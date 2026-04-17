@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '../../../lib/supabaseAdmin';
 import { extractEmpresaFechamentos } from '../../../lib/fechamento';
-import { MonthlyImportRow } from '../../../lib/types';
+import { MonthlyImportRow } from '../../../lib/monthlyTypes';
 
 export async function POST(request: NextRequest) {
   try {
