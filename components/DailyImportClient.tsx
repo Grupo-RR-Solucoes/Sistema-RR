@@ -18,23 +18,102 @@ function estimateFaixa(total: number) {
   return 'Faixa 1';
 }
 
+type FechamentoResponse = {
+  ok?: boolean;
+  message?: string;
+  error?: string;
+  linhasProcessadas?: number;
+  recebimentosSalvos?: number;
+  fechamentosGerados?: number;
+  fechamento?: Array<{
+    empresa_cnpj: string;
+    ano: number;
+    mes: number;
+    valor_avista: number;
+    valor_diferido: number;
+    valor_seguro: number;
+    valor_estorno: number;
+    valor_renovacao: number;
+    valor_liquido: number;
+    operacoes: number;
+    updated_at?: string;
+  }>;
+};
+
 export default function DailyImportClient() {
   const [summary, setSummary] = useState<ReturnType<typeof parseDailyWorkbook> | null>(null);
   const [fileName, setFileName] = useState('');
   const [status, setStatus] = useState('Nenhum arquivo carregado ainda.');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [sending, setSending] = useState(false);
+  const [backendMessage, setBackendMessage] = useState('');
+  const [backendError, setBackendError] = useState('');
+  const [apiResult, setApiResult] = useState<FechamentoResponse | null>(null);
 
   async function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const buffer = await file.arrayBuffer();
-    const parsed = parseDailyWorkbook(buffer);
+    try {
+      setSelectedFile(file);
+      setBackendMessage('');
+      setBackendError('');
+      setApiResult(null);
 
-    setSummary(parsed);
-    setFileName(file.name);
-    setStatus(
-      `${parsed.operacoes.length} registros lidos | ${parsed.quantidadeProducao} em produção | ${parsed.quantidadePendentes} pendentes | ${parsed.quantidadeCanceladas} canceladas.`
-    );
+      const buffer = await file.arrayBuffer();
+      const parsed = parseDailyWorkbook(buffer);
+
+      setSummary(parsed);
+      setFileName(file.name);
+      setStatus(
+        `${parsed.operacoes.length} registros lidos | ${parsed.quantidadeProducao} em produção | ${parsed.quantidadePendentes} pendentes | ${parsed.quantidadeCanceladas} canceladas.`
+      );
+    } catch (error) {
+      console.error(error);
+      setSummary(null);
+      setFileName(file.name);
+      setStatus('Erro ao ler a planilha.');
+      setBackendError('Não foi possível ler a planilha selecionada.');
+    }
+  }
+
+  async function handleSendToBackend() {
+    if (!selectedFile || !summary) {
+      setBackendError('Selecione uma planilha antes de enviar.');
+      setBackendMessage('');
+      return;
+    }
+
+    try {
+      setSending(true);
+      setBackendError('');
+      setBackendMessage('');
+      setApiResult(null);
+
+      const response = await fetch('/api/fechamento', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(summary),
+      });
+
+      const data: FechamentoResponse = await response.json();
+
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || data.message || 'Erro ao enviar dados para o backend.');
+      }
+
+      setApiResult(data);
+      setBackendMessage(data.message || 'Dados enviados e fechamento processado com sucesso.');
+    } catch (error) {
+      console.error(error);
+      setBackendError(
+        error instanceof Error ? error.message : 'Erro inesperado ao enviar os dados.'
+      );
+    } finally {
+      setSending(false);
+    }
   }
 
   const metrics = useMemo(() => {
@@ -76,6 +155,37 @@ export default function DailyImportClient() {
         </div>
 
         <div style={{ marginTop: 8, color: '#556070' }}>{status}</div>
+
+        <div style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            onClick={handleSendToBackend}
+            disabled={!summary || sending}
+            style={{
+              background: sending ? '#9aa4b2' : '#111827',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 12,
+              padding: '12px 18px',
+              cursor: !summary || sending ? 'not-allowed' : 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            {sending ? 'Enviando...' : 'Enviar para o fechamento mensal'}
+          </button>
+        </div>
+
+        {backendMessage ? (
+          <div style={{ marginTop: 16, color: '#067647', fontWeight: 600 }}>
+            {backendMessage}
+          </div>
+        ) : null}
+
+        {backendError ? (
+          <div style={{ marginTop: 16, color: '#b42318', fontWeight: 600 }}>
+            {backendError}
+          </div>
+        ) : null}
       </section>
 
       <section
@@ -92,6 +202,66 @@ export default function DailyImportClient() {
         <Card label="Valor pendente" value={formatCurrency(metrics.valorPendente)} />
         <Card label="Faixa do grupo" value={metrics.faixa} />
       </section>
+
+      {apiResult?.fechamento && apiResult.fechamento.length > 0 ? (
+        <section
+          style={{
+            background: '#fff',
+            border: '1px solid #d9dde7',
+            borderRadius: 20,
+            padding: 24,
+          }}
+        >
+          <h2 style={{ marginTop: 0, fontSize: 24 }}>Retorno do fechamento</h2>
+
+          <div style={{ marginBottom: 16, color: '#556070', display: 'grid', gap: 6 }}>
+            <div>
+              <strong>Linhas processadas:</strong> {apiResult.linhasProcessadas ?? 0}
+            </div>
+            <div>
+              <strong>Recebimentos salvos:</strong> {apiResult.recebimentosSalvos ?? 0}
+            </div>
+            <div>
+              <strong>Fechamentos gerados:</strong> {apiResult.fechamentosGerados ?? 0}
+            </div>
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+              <thead>
+                <tr>
+                  <TableHead>CNPJ</TableHead>
+                  <TableHead>Ano</TableHead>
+                  <TableHead>Mês</TableHead>
+                  <TableHead>À vista</TableHead>
+                  <TableHead>Diferido</TableHead>
+                  <TableHead>Seguro</TableHead>
+                  <TableHead>Estorno</TableHead>
+                  <TableHead>Renovação</TableHead>
+                  <TableHead>Líquido</TableHead>
+                  <TableHead>Operações</TableHead>
+                </tr>
+              </thead>
+              <tbody>
+                {apiResult.fechamento.map((item) => (
+                  <tr key={`${item.empresa_cnpj}-${item.ano}-${item.mes}`}>
+                    <TableCell>{item.empresa_cnpj}</TableCell>
+                    <TableCell>{item.ano}</TableCell>
+                    <TableCell>{item.mes}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_avista)}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_diferido)}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_seguro)}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_estorno)}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_renovacao)}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_liquido)}</TableCell>
+                    <TableCell>{String(item.operacoes)}</TableCell>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -109,5 +279,34 @@ function Card({ label, value }: { label: string; value: string }) {
       <div style={{ color: '#556070', marginBottom: 10 }}>{label}</div>
       <div style={{ fontSize: 24, fontWeight: 700 }}>{value}</div>
     </div>
+  );
+}
+
+function TableHead({ children }: { children: React.ReactNode }) {
+  return (
+    <th
+      style={{
+        textAlign: 'left',
+        padding: '12px 10px',
+        borderBottom: '1px solid #d9dde7',
+        fontSize: 14,
+      }}
+    >
+      {children}
+    </th>
+  );
+}
+
+function TableCell({ children }: { children: React.ReactNode }) {
+  return (
+    <td
+      style={{
+        padding: '12px 10px',
+        borderBottom: '1px solid #eef1f5',
+        fontSize: 14,
+      }}
+    >
+      {children}
+    </td>
   );
 }
