@@ -1,5 +1,9 @@
 import * as XLSX from 'xlsx';
-import { DailyImportRow, EmpresaDetectada, ParsedDailySummary } from './types';
+import {
+  DailyImportRow,
+  EmpresaDetectadaResumo,
+  ParsedDailySummary,
+} from './types';
 
 function normalizeKey(value: string) {
   return value
@@ -139,32 +143,69 @@ const EMPRESAS_POR_COBAN: Record<string, { empresaNome: string; empresaCnpj: str
   },
 };
 
-function detectarEmpresa(operacoes: DailyImportRow[]): EmpresaDetectada | null {
+function detectarEmpresaPorLinha(mciRaw: string, cobanRaw: string) {
+  const mci = onlyNumbers(mciRaw);
+  if (mci && EMPRESAS_POR_MCI[mci]) {
+    const empresa = EMPRESAS_POR_MCI[mci];
+    return {
+      empresaNome: empresa.empresaNome,
+      empresaCnpj: empresa.empresaCnpj,
+      identificadorTipo: 'mci' as const,
+      identificadorValor: mci,
+    };
+  }
+
+  const coban = onlyNumbers(cobanRaw);
+  if (coban && EMPRESAS_POR_COBAN[coban]) {
+    const empresa = EMPRESAS_POR_COBAN[coban];
+    return {
+      empresaNome: empresa.empresaNome,
+      empresaCnpj: empresa.empresaCnpj,
+      identificadorTipo: 'coban' as const,
+      identificadorValor: coban,
+    };
+  }
+
+  return {
+    empresaNome: '',
+    empresaCnpj: '',
+    identificadorTipo: '' as const,
+    identificadorValor: '',
+  };
+}
+
+function resumirEmpresas(operacoes: DailyImportRow[]): EmpresaDetectadaResumo[] {
+  const mapa = new Map<string, EmpresaDetectadaResumo>();
+
   for (const row of operacoes) {
-    const mci = onlyNumbers(row.mci);
-    if (mci && EMPRESAS_POR_MCI[mci]) {
-      const empresa = EMPRESAS_POR_MCI[mci];
-      return {
-        empresaNome: empresa.empresaNome,
-        empresaCnpj: empresa.empresaCnpj,
-        identificadorTipo: 'mci',
-        identificadorValor: mci,
-      };
+    if (!row.empresaCnpj || !row.empresaNome) continue;
+
+    const chave = row.empresaCnpj;
+
+    if (!mapa.has(chave)) {
+      mapa.set(chave, {
+        empresaNome: row.empresaNome,
+        empresaCnpj: row.empresaCnpj,
+        quantidadeOperacoes: 0,
+        identificadores: [],
+      });
     }
 
-    const coban = onlyNumbers(row.codigoCoban);
-    if (coban && EMPRESAS_POR_COBAN[coban]) {
-      const empresa = EMPRESAS_POR_COBAN[coban];
-      return {
-        empresaNome: empresa.empresaNome,
-        empresaCnpj: empresa.empresaCnpj,
-        identificadorTipo: 'coban',
-        identificadorValor: coban,
-      };
+    const atual = mapa.get(chave)!;
+    atual.quantidadeOperacoes += 1;
+
+    const identificador = row.identificadorTipo && row.identificadorValor
+      ? `${row.identificadorTipo.toUpperCase()} ${row.identificadorValor}`
+      : '';
+
+    if (identificador && !atual.identificadores.includes(identificador)) {
+      atual.identificadores.push(identificador);
     }
   }
 
-  return null;
+  return Array.from(mapa.values()).sort((a, b) =>
+    a.empresaNome.localeCompare(b.empresaNome, 'pt-BR')
+  );
 }
 
 export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary {
@@ -228,13 +269,14 @@ export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary
       );
 
       const codigoCoban = asString(
-        pick(row, ['CÓD COBAN', 'COD COBAN', 'Código Coban', 'Codigo Coban', 'Coban'])
+        pick(row, ['Cód. Coban', 'Cod. Coban', 'CÓD COBAN', 'COD COBAN', 'Código Coban', 'Codigo Coban', 'Coban'])
       );
 
-      const externalKey = numeroProposta;
+      const empresa = detectarEmpresaPorLinha(mci, codigoCoban);
+      const externalKeyBase = numeroProposta || `${mci}-${codigoCoban}-${dataContrato}-${valorLiquido}`;
 
       return {
-        externalKey,
+        externalKey: externalKeyBase,
         produto,
         codigoConvenio,
         dataProposta,
@@ -247,6 +289,10 @@ export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary
         status,
         mci,
         codigoCoban,
+        empresaNome: empresa.empresaNome,
+        empresaCnpj: empresa.empresaCnpj,
+        identificadorTipo: empresa.identificadorTipo,
+        identificadorValor: empresa.identificadorValor,
       } satisfies DailyImportRow;
     })
     .filter((row) => row.numeroProposta && row.valorLiquido > 0);
@@ -263,7 +309,10 @@ export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary
     (row) => normalizeStatus(row.status) === 'cancelado'
   );
 
-  const empresaDetectada = detectarEmpresa(operacoes);
+  const empresasDetectadas = resumirEmpresas(operacoes);
+  const quantidadeNaoIdentificadas = operacoes.filter(
+    (row) => !row.empresaCnpj || !row.empresaNome
+  ).length;
 
   return {
     operacoes,
@@ -275,6 +324,7 @@ export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary
     quantidadeCanceladas: operacoesCanceladas.length,
     producaoValida: operacoesProducao.reduce((acc, row) => acc + row.valorLiquido, 0),
     valorPendente: operacoesPendentes.reduce((acc, row) => acc + row.valorLiquido, 0),
-    empresaDetectada,
+    empresasDetectadas,
+    quantidadeNaoIdentificadas,
   };
 }
