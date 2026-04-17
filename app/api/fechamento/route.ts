@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '../../../lib/supabaseAdmin';
 import { extractEmpresaFechamentos } from '../../../lib/fechamento';
-import { MonthlyImportRow } from '../../../lib/monthlyTypes';
+import { MonthlyImportRow } from '../../../lib/types';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const rows = (body.rows || []) as MonthlyImportRow[];
+
+    const rows = (
+      Array.isArray(body)
+        ? body
+        : Array.isArray(body.rows)
+        ? body.rows
+        : []
+    ) as MonthlyImportRow[];
 
     if (!rows.length) {
       return NextResponse.json(
@@ -59,8 +66,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      inserted: rows.length,
-      empresas: fechamentos.length,
+      message: 'Fechamento processado com sucesso.',
+      linhasProcessadas: rows.length,
+      recebimentosSalvos: rows.length,
+      fechamentosGerados: fechamentos.length,
+      fechamento: fechamentos,
     });
   } catch (error) {
     const message =
