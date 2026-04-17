@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { DailyImportRow, ParsedDailySummary } from './types';
+import { DailyImportRow, EmpresaDetectada, ParsedDailySummary } from './types';
 
 function normalizeKey(value: string) {
   return value
@@ -9,6 +9,10 @@ function normalizeKey(value: string) {
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function onlyNumbers(value: string) {
+  return value.replace(/\D/g, '');
 }
 
 function pick(row: Record<string, unknown>, aliases: string[]) {
@@ -40,21 +44,13 @@ function asNumber(value: unknown): number {
     const hasComma = cleaned.includes(',');
     const hasDot = cleaned.includes('.');
 
-    // Ex: 35.000,00
     if (hasComma && hasDot) {
       cleaned = cleaned.replace(/\./g, '').replace(',', '.');
-    }
-    // Ex: 804,79
-    else if (hasComma) {
+    } else if (hasComma) {
       cleaned = cleaned.replace(',', '.');
-    }
-    // Ex: 35000.00
-    else if (hasDot) {
+    } else if (hasDot) {
       const parts = cleaned.split('.');
-
-      // Se for decimal com 2 casas, mantém
       if (!(parts.length === 2 && parts[1].length <= 2)) {
-        // senão trata ponto como separador de milhar
         cleaned = cleaned.replace(/\./g, '');
       }
     }
@@ -103,6 +99,72 @@ function normalizeStatus(value: string) {
   if (status === 'cancelado') return 'cancelado';
 
   return 'outro';
+}
+
+const EMPRESAS_POR_MCI: Record<string, { empresaNome: string; empresaCnpj: string }> = {
+  '847822962': {
+    empresaNome: 'RR SOLUÇÕES LTDA',
+    empresaCnpj: '48357275000103',
+  },
+  '873386662': {
+    empresaNome: 'RR SOLUÇÕES AL LTDA',
+    empresaCnpj: '56140658000153',
+  },
+  '873298328': {
+    empresaNome: 'RR AL SOLUÇÕES LTDA',
+    empresaCnpj: '55867409000100',
+  },
+  '850169280': {
+    empresaNome: 'RR SOLUÇÕES PE LTDA',
+    empresaCnpj: '51457289000103',
+  },
+};
+
+const EMPRESAS_POR_COBAN: Record<string, { empresaNome: string; empresaCnpj: string }> = {
+  '98250': {
+    empresaNome: 'RR SOLUÇÕES LTDA',
+    empresaCnpj: '48357275000103',
+  },
+  '18309': {
+    empresaNome: 'RR SOLUÇÕES AL LTDA',
+    empresaCnpj: '56140658000153',
+  },
+  '20466': {
+    empresaNome: 'RR AL SOLUÇÕES LTDA',
+    empresaCnpj: '55867409000100',
+  },
+  '14692': {
+    empresaNome: 'RR SOLUÇÕES PE LTDA',
+    empresaCnpj: '51457289000103',
+  },
+};
+
+function detectarEmpresa(operacoes: DailyImportRow[]): EmpresaDetectada | null {
+  for (const row of operacoes) {
+    const mci = onlyNumbers(row.mci);
+    if (mci && EMPRESAS_POR_MCI[mci]) {
+      const empresa = EMPRESAS_POR_MCI[mci];
+      return {
+        empresaNome: empresa.empresaNome,
+        empresaCnpj: empresa.empresaCnpj,
+        identificadorTipo: 'mci',
+        identificadorValor: mci,
+      };
+    }
+
+    const coban = onlyNumbers(row.codigoCoban);
+    if (coban && EMPRESAS_POR_COBAN[coban]) {
+      const empresa = EMPRESAS_POR_COBAN[coban];
+      return {
+        empresaNome: empresa.empresaNome,
+        empresaCnpj: empresa.empresaCnpj,
+        identificadorTipo: 'coban',
+        identificadorValor: coban,
+      };
+    }
+  }
+
+  return null;
 }
 
 export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary {
@@ -161,6 +223,14 @@ export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary
         pick(row, ['Status'])
       );
 
+      const mci = asString(
+        pick(row, ['MCI', 'Codigo MCI', 'Código MCI'])
+      );
+
+      const codigoCoban = asString(
+        pick(row, ['CÓD COBAN', 'COD COBAN', 'Código Coban', 'Codigo Coban', 'Coban'])
+      );
+
       const externalKey = numeroProposta;
 
       return {
@@ -175,6 +245,8 @@ export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary
         tipoLiberacao,
         dataContrato,
         status,
+        mci,
+        codigoCoban,
       } satisfies DailyImportRow;
     })
     .filter((row) => row.numeroProposta && row.valorLiquido > 0);
@@ -191,6 +263,8 @@ export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary
     (row) => normalizeStatus(row.status) === 'cancelado'
   );
 
+  const empresaDetectada = detectarEmpresa(operacoes);
+
   return {
     operacoes,
     operacoesProducao,
@@ -201,5 +275,6 @@ export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary
     quantidadeCanceladas: operacoesCanceladas.length,
     producaoValida: operacoesProducao.reduce((acc, row) => acc + row.valorLiquido, 0),
     valorPendente: operacoesPendentes.reduce((acc, row) => acc + row.valorLiquido, 0),
+    empresaDetectada,
   };
 }
