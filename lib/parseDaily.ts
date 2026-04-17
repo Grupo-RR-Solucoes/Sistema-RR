@@ -179,7 +179,7 @@ export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary
     quantidadeProducao: operacoesProducao.length,
     quantidadePendentes: operacoesPendentes.length,
     quantidadeCanceladas: operacoesCanceladas.length,
-    producaoValida: operacoesProducao.reduce((acc, row) => acc + row.valorFinanciado, 0),
-    valorPendente: operacoesPendentes.reduce((acc, row) => acc + row.valorFinanciado, 0),
+    producaoValida: operacoesProducao.reduce((acc, row) => acc + row.valorLiquido, 0),
+    valorPendente: operacoesPendentes.reduce((acc, row) => acc + row.valorLiquido, 0),
   };
 }
