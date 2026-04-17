@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { parseDailyWorkbook } from '../lib/parseDaily';
 
 function formatCurrency(value: number) {
@@ -18,6 +18,20 @@ function estimateFaixa(total: number) {
   return 'Faixa 1';
 }
 
+type FechamentoItem = {
+  empresa_cnpj: string;
+  ano: number;
+  mes: number;
+  valor_avista: number;
+  valor_diferido: number;
+  valor_seguro: number;
+  valor_estorno: number;
+  valor_renovacao: number;
+  valor_liquido: number;
+  operacoes: number;
+  updated_at?: string;
+};
+
 type FechamentoResponse = {
   ok?: boolean;
   message?: string;
@@ -25,26 +39,13 @@ type FechamentoResponse = {
   linhasProcessadas?: number;
   recebimentosSalvos?: number;
   fechamentosGerados?: number;
-  fechamento?: Array<{
-    empresa_cnpj: string;
-    ano: number;
-    mes: number;
-    valor_avista: number;
-    valor_diferido: number;
-    valor_seguro: number;
-    valor_estorno: number;
-    valor_renovacao: number;
-    valor_liquido: number;
-    operacoes: number;
-    updated_at?: string;
-  }>;
+  fechamento?: FechamentoItem[];
 };
 
 export default function DailyImportClient() {
   const [summary, setSummary] = useState<ReturnType<typeof parseDailyWorkbook> | null>(null);
   const [fileName, setFileName] = useState('');
   const [status, setStatus] = useState('Nenhum arquivo carregado ainda.');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
   const [backendMessage, setBackendMessage] = useState('');
   const [backendError, setBackendError] = useState('');
@@ -55,7 +56,6 @@ export default function DailyImportClient() {
     if (!file) return;
 
     try {
-      setSelectedFile(file);
       setBackendMessage('');
       setBackendError('');
       setApiResult(null);
@@ -78,7 +78,7 @@ export default function DailyImportClient() {
   }
 
   async function handleSendToBackend() {
-    if (!selectedFile || !summary) {
+    if (!summary) {
       setBackendError('Selecione uma planilha antes de enviar.');
       setBackendMessage('');
       return;
@@ -90,12 +90,27 @@ export default function DailyImportClient() {
       setBackendMessage('');
       setApiResult(null);
 
+      const rows = summary.operacoes.map((op) => ({
+        externalKey: op.externalKey,
+        empresaCnpj: '00000000000000',
+        numeroOperacao: op.numeroProposta,
+        dataReferencia: op.dataContrato,
+        tipoRecebimento: 'producao',
+        valorRecebido: Number(op.valorLiquido || 0),
+        valorDiferido: 0,
+        valorSeguro: 0,
+        valorEstorno: 0,
+        valorRenovacao: 0,
+        status: op.status,
+        observacao: '',
+      }));
+
       const response = await fetch('/api/fechamento', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(summary),
+        body: JSON.stringify({ rows }),
       });
 
       const data: FechamentoResponse = await response.json();
@@ -105,7 +120,7 @@ export default function DailyImportClient() {
       }
 
       setApiResult(data);
-      setBackendMessage(data.message || 'Dados enviados e fechamento processado com sucesso.');
+      setBackendMessage(data.message || 'Fechamento enviado com sucesso.');
     } catch (error) {
       console.error(error);
       setBackendError(
