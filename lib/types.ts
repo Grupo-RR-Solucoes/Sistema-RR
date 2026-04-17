@@ -10,6 +10,15 @@ export type DailyImportRow = {
   tipoLiberacao: string;
   dataContrato: string;
   status: string;
+  mci: string;
+  codigoCoban: string;
+};
+
+export type EmpresaDetectada = {
+  empresaNome: string;
+  empresaCnpj: string;
+  identificadorTipo: 'mci' | 'coban';
+  identificadorValor: string;
 };
 
 export type ParsedDailySummary = {
@@ -22,6 +31,7 @@ export type ParsedDailySummary = {
   quantidadeCanceladas: number;
   producaoValida: number;
   valorPendente: number;
+  empresaDetectada: EmpresaDetectada | null;
 };
 
 export type MonthlyImportRow = {
