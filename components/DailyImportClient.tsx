@@ -10,6 +10,20 @@ function formatCurrency(value: number) {
   }).format(value || 0);
 }
 
+function formatCnpj(value: string) {
+  const numbers = value.replace(/\D/g, '').slice(0, 14);
+
+  if (numbers.length <= 2) return numbers;
+  if (numbers.length <= 5) return numbers.replace(/^(\d{2})(\d+)/, '$1.$2');
+  if (numbers.length <= 8) return numbers.replace(/^(\d{2})(\d{3})(\d+)/, '$1.$2.$3');
+  if (numbers.length <= 12) return numbers.replace(/^(\d{2})(\d{3})(\d{3})(\d+)/, '$1.$2.$3/$4');
+
+  return numbers.replace(
+    /^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2}).*$/,
+    '$1.$2.$3/$4-$5'
+  );
+}
+
 function estimateFaixa(total: number) {
   if (total >= 20000000) return 'Faixa 5';
   if (total >= 7000000) return 'Faixa 4';
@@ -65,8 +79,15 @@ export default function DailyImportClient() {
 
       setSummary(parsed);
       setFileName(file.name);
+
+      const empresaTexto = parsed.empresaDetectada
+        ? ` Empresa detectada: ${parsed.empresaDetectada.empresaNome} (${formatCnpj(
+            parsed.empresaDetectada.empresaCnpj
+          )}).`
+        : ' Empresa não identificada automaticamente.';
+
       setStatus(
-        `${parsed.operacoes.length} registros lidos | ${parsed.quantidadeProducao} em produção | ${parsed.quantidadePendentes} pendentes | ${parsed.quantidadeCanceladas} canceladas.`
+        `${parsed.operacoes.length} registros lidos | ${parsed.quantidadeProducao} em produção | ${parsed.quantidadePendentes} pendentes | ${parsed.quantidadeCanceladas} canceladas.${empresaTexto}`
       );
     } catch (error) {
       console.error(error);
@@ -84,6 +105,12 @@ export default function DailyImportClient() {
       return;
     }
 
+    if (!summary.empresaDetectada) {
+      setBackendError('Não foi possível identificar a empresa automaticamente pela planilha.');
+      setBackendMessage('');
+      return;
+    }
+
     try {
       setSending(true);
       setBackendError('');
@@ -91,8 +118,8 @@ export default function DailyImportClient() {
       setApiResult(null);
 
       const rows = summary.operacoes.map((op) => ({
-        externalKey: op.externalKey,
-        empresaCnpj: '00000000000000',
+        externalKey: `${summary.empresaDetectada?.empresaCnpj}-${op.externalKey}`,
+        empresaCnpj: summary.empresaDetectada!.empresaCnpj,
         numeroOperacao: op.numeroProposta,
         dataReferencia: op.dataContrato,
         tipoRecebimento: 'producao',
@@ -102,7 +129,7 @@ export default function DailyImportClient() {
         valorEstorno: 0,
         valorRenovacao: 0,
         status: op.status,
-        observacao: '',
+        observacao: summary.empresaDetectada!.empresaNome,
       }));
 
       const response = await fetch('/api/fechamento', {
@@ -159,8 +186,8 @@ export default function DailyImportClient() {
       >
         <h2 style={{ marginTop: 0, fontSize: 24 }}>Importar produção diária</h2>
         <p style={{ color: '#556070' }}>
-          Envie a planilha diária .xlsx. O sistema vai ler a primeira aba e separar
-          produção válida, pendentes e canceladas.
+          Envie a planilha diária .xlsx. O sistema vai ler a primeira aba, separar a produção
+          e identificar automaticamente a empresa por MCI ou CÓD COBAN.
         </p>
 
         <input type="file" accept=".xlsx,.xls" onChange={handleFile} />
@@ -171,18 +198,46 @@ export default function DailyImportClient() {
 
         <div style={{ marginTop: 8, color: '#556070' }}>{status}</div>
 
+        {summary?.empresaDetectada ? (
+          <div
+            style={{
+              marginTop: 16,
+              padding: 14,
+              borderRadius: 12,
+              background: '#f7f8fa',
+              border: '1px solid #d9dde7',
+              color: '#111827',
+              display: 'grid',
+              gap: 6,
+            }}
+          >
+            <div>
+              <strong>Empresa detectada:</strong> {summary.empresaDetectada.empresaNome}
+            </div>
+            <div>
+              <strong>CNPJ:</strong> {formatCnpj(summary.empresaDetectada.empresaCnpj)}
+            </div>
+            <div>
+              <strong>Identificado por:</strong> {summary.empresaDetectada.identificadorTipo.toUpperCase()} {summary.empresaDetectada.identificadorValor}
+            </div>
+          </div>
+        ) : null}
+
         <div style={{ marginTop: 16 }}>
           <button
             type="button"
             onClick={handleSendToBackend}
-            disabled={!summary || sending}
+            disabled={!summary || sending || !summary?.empresaDetectada}
             style={{
               background: sending ? '#9aa4b2' : '#111827',
               color: '#fff',
               border: 'none',
               borderRadius: 12,
               padding: '12px 18px',
-              cursor: !summary || sending ? 'not-allowed' : 'pointer',
+              cursor:
+                !summary || sending || !summary?.empresaDetectada
+                  ? 'not-allowed'
+                  : 'pointer',
               fontWeight: 600,
             }}
           >
@@ -231,6 +286,15 @@ export default function DailyImportClient() {
 
           <div style={{ marginBottom: 16, color: '#556070', display: 'grid', gap: 6 }}>
             <div>
+              <strong>Empresa:</strong> {summary?.empresaDetectada?.empresaNome ?? '-'}
+            </div>
+            <div>
+              <strong>CNPJ:</strong>{' '}
+              {summary?.empresaDetectada
+                ? formatCnpj(summary.empresaDetectada.empresaCnpj)
+                : '-'}
+            </div>
+            <div>
               <strong>Linhas processadas:</strong> {apiResult.linhasProcessadas ?? 0}
             </div>
             <div>
@@ -260,7 +324,7 @@ export default function DailyImportClient() {
               <tbody>
                 {apiResult.fechamento.map((item) => (
                   <tr key={`${item.empresa_cnpj}-${item.ano}-${item.mes}`}>
-                    <TableCell>{item.empresa_cnpj}</TableCell>
+                    <TableCell>{formatCnpj(item.empresa_cnpj)}</TableCell>
                     <TableCell>{item.ano}</TableCell>
                     <TableCell>{item.mes}</TableCell>
                     <TableCell>{formatCurrency(item.valor_avista)}</TableCell>
