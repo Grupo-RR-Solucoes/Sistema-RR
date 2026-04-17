@@ -40,13 +40,21 @@ function asNumber(value: unknown): number {
     const hasComma = cleaned.includes(',');
     const hasDot = cleaned.includes('.');
 
+    // Ex: 35.000,00
     if (hasComma && hasDot) {
       cleaned = cleaned.replace(/\./g, '').replace(',', '.');
-    } else if (hasComma) {
+    }
+    // Ex: 804,79
+    else if (hasComma) {
       cleaned = cleaned.replace(',', '.');
-    } else if (hasDot) {
+    }
+    // Ex: 35000.00
+    else if (hasDot) {
       const parts = cleaned.split('.');
+
+      // Se for decimal com 2 casas, mantém
       if (!(parts.length === 2 && parts[1].length <= 2)) {
+        // senão trata ponto como separador de milhar
         cleaned = cleaned.replace(/\./g, '');
       }
     }
@@ -61,6 +69,12 @@ function asNumber(value: unknown): number {
 }
 
 function formatDate(value: unknown): string {
+  if (typeof value === 'number') {
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    const result = new Date(excelEpoch.getTime() + value * 86400000);
+    return result.toISOString().slice(0, 10);
+  }
+
   const text = asString(value);
   if (!text) return '';
 
@@ -87,6 +101,7 @@ function normalizeStatus(value: string) {
   if (status === 'producao') return 'producao';
   if (status === 'em aberto') return 'em_aberto';
   if (status === 'cancelado') return 'cancelado';
+
   return 'outro';
 }
 
@@ -126,7 +141,12 @@ export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary
       );
 
       const valorLiquido = asNumber(
-        pick(row, ['Valor Financiado Líquido', 'Valor Financiado Liquido'])
+        pick(row, [
+          'Valor Financiado Líquido',
+          'Valor Financiado Liquido',
+          'Valor Líquido',
+          'Valor Liquido',
+        ])
       );
 
       const tipoLiberacao = asString(
@@ -157,7 +177,7 @@ export function parseDailyWorkbook(arrayBuffer: ArrayBuffer): ParsedDailySummary
         status,
       } satisfies DailyImportRow;
     })
-    .filter((row) => row.numeroProposta && row.valorFinanciado > 0);
+    .filter((row) => row.numeroProposta && row.valorLiquido > 0);
 
   const operacoesProducao = operacoes.filter(
     (row) => normalizeStatus(row.status) === 'producao'
