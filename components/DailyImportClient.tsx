@@ -16,7 +16,7 @@ function formatCnpj(value: string) {
   if (numbers.length <= 2) return numbers;
   if (numbers.length <= 5) return numbers.replace(/^(\d{2})(\d+)/, '$1.$2');
   if (numbers.length <= 8) return numbers.replace(/^(\d{2})(\d{3})(\d+)/, '$1.$2.$3');
-  if (numbers.length <= 12) return numbers.replace(/^(\d{2})(\d{3})(\d{3})(\d+)/, '$1.$2.$3/$4');
+  if (numbers.length <= 12) return numbers.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(.*)$/, '$1.$2.$3/$4');
 
   return numbers.replace(
     /^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2}).*$/,
@@ -80,14 +80,18 @@ export default function DailyImportClient() {
       setSummary(parsed);
       setFileName(file.name);
 
-      const empresaTexto = parsed.empresaDetectada
-        ? ` Empresa detectada: ${parsed.empresaDetectada.empresaNome} (${formatCnpj(
-            parsed.empresaDetectada.empresaCnpj
-          )}).`
-        : ' Empresa não identificada automaticamente.';
+      const empresasTexto =
+        parsed.empresasDetectadas.length > 0
+          ? ` ${parsed.empresasDetectadas.length} empresa(s) identificada(s) automaticamente.`
+          : ' Nenhuma empresa identificada automaticamente.';
+
+      const naoIdentificadasTexto =
+        parsed.quantidadeNaoIdentificadas > 0
+          ? ` ${parsed.quantidadeNaoIdentificadas} linha(s) sem empresa identificada.`
+          : '';
 
       setStatus(
-        `${parsed.operacoes.length} registros lidos | ${parsed.quantidadeProducao} em produção | ${parsed.quantidadePendentes} pendentes | ${parsed.quantidadeCanceladas} canceladas.${empresaTexto}`
+        `${parsed.operacoes.length} registros lidos | ${parsed.quantidadeProducao} em produção | ${parsed.quantidadePendentes} pendentes | ${parsed.quantidadeCanceladas} canceladas.${empresasTexto}${naoIdentificadasTexto}`
       );
     } catch (error) {
       console.error(error);
@@ -105,8 +109,10 @@ export default function DailyImportClient() {
       return;
     }
 
-    if (!summary.empresaDetectada) {
-      setBackendError('Não foi possível identificar a empresa automaticamente pela planilha.');
+    if (summary.quantidadeNaoIdentificadas > 0) {
+      setBackendError(
+        'Existem linhas sem empresa identificada. Revise o MCI/CÓD COBAN antes de enviar.'
+      );
       setBackendMessage('');
       return;
     }
@@ -118,8 +124,8 @@ export default function DailyImportClient() {
       setApiResult(null);
 
       const rows = summary.operacoes.map((op) => ({
-        externalKey: `${summary.empresaDetectada?.empresaCnpj}-${op.externalKey}`,
-        empresaCnpj: summary.empresaDetectada!.empresaCnpj,
+        externalKey: `${op.empresaCnpj}-${op.externalKey}`,
+        empresaCnpj: op.empresaCnpj,
         numeroOperacao: op.numeroProposta,
         dataReferencia: op.dataContrato,
         tipoRecebimento: 'producao',
@@ -129,7 +135,7 @@ export default function DailyImportClient() {
         valorEstorno: 0,
         valorRenovacao: 0,
         status: op.status,
-        observacao: summary.empresaDetectada!.empresaNome,
+        observacao: op.empresaNome,
       }));
 
       const response = await fetch('/api/fechamento', {
@@ -187,7 +193,7 @@ export default function DailyImportClient() {
         <h2 style={{ marginTop: 0, fontSize: 24 }}>Importar produção diária</h2>
         <p style={{ color: '#556070' }}>
           Envie a planilha diária .xlsx. O sistema vai ler a primeira aba, separar a produção
-          e identificar automaticamente a empresa por MCI ou CÓD COBAN.
+          e identificar automaticamente cada empresa por MCI ou CÓD COBAN.
         </p>
 
         <input type="file" accept=".xlsx,.xls" onChange={handleFile} />
@@ -198,7 +204,7 @@ export default function DailyImportClient() {
 
         <div style={{ marginTop: 8, color: '#556070' }}>{status}</div>
 
-        {summary?.empresaDetectada ? (
+        {summary?.empresasDetectadas && summary.empresasDetectadas.length > 0 ? (
           <div
             style={{
               marginTop: 16,
@@ -208,18 +214,41 @@ export default function DailyImportClient() {
               border: '1px solid #d9dde7',
               color: '#111827',
               display: 'grid',
-              gap: 6,
+              gap: 10,
             }}
           >
-            <div>
-              <strong>Empresa detectada:</strong> {summary.empresaDetectada.empresaNome}
-            </div>
-            <div>
-              <strong>CNPJ:</strong> {formatCnpj(summary.empresaDetectada.empresaCnpj)}
-            </div>
-            <div>
-              <strong>Identificado por:</strong> {summary.empresaDetectada.identificadorTipo.toUpperCase()} {summary.empresaDetectada.identificadorValor}
-            </div>
+            <strong>Empresas detectadas na planilha</strong>
+
+            {summary.empresasDetectadas.map((empresa) => (
+              <div
+                key={empresa.empresaCnpj}
+                style={{
+                  padding: 10,
+                  borderRadius: 10,
+                  background: '#fff',
+                  border: '1px solid #e5e7eb',
+                }}
+              >
+                <div>
+                  <strong>Empresa:</strong> {empresa.empresaNome}
+                </div>
+                <div>
+                  <strong>CNPJ:</strong> {formatCnpj(empresa.empresaCnpj)}
+                </div>
+                <div>
+                  <strong>Operações:</strong> {empresa.quantidadeOperacoes}
+                </div>
+                <div>
+                  <strong>Identificadores:</strong> {empresa.identificadores.join(' | ')}
+                </div>
+              </div>
+            ))}
+
+            {summary.quantidadeNaoIdentificadas > 0 ? (
+              <div style={{ color: '#b42318', fontWeight: 600 }}>
+                Atenção: {summary.quantidadeNaoIdentificadas} linha(s) não foram identificadas.
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -227,15 +256,18 @@ export default function DailyImportClient() {
           <button
             type="button"
             onClick={handleSendToBackend}
-            disabled={!summary || sending || !summary?.empresaDetectada}
+            disabled={!summary || sending || summary.quantidadeNaoIdentificadas > 0}
             style={{
-              background: sending ? '#9aa4b2' : '#111827',
+              background:
+                !summary || sending || (summary?.quantidadeNaoIdentificadas ?? 0) > 0
+                  ? '#9aa4b2'
+                  : '#111827',
               color: '#fff',
               border: 'none',
               borderRadius: 12,
               padding: '12px 18px',
               cursor:
-                !summary || sending || !summary?.empresaDetectada
+                !summary || sending || (summary?.quantidadeNaoIdentificadas ?? 0) > 0
                   ? 'not-allowed'
                   : 'pointer',
               fontWeight: 600,
@@ -286,13 +318,7 @@ export default function DailyImportClient() {
 
           <div style={{ marginBottom: 16, color: '#556070', display: 'grid', gap: 6 }}>
             <div>
-              <strong>Empresa:</strong> {summary?.empresaDetectada?.empresaNome ?? '-'}
-            </div>
-            <div>
-              <strong>CNPJ:</strong>{' '}
-              {summary?.empresaDetectada
-                ? formatCnpj(summary.empresaDetectada.empresaCnpj)
-                : '-'}
+              <strong>Empresas detectadas:</strong> {summary?.empresasDetectadas.length ?? 0}
             </div>
             <div>
               <strong>Linhas processadas:</strong> {apiResult.linhasProcessadas ?? 0}
@@ -306,7 +332,7 @@ export default function DailyImportClient() {
           </div>
 
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1000 }}>
               <thead>
                 <tr>
                   <TableHead>CNPJ</TableHead>
