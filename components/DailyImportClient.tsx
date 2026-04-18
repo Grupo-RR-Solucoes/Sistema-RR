@@ -226,6 +226,22 @@ export default function DailyImportClient() {
     );
   }, [apiResult]);
 
+  const detalhamentoPorMes = useMemo(() => {
+    const itens = [...(apiResult?.fechamento ?? [])];
+
+    return itens.sort((a, b) => {
+      if (a.empresa_cnpj !== b.empresa_cnpj) {
+        return a.empresa_cnpj.localeCompare(b.empresa_cnpj, 'pt-BR');
+      }
+
+      if (a.ano !== b.ano) {
+        return b.ano - a.ano;
+      }
+
+      return b.mes - a.mes;
+    });
+  }, [apiResult]);
+
   return (
     <div style={{ display: 'grid', gap: 24 }}>
       <section
@@ -360,7 +376,7 @@ export default function DailyImportClient() {
             padding: 24,
           }}
         >
-          <h2 style={{ marginTop: 0, fontSize: 24 }}>Retorno do fechamento</h2>
+          <h2 style={{ marginTop: 0, fontSize: 24 }}>Resumo por empresa</h2>
 
           <div style={{ marginBottom: 16, color: '#556070', display: 'grid', gap: 6 }}>
             <div>
@@ -395,6 +411,54 @@ export default function DailyImportClient() {
                 {resumoPorEmpresa.map((item) => (
                   <tr key={item.empresa_cnpj}>
                     <TableCell>{formatCnpj(item.empresa_cnpj)}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_avista)}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_diferido)}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_seguro)}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_estorno)}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_renovacao)}</TableCell>
+                    <TableCell>{formatCurrency(item.valor_liquido)}</TableCell>
+                    <TableCell>{String(item.operacoes)}</TableCell>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      {detalhamentoPorMes.length > 0 ? (
+        <section
+          style={{
+            background: '#fff',
+            border: '1px solid #d9dde7',
+            borderRadius: 20,
+            padding: 24,
+          }}
+        >
+          <h2 style={{ marginTop: 0, fontSize: 24 }}>Detalhamento por mês</h2>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
+              <thead>
+                <tr>
+                  <TableHead>CNPJ</TableHead>
+                  <TableHead>Ano</TableHead>
+                  <TableHead>Mês</TableHead>
+                  <TableHead>À vista</TableHead>
+                  <TableHead>Diferido</TableHead>
+                  <TableHead>Seguro</TableHead>
+                  <TableHead>Estorno</TableHead>
+                  <TableHead>Renovação</TableHead>
+                  <TableHead>Líquido</TableHead>
+                  <TableHead>Operações</TableHead>
+                </tr>
+              </thead>
+              <tbody>
+                {detalhamentoPorMes.map((item) => (
+                  <tr key={`${item.empresa_cnpj}-${item.ano}-${item.mes}`}>
+                    <TableCell>{formatCnpj(item.empresa_cnpj)}</TableCell>
+                    <TableCell>{item.ano}</TableCell>
+                    <TableCell>{item.mes}</TableCell>
                     <TableCell>{formatCurrency(item.valor_avista)}</TableCell>
                     <TableCell>{formatCurrency(item.valor_diferido)}</TableCell>
                     <TableCell>{formatCurrency(item.valor_seguro)}</TableCell>
