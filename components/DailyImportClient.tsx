@@ -16,7 +16,9 @@ function formatCnpj(value: string) {
   if (numbers.length <= 2) return numbers;
   if (numbers.length <= 5) return numbers.replace(/^(\d{2})(\d+)/, '$1.$2');
   if (numbers.length <= 8) return numbers.replace(/^(\d{2})(\d{3})(\d+)/, '$1.$2.$3');
-  if (numbers.length <= 12) return numbers.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(.*)$/, '$1.$2.$3/$4');
+  if (numbers.length <= 12) {
+    return numbers.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(.*)$/, '$1.$2.$3/$4');
+  }
 
   return numbers.replace(
     /^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2}).*$/,
@@ -44,6 +46,17 @@ type FechamentoItem = {
   valor_liquido: number;
   operacoes: number;
   updated_at?: string;
+};
+
+type FechamentoEmpresaResumo = {
+  empresa_cnpj: string;
+  valor_avista: number;
+  valor_diferido: number;
+  valor_seguro: number;
+  valor_estorno: number;
+  valor_renovacao: number;
+  valor_liquido: number;
+  operacoes: number;
 };
 
 type FechamentoResponse = {
@@ -180,6 +193,39 @@ export default function DailyImportClient() {
     };
   }, [summary]);
 
+  const resumoPorEmpresa = useMemo(() => {
+    const itens = apiResult?.fechamento ?? [];
+    const mapa = new Map<string, FechamentoEmpresaResumo>();
+
+    for (const item of itens) {
+      if (!mapa.has(item.empresa_cnpj)) {
+        mapa.set(item.empresa_cnpj, {
+          empresa_cnpj: item.empresa_cnpj,
+          valor_avista: 0,
+          valor_diferido: 0,
+          valor_seguro: 0,
+          valor_estorno: 0,
+          valor_renovacao: 0,
+          valor_liquido: 0,
+          operacoes: 0,
+        });
+      }
+
+      const atual = mapa.get(item.empresa_cnpj)!;
+      atual.valor_avista += Number(item.valor_avista || 0);
+      atual.valor_diferido += Number(item.valor_diferido || 0);
+      atual.valor_seguro += Number(item.valor_seguro || 0);
+      atual.valor_estorno += Number(item.valor_estorno || 0);
+      atual.valor_renovacao += Number(item.valor_renovacao || 0);
+      atual.valor_liquido += Number(item.valor_liquido || 0);
+      atual.operacoes += Number(item.operacoes || 0);
+    }
+
+    return Array.from(mapa.values()).sort((a, b) =>
+      a.empresa_cnpj.localeCompare(b.empresa_cnpj, 'pt-BR')
+    );
+  }, [apiResult]);
+
   return (
     <div style={{ display: 'grid', gap: 24 }}>
       <section
@@ -305,7 +351,7 @@ export default function DailyImportClient() {
         <Card label="Faixa do grupo" value={metrics.faixa} />
       </section>
 
-      {apiResult?.fechamento && apiResult.fechamento.length > 0 ? (
+      {resumoPorEmpresa.length > 0 ? (
         <section
           style={{
             background: '#fff',
@@ -321,13 +367,13 @@ export default function DailyImportClient() {
               <strong>Empresas detectadas:</strong> {summary?.empresasDetectadas.length ?? 0}
             </div>
             <div>
-              <strong>Linhas processadas:</strong> {apiResult.linhasProcessadas ?? 0}
+              <strong>Linhas processadas:</strong> {apiResult?.linhasProcessadas ?? 0}
             </div>
             <div>
-              <strong>Recebimentos salvos:</strong> {apiResult.recebimentosSalvos ?? 0}
+              <strong>Recebimentos salvos:</strong> {apiResult?.recebimentosSalvos ?? 0}
             </div>
             <div>
-              <strong>Fechamentos gerados:</strong> {apiResult.fechamentosGerados ?? 0}
+              <strong>Fechamentos gerados:</strong> {apiResult?.fechamentosGerados ?? 0}
             </div>
           </div>
 
@@ -336,8 +382,6 @@ export default function DailyImportClient() {
               <thead>
                 <tr>
                   <TableHead>CNPJ</TableHead>
-                  <TableHead>Ano</TableHead>
-                  <TableHead>Mês</TableHead>
                   <TableHead>À vista</TableHead>
                   <TableHead>Diferido</TableHead>
                   <TableHead>Seguro</TableHead>
@@ -348,11 +392,9 @@ export default function DailyImportClient() {
                 </tr>
               </thead>
               <tbody>
-                {apiResult.fechamento.map((item) => (
-                  <tr key={`${item.empresa_cnpj}-${item.ano}-${item.mes}`}>
+                {resumoPorEmpresa.map((item) => (
+                  <tr key={item.empresa_cnpj}>
                     <TableCell>{formatCnpj(item.empresa_cnpj)}</TableCell>
-                    <TableCell>{item.ano}</TableCell>
-                    <TableCell>{item.mes}</TableCell>
                     <TableCell>{formatCurrency(item.valor_avista)}</TableCell>
                     <TableCell>{formatCurrency(item.valor_diferido)}</TableCell>
                     <TableCell>{formatCurrency(item.valor_seguro)}</TableCell>
