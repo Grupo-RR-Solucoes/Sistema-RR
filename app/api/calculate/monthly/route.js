@@ -70,20 +70,12 @@ function getProductionBand(value) {
 
 function isCancelledStatus(status) {
   const s = normalizeText(status);
-  return (
-    s.includes("CANCEL") ||
-    s.includes("ESTORN") ||
-    s.includes("RECUS")
-  );
+  return s.includes("CANCEL") || s.includes("ESTORN") || s.includes("RECUS");
 }
 
 function isPendingStatus(status) {
   const s = normalizeText(status);
-  return (
-    s.includes("PEND") ||
-    s.includes("ANALIS") ||
-    s.includes("PROCESS")
-  );
+  return s.includes("PEND") || s.includes("ANALIS") || s.includes("PROCESS");
 }
 
 function isRenewedStatus(status, productDescription) {
@@ -106,11 +98,9 @@ function calculateInsurancePenetration(productionValue, insuredValue) {
 }
 
 function pickCommissionRow(rows, metricValue) {
-  const ordered = [...rows].sort((a, b) => {
-    const aFrom = toNumber(a.range_from);
-    const bFrom = toNumber(b.range_from);
-    return aFrom - bFrom;
-  });
+  const ordered = [...rows].sort(
+    (a, b) => toNumber(a.range_from) - toNumber(b.range_from)
+  );
 
   return (
     ordered.find((row) => {
@@ -123,15 +113,8 @@ function pickCommissionRow(rows, metricValue) {
   );
 }
 
-function calculateCommissionFromRow(row, baseValue) {
-  if (!row) return 0;
-  const value = toNumber(row.commission_value);
-
-  if (row.commission_type === "FIXED") {
-    return value;
-  }
-
-  return baseValue * (value / 100);
+function calculatePercentValue(baseValue, percent) {
+  return toNumber(baseValue) * (toNumber(percent) / 100);
 }
 
 function resolveTargetStatus(productionValue, target, target1, target2) {
@@ -141,12 +124,50 @@ function resolveTargetStatus(productionValue, target, target1, target2) {
   return "BELOW_META";
 }
 
-/**
- * MOTOR INICIAL DA EMPRESA
- * Esta versão já fecha produção mensal, banda, seguro e estrutura do fechamento.
- * O cálculo exato de A Vista / PRT da Promotiva precisa da matriz completa
- * com taxa, prazo, convênio/segmento e linha do produto em todos os registros.
- */
+function groupByCompany(records) {
+  const map = new Map();
+  for (const record of records) {
+    if (!record.company_id) continue;
+    if (!map.has(record.company_id)) map.set(record.company_id, []);
+    map.get(record.company_id).push(record);
+  }
+  return map;
+}
+
+function groupByPromoter(records) {
+  const map = new Map();
+  for (const record of records) {
+    const promoterId = record.assigned_promoter_id;
+    if (!promoterId) continue;
+    if (!map.has(promoterId)) map.set(promoterId, []);
+    map.get(promoterId).push(record);
+  }
+  return map;
+}
+
+async function fetchAllPaged(baseQueryBuilder) {
+  let from = 0;
+  const pageSize = 1000;
+  const all = [];
+
+  while (true) {
+    const { data, error } = await baseQueryBuilder().range(
+      from,
+      from + pageSize - 1
+    );
+
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+
+    all.push(...data);
+
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return all;
+}
+
 function calculateCompanyExpectedValues(records) {
   let grossProduction = 0;
   let netValidProduction = 0;
@@ -178,15 +199,12 @@ function calculateCompanyExpectedValues(records) {
       netValidProduction += net;
     }
 
-    // Seguro da empresa - base inicial automática:
-    // enquanto a modalidade detalhada (SLIP/ESTOQUE) não estiver 100% importada,
-    // usamos regra base por prazo assumindo SLIP.
     if (toNumber(record.insurance_value) > 0 && gross > 0 && record.term_months) {
       const prazo = Number(record.term_months);
       let rate = 0.15;
 
       if (prazo >= 37 && prazo <= 60) rate = 0.25;
-      else if (prazo >= 61 && prazo <= 84) rate = 0.40;
+      else if (prazo >= 61 && prazo <= 84) rate = 0.4;
       else if (prazo >= 85) rate = 0.55;
 
       expectedInsuranceCommission += gross * (rate / 100);
@@ -194,9 +212,6 @@ function calculateCompanyExpectedValues(records) {
   }
 
   const band = getProductionBand(netValidProduction);
-
-  // Placeholder controlado para a Promotiva:
-  // cash e PRT ainda ficam zerados até fecharmos a matriz exata por produto/taxa/prazo.
   const expectedCashCommission = 0;
   const expectedPrtCommission = 0;
 
@@ -217,51 +232,41 @@ function calculateCompanyExpectedValues(records) {
   };
 }
 
-function groupByCompany(records) {
-  const map = new Map();
+function chooseMonthlyDefaultPercent({
+  productionValue,
+  targetStatus,
+  productionRows,
+}) {
+  const baseRow = pickCommissionRow(productionRows, productionValue);
+  if (!baseRow) return 0;
 
-  for (const record of records) {
-    if (!record.company_id) continue;
-    if (!map.has(record.company_id)) map.set(record.company_id, []);
-    map.get(record.company_id).push(record);
+  let percent = toNumber(baseRow.commission_value);
+
+  // Gatilho simples para meta/meta1/meta2
+  // Aqui você pode depois sofisticar com percentuais específicos por faixa.
+  if (targetStatus === "META_1") {
+    percent = Math.min(percent + 0.1, 5.8);
+  } else if (targetStatus === "META_2") {
+    percent = Math.min(percent + 0.2, 5.8);
   }
 
-  return map;
+  return percent;
 }
 
-function groupByPromoter(records) {
-  const map = new Map();
+function findProductRule(productRules, record) {
+  const code = normalizeText(record.product_code);
+  const desc = normalizeText(record.product_description);
 
-  for (const record of records) {
-    const promoterId = record.assigned_promoter_id;
-    if (!promoterId) continue;
+  return (
+    productRules.find((rule) => {
+      const ruleCode = normalizeText(rule.product_code);
+      const ruleDesc = normalizeText(rule.product_description);
 
-    if (!map.has(promoterId)) map.set(promoterId, []);
-    map.get(promoterId).push(record);
-  }
-
-  return map;
-}
-
-async function fetchAllPaged(supabase, table, baseQueryBuilder) {
-  let from = 0;
-  const pageSize = 1000;
-  const all = [];
-
-  while (true) {
-    const { data, error } = await baseQueryBuilder()
-      .range(from, from + pageSize - 1);
-
-    if (error) throw error;
-    if (!data || data.length === 0) break;
-
-    all.push(...data);
-
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-
-  return all;
+      if (ruleCode && code && ruleCode === code) return true;
+      if (ruleDesc && desc && ruleDesc === desc) return true;
+      return false;
+    }) || null
+  );
 }
 
 export async function POST(req) {
@@ -282,7 +287,7 @@ export async function POST(req) {
 
     const { start, end } = getMonthRange(year, month);
 
-    const companiesQuery = () => {
+    const companies = await fetchAllPaged(() => {
       let query = supabase
         .from("companies")
         .select("id, name, cnpj")
@@ -290,11 +295,9 @@ export async function POST(req) {
 
       if (companyId) query = query.eq("id", companyId);
       return query;
-    };
+    });
 
-    const companies = await fetchAllPaged(supabase, "companies", companiesQuery);
-
-    const dailyQuery = () => {
+    const dailyRecords = await fetchAllPaged(() => {
       let query = supabase
         .from("daily_production_records")
         .select(`
@@ -303,6 +306,7 @@ export async function POST(req) {
           assigned_promoter_id,
           proposal_number,
           contract_number,
+          product_code,
           product_description,
           gross_value,
           net_value,
@@ -320,15 +324,9 @@ export async function POST(req) {
 
       if (companyId) query = query.eq("company_id", companyId);
       return query;
-    };
+    });
 
-    const dailyRecords = await fetchAllPaged(
-      supabase,
-      "daily_production_records",
-      dailyQuery
-    );
-
-    const promotersQuery = () => {
+    const promoters = await fetchAllPaged(() => {
       let query = supabase
         .from("promoters")
         .select("id, company_id, name, active")
@@ -336,15 +334,9 @@ export async function POST(req) {
 
       if (companyId) query = query.eq("company_id", companyId);
       return query;
-    };
+    });
 
-    const promoters = await fetchAllPaged(
-      supabase,
-      "promoters",
-      promotersQuery
-    );
-
-    const targetsQuery = () => {
+    const targets = await fetchAllPaged(() => {
       let query = supabase
         .from("monthly_targets")
         .select("*")
@@ -353,15 +345,9 @@ export async function POST(req) {
 
       if (companyId) query = query.eq("company_id", companyId);
       return query;
-    };
+    });
 
-    const targets = await fetchAllPaged(
-      supabase,
-      "monthly_targets",
-      targetsQuery
-    );
-
-    const agreementsQuery = () => {
+    const agreements = await fetchAllPaged(() => {
       let query = supabase
         .from("promoter_agreements")
         .select("*")
@@ -371,15 +357,9 @@ export async function POST(req) {
 
       if (companyId) query = query.eq("company_id", companyId);
       return query;
-    };
+    });
 
-    const agreements = await fetchAllPaged(
-      supabase,
-      "promoter_agreements",
-      agreementsQuery
-    );
-
-    const commissionTablesQuery = () => {
+    const commissionTables = await fetchAllPaged(() => {
       let query = supabase
         .from("commission_tables")
         .select("id, company_id, year, month, active, version")
@@ -389,34 +369,42 @@ export async function POST(req) {
 
       if (companyId) query = query.eq("company_id", companyId);
       return query;
-    };
-
-    const commissionTables = await fetchAllPaged(
-      supabase,
-      "commission_tables",
-      commissionTablesQuery
-    );
+    });
 
     const tableIds = commissionTables.map((t) => t.id);
 
     let commissionRows = [];
     if (tableIds.length > 0) {
-      const rowsQuery = () =>
+      commissionRows = await fetchAllPaged(() =>
         supabase
           .from("commission_table_rows")
           .select("*")
-          .in("commission_table_id", tableIds);
-
-      commissionRows = await fetchAllPaged(
-        supabase,
-        "commission_table_rows",
-        rowsQuery
+          .in("commission_table_id", tableIds)
       );
     }
 
-    // ============================
-    // 1) FECHAMENTO POR EMPRESA
-    // ============================
+    const productRules = await fetchAllPaged(() => {
+      let query = supabase
+        .from("promoter_product_commissions")
+        .select("*")
+        .eq("year", year)
+        .eq("month", month)
+        .eq("active", true);
+
+      if (companyId) query = query.eq("company_id", companyId);
+      return query;
+    });
+
+    const proposalRules = await fetchAllPaged(() => {
+      let query = supabase
+        .from("promoter_proposal_commissions")
+        .select("*")
+        .eq("active", true);
+
+      return query;
+    });
+
+    // 1) Fechamento empresa
     const companyGroups = groupByCompany(dailyRecords);
     const expectedClosingsUpserts = [];
 
@@ -452,9 +440,7 @@ export async function POST(req) {
       if (error) throw error;
     }
 
-    // ============================
-    // 2) RESULTADO POR PROMOTOR
-    // ============================
+    // 2) Promotores e detalhe por proposta
     const promoterGroups = groupByPromoter(dailyRecords);
     const promoterUpserts = [];
 
@@ -497,6 +483,13 @@ export async function POST(req) {
           ? (productionValue / elapsedBusinessDays) * totalBusinessDays
           : productionValue;
 
+      const targetStatus = resolveTargetStatus(
+        productionValue,
+        targetValue,
+        target1Value,
+        target2Value
+      );
+
       const companyTable = commissionTables
         .filter((t) => t.company_id === promoter.company_id)
         .sort((a, b) => b.version - a.version)[0];
@@ -508,85 +501,145 @@ export async function POST(req) {
       const productionRows = rowsForTable.filter(
         (r) => r.rule_type === "PRODUCTION"
       );
-
       const insuranceRows = rowsForTable.filter(
         (r) => r.rule_type === "INSURANCE"
       );
 
-      const selectedProductionRow = pickCommissionRow(
-        productionRows,
-        productionValue
+      const promoterAgreements = agreements.filter(
+        (a) => a.promoter_id === promoter.id && a.active !== false
       );
 
-      let selectedInsuranceMetricValue = insurancePenetrationPercent;
-      if (insuranceRows.length > 0) {
-        const metricType = insuranceRows[0].metric_type;
-        if (metricType === "VALUE") {
-          selectedInsuranceMetricValue = insuredProductionValue;
-        } else if (metricType === "COUNT") {
-          selectedInsuranceMetricValue = insuredProposalCount;
-        } else {
-          selectedInsuranceMetricValue = insurancePenetrationPercent;
-        }
-      }
-
-      const selectedInsuranceRow = pickCommissionRow(
-        insuranceRows,
-        selectedInsuranceMetricValue
+      const promoterProductRules = productRules.filter(
+        (r) => r.promoter_id === promoter.id
       );
 
-      let productionCommissionValue = calculateCommissionFromRow(
-        selectedProductionRow,
-        productionValue
-      );
-
-      let insuranceCommissionValue = calculateCommissionFromRow(
-        selectedInsuranceRow,
-        insuredProductionValue
-      );
-
+      let productionCommissionValue = 0;
+      let insuranceCommissionValue = 0;
       let agreementAdjustmentValue = 0;
 
-      const promoterAgreements = agreements.filter(
-        (a) => a.promoter_id === promoter.id
-      );
+      for (const record of validRecords) {
+        const manualRule = proposalRules.find(
+          (r) => r.daily_production_record_id === record.id
+        );
 
-      for (const agreement of promoterAgreements) {
-        const type = agreement.agreement_type;
-        const value = toNumber(agreement.commission_value);
+        const productRule = manualRule
+          ? null
+          : findProductRule(promoterProductRules, record);
 
-        if (type === "PRODUCTION") {
-          if (agreement.commission_type === "FIXED") {
-            productionCommissionValue = value;
-          } else {
-            productionCommissionValue = productionValue * (value / 100);
-          }
-        } else if (type === "INSURANCE") {
-          if (agreement.commission_type === "FIXED") {
-            insuranceCommissionValue = value;
-          } else {
-            insuranceCommissionValue = insuredProductionValue * (value / 100);
-          }
-        } else if (type === "SPECIAL") {
-          if (agreement.commission_type === "FIXED") {
-            agreementAdjustmentValue += value;
-          } else {
-            agreementAdjustmentValue += productionValue * (value / 100);
+        let commissionPercent = 0;
+        let insuranceCommissionPercent = 0;
+        let commissionRuleSource = "MONTHLY_DEFAULT";
+
+        if (manualRule) {
+          commissionPercent =
+            manualRule.commission_percent !== null
+              ? toNumber(manualRule.commission_percent)
+              : 0;
+
+          insuranceCommissionPercent =
+            manualRule.insurance_commission_percent !== null
+              ? toNumber(manualRule.insurance_commission_percent)
+              : 0;
+
+          commissionRuleSource = "MANUAL_PROPOSAL";
+        } else if (productRule) {
+          commissionPercent = toNumber(productRule.commission_percent);
+          insuranceCommissionPercent = toNumber(
+            productRule.insurance_commission_percent
+          );
+          commissionRuleSource = "PRODUCT_RULE";
+        } else {
+          commissionPercent = chooseMonthlyDefaultPercent({
+            productionValue,
+            targetStatus,
+            productionRows,
+          });
+
+          const insuranceMetricValue =
+            insuranceRows.length > 0 &&
+            insuranceRows[0].metric_type === "VALUE"
+              ? insuredProductionValue
+              : insuranceRows.length > 0 &&
+                insuranceRows[0].metric_type === "COUNT"
+              ? insuredProposalCount
+              : insurancePenetrationPercent;
+
+          const insuranceRow = pickCommissionRow(
+            insuranceRows,
+            insuranceMetricValue
+          );
+
+          insuranceCommissionPercent = insuranceRow
+            ? toNumber(insuranceRow.commission_value)
+            : 0;
+
+          commissionRuleSource = "MONTHLY_DEFAULT";
+        }
+
+        const productionBase = toNumber(record.gross_value);
+        const insuranceBase = toNumber(record.insurance_value);
+
+        let promoterCommissionAmount = calculatePercentValue(
+          productionBase,
+          commissionPercent
+        );
+
+        let insuranceCommissionAmount = calculatePercentValue(
+          insuranceBase,
+          insuranceCommissionPercent
+        );
+
+        // Acordos individuais sobrescrevem a base padrão
+        for (const agreement of promoterAgreements) {
+          if (agreement.agreement_type === "PRODUCTION") {
+            commissionPercent = toNumber(agreement.commission_value);
+            promoterCommissionAmount = calculatePercentValue(
+              productionBase,
+              commissionPercent
+            );
+            commissionRuleSource = "AGREEMENT";
+          } else if (agreement.agreement_type === "INSURANCE") {
+            insuranceCommissionPercent = toNumber(agreement.commission_value);
+            insuranceCommissionAmount = calculatePercentValue(
+              insuranceBase,
+              insuranceCommissionPercent
+            );
+            commissionRuleSource = "AGREEMENT";
+          } else if (agreement.agreement_type === "SPECIAL") {
+            agreementAdjustmentValue += calculatePercentValue(
+              productionBase,
+              agreement.commission_type === "PERCENT"
+                ? toNumber(agreement.commission_value)
+                : 0
+            );
+
+            if (agreement.commission_type === "FIXED") {
+              agreementAdjustmentValue += toNumber(agreement.commission_value);
+            }
           }
         }
+
+        productionCommissionValue += promoterCommissionAmount;
+        insuranceCommissionValue += insuranceCommissionAmount;
+
+        const { error: updateRecordError } = await supabase
+          .from("daily_production_records")
+          .update({
+            promoter_commission_percent: commissionPercent,
+            promoter_commission_amount: promoterCommissionAmount,
+            insurance_commission_percent: insuranceCommissionPercent,
+            insurance_commission_amount: insuranceCommissionAmount,
+            commission_rule_source: commissionRuleSource,
+          })
+          .eq("id", record.id);
+
+        if (updateRecordError) throw updateRecordError;
       }
 
       const finalCommissionValue =
         productionCommissionValue +
         insuranceCommissionValue +
         agreementAdjustmentValue;
-
-      const targetStatus = resolveTargetStatus(
-        productionValue,
-        targetValue,
-        target1Value,
-        target2Value
-      );
 
       promoterUpserts.push({
         promoter_id: promoter.id,
@@ -628,7 +681,7 @@ export async function POST(req) {
       companies_calculated: expectedClosingsUpserts.length,
       promoters_calculated: promoterUpserts.length,
       message:
-        "Cálculo mensal concluído com sucesso. Fechamento e resultados dos promotores atualizados.",
+        "Cálculo mensal concluído com comissão editável por produto e proposta.",
     });
   } catch (error) {
     return Response.json(
