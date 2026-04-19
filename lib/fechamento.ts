@@ -1,13 +1,9 @@
-import { supabaseAdmin } from "./supabaseAdmin";
-import { calcularOperacao } from "./motor";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { calcularOperacao } from "@/lib/motor";
 
-/**
- * Tipagem básica da entrada
- */
 type InputRow = {
   external_key: string;
   empresa_cnpj: string;
-
   numero_operacao: string;
   data_referencia: string;
 
@@ -21,11 +17,6 @@ type InputRow = {
   tem_seguro: boolean;
 };
 
-/**
- * ================================
- * GERAR PARCELAS DIFERIDO
- * ================================
- */
 async function salvarParcelasDiferido(
   operacaoId: string,
   prazo: number,
@@ -35,36 +26,26 @@ async function salvarParcelasDiferido(
 
   const hoje = new Date();
 
-  const parcelas = [];
-
-  for (let i = 1; i <= prazo; i++) {
+  const parcelas = Array.from({ length: prazo }, (_, i) => {
     const data = new Date(hoje);
-    data.setMonth(data.getMonth() + i);
+    data.setMonth(data.getMonth() + (i + 1));
 
-    parcelas.push({
+    return {
       operacao_id: operacaoId,
-      parcela_numero: i,
+      parcela_numero: i + 1,
       valor: valorParcela,
       data_prevista: data.toISOString(),
       status: "pendente",
-    });
-  }
+    };
+  });
 
   await supabaseAdmin.from("diferido_parcelas").insert(parcelas);
 }
 
-/**
- * ================================
- * PROCESSAMENTO PRINCIPAL
- * ================================
- */
 export async function processarFechamento(rows: InputRow[]) {
-  const recebimentos: any[] = [];
+  const registros: any[] = [];
 
   for (const row of rows) {
-    /**
-     * 🔥 MOTOR COMPLETO
-     */
     const resultado = calcularOperacao({
       valor_liquido: row.valor_liquido,
       valor_bruto: row.valor_bruto,
@@ -74,12 +55,7 @@ export async function processarFechamento(rows: InputRow[]) {
       tem_seguro: row.tem_seguro,
     });
 
-    /**
-     * ============================
-     * PREPARA REGISTRO
-     * ============================
-     */
-    const registro = {
+    registros.push({
       external_key: row.external_key,
       empresa_cnpj: row.empresa_cnpj,
       numero_operacao: row.numero_operacao,
@@ -94,39 +70,27 @@ export async function processarFechamento(rows: InputRow[]) {
       valor_renovacao: 0,
 
       status: "processado",
-      observacao: "Processado automaticamente pelo sistema",
-    };
-
-    recebimentos.push({
-      registro,
-      resultado,
+      observacao: "Processado automaticamente",
+      _resultado: resultado, // uso interno
     });
   }
 
-  /**
-   * ================================
-   * UPSERT RECEBIMENTO MENSAL
-   * ================================
-   */
   const { data: inserted, error } = await supabaseAdmin
     .from("recebimento_mensal")
-    .upsert(
-      recebimentos.map((r) => r.registro),
-      { onConflict: "external_key" }
-    )
+    .upsert(registros, { onConflict: "external_key" })
     .select();
 
   if (error) {
-    throw new Error("Erro ao salvar recebimentos: " + error.message);
+    throw new Error(error.message);
   }
 
-  /**
-   * ================================
-   * GERAR PARCELAS DIFERIDO
-   * ================================
-   */
+  if (!inserted) {
+    throw new Error("Falha ao inserir registros");
+  }
+
+  // salvar parcelas diferidas
   for (let i = 0; i < inserted.length; i++) {
-    const op = recebimentos[i].resultado;
+    const op = registros[i]._resultado;
 
     await salvarParcelasDiferido(
       inserted[i].id,
@@ -135,16 +99,10 @@ export async function processarFechamento(rows: InputRow[]) {
     );
   }
 
-  /**
-   * ================================
-   * CONSOLIDA FECHAMENTO
-   * ================================
-   */
+  // consolidação
   const fechamentoMap: Record<string, any> = {};
 
-  for (const item of recebimentos) {
-    const r = item.registro;
-
+  for (const r of registros) {
     const data = new Date(r.data_referencia);
     const ano = data.getFullYear();
     const mes = data.getMonth() + 1;
@@ -156,7 +114,6 @@ export async function processarFechamento(rows: InputRow[]) {
         empresa_cnpj: r.empresa_cnpj,
         ano,
         mes,
-
         valor_avista: 0,
         valor_diferido: 0,
         valor_seguro: 0,
@@ -183,11 +140,6 @@ export async function processarFechamento(rows: InputRow[]) {
       f.valor_renovacao,
   }));
 
-  /**
-   * ================================
-   * UPSERT FECHAMENTO MENSAL
-   * ================================
-   */
   const { error: fechamentoError } = await supabaseAdmin
     .from("fechamento_mensal_empresa")
     .upsert(fechamentoArray, {
@@ -195,19 +147,12 @@ export async function processarFechamento(rows: InputRow[]) {
     });
 
   if (fechamentoError) {
-    throw new Error(
-      "Erro ao salvar fechamento mensal: " + fechamentoError.message
-    );
+    throw new Error(fechamentoError.message);
   }
 
-  /**
-   * ================================
-   * RETORNO FINAL
-   * ================================
-   */
   return {
     sucesso: true,
-    total_operacoes: recebimentos.length,
+    total_operacoes: registros.length,
     fechamento: fechamentoArray,
   };
 }
