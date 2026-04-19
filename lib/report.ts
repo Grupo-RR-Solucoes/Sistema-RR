@@ -5,6 +5,9 @@ export function gerarRelatorio(fechamento: any[]) {
 
   fechamento.forEach((f) => {
     doc.text(`Empresa: ${f.empresa_cnpj}`);
+    doc.text(`À Vista: ${f.valor_avista}`);
+    doc.text(`Diferido: ${f.valor_diferido}`);
+    doc.text(`Seguro: ${f.valor_seguro}`);
     doc.text(`Total: ${f.valor_liquido}`);
     doc.moveDown();
   });
