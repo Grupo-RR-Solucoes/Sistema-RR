@@ -1,17 +1,18 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "@supabase/supabase-js";
 
-export function getSupabaseAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+/**
+ * 🔐 ADMIN (SERVER ONLY)
+ * usa SERVICE ROLE → acesso total ao banco
+ */
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-  if (!url || !key) {
-    throw new Error('Variáveis do Supabase não configuradas.');
-  }
-
-  return createClient(url, key, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
+if (!supabaseUrl || !serviceRoleKey) {
+  throw new Error("Variáveis do Supabase não configuradas");
 }
+
+export const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+  auth: {
+    persistSession: false,
+  },
+});
