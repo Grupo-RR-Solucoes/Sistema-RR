@@ -242,31 +242,62 @@ function chooseMonthlyDefaultPercent({
 
   let percent = toNumber(baseRow.commission_value);
 
-  // Gatilho simples para meta/meta1/meta2
-  // Aqui você pode depois sofisticar com percentuais específicos por faixa.
   if (targetStatus === "META_1") {
     percent = Math.min(percent + 0.1, 5.8);
   } else if (targetStatus === "META_2") {
     percent = Math.min(percent + 0.2, 5.8);
   }
 
-  return percent;
+  return Math.min(percent, 5.8);
 }
 
 function findProductRule(productRules, record) {
   const code = normalizeText(record.product_code);
   const desc = normalizeText(record.product_description);
+  const received = toNumber(record.company_received_percent);
 
-  return (
-    productRules.find((rule) => {
-      const ruleCode = normalizeText(rule.product_code);
-      const ruleDesc = normalizeText(rule.product_description);
+  const matchingRules = productRules.filter((rule) => {
+    const ruleCode = normalizeText(rule.product_code);
+    const ruleDesc = normalizeText(rule.product_description);
 
-      if (ruleCode && code && ruleCode === code) return true;
-      if (ruleDesc && desc && ruleDesc === desc) return true;
-      return false;
-    }) || null
-  );
+    const matchesProduct =
+      (!ruleCode && !ruleDesc) ||
+      (ruleCode && code && ruleCode === code) ||
+      (ruleDesc && desc && ruleDesc === desc);
+
+    const from = rule.company_received_percent_from === null
+      ? null
+      : toNumber(rule.company_received_percent_from);
+
+    const to = rule.company_received_percent_to === null
+      ? null
+      : toNumber(rule.company_received_percent_to);
+
+    const matchesReceived =
+      (from === null && to === null) ||
+      ((from === null || received >= from) &&
+        (to === null || received <= to));
+
+    return matchesProduct && matchesReceived;
+  });
+
+  if (matchingRules.length === 0) return null;
+
+  matchingRules.sort((a, b) => {
+    const aSpecificity =
+      (a.product_code ? 2 : 0) +
+      (a.product_description ? 1 : 0) +
+      (a.company_received_percent_from !== null || a.company_received_percent_to !== null ? 4 : 0);
+
+    const bSpecificity =
+      (b.product_code ? 2 : 0) +
+      (b.product_description ? 1 : 0) +
+      (b.company_received_percent_from !== null || b.company_received_percent_to !== null ? 4 : 0);
+
+    return bSpecificity - aSpecificity;
+  });
+
+  return matchingRules[0];
 }
 
 export async function POST(req) {
@@ -317,7 +348,8 @@ export async function POST(req) {
           movement_date,
           cancellation_date,
           is_srcc_restricted,
-          term_months
+          term_months,
+          company_received_percent
         `)
         .gte("movement_date", start)
         .lt("movement_date", end);
@@ -395,16 +427,13 @@ export async function POST(req) {
       return query;
     });
 
-    const proposalRules = await fetchAllPaged(() => {
-      let query = supabase
+    const proposalRules = await fetchAllPaged(() =>
+      supabase
         .from("promoter_proposal_commissions")
         .select("*")
-        .eq("active", true);
+        .eq("active", true)
+    );
 
-      return query;
-    });
-
-    // 1) Fechamento empresa
     const companyGroups = groupByCompany(dailyRecords);
     const expectedClosingsUpserts = [];
 
@@ -440,7 +469,6 @@ export async function POST(req) {
       if (error) throw error;
     }
 
-    // 2) Promotores e detalhe por proposta
     const promoterGroups = groupByPromoter(dailyRecords);
     const promoterUpserts = [];
 
@@ -501,6 +529,7 @@ export async function POST(req) {
       const productionRows = rowsForTable.filter(
         (r) => r.rule_type === "PRODUCTION"
       );
+
       const insuranceRows = rowsForTable.filter(
         (r) => r.rule_type === "INSURANCE"
       );
@@ -533,7 +562,7 @@ export async function POST(req) {
         if (manualRule) {
           commissionPercent =
             manualRule.commission_percent !== null
-              ? toNumber(manualRule.commission_percent)
+              ? Math.min(toNumber(manualRule.commission_percent), 5.8)
               : 0;
 
           insuranceCommissionPercent =
@@ -543,17 +572,28 @@ export async function POST(req) {
 
           commissionRuleSource = "MANUAL_PROPOSAL";
         } else if (productRule) {
-          commissionPercent = toNumber(productRule.commission_percent);
+          commissionPercent = Math.min(
+            toNumber(productRule.commission_percent),
+            5.8
+          );
+
           insuranceCommissionPercent = toNumber(
             productRule.insurance_commission_percent
           );
+
           commissionRuleSource = "PRODUCT_RULE";
         } else {
-          commissionPercent = chooseMonthlyDefaultPercent({
-            productionValue,
-            targetStatus,
-            productionRows,
-          });
+          const companyReceivedPercent = toNumber(record.company_received_percent);
+
+          if (companyReceivedPercent > 0) {
+            commissionPercent = Math.min(companyReceivedPercent, 5.8);
+          } else {
+            commissionPercent = chooseMonthlyDefaultPercent({
+              productionValue,
+              targetStatus,
+              productionRows,
+            });
+          }
 
           const insuranceMetricValue =
             insuranceRows.length > 0 &&
@@ -589,10 +629,12 @@ export async function POST(req) {
           insuranceCommissionPercent
         );
 
-        // Acordos individuais sobrescrevem a base padrão
         for (const agreement of promoterAgreements) {
           if (agreement.agreement_type === "PRODUCTION") {
-            commissionPercent = toNumber(agreement.commission_value);
+            commissionPercent = Math.min(
+              toNumber(agreement.commission_value),
+              5.8
+            );
             promoterCommissionAmount = calculatePercentValue(
               productionBase,
               commissionPercent
@@ -681,7 +723,7 @@ export async function POST(req) {
       companies_calculated: expectedClosingsUpserts.length,
       promoters_calculated: promoterUpserts.length,
       message:
-        "Cálculo mensal concluído com comissão editável por produto e proposta.",
+        "Cálculo mensal concluído com regra por produto e percentual recebido.",
     });
   } catch (error) {
     return Response.json(
