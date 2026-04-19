@@ -1,50 +1,162 @@
-import { MonthlyImportRow } from './types';
+import { supabaseAdmin } from "./supabaseAdmin";
+import { calcularOperacao } from "./motor";
 
-type FechamentoEmpresa = {
+/**
+ * Tipagem básica da entrada
+ */
+type InputRow = {
+  external_key: string;
   empresa_cnpj: string;
-  ano: number;
-  mes: number;
-  valor_avista: number;
-  valor_diferido: number;
-  valor_seguro: number;
-  valor_estorno: number;
-  valor_renovacao: number;
+
+  numero_operacao: string;
+  data_referencia: string;
+
   valor_liquido: number;
-  operacoes: number;
-  updated_at: string;
+  valor_bruto: number;
+  valor_seguro: number;
+
+  taxa_juros: number;
+  prazo: number;
+
+  tem_seguro: boolean;
 };
 
-function obterAnoMes(dataValue?: string) {
-  const base = dataValue ? new Date(dataValue) : new Date();
+/**
+ * ================================
+ * GERAR PARCELAS DIFERIDO
+ * ================================
+ */
+async function salvarParcelasDiferido(
+  operacaoId: string,
+  prazo: number,
+  valorParcela: number
+) {
+  if (!prazo || valorParcela <= 0) return;
 
-  if (Number.isNaN(base.getTime())) {
-    const agora = new Date();
-    return {
-      ano: agora.getFullYear(),
-      mes: agora.getMonth() + 1,
-    };
+  const hoje = new Date();
+
+  const parcelas = [];
+
+  for (let i = 1; i <= prazo; i++) {
+    const data = new Date(hoje);
+    data.setMonth(data.getMonth() + i);
+
+    parcelas.push({
+      operacao_id: operacaoId,
+      parcela_numero: i,
+      valor: valorParcela,
+      data_prevista: data.toISOString(),
+      status: "pendente",
+    });
   }
 
-  return {
-    ano: base.getFullYear(),
-    mes: base.getMonth() + 1,
-  };
+  await supabaseAdmin.from("diferido_parcelas").insert(parcelas);
 }
 
-export function extractEmpresaFechamentos(
-  rows: MonthlyImportRow[]
-): FechamentoEmpresa[] {
-  const mapa = new Map<string, FechamentoEmpresa>();
+/**
+ * ================================
+ * PROCESSAMENTO PRINCIPAL
+ * ================================
+ */
+export async function processarFechamento(rows: InputRow[]) {
+  const recebimentos: any[] = [];
 
   for (const row of rows) {
-    const { ano, mes } = obterAnoMes(row.dataReferencia);
-    const chave = `${row.empresaCnpj}-${ano}-${mes}`;
+    /**
+     * 🔥 MOTOR COMPLETO
+     */
+    const resultado = calcularOperacao({
+      valor_liquido: row.valor_liquido,
+      valor_bruto: row.valor_bruto,
+      valor_seguro: row.valor_seguro,
+      taxa_juros: row.taxa_juros,
+      prazo: row.prazo,
+      tem_seguro: row.tem_seguro,
+    });
 
-    if (!mapa.has(chave)) {
-      mapa.set(chave, {
-        empresa_cnpj: row.empresaCnpj,
+    /**
+     * ============================
+     * PREPARA REGISTRO
+     * ============================
+     */
+    const registro = {
+      external_key: row.external_key,
+      empresa_cnpj: row.empresa_cnpj,
+      numero_operacao: row.numero_operacao,
+      data_referencia: row.data_referencia,
+
+      tipo_recebimento: "credito",
+
+      valor_recebido: resultado.credito.avista_empresa,
+      valor_diferido: resultado.credito.diferido,
+      valor_seguro: resultado.seguro.empresa,
+      valor_estorno: 0,
+      valor_renovacao: 0,
+
+      status: "processado",
+      observacao: "Processado automaticamente pelo sistema",
+    };
+
+    recebimentos.push({
+      registro,
+      resultado,
+    });
+  }
+
+  /**
+   * ================================
+   * UPSERT RECEBIMENTO MENSAL
+   * ================================
+   */
+  const { data: inserted, error } = await supabaseAdmin
+    .from("recebimento_mensal")
+    .upsert(
+      recebimentos.map((r) => r.registro),
+      { onConflict: "external_key" }
+    )
+    .select();
+
+  if (error) {
+    throw new Error("Erro ao salvar recebimentos: " + error.message);
+  }
+
+  /**
+   * ================================
+   * GERAR PARCELAS DIFERIDO
+   * ================================
+   */
+  for (let i = 0; i < inserted.length; i++) {
+    const op = recebimentos[i].resultado;
+
+    await salvarParcelasDiferido(
+      inserted[i].id,
+      op.diferido.parcelas,
+      op.diferido.valorParcela
+    );
+  }
+
+  /**
+   * ================================
+   * CONSOLIDA FECHAMENTO
+   * ================================
+   */
+  const fechamentoMap: Record<string, any> = {};
+
+  for (const item of recebimentos) {
+    const r = item.registro;
+
+    const data = new Date(r.data_referencia);
+    const ano = data.getFullYear();
+    const mes = data.getMonth() + 1;
+
+    const key = `${r.empresa_cnpj}_${ano}_${mes}`;
+
+    if (!fechamentoMap[key]) {
+      fechamentoMap[key] = {
+        empresa_cnpj: r.empresa_cnpj,
         ano,
         mes,
+
         valor_avista: 0,
         valor_diferido: 0,
         valor_seguro: 0,
@@ -52,32 +164,50 @@ export function extractEmpresaFechamentos(
         valor_renovacao: 0,
         valor_liquido: 0,
         operacoes: 0,
-        updated_at: new Date().toISOString(),
-      });
+      };
     }
 
-    const atual = mapa.get(chave)!;
-
-    const valorRecebido = Number(row.valorRecebido || 0);
-    const valorDiferido = Number(row.valorDiferido || 0);
-    const valorSeguro = Number(row.valorSeguro || 0);
-    const valorEstorno = Number(row.valorEstorno || 0);
-    const valorRenovacao = Number(row.valorRenovacao || 0);
-
-    atual.valor_avista += valorRecebido;
-    atual.valor_diferido += valorDiferido;
-    atual.valor_seguro += valorSeguro;
-    atual.valor_estorno += valorEstorno;
-    atual.valor_renovacao += valorRenovacao;
-    atual.valor_liquido +=
-      valorRecebido +
-      valorDiferido +
-      valorSeguro +
-      valorRenovacao -
-      valorEstorno;
-    atual.operacoes += 1;
-    atual.updated_at = new Date().toISOString();
+    fechamentoMap[key].valor_avista += r.valor_recebido;
+    fechamentoMap[key].valor_diferido += r.valor_diferido;
+    fechamentoMap[key].valor_seguro += r.valor_seguro;
+    fechamentoMap[key].operacoes += 1;
   }
 
-  return Array.from(mapa.values());
+  const fechamentoArray = Object.values(fechamentoMap).map((f: any) => ({
+    ...f,
+    valor_liquido:
+      f.valor_avista +
+      f.valor_diferido +
+      f.valor_seguro -
+      f.valor_estorno -
+      f.valor_renovacao,
+  }));
+
+  /**
+   * ================================
+   * UPSERT FECHAMENTO MENSAL
+   * ================================
+   */
+  const { error: fechamentoError } = await supabaseAdmin
+    .from("fechamento_mensal_empresa")
+    .upsert(fechamentoArray, {
+      onConflict: "empresa_cnpj,ano,mes",
+    });
+
+  if (fechamentoError) {
+    throw new Error(
+      "Erro ao salvar fechamento mensal: " + fechamentoError.message
+    );
+  }
+
+  /**
+   * ================================
+   * RETORNO FINAL
+   * ================================
+   */
+  return {
+    sucesso: true,
+    total_operacoes: recebimentos.length,
+    fechamento: fechamentoArray,
+  };
 }
