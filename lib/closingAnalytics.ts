@@ -1136,6 +1136,29 @@ export async function buildClosingAnalytics(filters?: {
     )
   );
 
+  // FASE 2.5 — quando o caller nao informa year/month (carga inicial),
+  // usa o ultimo periodo presente em actualRows como filtro implicito,
+  // evitando timeout em monthly_closing_entries (~280k linhas).
+  let implicitYear: number | undefined = filters?.year;
+  let implicitMonth: number | undefined = filters?.month;
+  if ((!implicitYear || !implicitMonth) && actualRows.length > 0) {
+    let maxYear = 0;
+    let maxMonth = 0;
+    for (const row of actualRows) {
+      if (
+        row.ano > maxYear ||
+        (row.ano === maxYear && row.mes > maxMonth)
+      ) {
+        maxYear = row.ano;
+        maxMonth = row.mes;
+      }
+    }
+    if (maxYear > 0 && maxMonth > 0) {
+      implicitYear = maxYear;
+      implicitMonth = maxMonth;
+    }
+  }
+
   const [historicalPrtEntryRows, historicalCashEntryRows, historicalAdjustmentRows] =
     !filters?.fastDashboardMode && historicalCompanyCnpjs.length > 0
       ? await Promise.all([
@@ -1148,8 +1171,8 @@ export async function buildClosingAnalytics(filters?: {
               .in("company_cnpj", historicalCompanyCnpjs)
               .eq("entry_type", "PRT")
               .gt("commission_value", 0);
-            if (filters?.year && filters?.month) {
-              query = query.eq("year", filters.year).eq("month", filters.month);
+            if (implicitYear && implicitMonth) {
+              query = query.eq("year", implicitYear).eq("month", implicitMonth);
             }
             return query;
           }),
@@ -1162,8 +1185,8 @@ export async function buildClosingAnalytics(filters?: {
               .in("company_cnpj", historicalCompanyCnpjs)
               .eq("entry_type", "CASH")
               .gt("commission_value", 0);
-            if (filters?.year && filters?.month) {
-              query = query.eq("year", filters.year).eq("month", filters.month);
+            if (implicitYear && implicitMonth) {
+              query = query.eq("year", implicitYear).eq("month", implicitMonth);
             }
             return query;
           }),
@@ -1175,8 +1198,8 @@ export async function buildClosingAnalytics(filters?: {
               )
               .in("company_cnpj", historicalCompanyCnpjs)
               .eq("entry_type", "DEBIT");
-            if (filters?.year && filters?.month) {
-              query = query.eq("year", filters.year).eq("month", filters.month);
+            if (implicitYear && implicitMonth) {
+              query = query.eq("year", implicitYear).eq("month", implicitMonth);
             }
             return query;
           }),
