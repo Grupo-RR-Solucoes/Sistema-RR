@@ -1139,35 +1139,47 @@ export async function buildClosingAnalytics(filters?: {
   const [historicalPrtEntryRows, historicalCashEntryRows, historicalAdjustmentRows] =
     !filters?.fastDashboardMode && historicalCompanyCnpjs.length > 0
       ? await Promise.all([
-          fetchAllRows<HistoricalPrtEntryRow>(() =>
-            supabaseAdmin
+          fetchAllRows<HistoricalPrtEntryRow>(() => {
+            let query = supabaseAdmin
               .from("monthly_closing_entries")
               .select(
                 "company_cnpj, year, month, operation_number, contract_number, commission_value, metadata"
               )
               .in("company_cnpj", historicalCompanyCnpjs)
               .eq("entry_type", "PRT")
-              .gt("commission_value", 0)
-          ),
-          fetchAllRows<HistoricalCashEntryRow>(() =>
-            supabaseAdmin
+              .gt("commission_value", 0);
+            if (filters?.year && filters?.month) {
+              query = query.eq("year", filters.year).eq("month", filters.month);
+            }
+            return query;
+          }),
+          fetchAllRows<HistoricalCashEntryRow>(() => {
+            let query = supabaseAdmin
               .from("monthly_closing_entries")
               .select(
                 "company_cnpj, year, month, operation_number, contract_number, commission_value, net_value, metadata"
               )
               .in("company_cnpj", historicalCompanyCnpjs)
               .eq("entry_type", "CASH")
-              .gt("commission_value", 0)
-          ),
-          fetchAllRows<HistoricalAdjustmentEntryRow>(() =>
-            supabaseAdmin
+              .gt("commission_value", 0);
+            if (filters?.year && filters?.month) {
+              query = query.eq("year", filters.year).eq("month", filters.month);
+            }
+            return query;
+          }),
+          fetchAllRows<HistoricalAdjustmentEntryRow>(() => {
+            let query = supabaseAdmin
               .from("monthly_closing_entries")
               .select(
                 "company_cnpj, year, month, operation_number, contract_number, metadata"
               )
               .in("company_cnpj", historicalCompanyCnpjs)
-              .eq("entry_type", "DEBIT")
-          ),
+              .eq("entry_type", "DEBIT");
+            if (filters?.year && filters?.month) {
+              query = query.eq("year", filters.year).eq("month", filters.month);
+            }
+            return query;
+          }),
         ])
       : [[], [], []];
 
