@@ -3,3 +3,9 @@
 .env*.local
 runtime/outputs/
 backup_*/
+runtime/*.log
+runtime/*.stderr.log
+runtime/*.stdout.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
