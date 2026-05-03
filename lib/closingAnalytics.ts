@@ -1123,7 +1123,7 @@ export async function buildClosingAnalytics(filters?: {
       fetchAllRows<DeferredRow>(() =>
         supabaseAdmin
           .from("diferido_parcelas")
-          .select("valor, status, data_prevista, operacao:recebimento_mensal(empresa_cnpj, data_referencia)")
+          .select("valor, status, data_prevista")
           .order("data_prevista", { ascending: true })
       ),
     ]);
