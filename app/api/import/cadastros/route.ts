@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 
+import { fetchAllRows } from "@/lib/queryHelpers";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 type CompanyRow = {
@@ -78,31 +79,6 @@ function pickField(row: Record<string, unknown>, aliases: string[]) {
   }
 
   return null;
-}
-
-async function fetchAllRows<T>(queryFactory: () => any) {
-  const rows: T[] = [];
-  const pageSize = 1000;
-  let from = 0;
-
-  while (true) {
-    const { data, error } = await queryFactory().range(from, from + pageSize - 1);
-
-    if (error) {
-      throw new Error(error.message);
-    }
-
-    const current = (data || []) as T[];
-    rows.push(...current);
-
-    if (current.length < pageSize) {
-      break;
-    }
-
-    from += pageSize;
-  }
-
-  return rows;
 }
 
 function buildPlaceholderCompanyName(mci?: string | null, coban?: string | null) {
