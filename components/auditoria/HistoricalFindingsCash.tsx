@@ -1,0 +1,330 @@
+"use client";
+
+import type { CSSProperties } from "react";
+import { useMemo, useState } from "react";
+import EmptyStatePanel from "../EmptyStatePanel";
+import {
+  type CashResult,
+  type CashDivergence,
+  formatCurrency,
+  formatPercent,
+  getCompanyShortName,
+} from "@/lib/historicalAuditClient";
+
+const PAGE_SIZE = 10;
+
+type Filter = "DIVERGENT" | "ALL";
+
+export default function HistoricalFindingsCash({ results }: { results: CashResult[] }) {
+  const [filter, setFilter] = useState<Filter>("DIVERGENT");
+  const [page, setPage] = useState(1);
+
+  const filtered = useMemo(() => {
+    const arr =
+      filter === "ALL"
+        ? [...results]
+        : results.filter((r) => r.divergence !== "NONE");
+    arr.sort(
+      (a, b) => Math.abs(b.recuperavel) - Math.abs(a.recuperavel)
+    );
+    return arr;
+  }, [results, filter]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const slice = filtered.slice(
+    (safePage - 1) * PAGE_SIZE,
+    safePage * PAGE_SIZE
+  );
+
+  function changeFilter(next: Filter) {
+    setFilter(next);
+    setPage(1);
+  }
+
+  return (
+    <div style={styles.container}>
+      <div style={styles.pillRow}>
+        <button
+          type="button"
+          onClick={() => changeFilter("DIVERGENT")}
+          style={{
+            ...styles.pill,
+            ...(filter === "DIVERGENT" ? styles.pillActive : {}),
+          }}
+        >
+          Apenas com divergência
+        </button>
+        <button
+          type="button"
+          onClick={() => changeFilter("ALL")}
+          style={{
+            ...styles.pill,
+            ...(filter === "ALL" ? styles.pillActive : {}),
+          }}
+        >
+          Todos
+        </button>
+        <span style={styles.counter}>
+          {filtered.length} contratos {filter === "DIVERGENT" ? "com divergência" : "no total"}
+        </span>
+      </div>
+
+      {filtered.length === 0 ? (
+        <EmptyStatePanel
+          compact
+          eyebrow="À Vista"
+          title="Sem divergências detectadas neste mês."
+          description="O percentual à vista pago pela Promotiva está dentro do esperado para o regime ativo."
+        />
+      ) : (
+        <>
+          <div style={styles.tableWrap}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}>Contrato</th>
+                  <th style={styles.th}>Empresa</th>
+                  <th style={styles.th}>Tipo</th>
+                  <th style={styles.thRight}>Esperado</th>
+                  <th style={styles.thRight}>Pago</th>
+                  <th style={styles.thRight}>Recuperável</th>
+                </tr>
+              </thead>
+              <tbody>
+                {slice.map((r) => (
+                  <tr key={`${r.companyCnpj}-${r.contractNumber}`}>
+                    <td style={styles.td}>{r.contractNumber || "—"}</td>
+                    <td style={styles.td}>{getCompanyShortName(r.companyCnpj)}</td>
+                    <td style={styles.td}>
+                      <span
+                        style={{
+                          ...styles.badge,
+                          ...divergenceBadge(r.divergence),
+                        }}
+                      >
+                        {labelOfDivergence(r.divergence)}
+                      </span>
+                    </td>
+                    <td style={styles.tdRight}>
+                      {formatPercent(r.pctAVistaEsperado)}
+                    </td>
+                    <td style={styles.tdRight}>
+                      {formatPercent(r.pctAVistaPago)}
+                    </td>
+                    <td
+                      style={{
+                        ...styles.tdRight,
+                        color: r.recuperavel > 0 ? "#a62345" : "var(--rr-muted)",
+                        fontWeight: r.recuperavel > 0 ? 700 : 500,
+                      }}
+                    >
+                      {formatCurrency(r.recuperavel)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <PaginationBar
+            page={safePage}
+            totalPages={totalPages}
+            onChange={setPage}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function PaginationBar({
+  page,
+  totalPages,
+  onChange,
+}: {
+  page: number;
+  totalPages: number;
+  onChange: (next: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+  return (
+    <div style={styles.pagination}>
+      <button
+        type="button"
+        disabled={page <= 1}
+        onClick={() => onChange(page - 1)}
+        style={{
+          ...styles.pageButton,
+          ...(page <= 1 ? styles.pageButtonDisabled : {}),
+        }}
+      >
+        Anterior
+      </button>
+      <span style={styles.pageLabel}>
+        Página {page} de {totalPages}
+      </span>
+      <button
+        type="button"
+        disabled={page >= totalPages}
+        onClick={() => onChange(page + 1)}
+        style={{
+          ...styles.pageButton,
+          ...(page >= totalPages ? styles.pageButtonDisabled : {}),
+        }}
+      >
+        Próxima
+      </button>
+    </div>
+  );
+}
+
+function labelOfDivergence(d: CashDivergence): string {
+  switch (d) {
+    case "NONE":
+      return "OK";
+    case "INTERNAL_DIVERGENCE":
+      return "Divergência interna";
+    case "PROBABLY_WRONG_BRACKET":
+      return "Provável faixa errada";
+    case "WRONG_BRACKET":
+      return "Faixa errada";
+    case "OTHER":
+      return "Outro";
+  }
+}
+
+function divergenceBadge(d: CashDivergence): CSSProperties {
+  switch (d) {
+    case "NONE":
+      return { background: "rgba(18,142,87,0.12)", color: "#177954" };
+    case "INTERNAL_DIVERGENCE":
+    case "WRONG_BRACKET":
+      return { background: "rgba(204,43,73,0.12)", color: "#a62345" };
+    case "PROBABLY_WRONG_BRACKET":
+      return { background: "rgba(214,161,63,0.16)", color: "#745114" };
+    case "OTHER":
+    default:
+      return { background: "rgba(13,77,227,0.1)", color: "var(--rr-blue-deep)" };
+  }
+}
+
+const styles: Record<string, CSSProperties> = {
+  container: {
+    display: "grid",
+    gap: "12px",
+  },
+  pillRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "8px",
+  },
+  pill: {
+    border: "1px solid rgba(13,77,227,0.16)",
+    borderRadius: "999px",
+    background: "rgba(255,255,255,0.92)",
+    color: "var(--rr-blue-deep)",
+    padding: "8px 14px",
+    fontSize: "12px",
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+  pillActive: {
+    background:
+      "linear-gradient(135deg, rgba(13,77,227,0.98) 0%, rgba(7,37,125,0.98) 100%)",
+    color: "#ffffff",
+    border: "1px solid rgba(13,77,227,0.98)",
+  },
+  counter: {
+    marginLeft: "auto",
+    fontSize: "12px",
+    color: "var(--rr-muted)",
+    fontWeight: 600,
+  },
+  tableWrap: {
+    overflowX: "auto",
+    border: "1px solid var(--rr-line)",
+    borderRadius: "16px",
+    background: "rgba(255,255,255,0.96)",
+  },
+  table: {
+    width: "100%",
+    borderCollapse: "separate",
+    borderSpacing: 0,
+  },
+  th: {
+    textAlign: "left",
+    padding: "12px 14px",
+    fontSize: "11px",
+    textTransform: "uppercase",
+    letterSpacing: "0.12em",
+    color: "var(--rr-blue)",
+    borderBottom: "1px solid var(--rr-line)",
+    fontWeight: 800,
+    whiteSpace: "nowrap",
+    background: "rgba(255,255,255,0.98)",
+  },
+  thRight: {
+    textAlign: "right",
+    padding: "12px 14px",
+    fontSize: "11px",
+    textTransform: "uppercase",
+    letterSpacing: "0.12em",
+    color: "var(--rr-blue)",
+    borderBottom: "1px solid var(--rr-line)",
+    fontWeight: 800,
+    whiteSpace: "nowrap",
+    background: "rgba(255,255,255,0.98)",
+  },
+  td: {
+    padding: "10px 14px",
+    fontSize: "13px",
+    color: "var(--rr-ink)",
+    borderBottom: "1px solid rgba(13,77,227,0.06)",
+    whiteSpace: "nowrap",
+  },
+  tdRight: {
+    padding: "10px 14px",
+    fontSize: "13px",
+    color: "var(--rr-ink)",
+    borderBottom: "1px solid rgba(13,77,227,0.06)",
+    whiteSpace: "nowrap",
+    textAlign: "right",
+  },
+  badge: {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "5px 10px",
+    borderRadius: "999px",
+    fontSize: "11px",
+    fontWeight: 800,
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+  },
+  pagination: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: "10px",
+  },
+  pageButton: {
+    border: "1px solid var(--rr-line-strong)",
+    background: "rgba(255,255,255,0.94)",
+    color: "var(--rr-blue-deep)",
+    padding: "8px 14px",
+    borderRadius: "12px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  pageButtonDisabled: {
+    opacity: 0.5,
+    cursor: "not-allowed",
+  },
+  pageLabel: {
+    fontSize: "12px",
+    color: "var(--rr-muted)",
+    fontWeight: 600,
+  },
+};

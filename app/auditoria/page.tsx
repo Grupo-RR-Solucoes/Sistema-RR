@@ -4,6 +4,11 @@ import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
 import EmptyStatePanel from "../../components/EmptyStatePanel";
 import FeedbackBanner from "../../components/FeedbackBanner";
+import HistoricalFindingsSection from "../../components/auditoria/HistoricalFindingsSection";
+import {
+  isMetaRegime,
+  isVolumeOuSafira,
+} from "../../lib/historicalAuditClient";
 
 type PeriodOption = {
   key: string;
@@ -183,6 +188,17 @@ export default function AuditoriaPage() {
           detail="Quanto da producao tem base suficiente para previsao."
         />
       </div>
+
+      {(() => {
+        const effectiveKey = periodValue;
+        if (!effectiveKey) return null;
+        const [yStr, mStr] = effectiveKey.split("-");
+        const y = Number(yStr);
+        const m = Number(mStr);
+        if (!Number.isFinite(y) || !Number.isFinite(m)) return null;
+        if (!isVolumeOuSafira(y, m) && !isMetaRegime(y, m)) return null;
+        return <HistoricalFindingsSection year={y} month={m} />;
+      })()}
 
       <div style={styles.subsectionNav}>
         <button
