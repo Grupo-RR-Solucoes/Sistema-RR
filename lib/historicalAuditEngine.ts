@@ -741,9 +741,11 @@ export function auditPrtForContract(
         : false;
 
     if (interrupted) {
-      // Quantos meses esperaríamos ter pago até refPeriod?
-      // Idade do contrato até último mês pago vs prazo total
-      if (idadeAteUltimoMesPago < SUSPICIOUS_AGE_THRESHOLD_MONTHS) {
+      // Refinamento 3.2.A.3.R: classificação baseada em quantas PRT efetivamente
+      // pagas (cod_est=1). Se a Promotiva já pagou >=12 parcelas, considera-se
+      // legítimo; abaixo disso, suspeito.
+      const nMesesPagos = parcelasPagas; // parcelasPagas = paid.length
+      if (nMesesPagos < SUSPICIOUS_AGE_THRESHOLD_MONTHS) {
         status = "INTERROMPIDO_SUSPEITO";
       } else {
         status = "INTERROMPIDO_LEGITIMO";
@@ -782,10 +784,67 @@ export function auditPrtForContract(
 
   // ---- Recuperável estimado ----
   let recuperavelEstimado = 0;
-  if (status === "INTERROMPIDO_SUSPEITO") {
-    const comissaoMedia = paid.length > 0 ? totalPago / paid.length : 0;
-    const mesesRestantes = Math.max(parcelasTotal - parcelasPagas, 0);
-    recuperavelEstimado = roundMoney(comissaoMedia * mesesRestantes);
+  if (
+    status === "INTERROMPIDO_SUSPEITO" ||
+    status === "INTERROMPIDO_LEGITIMO"
+  ) {
+    // Refinamento 3.2.A.3.R: cobrar apenas meses VENCIDOS (já deveriam ter sido
+    // pagos até dataReferencia) e ainda não pagos, multiplicado pela comissão
+    // média histórica por parcela.
+    //
+    // dataReferencia = primeiro dia do mês SEGUINTE ao refPeriod
+    // (para refPeriod={year, month}, JS month-index = month → mês seguinte ✓)
+    const dataReferencia = new Date(
+      Date.UTC(refPeriod.year, refPeriod.month, 1)
+    );
+
+    let dataOrigem: Date | null =
+      cash.dataContratacao && !Number.isNaN(cash.dataContratacao.getTime())
+        ? cash.dataContratacao
+        : null;
+
+    if (!dataOrigem && cashEntry?.year && cashEntry?.month) {
+      dataOrigem = new Date(
+        Date.UTC(cashEntry.year, cashEntry.month - 1, 1)
+      );
+    }
+
+    if (!dataOrigem && sorted.length > 0) {
+      // 1ª PRT entry pelo (year, month) mínimo
+      const primeira = [...sorted].sort((a, b) =>
+        comparePeriod(
+          { year: a.year, month: a.month },
+          { year: b.year, month: b.month }
+        )
+      )[0];
+      if (primeira) {
+        dataOrigem = new Date(
+          Date.UTC(primeira.year, primeira.month - 1, 1)
+        );
+      }
+    }
+
+    if (!dataOrigem || Number.isNaN(dataOrigem.getTime())) {
+      recuperavelEstimado = 0;
+      observations.push(
+        "dataContratacao indisponivel — recuperavel nao calculado"
+      );
+    } else {
+      const comissaoMediaPorParcela =
+        paid.length > 0 ? totalPago / paid.length : 0;
+      const mesesDesdeOrigem = Math.max(
+        diffInMonths(dataOrigem, dataReferencia),
+        0
+      );
+      const mesesDevidos = Math.min(mesesDesdeOrigem, parcelasTotal);
+      const mesesEsperadosVencidos = Math.max(
+        mesesDevidos - parcelasPagas,
+        0
+      );
+      recuperavelEstimado = roundMoney(
+        mesesEsperadosVencidos * comissaoMediaPorParcela
+      );
+    }
   } else if (status === "NUNCA_PAGO") {
     recuperavelEstimado = roundMoney(totalListadoNaoPago);
   } else if (status === "AUSENTE") {
@@ -810,8 +869,6 @@ export function auditPrtForContract(
       const estimativaPorParcela = cash.valorBruto * 0.001;
       recuperavelEstimado = roundMoney(estimativaPorParcela * mesesDecorridos);
     }
-  } else if (status === "INTERROMPIDO_LEGITIMO") {
-    recuperavelEstimado = 0;
   }
 
   return {
