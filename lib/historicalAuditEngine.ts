@@ -312,17 +312,38 @@ export async function auditCashEntriesForMonth(
   // Não filtramos company_cnpj na query — a base só carrega os 4 CNPJs do
   // grupo, e usar `.in()` aqui derruba o índice (year, month) e dá timeout.
   // A filtragem por CNPJ conhecido é feita localmente.
-  const rawRows = await fetchAllRows<CashEntryRow>(() =>
-    supabaseAdmin
-      .from("monthly_closing_entries")
-      .select(
-        "id, company_cnpj, year, month, contract_number, net_value, gross_value, commission_value, metadata"
-      )
-      .eq("entry_type", "CASH")
-      .eq("year", year)
-      .eq("month", month)
-      .order("id", { ascending: true })
-  );
+  // Retry com backoff: o Postgres do Supabase as vezes retorna statement
+  // timeout transient quando ha pico de carga concorrente (visto em mar/26
+  // logo apos rodar varredura de 8 meses).
+  async function loadCashWithRetry(retries = 4): Promise<CashEntryRow[]> {
+    try {
+      return await fetchAllRows<CashEntryRow>(() =>
+        supabaseAdmin
+          .from("monthly_closing_entries")
+          .select(
+            "id, company_cnpj, year, month, contract_number, net_value, gross_value, commission_value, metadata"
+          )
+          .eq("entry_type", "CASH")
+          .eq("year", year)
+          .eq("month", month)
+          .order("id", { ascending: true })
+      );
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (
+        retries > 0 &&
+        (msg.includes("statement timeout") ||
+          msg.includes("canceling statement") ||
+          msg.includes("ECONNRESET"))
+      ) {
+        const delay = (5 - retries) * 2000;
+        await new Promise((res) => setTimeout(res, delay));
+        return loadCashWithRetry(retries - 1);
+      }
+      throw e;
+    }
+  }
+  const rawRows = await loadCashWithRetry();
 
   const rows = rawRows.filter((row) =>
     knownCnpjSet.has(String(row.company_cnpj || "").trim())

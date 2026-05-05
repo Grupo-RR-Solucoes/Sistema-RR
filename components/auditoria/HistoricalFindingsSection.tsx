@@ -160,6 +160,7 @@ function SummaryCards({ payload }: { payload: HistoricalAuditPayload }) {
   const cashDivergencias =
     (cashSum.byDivergence.INTERNAL_DIVERGENCE || 0) +
     (cashSum.byDivergence.WRONG_BRACKET || 0) +
+    (cashSum.byDivergence.PROBABLY_WRONG_BRACKET || 0) +
     (cashSum.byDivergence.OTHER || 0);
 
   return (
@@ -182,9 +183,12 @@ function SummaryCards({ payload }: { payload: HistoricalAuditPayload }) {
         helper="Liquidações/cancelamentos justificados"
       />
       <Card
-        eyebrow="Cobertura"
-        value={`${cashSum.totalContracts} À Vista | ${prtSum.totalContractsAuditados} PRT`}
-        helper={`Cache: ${payload.meta.cached ? "ativo" : "primeira execução"}`}
+        eyebrow="Total auditado"
+        value={`À Vista: ${cashSum.totalContracts} contratos`}
+        secondaryValue={`PRT: ${prtSum.totalContractsAuditados} contratos`}
+        helper={`Cache: ${payload.meta.cached ? "sim" : "não"} · ${
+          payload.meta.timing.totalMs
+        } ms`}
       />
     </div>
   );
@@ -193,16 +197,21 @@ function SummaryCards({ payload }: { payload: HistoricalAuditPayload }) {
 function Card({
   eyebrow,
   value,
+  secondaryValue,
   helper,
 }: {
   eyebrow: string;
   value: string;
+  secondaryValue?: string;
   helper: string;
 }) {
   return (
     <article style={styles.card}>
       <div style={styles.cardEyebrow}>{eyebrow}</div>
       <div style={styles.cardValue}>{value}</div>
+      {secondaryValue ? (
+        <div style={styles.cardSecondaryValue}>{secondaryValue}</div>
+      ) : null}
       <div style={styles.cardHelper}>{helper}</div>
     </article>
   );
@@ -267,6 +276,13 @@ const styles: Record<string, CSSProperties> = {
     color: "var(--rr-ink)",
     fontFamily: "var(--font-heading)",
     lineHeight: 1.18,
+  },
+  cardSecondaryValue: {
+    fontSize: "16px",
+    fontWeight: 700,
+    color: "var(--rr-ink)",
+    fontFamily: "var(--font-heading)",
+    lineHeight: 1.2,
   },
   cardHelper: {
     fontSize: "12px",

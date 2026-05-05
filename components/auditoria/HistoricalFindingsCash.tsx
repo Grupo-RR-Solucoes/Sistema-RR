@@ -13,22 +13,44 @@ import {
 
 const PAGE_SIZE = 10;
 
-type Filter = "DIVERGENT" | "ALL";
+type Filter =
+  | "DIVERGENT"
+  | "ALL"
+  | "INTERNAL_DIVERGENCE"
+  | "WRONG_BRACKET"
+  | "PROBABLY_WRONG_BRACKET"
+  | "OTHER";
+
+const FILTER_OPTIONS: Array<{ key: Filter; label: string }> = [
+  { key: "DIVERGENT", label: "Todas com divergência" },
+  { key: "INTERNAL_DIVERGENCE", label: "Internal" },
+  { key: "WRONG_BRACKET", label: "Wrong Bracket" },
+  { key: "PROBABLY_WRONG_BRACKET", label: "Probably Wrong" },
+  { key: "OTHER", label: "Other" },
+  { key: "ALL", label: "Todos" },
+];
 
 export default function HistoricalFindingsCash({ results }: { results: CashResult[] }) {
   const [filter, setFilter] = useState<Filter>("DIVERGENT");
   const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
-    const arr =
-      filter === "ALL"
-        ? [...results]
-        : results.filter((r) => r.divergence !== "NONE");
-    arr.sort(
-      (a, b) => Math.abs(b.recuperavel) - Math.abs(a.recuperavel)
-    );
+    let arr: CashResult[];
+    if (filter === "ALL") {
+      arr = [...results];
+    } else if (filter === "DIVERGENT") {
+      arr = results.filter((r) => r.divergence !== "NONE");
+    } else {
+      arr = results.filter((r) => r.divergence === filter);
+    }
+    arr.sort((a, b) => Math.abs(b.recuperavel) - Math.abs(a.recuperavel));
     return arr;
   }, [results, filter]);
+
+  const totalRecuperavel = useMemo(
+    () => filtered.reduce((s, r) => s + r.recuperavel, 0),
+    [filtered]
+  );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -45,29 +67,20 @@ export default function HistoricalFindingsCash({ results }: { results: CashResul
   return (
     <div style={styles.container}>
       <div style={styles.pillRow}>
-        <button
-          type="button"
-          onClick={() => changeFilter("DIVERGENT")}
-          style={{
-            ...styles.pill,
-            ...(filter === "DIVERGENT" ? styles.pillActive : {}),
-          }}
-        >
-          Apenas com divergência
-        </button>
-        <button
-          type="button"
-          onClick={() => changeFilter("ALL")}
-          style={{
-            ...styles.pill,
-            ...(filter === "ALL" ? styles.pillActive : {}),
-          }}
-        >
-          Todos
-        </button>
-        <span style={styles.counter}>
-          {filtered.length} contratos {filter === "DIVERGENT" ? "com divergência" : "no total"}
-        </span>
+        {FILTER_OPTIONS.map((opt) => (
+          <button
+            key={opt.key}
+            type="button"
+            onClick={() => changeFilter(opt.key)}
+            style={{
+              ...styles.pill,
+              ...(filter === opt.key ? styles.pillActive : {}),
+            }}
+          >
+            {opt.label}
+          </button>
+        ))}
+        <span style={styles.counter}>{filtered.length} contratos</span>
       </div>
 
       {filtered.length === 0 ? (
@@ -125,6 +138,15 @@ export default function HistoricalFindingsCash({ results }: { results: CashResul
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div style={styles.footerRow}>
+            <span style={styles.footerLabel}>
+              Total recuperável (filtro atual)
+            </span>
+            <strong style={styles.footerValue}>
+              {formatCurrency(totalRecuperavel)}
+            </strong>
           </div>
 
           <PaginationBar
@@ -301,6 +323,28 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     textTransform: "uppercase",
     letterSpacing: "0.06em",
+  },
+  footerRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+    padding: "12px 14px",
+    border: "1px solid var(--rr-line)",
+    borderRadius: "14px",
+    background: "rgba(13,77,227,0.04)",
+  },
+  footerLabel: {
+    fontSize: "12px",
+    color: "var(--rr-blue)",
+    fontWeight: 800,
+    textTransform: "uppercase",
+    letterSpacing: "0.12em",
+  },
+  footerValue: {
+    fontSize: "16px",
+    color: "var(--rr-ink)",
+    fontWeight: 800,
   },
   pagination: {
     display: "flex",

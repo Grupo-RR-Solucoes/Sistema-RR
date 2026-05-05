@@ -18,28 +18,29 @@ type Filter =
   | "INTERROMPIDO_SUSPEITO"
   | "INTERROMPIDO_LEGITIMO"
   | "NUNCA_PAGO"
-  | "OK_DEBITADO"
   | "AUSENTE";
 
 const FILTER_OPTIONS: Array<{ key: Filter; label: string }> = [
-  { key: "INTERROMPIDO_SUSPEITO", label: "Suspeitos" },
-  { key: "INTERROMPIDO_LEGITIMO", label: "Legítimos" },
-  { key: "NUNCA_PAGO", label: "Nunca pagos" },
-  { key: "OK_DEBITADO", label: "Débitos aplicados" },
-  { key: "AUSENTE", label: "Ausentes" },
   { key: "ALL", label: "Todos" },
+  { key: "INTERROMPIDO_SUSPEITO", label: "Suspeitos <12m" },
+  { key: "INTERROMPIDO_LEGITIMO", label: "Legítimos ≥12m" },
+  { key: "NUNCA_PAGO", label: "Nunca pagos" },
+  { key: "AUSENTE", label: "Ausentes" },
 ];
 
 export default function HistoricalFindingsPrt({ results }: { results: PrtResult[] }) {
   const [filter, setFilter] = useState<Filter>("INTERROMPIDO_SUSPEITO");
   const [page, setPage] = useState(1);
 
-  // Pré-filtra: para "ALL" mostra apenas problemáticos (status != OK).
-  // Para os filtros específicos, casa exatamente o status.
+  // "ALL" lista contratos cobráveis (exclui OK e OK_DEBITADO — débitos
+  // justificados não pertencem ao recuperável). Filtros específicos casam
+  // exatamente o status.
   const filtered = useMemo(() => {
     let arr: PrtResult[];
     if (filter === "ALL") {
-      arr = results.filter((r) => r.status !== "OK");
+      arr = results.filter(
+        (r) => r.status !== "OK" && r.status !== "OK_DEBITADO"
+      );
     } else {
       arr = results.filter((r) => r.status === filter);
     }
@@ -49,6 +50,11 @@ export default function HistoricalFindingsPrt({ results }: { results: PrtResult[
     );
     return arr;
   }, [results, filter]);
+
+  const totalRecuperavel = useMemo(
+    () => filtered.reduce((s, r) => s + r.recuperavelEstimado, 0),
+    [filtered]
+  );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -137,6 +143,15 @@ export default function HistoricalFindingsPrt({ results }: { results: PrtResult[
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div style={styles.footerRow}>
+            <span style={styles.footerLabel}>
+              Total recuperável (filtro atual)
+            </span>
+            <strong style={styles.footerValue}>
+              {formatCurrency(totalRecuperavel)}
+            </strong>
           </div>
 
           <PaginationBar
@@ -320,6 +335,28 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     textTransform: "uppercase",
     letterSpacing: "0.06em",
+  },
+  footerRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "12px",
+    padding: "12px 14px",
+    border: "1px solid var(--rr-line)",
+    borderRadius: "14px",
+    background: "rgba(13,77,227,0.04)",
+  },
+  footerLabel: {
+    fontSize: "12px",
+    color: "var(--rr-blue)",
+    fontWeight: 800,
+    textTransform: "uppercase",
+    letterSpacing: "0.12em",
+  },
+  footerValue: {
+    fontSize: "16px",
+    color: "var(--rr-ink)",
+    fontWeight: 800,
   },
   pagination: {
     display: "flex",
