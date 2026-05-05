@@ -99,8 +99,8 @@ export default function HistoricalFindingsCash({ results }: { results: CashResul
                   <th style={styles.th}>Contrato</th>
                   <th style={styles.th}>Empresa</th>
                   <th style={styles.th}>Tipo</th>
-                  <th style={styles.thRight}>Esperado</th>
-                  <th style={styles.thRight}>Pago</th>
+                  <th style={styles.thRight}>% Esperado</th>
+                  <th style={styles.thRight}>% Aplicado</th>
                   <th style={styles.thRight}>Recuperável</th>
                 </tr>
               </thead>

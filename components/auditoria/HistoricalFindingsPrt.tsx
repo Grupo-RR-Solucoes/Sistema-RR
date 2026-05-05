@@ -7,7 +7,6 @@ import {
   type PrtResult,
   type PrtStatus,
   formatCurrency,
-  formatDateBr,
   getCompanyShortName,
 } from "@/lib/historicalAuditClient";
 
@@ -102,9 +101,9 @@ export default function HistoricalFindingsPrt({ results }: { results: PrtResult[
                 <tr>
                   <th style={styles.th}>Contrato</th>
                   <th style={styles.th}>Empresa</th>
-                  <th style={styles.th}>Contratação</th>
-                  <th style={styles.th}>Parcelas</th>
                   <th style={styles.th}>Status</th>
+                  <th style={styles.th}>Parcelas</th>
+                  <th style={styles.thRight}>Meses desde origem</th>
                   <th style={styles.thRight}>Recuperável</th>
                 </tr>
               </thead>
@@ -113,10 +112,6 @@ export default function HistoricalFindingsPrt({ results }: { results: PrtResult[
                   <tr key={`${r.companyCnpj}-${r.operationNumber}`}>
                     <td style={styles.td}>{r.operationNumber || "—"}</td>
                     <td style={styles.td}>{getCompanyShortName(r.companyCnpj)}</td>
-                    <td style={styles.td}>{formatDateBr(r.dataContratacao)}</td>
-                    <td style={styles.td}>
-                      {r.parcelasPagas}/{r.parcelasTotal || "—"}
-                    </td>
                     <td style={styles.td}>
                       <span
                         style={{
@@ -127,6 +122,10 @@ export default function HistoricalFindingsPrt({ results }: { results: PrtResult[
                         {labelOfStatus(r.status)}
                       </span>
                     </td>
+                    <td style={styles.td}>
+                      {r.parcelasPagas}/{r.parcelasTotal || "—"}
+                    </td>
+                    <td style={styles.tdRight}>{r.idadeAteUltimoMesPago}</td>
                     <td
                       style={{
                         ...styles.tdRight,

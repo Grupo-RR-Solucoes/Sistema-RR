@@ -9,9 +9,9 @@ import {
   fetchHistoricalAudit,
   formatCurrency,
   isMetaRegime,
-  isVolumeOuSafira,
   type HistoricalAuditPayload,
 } from "@/lib/historicalAuditClient";
+import { isHistoricalMonthSupported } from "@/lib/auditCoverage";
 
 type Tab = "cash" | "prt";
 
@@ -22,8 +22,19 @@ export default function HistoricalFindingsSection({
   year: number;
   month: number;
 }) {
+  const isSupported = isHistoricalMonthSupported(year, month);
   const isMeta = isMetaRegime(year, month);
-  const isCovered = isVolumeOuSafira(year, month);
+
+  // Mês fora do range coberto pelo motor (>= abr/26 ou < dez/22): sem fetch,
+  // apenas cabeçalho + aviso + caixa amarela explicando o bloqueio.
+  if (!isSupported) {
+    return (
+      <section style={styles.outer}>
+        <SectionHeader />
+        <UnsupportedMonthBox />
+      </section>
+    );
+  }
 
   // Caso META: placeholder explicativo, sem fetch.
   if (isMeta) {
@@ -40,11 +51,26 @@ export default function HistoricalFindingsSection({
     );
   }
 
-  if (!isCovered) {
-    return null;
-  }
-
   return <HistoricalFindingsLoaded year={year} month={month} />;
+}
+
+function UnsupportedMonthBox() {
+  return (
+    <div style={styles.unsupportedBox}>
+      <div style={styles.unsupportedIcon} aria-hidden="true">
+        ⚠️
+      </div>
+      <h3 style={styles.unsupportedTitle}>
+        Auditoria automática indisponível para esta competência
+      </h3>
+      <p style={styles.unsupportedText}>
+        O regime de comissionamento Promotiva mudou em abr/2026 (FAIXA 5). O
+        motor de auditoria histórica está em atualização para suportar este
+        novo regime. Disponível em breve. Para meses entre dez/2022 e mar/2026,
+        a auditoria automática funciona normalmente.
+      </p>
+    </div>
+  );
 }
 
 function HistoricalFindingsLoaded({
@@ -309,5 +335,34 @@ const styles: Record<string, CSSProperties> = {
       "linear-gradient(135deg, rgba(13,77,227,0.98) 0%, rgba(7,37,125,0.98) 100%)",
     color: "#ffffff",
     border: "1px solid rgba(13,77,227,0.98)",
+  },
+  unsupportedBox: {
+    display: "grid",
+    justifyItems: "center",
+    textAlign: "center",
+    gap: "10px",
+    padding: "28px 24px",
+    borderRadius: "18px",
+    background: "rgba(255, 244, 176, 0.55)",
+    border: "1px solid rgba(214, 161, 63, 0.42)",
+    boxShadow: "var(--rr-shadow-soft)",
+  },
+  unsupportedIcon: {
+    fontSize: "28px",
+    lineHeight: 1,
+  },
+  unsupportedTitle: {
+    margin: 0,
+    fontSize: "16px",
+    fontWeight: 800,
+    color: "#5b3f0a",
+    fontFamily: "var(--font-heading)",
+  },
+  unsupportedText: {
+    margin: 0,
+    maxWidth: "640px",
+    fontSize: "13px",
+    lineHeight: 1.6,
+    color: "#5b3f0a",
   },
 };
