@@ -94,15 +94,16 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // Sequencial (CASH antes de PRT). Em paralelo, a carga concorrente do PRT
+    // (40+ meses × 3 entry_types) faz a query CASH estourar statement timeout
+    // do Postgres (~10s). CASH é rápido (~1s) então a perda de latência total é
+    // desprezivel. Visto em fev/26: CASH isolada = 1.1s; CASH durante Promise.all = timeout.
     const cashStart = Date.now();
-    const prtStart = Date.now();
-
-    const [cashResult, prtResult] = await Promise.all([
-      auditCashEntriesForMonth(year, month),
-      auditPrtForMonth(year, month),
-    ]);
-
+    const cashResult = await auditCashEntriesForMonth(year, month);
     const cashMs = Date.now() - cashStart;
+
+    const prtStart = Date.now();
+    const prtResult = await auditPrtForMonth(year, month);
     const prtMs = Date.now() - prtStart;
 
     setCached(year, month, { cash: cashResult, prt: prtResult });
