@@ -1,0 +1,448 @@
+{
+  "_meta": {
+    "trp": "TRP Nº 2024/14",
+    "competencia": "2024-12",
+    "regime": "META_2_NIVEIS",
+    "fonte_pdf": "regras_anexos_2024/TRP 14- PROMOTIVA 122024.pdf",
+    "categorias_publicadas": [
+      "Tabela 1",
+      "Tabela 2"
+    ],
+    "limites_categoria": {
+      "Tabela 1": {
+        "meta_max": 1.0,
+        "teto_avista": 0.054
+      },
+      "Tabela 2": {
+        "meta_min": 1.0,
+        "teto_avista": 0.06
+      }
+    },
+    "obs": "Ago/2024: Geral separa Público e Privado. SP/MG ajustados (taxas baixas 1,60/1,80%)"
+  },
+  "CONSIG_PUBLICO": {
+    "_titulo": "1.1 - Consignado Geral - Público",
+    "prazo_min": 36,
+    "prazo_max": 120,
+    "tiquete_min": 100.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0137,
+        "tx_max": 0.0146,
+        "Tabela 1": 0.007,
+        "Tabela 2": 0.009
+      },
+      {
+        "tx_min": 0.0147,
+        "tx_max": 0.0155,
+        "Tabela 1": 0.007,
+        "Tabela 2": 0.009
+      },
+      {
+        "tx_min": 0.0156,
+        "tx_max": 0.0165,
+        "Tabela 1": 0.023,
+        "Tabela 2": 0.027
+      },
+      {
+        "tx_min": 0.0166,
+        "tx_max": 0.0175,
+        "Tabela 1": 0.047,
+        "Tabela 2": 0.054
+      },
+      {
+        "tx_min": 0.0176,
+        "tx_max": 0.0185,
+        "Tabela 1": 0.055,
+        "Tabela 2": 0.063
+      },
+      {
+        "tx_min": 0.0186,
+        "tx_max": 0.0195,
+        "Tabela 1": 0.055,
+        "Tabela 2": 0.063
+      },
+      {
+        "tx_min": 0.0196,
+        "tx_max": 0.0205,
+        "Tabela 1": 0.088,
+        "Tabela 2": 0.099
+      },
+      {
+        "tx_min": 0.0206,
+        "tx_max": 0.0215,
+        "Tabela 1": 0.104,
+        "Tabela 2": 0.117
+      },
+      {
+        "tx_min": 0.0216,
+        "tx_max": 0.0225,
+        "Tabela 1": 0.124,
+        "Tabela 2": 0.144
+      },
+      {
+        "tx_min": 0.0226,
+        "tx_max": 999,
+        "Tabela 1": 0.132,
+        "Tabela 2": 0.153
+      }
+    ]
+  },
+  "CONSIG_PRIVADO": {
+    "_titulo": "1.2 - Consignado Geral - Privado",
+    "prazo_min": 24,
+    "prazo_max": 96,
+    "tiquete_min": 100.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0147,
+        "tx_max": 0.0155,
+        "Tabela 1": 0.007,
+        "Tabela 2": 0.009
+      },
+      {
+        "tx_min": 0.0156,
+        "tx_max": 0.0165,
+        "Tabela 1": 0.023,
+        "Tabela 2": 0.027
+      },
+      {
+        "tx_min": 0.0166,
+        "tx_max": 0.0175,
+        "Tabela 1": 0.032,
+        "Tabela 2": 0.036
+      },
+      {
+        "tx_min": 0.0176,
+        "tx_max": 0.0185,
+        "Tabela 1": 0.048,
+        "Tabela 2": 0.054
+      },
+      {
+        "tx_min": 0.0186,
+        "tx_max": 0.0195,
+        "Tabela 1": 0.048,
+        "Tabela 2": 0.054
+      },
+      {
+        "tx_min": 0.0196,
+        "tx_max": 0.0205,
+        "Tabela 1": 0.064,
+        "Tabela 2": 0.072
+      },
+      {
+        "tx_min": 0.0206,
+        "tx_max": 0.0215,
+        "Tabela 1": 0.072,
+        "Tabela 2": 0.081
+      },
+      {
+        "tx_min": 0.0216,
+        "tx_max": 0.0225,
+        "Tabela 1": 0.08,
+        "Tabela 2": 0.09
+      },
+      {
+        "tx_min": 0.0226,
+        "tx_max": 999,
+        "Tabela 1": 0.088,
+        "Tabela 2": 0.099
+      }
+    ]
+  },
+  "INSS": {
+    "_titulo": "1.2 (na imagem) - Consignado INSS",
+    "_obs": "Note: TRP10 chama de '1.2 INSS' apesar de Privado também ser '1.2'. Manter aqui como INSS",
+    "convenio": "1640",
+    "tiquete_min": 100.0,
+    "custo_processamento": 1.8,
+    "celulas_taxa_prazo": [
+      {
+        "tx_min": 0.0147,
+        "tx_max": 0.0163,
+        "prazo_min": 36,
+        "prazo_max": 84,
+        "Tabela 1": 0.008,
+        "Tabela 2": 0.009
+      },
+      {
+        "tx_min": 0.0164,
+        "tx_max": 999,
+        "prazo_min": 36,
+        "prazo_max": 48,
+        "Tabela 1": 0.0375,
+        "Tabela 2": 0.045
+      },
+      {
+        "tx_min": 0.0164,
+        "tx_max": 999,
+        "prazo_min": 49,
+        "prazo_max": 83,
+        "Tabela 1": 0.0675,
+        "Tabela 2": 0.081
+      },
+      {
+        "tx_min": 0.0164,
+        "tx_max": 999,
+        "prazo_min": 84,
+        "prazo_max": 84,
+        "Tabela 1": 0.135,
+        "Tabela 2": 0.162
+      }
+    ]
+  },
+  "SIAPE": {
+    "_titulo": "1.3 - SIAPE/MPDG",
+    "convenio": "1078",
+    "prazo_min": 36,
+    "prazo_max": 96,
+    "tiquete_min": 100.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0147,
+        "tx_max": 0.0155,
+        "Tabela 1": 0.011,
+        "Tabela 2": 0.013
+      },
+      {
+        "tx_min": 0.0156,
+        "tx_max": 0.0165,
+        "Tabela 1": 0.037,
+        "Tabela 2": 0.042
+      },
+      {
+        "tx_min": 0.0166,
+        "tx_max": 0.0175,
+        "Tabela 1": 0.07,
+        "Tabela 2": 0.081
+      },
+      {
+        "tx_min": 0.0176,
+        "tx_max": 999,
+        "Tabela 1": 0.078,
+        "Tabela 2": 0.09
+      }
+    ]
+  },
+  "CONSIG_SP": {
+    "_titulo": "1.4 - Consignado SP",
+    "prazo_min": 36,
+    "prazo_max": 120,
+    "tiquete_min": 100.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0147,
+        "tx_max": 0.0155,
+        "Tabela 1": 0.016,
+        "Tabela 2": 0.018
+      },
+      {
+        "tx_min": 0.0156,
+        "tx_max": 0.0165,
+        "Tabela 1": 0.032,
+        "Tabela 2": 0.036
+      },
+      {
+        "tx_min": 0.0166,
+        "tx_max": 0.0175,
+        "Tabela 1": 0.049,
+        "Tabela 2": 0.056
+      },
+      {
+        "tx_min": 0.0176,
+        "tx_max": 0.0185,
+        "Tabela 1": 0.064,
+        "Tabela 2": 0.074
+      },
+      {
+        "tx_min": 0.0186,
+        "tx_max": 0.0195,
+        "Tabela 1": 0.066,
+        "Tabela 2": 0.076
+      },
+      {
+        "tx_min": 0.0196,
+        "tx_max": 0.0205,
+        "Tabela 1": 0.093,
+        "Tabela 2": 0.108
+      },
+      {
+        "tx_min": 0.0206,
+        "tx_max": 0.0215,
+        "Tabela 1": 0.109,
+        "Tabela 2": 0.126
+      },
+      {
+        "tx_min": 0.0216,
+        "tx_max": 0.0225,
+        "Tabela 1": 0.124,
+        "Tabela 2": 0.144
+      },
+      {
+        "tx_min": 0.0226,
+        "tx_max": 999,
+        "Tabela 1": 0.132,
+        "Tabela 2": 0.153
+      }
+    ]
+  },
+  "CONSIG_MG": {
+    "_titulo": "1.5 - Consignado MG",
+    "prazo_min": 36,
+    "prazo_max": 120,
+    "tiquete_min": 100.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0137,
+        "tx_max": 0.0146,
+        "Tabela 1": 0.008,
+        "Tabela 2": 0.009
+      },
+      {
+        "tx_min": 0.0147,
+        "tx_max": 0.0155,
+        "Tabela 1": 0.016,
+        "Tabela 2": 0.018
+      },
+      {
+        "tx_min": 0.0156,
+        "tx_max": 0.0165,
+        "Tabela 1": 0.032,
+        "Tabela 2": 0.036
+      },
+      {
+        "tx_min": 0.0166,
+        "tx_max": 0.0175,
+        "Tabela 1": 0.049,
+        "Tabela 2": 0.056
+      },
+      {
+        "tx_min": 0.0176,
+        "tx_max": 0.0185,
+        "Tabela 1": 0.064,
+        "Tabela 2": 0.074
+      },
+      {
+        "tx_min": 0.0186,
+        "tx_max": 0.0195,
+        "Tabela 1": 0.066,
+        "Tabela 2": 0.076
+      },
+      {
+        "tx_min": 0.0196,
+        "tx_max": 0.0205,
+        "Tabela 1": 0.093,
+        "Tabela 2": 0.108
+      },
+      {
+        "tx_min": 0.0206,
+        "tx_max": 0.0215,
+        "Tabela 1": 0.109,
+        "Tabela 2": 0.126
+      },
+      {
+        "tx_min": 0.0216,
+        "tx_max": 0.0225,
+        "Tabela 1": 0.124,
+        "Tabela 2": 0.144
+      },
+      {
+        "tx_min": 0.0226,
+        "tx_max": 999,
+        "Tabela 1": 0.132,
+        "Tabela 2": 0.153
+      }
+    ]
+  },
+  "PORTAB_INSS": {
+    "_titulo": "2.1 - Portabilidade INSS",
+    "prazo_min": 36,
+    "prazo_max": 84,
+    "tiquete_min": 1000.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.015,
+        "tx_max": 0.0173,
+        "pct_geral": 0.009
+      },
+      {
+        "tx_min": 0.0174,
+        "tx_max": 999,
+        "pct_geral": 0.027
+      }
+    ]
+  },
+  "PORTAB_GERAL": {
+    "_titulo": "2.2 - Portabilidade Demais",
+    "prazo_min": 36,
+    "prazo_max": 120,
+    "tiquete_min": 2500.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.015,
+        "tx_max": 0.0173,
+        "pct_geral": 0.009
+      },
+      {
+        "tx_min": 0.0174,
+        "tx_max": 999,
+        "pct_geral": 0.027
+      }
+    ]
+  },
+  "NAO_CONSIGNADO": {
+    "_titulo": "3.1 - Não Consignado",
+    "prazo_min": 13,
+    "prazo_max": 96,
+    "tiquete_min": 100.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.024,
+        "tx_max": 0.0374,
+        "Tabela 1": 0.016,
+        "Tabela 2": 0.018
+      },
+      {
+        "tx_min": 0.0375,
+        "tx_max": 0.046,
+        "Tabela 1": 0.048,
+        "Tabela 2": 0.054
+      },
+      {
+        "tx_min": 0.0461,
+        "tx_max": 0.055,
+        "Tabela 1": 0.072,
+        "Tabela 2": 0.0805
+      },
+      {
+        "tx_min": 0.0551,
+        "tx_max": 999,
+        "Tabela 1": 0.096,
+        "Tabela 2": 0.1075
+      }
+    ]
+  },
+  "ADIANTAMENTO_13": {
+    "_titulo": "3.1 (linha 13º)",
+    "tx_juros_min": 0.0279,
+    "prazo_min": 5,
+    "tiquete_min": 100.0,
+    "celulas": [
+      {
+        "prazo_min": 5,
+        "prazo_max": 999,
+        "Tabela 1": 0.016,
+        "Tabela 2": 0.018
+      }
+    ]
+  },
+  "FGTS": {
+    "_titulo": "3.2 - FGTS",
+    "_observacao": "Sem variação por categoria",
+    "tx_juros_fixa": 0.0179,
+    "prazo_min": 2,
+    "prazo_max": 60,
+    "tiquete_min": 1000.0,
+    "pct_geral": 0.034
+  }
+}

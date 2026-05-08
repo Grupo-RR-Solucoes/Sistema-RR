@@ -1,0 +1,116 @@
+{
+  "_meta": {
+    "trp": "TRP Nº 2025/?",
+    "competencia": "2025-04",
+    "regime": "META_4_NIVEIS",
+    "fonte_pdf": "msg_008/TRP20_-_PROMOTIVA_042025.pdf",
+    "categorias_publicadas": ["Tabela 1", "Tabela 2"],
+    "categorias_logicas": ["Tabela 1", "Tabela Intermediaria 1", "Tabela Intermediaria 2", "Tabela 2"],
+    "limites_categoria": {
+      "Tabela 1":               {"meta_max": 0.95, "teto_avista": 0.054},
+      "Tabela Intermediaria 1": {"meta_min": 0.95, "meta_max": 0.97, "teto_avista": 0.056},
+      "Tabela Intermediaria 2": {"meta_min": 0.97, "meta_max": 1.00, "teto_avista": 0.058},
+      "Tabela 2":               {"meta_min": 1.00, "teto_avista": 0.060}
+    }
+  },
+  "INSS_NOVO": {
+    "_titulo": "1.2 - INSS Novo",
+    "tx_juros_fixa": 0.0185, "tiquete_min": 100.00, "custo_processamento": 2.03,
+    "celulas_prazo": [
+      {"prazo_min": 48, "prazo_max": 60,  "Tabela 1": 0.0188, "Tabela 2": 0.0213},
+      {"prazo_min": 61, "prazo_max": 84,  "Tabela 1": 0.0225, "Tabela 2": 0.0255},
+      {"prazo_min": 85, "prazo_max": 999, "Tabela 1": 0.0308, "Tabela 2": 0.0349}
+    ]
+  },
+  "INSS_RENOV": {
+    "_titulo": "1.3 - INSS Renovação (exclusivo cód produto 2881)",
+    "tx_juros_min": 0.0100, "tiquete_min": 100.00,
+    "obs": "Asterisco no PDF: exclusivo para código de produto 2881",
+    "celulas_prazo": [
+      {"prazo_min": 48, "prazo_max": 60,  "Tabela 1": 0.0188, "Tabela 2": 0.0213},
+      {"prazo_min": 61, "prazo_max": 84,  "Tabela 1": 0.0225, "Tabela 2": 0.0255},
+      {"prazo_min": 85, "prazo_max": 999, "Tabela 1": 0.0308, "Tabela 2": 0.0349}
+    ]
+  },
+  "CONSIG_PUBLICO": {
+    "_titulo": "1.4 - Consignado Geral Público",
+    "prazo_min": 48, "prazo_max": 120, "tiquete_min": 100.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0175, "tx_max": 0.0175, "Tabela 1": 0.0070, "Tabela 2": 0.0085},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "Tabela 1": 0.0215, "Tabela 2": 0.0255},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "Tabela 1": 0.0365, "Tabela 2": 0.0420},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "Tabela 1": 0.0470, "Tabela 2": 0.0540},
+      {"tx_min": 0.0206, "tx_max": 0.0215, "Tabela 1": 0.0470, "Tabela 2": 0.0540},
+      {"tx_min": 0.0216, "tx_max": 0.0225, "Tabela 1": 0.0680, "Tabela 2": 0.0765},
+      {"tx_min": 0.0226, "tx_max": 0.0235, "Tabela 1": 0.0802, "Tabela 2": 0.0902},
+      {"tx_min": 0.0236, "tx_max": 0.0245, "Tabela 1": 0.0960, "Tabela 2": 0.1110},
+      {"tx_min": 0.0246, "tx_max": 999,    "Tabela 1": 0.1020, "Tabela 2": 0.1179}
+    ]
+  },
+  "SIAPE": {
+    "_titulo": "1.5 - SIAPE/MPDG",
+    "convenio": "1078", "prazo_min": 48, "prazo_max": 96, "tiquete_min": 100.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0167, "tx_max": 0.0167, "Tabela 1": 0.0090, "Tabela 2": 0.0105},
+      {"tx_min": 0.0168, "tx_max": 0.0179, "Tabela 1": 0.0300, "Tabela 2": 0.0350},
+      {"tx_min": 0.0180, "tx_max": 0.0180, "Tabela 1": 0.0450, "Tabela 2": 0.0525}
+    ]
+  },
+  "CONSIG_SP_MG": {
+    "_titulo": "1.6 - Consignado SP e MG",
+    "prazo_min": 48, "prazo_max": 120, "tiquete_min": 100.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0175, "tx_max": 0.0175, "Tabela 1": 0.0125, "Tabela 2": 0.0144},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "Tabela 1": 0.0247, "Tabela 2": 0.0278},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "Tabela 1": 0.0400, "Tabela 2": 0.0450},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "Tabela 1": 0.0510, "Tabela 2": 0.0575},
+      {"tx_min": 0.0206, "tx_max": 0.0215, "Tabela 1": 0.0520, "Tabela 2": 0.0590},
+      {"tx_min": 0.0216, "tx_max": 0.0225, "Tabela 1": 0.0720, "Tabela 2": 0.0840},
+      {"tx_min": 0.0226, "tx_max": 0.0235, "Tabela 1": 0.0850, "Tabela 2": 0.0980},
+      {"tx_min": 0.0236, "tx_max": 0.0245, "Tabela 1": 0.0960, "Tabela 2": 0.1115},
+      {"tx_min": 0.0246, "tx_max": 999,    "Tabela 1": 0.1020, "Tabela 2": 0.1179}
+    ]
+  },
+  "EXERCITO": {
+    "_titulo": "1.7 - Consignado Convênio Exército",
+    "convenio": "14661",
+    "prazo_min": 48, "prazo_max": 72, "tiquete_min": 100.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0175, "tx_max": 0.0175, "Tabela 1": 0.0080, "Tabela 2": 0.0090},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "Tabela 1": 0.0240, "Tabela 2": 0.0270},
+      {"tx_min": 0.0186, "tx_max": 0.0192, "Tabela 1": 0.0375, "Tabela 2": 0.0420}
+    ]
+  },
+  "PORTAB_GERAL": {
+    "_titulo": "2.2 - Portabilidade Demais Convênios",
+    "_observacao": "Sem variação por categoria",
+    "prazo_min": 48, "prazo_max": 120, "tiquete_min": 2500.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0175, "tx_max": 0.0185, "pct_geral": 0.0072},
+      {"tx_min": 0.0186, "tx_max": 999,    "pct_geral": 0.0225}
+    ]
+  },
+  "NAO_CONSIGNADO": {
+    "_titulo": "3.2 - Não Consignado (Automático/Salário/Benefício/13º)",
+    "prazo_min": 13, "prazo_max": 96, "tiquete_min": 100.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0287, "tx_max": 0.0395, "Tabela 1": 0.0125, "Tabela 2": 0.0140},
+      {"tx_min": 0.0396, "tx_max": 0.0481, "Tabela 1": 0.0370, "Tabela 2": 0.0417},
+      {"tx_min": 0.0482, "tx_max": 0.0570, "Tabela 1": 0.0560, "Tabela 2": 0.0625},
+      {"tx_min": 0.0571, "tx_max": 999,    "Tabela 1": 0.0760, "Tabela 2": 0.0850}
+    ]
+  },
+  "ADIANTAMENTO_13": {
+    "_titulo": "3.2 (linha 13º) - Adiantamento 13º Salário",
+    "tx_juros_min": 0.0321, "prazo_min": 5, "tiquete_min": 100.00,
+    "celulas": [
+      {"prazo_min": 5, "prazo_max": 999, "Tabela 1": 0.0128, "Tabela 2": 0.0144}
+    ]
+  },
+  "FGTS": {
+    "_titulo": "3.3 - FGTS Saque Aniversário",
+    "_observacao": "Sem variação por categoria",
+    "tx_juros_fixa": 0.0179, "prazo_min": 36, "prazo_max": 84,
+    "tiquete_min": 1000.00, "pct_geral": 0.0420
+  }
+}

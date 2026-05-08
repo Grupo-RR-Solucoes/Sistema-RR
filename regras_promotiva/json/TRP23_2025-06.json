@@ -1,0 +1,144 @@
+{
+  "_meta": {
+    "trp": "TRP Nº 2025/115",
+    "competencia": "2025-06",
+    "regime": "META_4_NIVEIS",
+    "fonte_pdf": "msg_005/TRP23_-_PROMOTIVA_062025.pdf",
+    "categorias_publicadas": ["Tabela 1", "Tabela 2"],
+    "categorias_logicas": [
+      "Tabela 1",
+      "Tabela Intermediaria 1",
+      "Tabela Intermediaria 2",
+      "Tabela 2"
+    ],
+    "limites_categoria": {
+      "Tabela 1":               {"meta_max": 0.95,  "teto_avista": 0.054},
+      "Tabela Intermediaria 1": {"meta_min": 0.95,  "meta_max": 0.97,  "teto_avista": 0.056},
+      "Tabela Intermediaria 2": {"meta_min": 0.97,  "meta_max": 1.00,  "teto_avista": 0.058},
+      "Tabela 2":               {"meta_min": 1.00,  "teto_avista": 0.060}
+    },
+    "observacoes": [
+      "PDFs publicam apenas Tab1 e Tab2; Intermediárias usam % de Tab2 limitado pelo teto da intermediária",
+      "Operações com restrição SRCC não são remuneradas e não contam para meta",
+      "Para produtos sem variação por categoria (Portab, FGTS), o % é igual nas 4 categorias"
+    ]
+  },
+  "INSS_NOVO": {
+    "_titulo": "1.2 - Crédito Consignado INSS Novo",
+    "tx_juros_fixa": 0.0185,
+    "tiquete_min": 100.00,
+    "custo_processamento": 2.03,
+    "celulas_prazo": [
+      {"prazo_min": 48, "prazo_max": 60,  "Tabela 1": 0.0188, "Tabela 2": 0.0213},
+      {"prazo_min": 61, "prazo_max": 84,  "Tabela 1": 0.0225, "Tabela 2": 0.0255},
+      {"prazo_min": 85, "prazo_max": 999, "Tabela 1": 0.0308, "Tabela 2": 0.0349}
+    ]
+  },
+  "INSS_RENOV": {
+    "_titulo": "1.3 - Crédito Consignado INSS Renovação",
+    "tx_juros_min": 0.0100,
+    "tiquete_min": 100.00,
+    "custo_processamento": 2.03,
+    "celulas_prazo": [
+      {"prazo_min": 48, "prazo_max": 60,  "Tabela 1": 0.0188, "Tabela 2": 0.0213},
+      {"prazo_min": 61, "prazo_max": 84,  "Tabela 1": 0.0225, "Tabela 2": 0.0255},
+      {"prazo_min": 85, "prazo_max": 999, "Tabela 1": 0.0308, "Tabela 2": 0.0349}
+    ]
+  },
+  "CONSIG_PUBLICO": {
+    "_titulo": "1.4 - Consignado Geral Público",
+    "prazo_min": 36, "prazo_max": 120,
+    "tiquete_min": 100.00,
+    "custo_processamento": "2.5% ou R$ 5,00",
+    "celulas_taxa": [
+      {"tx_min": 0.0175, "tx_max": 0.0177, "Tabela 1": 0.0078, "Tabela 2": 0.0088},
+      {"tx_min": 0.0178, "tx_max": 0.0187, "Tabela 1": 0.0234, "Tabela 2": 0.0264},
+      {"tx_min": 0.0188, "tx_max": 0.0197, "Tabela 1": 0.0351, "Tabela 2": 0.0396},
+      {"tx_min": 0.0198, "tx_max": 0.0207, "Tabela 1": 0.0429, "Tabela 2": 0.0484},
+      {"tx_min": 0.0208, "tx_max": 0.0217, "Tabela 1": 0.0468, "Tabela 2": 0.0528},
+      {"tx_min": 0.0218, "tx_max": 0.0227, "Tabela 1": 0.0585, "Tabela 2": 0.0660},
+      {"tx_min": 0.0228, "tx_max": 0.0237, "Tabela 1": 0.0663, "Tabela 2": 0.0748},
+      {"tx_min": 0.0238, "tx_max": 0.0247, "Tabela 1": 0.0780, "Tabela 2": 0.0880},
+      {"tx_min": 0.0248, "tx_max": 999,    "Tabela 1": 0.0897, "Tabela 2": 0.1012}
+    ]
+  },
+  "SIAPE": {
+    "_titulo": "1.5 - Consignado Convênio MPDG (SIAPE)",
+    "convenio": "1078",
+    "prazo_min": 48, "prazo_max": 96,
+    "tiquete_min": 100.00,
+    "custo_processamento": 3.08,
+    "celulas_taxa": [
+      {"tx_min": 0.0164, "tx_max": 0.0167, "Tabela 1": 0.0090, "Tabela 2": 0.0102},
+      {"tx_min": 0.0168, "tx_max": 0.0179, "Tabela 1": 0.0225, "Tabela 2": 0.0255},
+      {"tx_min": 0.0180, "tx_max": 0.0180, "Tabela 1": 0.0308, "Tabela 2": 0.0349}
+    ]
+  },
+  "CONSIG_SP_MG": {
+    "_titulo": "1.6 - Consignado Convênio SP e MG",
+    "prazo_min": 36, "prazo_max": 120,
+    "tiquete_min": 100.00,
+    "custo_processamento": "2.5% ou R$ 5,00",
+    "celulas_taxa": [
+      {"tx_min": 0.0172, "tx_max": 0.0179, "Tabela 1": 0.0125, "Tabela 2": 0.0144},
+      {"tx_min": 0.0180, "tx_max": 0.0189, "Tabela 1": 0.0247, "Tabela 2": 0.0278},
+      {"tx_min": 0.0190, "tx_max": 0.0199, "Tabela 1": 0.0351, "Tabela 2": 0.0396},
+      {"tx_min": 0.0200, "tx_max": 0.0209, "Tabela 1": 0.0429, "Tabela 2": 0.0484},
+      {"tx_min": 0.0210, "tx_max": 0.0219, "Tabela 1": 0.0507, "Tabela 2": 0.0572},
+      {"tx_min": 0.0220, "tx_max": 0.0229, "Tabela 1": 0.0585, "Tabela 2": 0.0660},
+      {"tx_min": 0.0230, "tx_max": 0.0239, "Tabela 1": 0.0663, "Tabela 2": 0.0748},
+      {"tx_min": 0.0240, "tx_max": 0.0249, "Tabela 1": 0.0780, "Tabela 2": 0.0880},
+      {"tx_min": 0.0250, "tx_max": 999,    "Tabela 1": 0.0897, "Tabela 2": 0.1012}
+    ]
+  },
+  "CONSIG_PRIVADO": {
+    "_titulo": "1.7 - Consignado Convênio Privado",
+    "prazo_min": 36, "prazo_max": 96,
+    "celulas_taxa": [
+      {"tx_min": 0.0254, "tx_max": 0.0299, "Tabela 1": 0.0225, "Tabela 2": 0.0255},
+      {"tx_min": 0.0300, "tx_max": 0.0350, "Tabela 1": 0.0300, "Tabela 2": 0.0340},
+      {"tx_min": 0.0351, "tx_max": 999,    "Tabela 1": 0.0375, "Tabela 2": 0.0425}
+    ]
+  },
+  "PORTAB_GERAL": {
+    "_titulo": "2.2 - Portabilidade Demais convênios",
+    "_observacao": "Sem variação por Tab1/Tab2. NO REGIME META, Portabilidade era unificada (não separa Público/Privado)",
+    "prazo_min": 48, "prazo_max": 120,
+    "tiquete_min": 2500.00,
+    "custo_processamento": "2.5% ou R$ 5,00",
+    "celulas_taxa": [
+      {"tx_min": 0.0173, "tx_max": 0.0189, "pct_geral": 0.0072},
+      {"tx_min": 0.0190, "tx_max": 999,    "pct_geral": 0.0225}
+    ]
+  },
+  "NAO_CONSIGNADO": {
+    "_titulo": "3.2 - Crédito Não Consignado (Automático, Salário, Benefício e 13º Salário)",
+    "_observacao": "13º Salário está incluído nesta tabela em TRP META, não em tabela separada",
+    "prazo_min": 13, "prazo_max": 96,
+    "tiquete_min": 100.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0295, "tx_max": 0.0403, "Tabela 1": 0.0125, "Tabela 2": 0.0140},
+      {"tx_min": 0.0404, "tx_max": 0.0489, "Tabela 1": 0.0370, "Tabela 2": 0.0417},
+      {"tx_min": 0.0490, "tx_max": 0.0578, "Tabela 1": 0.0560, "Tabela 2": 0.0625},
+      {"tx_min": 0.0579, "tx_max": 999,    "Tabela 1": 0.0760, "Tabela 2": 0.0850}
+    ]
+  },
+  "ADIANTAMENTO_13": {
+    "_titulo": "3.2 (linha 13º Salário) - Adiantamento 13º",
+    "_observacao": "No regime META, 13º está como sub-linha em 3.2 (não tabela separada)",
+    "tx_juros_min": 0.0325,
+    "prazo_min": 5,
+    "tiquete_min": 100.00,
+    "celulas": [
+      {"prazo_min": 5, "prazo_max": 999, "Tabela 1": 0.0128, "Tabela 2": 0.0144}
+    ]
+  },
+  "FGTS": {
+    "_titulo": "3.3 - CDC FGTS Saque Aniversário",
+    "_observacao": "Sem variação por categoria",
+    "tx_juros_fixa": 0.0179,
+    "prazo_min": 36, "prazo_max": 84,
+    "tiquete_min": 1000.00,
+    "pct_geral": 0.0420
+  }
+}

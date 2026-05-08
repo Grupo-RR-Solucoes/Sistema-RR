@@ -1,0 +1,152 @@
+{
+  "_meta": {
+    "trp": "OPP PR2023/061",
+    "competencia_inicial": "2023-07",
+    "competencia_final": "2023-08",
+    "regime": "META_2_NIVEIS_MATRIZ_TAXA_PRAZO",
+    "fonte_pdf": "OPP_PR2023_052.pdf p.53-58",
+    "categorias_publicadas": ["Tabela 1", "Tabela 2"],
+    "limites_categoria": {
+      "Tabela 1": {"meta_max": 1.00, "teto_avista": 0.054},
+      "Tabela 2": {"meta_min": 1.00, "teto_avista": 0.060}
+    },
+    "obs": [
+      "Vigente 30/06/2023 a 31/08/2023 (atualizada por PR2023/066, PR2023/072, prorrogada para ago/2023)",
+      "Substituiu o Bônus INSS pelo Bônus Performance (1-3% adicional sobre tabela)",
+      "Limite à vista 5,40%, diferença vai para PRT",
+      "Acabou tabela própria de Gov MG — agora dentro de Geral",
+      "Estrutura: 1 Geral, 2 INSS, 3 Portab (3.1 INSS, 3.2 Demais), 4 Não Consig, 5 Portab Salário"
+    ]
+  },
+  "CONSIG_GERAL": {
+    "_titulo": "1 - Crédito Consignado Geral",
+    "tiquete_min": 100.00,
+    "celulas_taxa_prazo": [
+      {"tx_min": 0.0147, "tx_max": 0.0155, "prazo_min": 37, "prazo_max": 48,  "Tabela 1": 0.0012, "Tabela 2": 0.0013},
+      {"tx_min": 0.0147, "tx_max": 0.0155, "prazo_min": 49, "prazo_max": 60,  "Tabela 1": 0.0024, "Tabela 2": 0.0027},
+      {"tx_min": 0.0147, "tx_max": 0.0155, "prazo_min": 61, "prazo_max": 72,  "Tabela 1": 0.0048, "Tabela 2": 0.0054},
+      {"tx_min": 0.0147, "tx_max": 0.0155, "prazo_min": 73, "prazo_max": 84,  "Tabela 1": 0.0064, "Tabela 2": 0.0072},
+      {"tx_min": 0.0147, "tx_max": 0.0155, "prazo_min": 85, "prazo_max": 120, "Tabela 1": 0.0072, "Tabela 2": 0.0081},
+      {"tx_min": 0.0156, "tx_max": 0.0165, "prazo_min": 25, "prazo_max": 36,  "Tabela 1": 0.0048, "Tabela 2": 0.0054},
+      {"tx_min": 0.0156, "tx_max": 0.0165, "prazo_min": 37, "prazo_max": 48,  "Tabela 1": 0.0072, "Tabela 2": 0.0081},
+      {"tx_min": 0.0156, "tx_max": 0.0165, "prazo_min": 49, "prazo_max": 60,  "Tabela 1": 0.0096, "Tabela 2": 0.0108},
+      {"tx_min": 0.0156, "tx_max": 0.0165, "prazo_min": 61, "prazo_max": 72,  "Tabela 1": 0.0120, "Tabela 2": 0.0135},
+      {"tx_min": 0.0156, "tx_max": 0.0165, "prazo_min": 73, "prazo_max": 84,  "Tabela 1": 0.0144, "Tabela 2": 0.0162},
+      {"tx_min": 0.0156, "tx_max": 0.0165, "prazo_min": 85, "prazo_max": 120, "Tabela 1": 0.0168, "Tabela 2": 0.0189},
+      {"tx_min": 0.0166, "tx_max": 0.0175, "prazo_min": 25, "prazo_max": 36,  "Tabela 1": 0.0096, "Tabela 2": 0.0108},
+      {"tx_min": 0.0166, "tx_max": 0.0175, "prazo_min": 37, "prazo_max": 48,  "Tabela 1": 0.0144, "Tabela 2": 0.0162},
+      {"tx_min": 0.0166, "tx_max": 0.0175, "prazo_min": 49, "prazo_max": 60,  "Tabela 1": 0.0192, "Tabela 2": 0.0216},
+      {"tx_min": 0.0166, "tx_max": 0.0175, "prazo_min": 61, "prazo_max": 72,  "Tabela 1": 0.0240, "Tabela 2": 0.0270},
+      {"tx_min": 0.0166, "tx_max": 0.0175, "prazo_min": 73, "prazo_max": 84,  "Tabela 1": 0.0288, "Tabela 2": 0.0324},
+      {"tx_min": 0.0166, "tx_max": 0.0175, "prazo_min": 85, "prazo_max": 120, "Tabela 1": 0.0344, "Tabela 2": 0.0387},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "prazo_min": 25, "prazo_max": 36,  "Tabela 1": 0.0144, "Tabela 2": 0.0162},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "prazo_min": 37, "prazo_max": 48,  "Tabela 1": 0.0216, "Tabela 2": 0.0243},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "prazo_min": 49, "prazo_max": 60,  "Tabela 1": 0.0288, "Tabela 2": 0.0324},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "prazo_min": 61, "prazo_max": 72,  "Tabela 1": 0.0368, "Tabela 2": 0.0414},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "prazo_min": 73, "prazo_max": 84,  "Tabela 1": 0.0440, "Tabela 2": 0.0495},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "prazo_min": 85, "prazo_max": 120, "Tabela 1": 0.0512, "Tabela 2": 0.0570},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "prazo_min": 13, "prazo_max": 24,  "Tabela 1": 0.0096, "Tabela 2": 0.0108},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "prazo_min": 25, "prazo_max": 36,  "Tabela 1": 0.0192, "Tabela 2": 0.0216},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "prazo_min": 37, "prazo_max": 48,  "Tabela 1": 0.0288, "Tabela 2": 0.0324},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "prazo_min": 49, "prazo_max": 60,  "Tabela 1": 0.0392, "Tabela 2": 0.0441},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "prazo_min": 61, "prazo_max": 72,  "Tabela 1": 0.0488, "Tabela 2": 0.0540},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "prazo_min": 73, "prazo_max": 84,  "Tabela 1": 0.0584, "Tabela 2": 0.0650},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "prazo_min": 85, "prazo_max": 120, "Tabela 1": 0.0680, "Tabela 2": 0.0760},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "prazo_min": 13, "prazo_max": 24,  "Tabela 1": 0.0120, "Tabela 2": 0.0135},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "prazo_min": 25, "prazo_max": 36,  "Tabela 1": 0.0240, "Tabela 2": 0.0270},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "prazo_min": 37, "prazo_max": 48,  "Tabela 1": 0.0368, "Tabela 2": 0.0414},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "prazo_min": 49, "prazo_max": 60,  "Tabela 1": 0.0488, "Tabela 2": 0.0540},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "prazo_min": 61, "prazo_max": 72,  "Tabela 1": 0.0608, "Tabela 2": 0.0680},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "prazo_min": 73, "prazo_max": 84,  "Tabela 1": 0.0728, "Tabela 2": 0.0815},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "prazo_min": 85, "prazo_max": 120, "Tabela 1": 0.0848, "Tabela 2": 0.0950},
+      {"tx_min": 0.0206, "tx_max": 0.0215, "prazo_min": 13, "prazo_max": 24,  "Tabela 1": 0.0144, "Tabela 2": 0.0162},
+      {"tx_min": 0.0206, "tx_max": 0.0215, "prazo_min": 25, "prazo_max": 36,  "Tabela 1": 0.0288, "Tabela 2": 0.0324},
+      {"tx_min": 0.0206, "tx_max": 0.0215, "prazo_min": 37, "prazo_max": 48,  "Tabela 1": 0.0440, "Tabela 2": 0.0495},
+      {"tx_min": 0.0206, "tx_max": 0.0215, "prazo_min": 49, "prazo_max": 60,  "Tabela 1": 0.0584, "Tabela 2": 0.0650},
+      {"tx_min": 0.0206, "tx_max": 0.0215, "prazo_min": 61, "prazo_max": 72,  "Tabela 1": 0.0728, "Tabela 2": 0.0815},
+      {"tx_min": 0.0206, "tx_max": 0.0215, "prazo_min": 73, "prazo_max": 84,  "Tabela 1": 0.0872, "Tabela 2": 0.0975},
+      {"tx_min": 0.0206, "tx_max": 0.0215, "prazo_min": 85, "prazo_max": 120, "Tabela 1": 0.1024, "Tabela 2": 0.1145},
+      {"tx_min": 0.0216, "tx_max": 0.0225, "prazo_min": 13, "prazo_max": 24,  "Tabela 1": 0.0168, "Tabela 2": 0.0189},
+      {"tx_min": 0.0216, "tx_max": 0.0225, "prazo_min": 25, "prazo_max": 36,  "Tabela 1": 0.0344, "Tabela 2": 0.0387},
+      {"tx_min": 0.0216, "tx_max": 0.0225, "prazo_min": 37, "prazo_max": 48,  "Tabela 1": 0.0512, "Tabela 2": 0.0570},
+      {"tx_min": 0.0216, "tx_max": 0.0225, "prazo_min": 49, "prazo_max": 60,  "Tabela 1": 0.0800, "Tabela 2": 0.0895},
+      {"tx_min": 0.0216, "tx_max": 0.0225, "prazo_min": 61, "prazo_max": 72,  "Tabela 1": 0.1040, "Tabela 2": 0.1160},
+      {"tx_min": 0.0216, "tx_max": 0.0225, "prazo_min": 73, "prazo_max": 84,  "Tabela 1": 0.1160, "Tabela 2": 0.1300},
+      {"tx_min": 0.0216, "tx_max": 0.0225, "prazo_min": 85, "prazo_max": 120, "Tabela 1": 0.1240, "Tabela 2": 0.1390},
+      {"tx_min": 0.0226, "tx_max": 999,    "prazo_min": 13, "prazo_max": 24,  "Tabela 1": 0.0192, "Tabela 2": 0.0216},
+      {"tx_min": 0.0226, "tx_max": 999,    "prazo_min": 25, "prazo_max": 36,  "Tabela 1": 0.0392, "Tabela 2": 0.0441},
+      {"tx_min": 0.0226, "tx_max": 999,    "prazo_min": 37, "prazo_max": 48,  "Tabela 1": 0.0584, "Tabela 2": 0.0650},
+      {"tx_min": 0.0226, "tx_max": 999,    "prazo_min": 49, "prazo_max": 60,  "Tabela 1": 0.0896, "Tabela 2": 0.1005},
+      {"tx_min": 0.0226, "tx_max": 999,    "prazo_min": 61, "prazo_max": 72,  "Tabela 1": 0.1120, "Tabela 2": 0.1255},
+      {"tx_min": 0.0226, "tx_max": 999,    "prazo_min": 73, "prazo_max": 84,  "Tabela 1": 0.1168, "Tabela 2": 0.1310},
+      {"tx_min": 0.0226, "tx_max": 999,    "prazo_min": 85, "prazo_max": 120, "Tabela 1": 0.1360, "Tabela 2": 0.1525}
+    ]
+  },
+  "INSS": {
+    "_titulo": "2 - Consignado INSS",
+    "convenio": "1640", "tiquete_min": 100.00, "custo_processamento": 1.55,
+    "celulas_taxa_prazo": [
+      {"tx_min": 0.0165, "tx_max": 0.0172, "prazo_min": 13, "prazo_max": 24, "Tabela 1": 0.0080, "Tabela 2": 0.0090},
+      {"tx_min": 0.0165, "tx_max": 0.0172, "prazo_min": 25, "prazo_max": 36, "Tabela 1": 0.0128, "Tabela 2": 0.0144},
+      {"tx_min": 0.0165, "tx_max": 0.0172, "prazo_min": 37, "prazo_max": 48, "Tabela 1": 0.0152, "Tabela 2": 0.0171},
+      {"tx_min": 0.0165, "tx_max": 0.0172, "prazo_min": 49, "prazo_max": 60, "Tabela 1": 0.0176, "Tabela 2": 0.0198},
+      {"tx_min": 0.0165, "tx_max": 0.0172, "prazo_min": 61, "prazo_max": 72, "Tabela 1": 0.0200, "Tabela 2": 0.0225},
+      {"tx_min": 0.0165, "tx_max": 0.0172, "prazo_min": 73, "prazo_max": 83, "Tabela 1": 0.0224, "Tabela 2": 0.0252},
+      {"tx_min": 0.0165, "tx_max": 0.0172, "prazo_min": 84, "prazo_max": 84, "Tabela 1": 0.0224, "Tabela 2": 0.0252},
+      {"tx_min": 0.0173, "tx_max": 0.0180, "prazo_min": 13, "prazo_max": 24, "Tabela 1": 0.0096, "Tabela 2": 0.0108},
+      {"tx_min": 0.0173, "tx_max": 0.0180, "prazo_min": 25, "prazo_max": 36, "Tabela 1": 0.0176, "Tabela 2": 0.0198},
+      {"tx_min": 0.0173, "tx_max": 0.0180, "prazo_min": 37, "prazo_max": 48, "Tabela 1": 0.0224, "Tabela 2": 0.0252},
+      {"tx_min": 0.0173, "tx_max": 0.0180, "prazo_min": 49, "prazo_max": 60, "Tabela 1": 0.0272, "Tabela 2": 0.0306},
+      {"tx_min": 0.0173, "tx_max": 0.0180, "prazo_min": 61, "prazo_max": 72, "Tabela 1": 0.0320, "Tabela 2": 0.0360},
+      {"tx_min": 0.0173, "tx_max": 0.0180, "prazo_min": 73, "prazo_max": 83, "Tabela 1": 0.0368, "Tabela 2": 0.0414},
+      {"tx_min": 0.0173, "tx_max": 0.0180, "prazo_min": 84, "prazo_max": 84, "Tabela 1": 0.0368, "Tabela 2": 0.0414},
+      {"tx_min": 0.0181, "tx_max": 0.0194, "prazo_min": 13, "prazo_max": 24, "Tabela 1": 0.0160, "Tabela 2": 0.0180},
+      {"tx_min": 0.0181, "tx_max": 0.0194, "prazo_min": 25, "prazo_max": 48, "Tabela 1": 0.0320, "Tabela 2": 0.0360},
+      {"tx_min": 0.0181, "tx_max": 0.0194, "prazo_min": 49, "prazo_max": 60, "Tabela 1": 0.0520, "Tabela 2": 0.0580},
+      {"tx_min": 0.0181, "tx_max": 0.0194, "prazo_min": 61, "prazo_max": 72, "Tabela 1": 0.0560, "Tabela 2": 0.0625},
+      {"tx_min": 0.0181, "tx_max": 0.0194, "prazo_min": 73, "prazo_max": 83, "Tabela 1": 0.0640, "Tabela 2": 0.0715},
+      {"tx_min": 0.0181, "tx_max": 0.0194, "prazo_min": 84, "prazo_max": 84, "Tabela 1": 0.1280, "Tabela 2": 0.1435},
+      {"tx_min": 0.0195, "tx_max": 999,    "prazo_min": 13, "prazo_max": 24, "Tabela 1": 0.0200, "Tabela 2": 0.0225},
+      {"tx_min": 0.0195, "tx_max": 999,    "prazo_min": 25, "prazo_max": 36, "Tabela 1": 0.0400, "Tabela 2": 0.0450}
+    ]
+  },
+  "PORTAB_INSS": {
+    "_titulo": "3.1 - Portabilidade INSS",
+    "_observacao": "Sem variação por categoria",
+    "prazo_min": 24, "prazo_max": 84, "tiquete_min": 1000.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0139, "tx_max": 999, "pct_geral": 0.0100}
+    ]
+  },
+  "PORTAB_GERAL": {
+    "_titulo": "3.2 - Portabilidade Demais",
+    "_observacao": "Sem variação por categoria",
+    "prazo_min": 37, "prazo_max": 120, "tiquete_min": 2500.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0129, "tx_max": 999, "pct_geral": 0.0100}
+    ]
+  },
+  "NAO_CONSIGNADO": {
+    "_titulo": "4.1 - Não Consignado",
+    "prazo_min": 13, "prazo_max": 96, "tiquete_min": 100.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0206, "tx_max": 0.0250, "Tabela 1": 0.0200, "Tabela 2": 0.0200},
+      {"tx_min": 0.0251, "tx_max": 0.0395, "Tabela 1": 0.0480, "Tabela 2": 0.0540},
+      {"tx_min": 0.0396, "tx_max": 0.0519, "Tabela 1": 0.0720, "Tabela 2": 0.0810},
+      {"tx_min": 0.0520, "tx_max": 999,    "Tabela 1": 0.0960, "Tabela 2": 0.1080}
+    ]
+  },
+  "ADIANTAMENTO_13": {
+    "_titulo": "4.1 (linha 13º)",
+    "tx_juros_min": 0.0286, "prazo_min": 5, "tiquete_min": 100.00,
+    "celulas": [
+      {"prazo_min": 5, "prazo_max": 999, "Tabela 1": 0.0200, "Tabela 2": 0.0200}
+    ]
+  },
+  "FGTS": {
+    "_titulo": "4.2 - FGTS",
+    "_observacao": "Sem variação por categoria",
+    "tx_juros_fixa": 0.0203, "prazo_min": 2, "prazo_max": 60,
+    "tiquete_min": 1000.00, "pct_geral": 0.0475
+  }
+}

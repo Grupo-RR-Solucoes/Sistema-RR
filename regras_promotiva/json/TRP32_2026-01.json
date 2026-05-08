@@ -1,0 +1,423 @@
+{
+  "_meta": {
+    "trp": "TRP Nº 2026/166",
+    "opp_referencia": "OPP PR2026/004",
+    "competencia": "2026-01",
+    "regime": "VOLUME_3_PERFIS",
+    "fonte_pdf": "msg_004/TRP32_-_PROMOTIVA_012026.pdf",
+    "categorias": [
+      "Rubi",
+      "Safira",
+      "Diamante"
+    ],
+    "limites_categoria": {
+      "Rubi": {
+        "prod_min": 0,
+        "teto_avista": 0.056
+      },
+      "Safira": {
+        "prod_min": 3000000,
+        "teto_avista": 0.058
+      },
+      "Diamante": {
+        "prod_min": 7000000,
+        "teto_avista": 0.06
+      }
+    },
+    "observacoes": [
+      "Produção líquida ex-SRCC define a categoria do Grupo no mês",
+      "Nos casos em que o % de remuneração ultrapasse o teto à vista, a diferença vai para PRT (excedente parcelado)",
+      "Para a operação ser remunerada, produto+taxa+prazo+tíquete devem estar em conformidade com a tabela vigente"
+    ]
+  },
+  "INSS_NOVO": {
+    "_titulo": "1.2 - Crédito Consignado INSS Novo",
+    "tx_juros_fixa": 0.0185,
+    "tiquete_min": 100.0,
+    "custo_processamento": 2.03,
+    "celulas_prazo": [
+      {
+        "prazo_min": 48,
+        "prazo_max": 60,
+        "Rubi": 0.0196,
+        "Safira": 0.0203,
+        "Diamante": 0.0212
+      },
+      {
+        "prazo_min": 61,
+        "prazo_max": 84,
+        "Rubi": 0.0235,
+        "Safira": 0.0244,
+        "Diamante": 0.0255
+      },
+      {
+        "prazo_min": 85,
+        "prazo_max": 999,
+        "Rubi": 0.0321,
+        "Safira": 0.0334,
+        "Diamante": 0.0348
+      }
+    ]
+  },
+  "INSS_RENOV": {
+    "_titulo": "1.3 - Crédito Consignado INSS Renovação",
+    "tx_juros_min": 0.01,
+    "tiquete_min": 100.0,
+    "custo_processamento": 2.03,
+    "celulas_prazo": [
+      {
+        "prazo_min": 48,
+        "prazo_max": 60,
+        "Rubi": 0.0196,
+        "Safira": 0.0203,
+        "Diamante": 0.0212
+      },
+      {
+        "prazo_min": 61,
+        "prazo_max": 84,
+        "Rubi": 0.0235,
+        "Safira": 0.0244,
+        "Diamante": 0.0255
+      },
+      {
+        "prazo_min": 85,
+        "prazo_max": 999,
+        "Rubi": 0.0321,
+        "Safira": 0.0334,
+        "Diamante": 0.0348
+      }
+    ]
+  },
+  "CONSIG_PUBLICO": {
+    "_titulo": "1.4 - Consignado Geral Público",
+    "prazo_min": 36,
+    "tiquete_min": 100.0,
+    "custo_processamento": "2.5% ou R$ 5,00",
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0175,
+        "tx_max": 0.0177,
+        "Rubi": 0.0078,
+        "Safira": 0.0081,
+        "Diamante": 0.0085
+      },
+      {
+        "tx_min": 0.0178,
+        "tx_max": 0.0187,
+        "Rubi": 0.0235,
+        "Safira": 0.0244,
+        "Diamante": 0.0255
+      },
+      {
+        "tx_min": 0.0188,
+        "tx_max": 0.0197,
+        "Rubi": 0.0353,
+        "Safira": 0.0366,
+        "Diamante": 0.0382
+      },
+      {
+        "tx_min": 0.0198,
+        "tx_max": 0.0207,
+        "Rubi": 0.0431,
+        "Safira": 0.0448,
+        "Diamante": 0.0467
+      },
+      {
+        "tx_min": 0.0208,
+        "tx_max": 0.0217,
+        "Rubi": 0.0471,
+        "Safira": 0.0489,
+        "Diamante": 0.051
+      },
+      {
+        "tx_min": 0.0218,
+        "tx_max": 0.0227,
+        "Rubi": 0.0588,
+        "Safira": 0.0611,
+        "Diamante": 0.0637
+      },
+      {
+        "tx_min": 0.0228,
+        "tx_max": 0.0237,
+        "Rubi": 0.0667,
+        "Safira": 0.0692,
+        "Diamante": 0.0722
+      },
+      {
+        "tx_min": 0.0238,
+        "tx_max": 0.0247,
+        "Rubi": 0.0785,
+        "Safira": 0.0815,
+        "Diamante": 0.085
+      },
+      {
+        "tx_min": 0.0248,
+        "tx_max": 999,
+        "Rubi": 0.0902,
+        "Safira": 0.0937,
+        "Diamante": 0.0977
+      }
+    ],
+    "prazo_max": 120
+  },
+  "SIAPE": {
+    "_titulo": "1.5 - Consignado Convênio SIAPE",
+    "convenio": "1078",
+    "prazo_min": 48,
+    "tiquete_min": 100.0,
+    "custo_processamento": 3.08,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0164,
+        "tx_max": 0.0167,
+        "Rubi": 0.0094,
+        "Safira": 0.0097,
+        "Diamante": 0.0102
+      },
+      {
+        "tx_min": 0.0168,
+        "tx_max": 0.0179,
+        "Rubi": 0.0235,
+        "Safira": 0.0244,
+        "Diamante": 0.0255
+      },
+      {
+        "tx_min": 0.018,
+        "tx_max": 0.018,
+        "Rubi": 0.0321,
+        "Safira": 0.0334,
+        "Diamante": 0.0348
+      }
+    ],
+    "prazo_max": 96
+  },
+  "CONSIG_SP_MG": {
+    "_titulo": "1.6 - Consignado Convênio SP e MG",
+    "prazo_min": 36,
+    "tiquete_min": 100.0,
+    "custo_processamento": "2.5% ou R$ 5,00",
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0172,
+        "tx_max": 0.0179,
+        "Rubi": 0.0125,
+        "Safira": 0.013,
+        "Diamante": 0.0136
+      },
+      {
+        "tx_min": 0.018,
+        "tx_max": 0.0189,
+        "Rubi": 0.0243,
+        "Safira": 0.0252,
+        "Diamante": 0.0263
+      },
+      {
+        "tx_min": 0.019,
+        "tx_max": 0.0199,
+        "Rubi": 0.0353,
+        "Safira": 0.0366,
+        "Diamante": 0.0382
+      },
+      {
+        "tx_min": 0.02,
+        "tx_max": 0.0209,
+        "Rubi": 0.0431,
+        "Safira": 0.0448,
+        "Diamante": 0.0467
+      },
+      {
+        "tx_min": 0.021,
+        "tx_max": 0.0219,
+        "Rubi": 0.051,
+        "Safira": 0.0529,
+        "Diamante": 0.0552
+      },
+      {
+        "tx_min": 0.022,
+        "tx_max": 0.0229,
+        "Rubi": 0.0588,
+        "Safira": 0.0611,
+        "Diamante": 0.0637
+      },
+      {
+        "tx_min": 0.023,
+        "tx_max": 0.0239,
+        "Rubi": 0.0667,
+        "Safira": 0.0692,
+        "Diamante": 0.0722
+      },
+      {
+        "tx_min": 0.024,
+        "tx_max": 0.0249,
+        "Rubi": 0.0785,
+        "Safira": 0.0815,
+        "Diamante": 0.085
+      },
+      {
+        "tx_min": 0.025,
+        "tx_max": 999,
+        "Rubi": 0.0902,
+        "Safira": 0.0937,
+        "Diamante": 0.0977
+      }
+    ],
+    "prazo_max": 120
+  },
+  "CONSIG_PRIVADO": {
+    "_titulo": "1.7 - Consignado Convênio Privado",
+    "tiquete_min": 2000.0,
+    "celulas_taxa_prazo": [
+      {
+        "tx_min": 0.0254,
+        "tx_max": 999,
+        "prazo_min": 18,
+        "prazo_max": 35,
+        "Rubi": 0.0078,
+        "Safira": 0.0081,
+        "Diamante": 0.0085
+      },
+      {
+        "tx_min": 0.0254,
+        "tx_max": 0.0299,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Rubi": 0.0235,
+        "Safira": 0.0244,
+        "Diamante": 0.0255
+      },
+      {
+        "tx_min": 0.03,
+        "tx_max": 0.035,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Rubi": 0.0314,
+        "Safira": 0.0326,
+        "Diamante": 0.034
+      },
+      {
+        "tx_min": 0.0351,
+        "tx_max": 999,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Rubi": 0.0392,
+        "Safira": 0.0407,
+        "Diamante": 0.0425
+      }
+    ]
+  },
+  "PORTAB_PUBLICO": {
+    "_titulo": "2.2 - Portabilidade Convênio Público",
+    "_observacao": "Sem variação por categoria — % é geral",
+    "prazo_min": 48,
+    "tiquete_min": 2500.0,
+    "custo_processamento": "2.5% ou R$ 5,00",
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0173,
+        "tx_max": 0.0189,
+        "pct_geral": 0.0072
+      },
+      {
+        "tx_min": 0.019,
+        "tx_max": 999,
+        "pct_geral": 0.0225
+      }
+    ],
+    "prazo_max": 120
+  },
+  "PORTAB_PRIVADO": {
+    "_titulo": "2.3 - Portabilidade Convênio Privado",
+    "_observacao": "Sem variação por categoria — % é geral",
+    "prazo_min": 36,
+    "tiquete_min": 2500.0,
+    "custo_processamento": "2.5% ou R$ 5,00",
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0254,
+        "tx_max": 0.0299,
+        "pct_geral": 0.0045
+      },
+      {
+        "tx_min": 0.03,
+        "tx_max": 999,
+        "pct_geral": 0.018
+      }
+    ],
+    "prazo_max": 96
+  },
+  "NAO_CONSIGNADO": {
+    "_titulo": "3.2 - Crédito Não Consignado (Automático, Salário e Benefício)",
+    "prazo_min": 13,
+    "tiquete_min": 100.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0292,
+        "tx_max": 0.0337,
+        "Rubi": 0.0196,
+        "Safira": 0.0203,
+        "Diamante": 0.0212
+      },
+      {
+        "tx_min": 0.0338,
+        "tx_max": 0.0383,
+        "Rubi": 0.0274,
+        "Safira": 0.0285,
+        "Diamante": 0.0297
+      },
+      {
+        "tx_min": 0.0384,
+        "tx_max": 0.0429,
+        "Rubi": 0.0353,
+        "Safira": 0.0366,
+        "Diamante": 0.0382
+      },
+      {
+        "tx_min": 0.043,
+        "tx_max": 0.0475,
+        "Rubi": 0.0431,
+        "Safira": 0.0448,
+        "Diamante": 0.0467
+      },
+      {
+        "tx_min": 0.0476,
+        "tx_max": 0.0538,
+        "Rubi": 0.0549,
+        "Safira": 0.057,
+        "Diamante": 0.0595
+      },
+      {
+        "tx_min": 0.0539,
+        "tx_max": 999,
+        "Rubi": 0.0824,
+        "Safira": 0.0855,
+        "Diamante": 0.0892
+      }
+    ],
+    "prazo_max": 96
+  },
+  "ADIANTAMENTO_13": {
+    "_titulo": "3.3 - Adiantamento 13º Salário",
+    "tx_juros_min": 0.0325,
+    "prazo_min": 5,
+    "tiquete_min": 100.0,
+    "celulas": [
+      {
+        "prazo_min": 5,
+        "prazo_max": 12,
+        "Rubi": 0.0235,
+        "Safira": 0.0244,
+        "Diamante": 0.0255
+      }
+    ],
+    "prazo_max": 12
+  },
+  "FGTS": {
+    "_titulo": "3.4 - CDC FGTS Saque Aniversário",
+    "_observacao": "Sem variação por categoria — % é geral",
+    "tx_juros_fixa": 0.0179,
+    "prazo_min": 36,
+    "prazo_max": 84,
+    "tiquete_min": 1000.0,
+    "pct_geral": 0.042
+  }
+}

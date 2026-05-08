@@ -1,0 +1,547 @@
+{
+  "_meta": {
+    "trp": "TRP Nº 2025/121",
+    "opp_referencia": "OPP PR2025/037",
+    "competencia": "2025-07",
+    "regime": "VOLUME_6_PERFIS",
+    "fonte_pdf": "msg_009/TRP24_-_PROMOTIVA_072025.pdf",
+    "categorias": [
+      "Varejo I",
+      "Varejo II",
+      "Middle",
+      "Upper Middle",
+      "Corporate",
+      "Large Corporate"
+    ],
+    "limites_categoria": {
+      "Varejo I": {
+        "prod_min": 0,
+        "teto_avista": 0.054
+      },
+      "Varejo II": {
+        "prod_min": 1000000,
+        "teto_avista": 0.056
+      },
+      "Middle": {
+        "prod_min": 3000000,
+        "teto_avista": 0.057
+      },
+      "Upper Middle": {
+        "prod_min": 5000000,
+        "teto_avista": 0.058
+      },
+      "Corporate": {
+        "prod_min": 7000000,
+        "teto_avista": 0.059
+      },
+      "Large Corporate": {
+        "prod_min": 10000000,
+        "teto_avista": 0.06
+      }
+    },
+    "bonus_observacao": "Há bônus 0,10% Seguro SLIP + 0,10% taxa máxima BB (acordo comercial, NÃO incluir no cálculo esperado)"
+  },
+  "INSS_NOVO": {
+    "_titulo": "1.2 - Crédito Consignado INSS Novo",
+    "tx_juros_fixa": 0.0185,
+    "tiquete_min": 100.0,
+    "custo_processamento": 2.03,
+    "celulas_prazo": [
+      {
+        "prazo_min": 48,
+        "prazo_max": 60,
+        "Varejo I": 0.0192,
+        "Varejo II": 0.0196,
+        "Middle": 0.02,
+        "Upper Middle": 0.0203,
+        "Corporate": 0.0207,
+        "Large Corporate": 0.0212
+      },
+      {
+        "prazo_min": 61,
+        "prazo_max": 84,
+        "Varejo I": 0.0231,
+        "Varejo II": 0.0235,
+        "Middle": 0.024,
+        "Upper Middle": 0.0244,
+        "Corporate": 0.0249,
+        "Large Corporate": 0.0255
+      },
+      {
+        "prazo_min": 85,
+        "prazo_max": 999,
+        "Varejo I": 0.0315,
+        "Varejo II": 0.0321,
+        "Middle": 0.0328,
+        "Upper Middle": 0.0334,
+        "Corporate": 0.034,
+        "Large Corporate": 0.0348
+      }
+    ]
+  },
+  "INSS_RENOV": {
+    "_titulo": "1.3 - Crédito Consignado INSS Renovação",
+    "tx_juros_min": 0.01,
+    "tiquete_min": 100.0,
+    "custo_processamento": 2.03,
+    "celulas_prazo": [
+      {
+        "prazo_min": 48,
+        "prazo_max": 60,
+        "Varejo I": 0.0192,
+        "Varejo II": 0.0196,
+        "Middle": 0.02,
+        "Upper Middle": 0.0203,
+        "Corporate": 0.0207,
+        "Large Corporate": 0.0212
+      },
+      {
+        "prazo_min": 61,
+        "prazo_max": 84,
+        "Varejo I": 0.0231,
+        "Varejo II": 0.0235,
+        "Middle": 0.024,
+        "Upper Middle": 0.0244,
+        "Corporate": 0.0249,
+        "Large Corporate": 0.0255
+      },
+      {
+        "prazo_min": 85,
+        "prazo_max": 999,
+        "Varejo I": 0.0315,
+        "Varejo II": 0.0321,
+        "Middle": 0.0328,
+        "Upper Middle": 0.0334,
+        "Corporate": 0.034,
+        "Large Corporate": 0.0348
+      }
+    ]
+  },
+  "CONSIG_PUBLICO": {
+    "_titulo": "1.4 - Consignado Geral Público",
+    "prazo_min": 36,
+    "prazo_max": 120,
+    "tiquete_min": 100.0,
+    "custo_processamento": "2.5% ou R$ 5,00",
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0175,
+        "tx_max": 0.0177,
+        "Varejo I": 0.0077,
+        "Varejo II": 0.0078,
+        "Middle": 0.008,
+        "Upper Middle": 0.0081,
+        "Corporate": 0.0083,
+        "Large Corporate": 0.0085
+      },
+      {
+        "tx_min": 0.0178,
+        "tx_max": 0.0187,
+        "Varejo I": 0.0231,
+        "Varejo II": 0.0235,
+        "Middle": 0.024,
+        "Upper Middle": 0.0244,
+        "Corporate": 0.0249,
+        "Large Corporate": 0.0255
+      },
+      {
+        "tx_min": 0.0188,
+        "tx_max": 0.0197,
+        "Varejo I": 0.0346,
+        "Varejo II": 0.0353,
+        "Middle": 0.036,
+        "Upper Middle": 0.0366,
+        "Corporate": 0.0373,
+        "Large Corporate": 0.0382
+      },
+      {
+        "tx_min": 0.0198,
+        "tx_max": 0.0207,
+        "Varejo I": 0.0423,
+        "Varejo II": 0.0431,
+        "Middle": 0.044,
+        "Upper Middle": 0.0448,
+        "Corporate": 0.0456,
+        "Large Corporate": 0.0467
+      },
+      {
+        "tx_min": 0.0208,
+        "tx_max": 0.0217,
+        "Varejo I": 0.0462,
+        "Varejo II": 0.0471,
+        "Middle": 0.048,
+        "Upper Middle": 0.0489,
+        "Corporate": 0.0498,
+        "Large Corporate": 0.051
+      },
+      {
+        "tx_min": 0.0218,
+        "tx_max": 0.0227,
+        "Varejo I": 0.0577,
+        "Varejo II": 0.0588,
+        "Middle": 0.06,
+        "Upper Middle": 0.0611,
+        "Corporate": 0.0622,
+        "Large Corporate": 0.0637
+      },
+      {
+        "tx_min": 0.0228,
+        "tx_max": 0.0237,
+        "Varejo I": 0.0654,
+        "Varejo II": 0.0667,
+        "Middle": 0.068,
+        "Upper Middle": 0.0692,
+        "Corporate": 0.0705,
+        "Large Corporate": 0.0722
+      },
+      {
+        "tx_min": 0.0238,
+        "tx_max": 0.0247,
+        "Varejo I": 0.077,
+        "Varejo II": 0.0785,
+        "Middle": 0.08,
+        "Upper Middle": 0.0815,
+        "Corporate": 0.083,
+        "Large Corporate": 0.085
+      },
+      {
+        "tx_min": 0.0248,
+        "tx_max": 999,
+        "Varejo I": 0.0885,
+        "Varejo II": 0.0902,
+        "Middle": 0.092,
+        "Upper Middle": 0.0937,
+        "Corporate": 0.0954,
+        "Large Corporate": 0.0977
+      }
+    ]
+  },
+  "SIAPE": {
+    "_titulo": "1.5 - Consignado Convênio SIAPE",
+    "convenio": "1078",
+    "prazo_min": 48,
+    "prazo_max": 96,
+    "tiquete_min": 100.0,
+    "custo_processamento": 3.08,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0164,
+        "tx_max": 0.0167,
+        "Varejo I": 0.0092,
+        "Varejo II": 0.0094,
+        "Middle": 0.0096,
+        "Upper Middle": 0.0097,
+        "Corporate": 0.0099,
+        "Large Corporate": 0.0102
+      },
+      {
+        "tx_min": 0.0168,
+        "tx_max": 0.0179,
+        "Varejo I": 0.0231,
+        "Varejo II": 0.0235,
+        "Middle": 0.024,
+        "Upper Middle": 0.0244,
+        "Corporate": 0.0249,
+        "Large Corporate": 0.0255
+      },
+      {
+        "tx_min": 0.018,
+        "tx_max": 0.018,
+        "Varejo I": 0.0315,
+        "Varejo II": 0.0321,
+        "Middle": 0.0328,
+        "Upper Middle": 0.0334,
+        "Corporate": 0.034,
+        "Large Corporate": 0.0348
+      }
+    ]
+  },
+  "CONSIG_SP_MG": {
+    "_titulo": "1.6 - Consignado Convênio SP e MG",
+    "prazo_min": 36,
+    "prazo_max": 120,
+    "tiquete_min": 100.0,
+    "custo_processamento": "2.5% ou R$ 5,00",
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0172,
+        "tx_max": 0.0179,
+        "Varejo I": 0.0123,
+        "Varejo II": 0.0125,
+        "Middle": 0.0128,
+        "Upper Middle": 0.013,
+        "Corporate": 0.0132,
+        "Large Corporate": 0.0136
+      },
+      {
+        "tx_min": 0.018,
+        "tx_max": 0.0189,
+        "Varejo I": 0.0238,
+        "Varejo II": 0.0243,
+        "Middle": 0.0248,
+        "Upper Middle": 0.0252,
+        "Corporate": 0.0257,
+        "Large Corporate": 0.0263
+      },
+      {
+        "tx_min": 0.019,
+        "tx_max": 0.0199,
+        "Varejo I": 0.0346,
+        "Varejo II": 0.0353,
+        "Middle": 0.036,
+        "Upper Middle": 0.0366,
+        "Corporate": 0.0373,
+        "Large Corporate": 0.0382
+      },
+      {
+        "tx_min": 0.02,
+        "tx_max": 0.0209,
+        "Varejo I": 0.0423,
+        "Varejo II": 0.0431,
+        "Middle": 0.044,
+        "Upper Middle": 0.0448,
+        "Corporate": 0.0456,
+        "Large Corporate": 0.0467
+      },
+      {
+        "tx_min": 0.021,
+        "tx_max": 0.0219,
+        "Varejo I": 0.05,
+        "Varejo II": 0.051,
+        "Middle": 0.052,
+        "Upper Middle": 0.0529,
+        "Corporate": 0.0539,
+        "Large Corporate": 0.0552
+      },
+      {
+        "tx_min": 0.022,
+        "tx_max": 0.0229,
+        "Varejo I": 0.0577,
+        "Varejo II": 0.0588,
+        "Middle": 0.06,
+        "Upper Middle": 0.0611,
+        "Corporate": 0.0622,
+        "Large Corporate": 0.0637
+      },
+      {
+        "tx_min": 0.023,
+        "tx_max": 0.0239,
+        "Varejo I": 0.0654,
+        "Varejo II": 0.0667,
+        "Middle": 0.068,
+        "Upper Middle": 0.0692,
+        "Corporate": 0.0705,
+        "Large Corporate": 0.0722
+      },
+      {
+        "tx_min": 0.024,
+        "tx_max": 0.0249,
+        "Varejo I": 0.077,
+        "Varejo II": 0.0785,
+        "Middle": 0.08,
+        "Upper Middle": 0.0815,
+        "Corporate": 0.083,
+        "Large Corporate": 0.085
+      },
+      {
+        "tx_min": 0.025,
+        "tx_max": 999,
+        "Varejo I": 0.0885,
+        "Varejo II": 0.0902,
+        "Middle": 0.092,
+        "Upper Middle": 0.0937,
+        "Corporate": 0.0954,
+        "Large Corporate": 0.0977
+      }
+    ]
+  },
+  "CONSIG_PRIVADO": {
+    "_titulo": "1.7 - Consignado Convênio Privado",
+    "tiquete_min": 2000.0,
+    "celulas_taxa_prazo": [
+      {
+        "tx_min": 0.0254,
+        "tx_max": 999,
+        "prazo_min": 18,
+        "prazo_max": 35,
+        "Varejo I": 0.0077,
+        "Varejo II": 0.0078,
+        "Middle": 0.008,
+        "Upper Middle": 0.0081,
+        "Corporate": 0.0083,
+        "Large Corporate": 0.0085
+      },
+      {
+        "tx_min": 0.0254,
+        "tx_max": 0.0299,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Varejo I": 0.0231,
+        "Varejo II": 0.0235,
+        "Middle": 0.024,
+        "Upper Middle": 0.0244,
+        "Corporate": 0.0249,
+        "Large Corporate": 0.0255
+      },
+      {
+        "tx_min": 0.03,
+        "tx_max": 0.035,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Varejo I": 0.0308,
+        "Varejo II": 0.0314,
+        "Middle": 0.032,
+        "Upper Middle": 0.0326,
+        "Corporate": 0.0332,
+        "Large Corporate": 0.034
+      },
+      {
+        "tx_min": 0.0351,
+        "tx_max": 999,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Varejo I": 0.0385,
+        "Varejo II": 0.0392,
+        "Middle": 0.04,
+        "Upper Middle": 0.0407,
+        "Corporate": 0.0415,
+        "Large Corporate": 0.0425
+      }
+    ]
+  },
+  "PORTAB_PUBLICO": {
+    "_titulo": "2.2 - Portabilidade Convênio Público",
+    "_observacao": "Sem variação por categoria",
+    "prazo_min": 48,
+    "prazo_max": 120,
+    "tiquete_min": 2500.0,
+    "custo_processamento": "2.5% ou R$ 5,00",
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0173,
+        "tx_max": 0.0189,
+        "pct_geral": 0.0072
+      },
+      {
+        "tx_min": 0.019,
+        "tx_max": 999,
+        "pct_geral": 0.0225
+      }
+    ]
+  },
+  "PORTAB_PRIVADO": {
+    "_titulo": "2.3 - Portabilidade Convênio Privado",
+    "_observacao": "Sem variação por categoria",
+    "prazo_min": 36,
+    "prazo_max": 96,
+    "tiquete_min": 2500.0,
+    "custo_processamento": "2.5% ou R$ 5,00",
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0254,
+        "tx_max": 0.0299,
+        "pct_geral": 0.0045
+      },
+      {
+        "tx_min": 0.03,
+        "tx_max": 999,
+        "pct_geral": 0.018
+      }
+    ]
+  },
+  "NAO_CONSIGNADO": {
+    "_titulo": "3.2 - Crédito Não Consignado (Automático, Salário e Benefício)",
+    "prazo_min": 13,
+    "prazo_max": 96,
+    "tiquete_min": 100.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0292,
+        "tx_max": 0.0337,
+        "Varejo I": 0.0192,
+        "Varejo II": 0.0196,
+        "Middle": 0.02,
+        "Upper Middle": 0.0203,
+        "Corporate": 0.0207,
+        "Large Corporate": 0.0212
+      },
+      {
+        "tx_min": 0.0338,
+        "tx_max": 0.0383,
+        "Varejo I": 0.0269,
+        "Varejo II": 0.0274,
+        "Middle": 0.028,
+        "Upper Middle": 0.0285,
+        "Corporate": 0.029,
+        "Large Corporate": 0.0297
+      },
+      {
+        "tx_min": 0.0384,
+        "tx_max": 0.0429,
+        "Varejo I": 0.0346,
+        "Varejo II": 0.0353,
+        "Middle": 0.036,
+        "Upper Middle": 0.0366,
+        "Corporate": 0.0373,
+        "Large Corporate": 0.0382
+      },
+      {
+        "tx_min": 0.043,
+        "tx_max": 0.0475,
+        "Varejo I": 0.0423,
+        "Varejo II": 0.0431,
+        "Middle": 0.044,
+        "Upper Middle": 0.0448,
+        "Corporate": 0.0456,
+        "Large Corporate": 0.0467
+      },
+      {
+        "tx_min": 0.0476,
+        "tx_max": 0.0538,
+        "Varejo I": 0.0539,
+        "Varejo II": 0.0549,
+        "Middle": 0.056,
+        "Upper Middle": 0.057,
+        "Corporate": 0.0581,
+        "Large Corporate": 0.0595
+      },
+      {
+        "tx_min": 0.0539,
+        "tx_max": 999,
+        "Varejo I": 0.0808,
+        "Varejo II": 0.0824,
+        "Middle": 0.084,
+        "Upper Middle": 0.0855,
+        "Corporate": 0.0871,
+        "Large Corporate": 0.0892
+      }
+    ]
+  },
+  "ADIANTAMENTO_13": {
+    "_titulo": "3.3 - Adiantamento 13º Salário",
+    "tx_juros_min": 0.0325,
+    "prazo_min": 5,
+    "tiquete_min": 100.0,
+    "celulas": [
+      {
+        "prazo_min": 5,
+        "prazo_max": 999,
+        "Varejo I": 0.0231,
+        "Varejo II": 0.0235,
+        "Middle": 0.024,
+        "Upper Middle": 0.0244,
+        "Corporate": 0.0249,
+        "Large Corporate": 0.0255
+      }
+    ]
+  },
+  "FGTS": {
+    "_titulo": "3.4 - CDC FGTS Saque Aniversário",
+    "_observacao": "Sem variação por categoria",
+    "tx_juros_fixa": 0.0179,
+    "prazo_min": 36,
+    "prazo_max": 84,
+    "tiquete_min": 1000.0,
+    "pct_geral": 0.042
+  }
+}

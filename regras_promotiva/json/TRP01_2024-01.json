@@ -1,0 +1,117 @@
+{
+  "_meta": {
+    "trp": "TRP Nº 2024/01",
+    "competencia": "2024-01",
+    "regime": "META_2_NIVEIS",
+    "fonte_pdf": "regras_anexos_2024/TRP - PROMOTIVA 012024.pdf",
+    "categorias_publicadas": ["Tabela 1", "Tabela 2"],
+    "categorias_logicas": ["Tabela 1", "Tabela 2"],
+    "limites_categoria": {
+      "Tabela 1": {"meta_max": 1.00, "teto_avista": 0.054},
+      "Tabela 2": {"meta_min": 1.00, "teto_avista": 0.060}
+    },
+    "obs": "Em jan-dez/2024 só existem Tab1 e Tab2 (sem Intermediárias). Tab1 < 100%, Tab2 >= 100%."
+  },
+  "CONSIG_GERAL": {
+    "_titulo": "1.1 - Consignado Geral (Público + Privado unificados)",
+    "prazo_min": 36, "prazo_max": 120, "tiquete_min": 100.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0147, "tx_max": 0.0155, "Tabela 1": 0.0070, "Tabela 2": 0.0090},
+      {"tx_min": 0.0156, "tx_max": 0.0165, "Tabela 1": 0.0230, "Tabela 2": 0.0270},
+      {"tx_min": 0.0166, "tx_max": 0.0175, "Tabela 1": 0.0520, "Tabela 2": 0.0600},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "Tabela 1": 0.0680, "Tabela 2": 0.0780},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "Tabela 1": 0.0700, "Tabela 2": 0.0780},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "Tabela 1": 0.0880, "Tabela 2": 0.0990},
+      {"tx_min": 0.0206, "tx_max": 0.0215, "Tabela 1": 0.1040, "Tabela 2": 0.1170},
+      {"tx_min": 0.0216, "tx_max": 0.0225, "Tabela 1": 0.1240, "Tabela 2": 0.1440},
+      {"tx_min": 0.0226, "tx_max": 999,    "Tabela 1": 0.1320, "Tabela 2": 0.1530}
+    ]
+  },
+  "INSS": {
+    "_titulo": "1.2 - Consignado INSS (matriz taxa × prazo)",
+    "convenio": "1640", "tiquete_min": 100.00, "custo_processamento": 1.80,
+    "celulas_taxa_prazo": [
+      {"tx_min": 0.0165, "tx_max": 0.0169, "prazo_min": 36, "prazo_max": 48, "Tabela 1": 0.0375, "Tabela 2": 0.0450},
+      {"tx_min": 0.0165, "tx_max": 0.0169, "prazo_min": 49, "prazo_max": 83, "Tabela 1": 0.0675, "Tabela 2": 0.0810},
+      {"tx_min": 0.0165, "tx_max": 0.0169, "prazo_min": 84, "prazo_max": 84, "Tabela 1": 0.1350, "Tabela 2": 0.1620},
+      {"tx_min": 0.0170, "tx_max": 0.0180, "prazo_min": 36, "prazo_max": 48, "Tabela 1": 0.0450, "Tabela 2": 0.0540},
+      {"tx_min": 0.0170, "tx_max": 0.0180, "prazo_min": 49, "prazo_max": 83, "Tabela 1": 0.0750, "Tabela 2": 0.0900},
+      {"tx_min": 0.0170, "tx_max": 0.0180, "prazo_min": 84, "prazo_max": 84, "Tabela 1": 0.1500, "Tabela 2": 0.1800},
+      {"tx_min": 0.0181, "tx_max": 0.0190, "prazo_min": 36, "prazo_max": 48, "Tabela 1": 0.0525, "Tabela 2": 0.0630},
+      {"tx_min": 0.0181, "tx_max": 0.0190, "prazo_min": 49, "prazo_max": 83, "Tabela 1": 0.0825, "Tabela 2": 0.0990},
+      {"tx_min": 0.0181, "tx_max": 0.0190, "prazo_min": 84, "prazo_max": 84, "Tabela 1": 0.1650, "Tabela 2": 0.1980},
+      {"tx_min": 0.0191, "tx_max": 999,    "prazo_min": 36, "prazo_max": 48, "Tabela 1": 0.0600, "Tabela 2": 0.0720},
+      {"tx_min": 0.0191, "tx_max": 999,    "prazo_min": 49, "prazo_max": 83, "Tabela 1": 0.0900, "Tabela 2": 0.1080},
+      {"tx_min": 0.0191, "tx_max": 999,    "prazo_min": 84, "prazo_max": 84, "Tabela 1": 0.1800, "Tabela 2": 0.2160}
+    ]
+  },
+  "SIAPE": {
+    "_titulo": "1.3 - SIAPE/MPDG",
+    "convenio": "1078", "prazo_min": 36, "prazo_max": 96, "tiquete_min": 100.00, "custo_processamento": 3.08,
+    "celulas_taxa": [
+      {"tx_min": 0.0147, "tx_max": 0.0155, "Tabela 1": 0.0110, "Tabela 2": 0.0130},
+      {"tx_min": 0.0156, "tx_max": 0.0165, "Tabela 1": 0.0370, "Tabela 2": 0.0420},
+      {"tx_min": 0.0166, "tx_max": 0.0175, "Tabela 1": 0.0700, "Tabela 2": 0.0810},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "Tabela 1": 0.0780, "Tabela 2": 0.0900},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "Tabela 1": 0.0970, "Tabela 2": 0.1120},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "Tabela 1": 0.1090, "Tabela 2": 0.1260}
+    ]
+  },
+  "CONSIG_SP": {
+    "_titulo": "1.4 - Consignado SP (em jan/2024 era 'São Paulo' apenas, MG separado)",
+    "prazo_min": 36, "prazo_max": 120, "tiquete_min": 100.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0147, "tx_max": 0.0155, "Tabela 1": 0.0330, "Tabela 2": 0.0380},
+      {"tx_min": 0.0156, "tx_max": 0.0165, "Tabela 1": 0.0410, "Tabela 2": 0.0470},
+      {"tx_min": 0.0166, "tx_max": 0.0175, "Tabela 1": 0.0490, "Tabela 2": 0.0560},
+      {"tx_min": 0.0176, "tx_max": 0.0185, "Tabela 1": 0.0640, "Tabela 2": 0.0740},
+      {"tx_min": 0.0186, "tx_max": 0.0195, "Tabela 1": 0.0660, "Tabela 2": 0.0760},
+      {"tx_min": 0.0196, "tx_max": 0.0205, "Tabela 1": 0.0930, "Tabela 2": 0.1080},
+      {"tx_min": 0.0206, "tx_max": 0.0215, "Tabela 1": 0.1090, "Tabela 2": 0.1260},
+      {"tx_min": 0.0216, "tx_max": 0.0225, "Tabela 1": 0.1240, "Tabela 2": 0.1440},
+      {"tx_min": 0.0226, "tx_max": 999,    "Tabela 1": 0.1320, "Tabela 2": 0.1530}
+    ]
+  },
+  "PORTAB_INSS": {
+    "_titulo": "2.1 - Portabilidade Convênio INSS",
+    "_observacao": "Sem variação por categoria",
+    "prazo_min": 36, "prazo_max": 84, "tiquete_min": 1000.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0150, "tx_max": 0.0173, "pct_geral": 0.0090},
+      {"tx_min": 0.0174, "tx_max": 999,    "pct_geral": 0.0270}
+    ]
+  },
+  "PORTAB_GERAL": {
+    "_titulo": "2.2 - Portabilidade Demais convênios",
+    "_observacao": "Sem variação por categoria",
+    "prazo_min": 36, "prazo_max": 120, "tiquete_min": 2500.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0150, "tx_max": 0.0173, "pct_geral": 0.0090},
+      {"tx_min": 0.0174, "tx_max": 999,    "pct_geral": 0.0270}
+    ]
+  },
+  "NAO_CONSIGNADO": {
+    "_titulo": "3.1 - Não Consignado (Automático/Salário/Benefício/13º)",
+    "prazo_min": 13, "prazo_max": 96, "tiquete_min": 100.00,
+    "celulas_taxa": [
+      {"tx_min": 0.0240, "tx_max": 0.0374, "Tabela 1": 0.0160, "Tabela 2": 0.0180},
+      {"tx_min": 0.0375, "tx_max": 0.0460, "Tabela 1": 0.0480, "Tabela 2": 0.0540},
+      {"tx_min": 0.0461, "tx_max": 0.0550, "Tabela 1": 0.0720, "Tabela 2": 0.0805},
+      {"tx_min": 0.0551, "tx_max": 999,    "Tabela 1": 0.0960, "Tabela 2": 0.1075}
+    ]
+  },
+  "ADIANTAMENTO_13": {
+    "_titulo": "3.1 (linha 13º Salário)",
+    "tx_juros_min": 0.0279, "prazo_min": 5, "tiquete_min": 100.00,
+    "celulas": [
+      {"prazo_min": 5, "prazo_max": 999, "Tabela 1": 0.0160, "Tabela 2": 0.0180}
+    ]
+  },
+  "FGTS": {
+    "_titulo": "3.2 - FGTS",
+    "_observacao": "Sem variação por categoria",
+    "tx_juros_fixa": 0.0189, "prazo_min": 2, "prazo_max": 60,
+    "tiquete_min": 1000.00, "pct_geral": 0.0400, "pct_geral_tab2": 0.0450,
+    "_obs": "FGTS tem Tab1 4,00% / Tab2 4,50%"
+  }
+}
