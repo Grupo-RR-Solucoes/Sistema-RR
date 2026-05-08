@@ -9,3 +9,11 @@ runtime/*.stdout.log
 *.tsbuildinfo
 .DS_Store
 Thumbs.db
+
+# Datasets de auditoria e arquivos de produção (não versionar — são gerados ou
+# de propriedade da Promotiva). regras_promotiva/ FICA versionado por ser
+# regra de negócio canônica.
+/auditorias/
+/producao/
+/stress_test_workspace_local/
+/.claude/
