@@ -282,3 +282,181 @@ export function resumoCobertura(): {
     ultimoMes: meses[meses.length - 1],
   };
 }
+
+// ===========================================================================
+// API: getRegraEnquadramento — Fase 4.2 (Camada 1)
+// ===========================================================================
+//
+// Encapsula em uma única estrutura tudo que enquadramento.ts precisa para
+// decidir Cat_Devida, sem que esse caller precise duplicar lógica de regime.
+// Vide brief Fase 4.2 — "regrasLoader expõe getRegraEnquadramento, e
+// enquadramento.ts apenas APLICA o objeto".
+//
+// Esta função é aditiva sobre o regrasLoader 4.1 — não muda APIs existentes.
+// As regras encodadas aqui são *spec Promotiva* (não derivadas dos JSONs por
+// `_meta.limites_categoria`, que tem schemas inconsistentes entre regimes).
+// Fonte: TRP15 texto literal (META 4), errata OPP099 (06/09/2023), TRP24+
+// (VOLUME 6 perfis), TRP32+ (Rubi/Safira/Diamante), TRP35 (Faixa 1-5).
+
+/** Tier por meta atingida em regimes META. */
+export interface MetaTier {
+  /** Categoria no formato canônico v9 (uppercase): "TABELA 1", "TABELA 2",
+   * "TABELA INTERMEDIÁRIA 1", "TABELA INTERMEDIÁRIA 2". */
+  categoria: string;
+  /** Limite inferior inclusivo em decimal (ex.: 0.95). null = -infinito. */
+  metaMin: number | null;
+  /** Limite superior exclusivo em decimal (ex.: 1.0). null = +infinito. */
+  metaMax: number | null;
+}
+
+/** Tier por produção líquida em regimes VOLUME. */
+export interface VolumeTier {
+  /** Categoria no formato canônico (uppercase): "RUBI", "SAFIRA", "DIAMANTE",
+   * "FAIXA 1"-"FAIXA 5", "VAREJO I", "VAREJO II", "MIDDLE", "UPPER MIDDLE",
+   * "CORPORATE", "LARGE CORPORATE". */
+  categoria: string;
+  /** Limite inferior inclusivo em R$. */
+  prodMin: number;
+  /** Limite superior exclusivo em R$. null = +infinito. */
+  prodMax: number | null;
+}
+
+/** Estrutura completa de regra de enquadramento mensal. */
+export interface RegraEnquadramento {
+  mes: string;                      // ISO YYYY-MM
+  regime: Regime;
+  jsonRegra: string;
+  regraInferida: boolean;
+  /** "META" → usa metaTiers + opp099. "VOLUME" → cat_devida = null (auditoria
+   * marca INDETERMINADO; Promotiva aplica perfis sem critério publicado). */
+  type: "META" | "VOLUME";
+  metaTiers: MetaTier[] | null;
+  /** Listado para diagnóstico — não usado pela Camada 1 (que retorna
+   * INDETERMINADO em VOLUME). Camada 2 pode usar se necessário. */
+  volumeTiers: VolumeTier[] | null;
+  /** Configuração da regra promocional OPP099. null = não vigente nesse mês. */
+  opp099: {
+    metaMinTrigger: number;     // 0.90 inclusivo
+    metaMaxTrigger: number;     // 1.00 exclusivo
+    pctPenTrigger: number;      // 0.30 mínimo
+    upgradeToCategoria: string; // "TABELA 2"
+    fonte: string;              // "OPP099 (errata 06/09/2023)"
+  } | null;
+}
+
+// Tabela canônica de tiers META — não muda entre meses do mesmo regime.
+const TIERS_META_2_NIVEIS: MetaTier[] = [
+  { categoria: "TABELA 1", metaMin: null, metaMax: 1.0 },
+  { categoria: "TABELA 2", metaMin: 1.0, metaMax: null },
+];
+
+// META 4 NIVEIS — TRP15 texto literal (Jan-Jun/2025).
+const TIERS_META_4_NIVEIS: MetaTier[] = [
+  { categoria: "TABELA 1", metaMin: null, metaMax: 0.95 },
+  { categoria: "TABELA INTERMEDIÁRIA 1", metaMin: 0.95, metaMax: 0.97 },
+  { categoria: "TABELA INTERMEDIÁRIA 2", metaMin: 0.97, metaMax: 1.0 },
+  { categoria: "TABELA 2", metaMin: 1.0, metaMax: null },
+];
+
+// VOLUME 6 PERFIS — TRP24/PR2025/103 (Jul-Dez/2025).
+const TIERS_VOLUME_6: VolumeTier[] = [
+  { categoria: "VAREJO I", prodMin: 0, prodMax: 1_000_000 },
+  { categoria: "VAREJO II", prodMin: 1_000_000, prodMax: 3_000_000 },
+  { categoria: "MIDDLE", prodMin: 3_000_000, prodMax: 5_000_000 },
+  { categoria: "UPPER MIDDLE", prodMin: 5_000_000, prodMax: 7_000_000 },
+  { categoria: "CORPORATE", prodMin: 7_000_000, prodMax: 10_000_000 },
+  { categoria: "LARGE CORPORATE", prodMin: 10_000_000, prodMax: null },
+];
+
+// VOLUME 3 PERFIS — TRP32 (Jan-Mar/2026). Rubi/Safira/Diamante.
+const TIERS_VOLUME_3: VolumeTier[] = [
+  { categoria: "RUBI", prodMin: 1_000_000, prodMax: 3_000_000 },
+  { categoria: "SAFIRA", prodMin: 3_000_000, prodMax: 7_000_000 },
+  { categoria: "DIAMANTE", prodMin: 7_000_000, prodMax: null },
+];
+
+// VOLUME 5 FAIXAS — TRP35 (Abr/2026+). Faixa 1-5 conforme P1.4.
+const TIERS_VOLUME_5: VolumeTier[] = [
+  { categoria: "FAIXA 1", prodMin: 0, prodMax: 1_000_000 },
+  { categoria: "FAIXA 2", prodMin: 1_000_000, prodMax: 3_000_000 },
+  { categoria: "FAIXA 3", prodMin: 3_000_000, prodMax: 7_000_000 },
+  { categoria: "FAIXA 4", prodMin: 7_000_000, prodMax: 20_000_000 },
+  { categoria: "FAIXA 5", prodMin: 20_000_000, prodMax: null },
+];
+
+/**
+ * OPP099 — errata Promotiva 06/09/2023 (PR2023/099). Vigente Set/2023 a
+ * Jun/2025 nos regimes META_2_NIVEIS e META_4_NIVEIS. Texto literal:
+ *   "Caso o desempenho fique entre 90% e 99,99% da meta de produção do
+ *    crédito em conjunto com índice de penetração financeira mínima de 30%
+ *    no PRESTAMISTA, gozará do benefício da tabela 2".
+ *
+ * Validação reversa em validacao_reversa_p2_p3.md confirmou aplicação em
+ * META_2 (1.136 contratos promovidos em Jul+Set/2024) — em META_4 a regra
+ * fica vigente por princípio mas dados Jan-Jun/2025 não exercitaram o
+ * cenário.
+ */
+function buildOpp099(mes: string, regime: Regime): RegraEnquadramento["opp099"] {
+  const vigente = mes >= "2023-09" && mes <= "2025-06";
+  const aplicavel = regime === "META_2_NIVEIS" || regime === "META_4_NIVEIS";
+  if (!vigente || !aplicavel) return null;
+  return {
+    metaMinTrigger: 0.9,
+    metaMaxTrigger: 1.0,
+    pctPenTrigger: 0.3,
+    upgradeToCategoria: "TABELA 2",
+    fonte: "OPP099 (errata 06/09/2023)",
+  };
+}
+
+/**
+ * Retorna a regra de enquadramento (Cat_Devida) para o mês, no formato que
+ * a Camada 1 (lib/enquadramento.ts) consome diretamente.
+ *
+ * Para meses sem cobertura no MAPA_MES_REGRA, ainda retorna o regime via
+ * `getRegime` e os tiers correspondentes (com regraInferida=true,
+ * jsonRegra="(sem JSON nativo)"). Isso permite tratar Abr/2026+ mesmo
+ * quando o JSON está em rascunho.
+ */
+export function getRegraEnquadramento(mes: string): RegraEnquadramento {
+  const r = getRegra(mes);
+  const regime = getRegime(mes);
+  const jsonRegra = r ? r.jsonRegra : "(sem JSON nativo)";
+  const regraInferida = r ? r.regraInferida : true;
+  let metaTiers: MetaTier[] | null = null;
+  let volumeTiers: VolumeTier[] | null = null;
+  let type: "META" | "VOLUME";
+  switch (regime) {
+    case "META_2_NIVEIS_MATRIZ_TAXA_PRAZO":
+    case "META_2_NIVEIS":
+      type = "META";
+      metaTiers = TIERS_META_2_NIVEIS;
+      break;
+    case "META_4_NIVEIS":
+      type = "META";
+      metaTiers = TIERS_META_4_NIVEIS;
+      break;
+    case "VOLUME_6_PERFIS":
+      type = "VOLUME";
+      volumeTiers = TIERS_VOLUME_6;
+      break;
+    case "VOLUME_3_PERFIS":
+      type = "VOLUME";
+      volumeTiers = TIERS_VOLUME_3;
+      break;
+    case "VOLUME_5_FAIXAS":
+      type = "VOLUME";
+      volumeTiers = TIERS_VOLUME_5;
+      break;
+  }
+  return {
+    mes,
+    regime,
+    jsonRegra,
+    regraInferida,
+    type,
+    metaTiers,
+    volumeTiers,
+    opp099: buildOpp099(mes, regime),
+  };
+}
