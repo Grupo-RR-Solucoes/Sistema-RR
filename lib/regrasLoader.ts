@@ -118,7 +118,23 @@ export function lookupPctInRegra(
   // Bug #6: ADIANTAMENTO_13 (e demais categorias com tx_juros_min) — se taxa
   // declarada no contrato é menor que tx_juros_min do JSON, contrato está
   // FORA_DA_TABELA. v8 atual retorna pct positivo erroneamente.
-  if (typeof cat.tx_juros_min === "number" && taxa < cat.tx_juros_min - EPS) {
+  //
+  // TODO Fase 4.4: revisar tx_juros_min para ADIANTAMENTO_13.
+  //   V8 e V9 humanas IGNORAM este check — motor TS espelha esta convenção
+  //   nesta fase (skip APENAS para ADIANTAMENTO_13). 6 contratos no batch
+  //   full são tratados como SUBPAGAMENTO por v9 mesmo com taxa abaixo do
+  //   tx_juros_min declarado (~R$ 227 total). 1 contrato outlier (204131022,
+  //   Fev/2026) v9 marcou FORA_DA_TABELA — v9 NÃO É CONSISTENTE INTERNAMENTE.
+  //   Identificar critério do outlier e investigar PDFs originais TRP07/08
+  //   antes de remover este skip. Risco se removido sem revisão: motor
+  //   diverge do email enviado 07/05/2026 que cobrou esses 6 contratos.
+  //   Ver gap_analysis.md "DÍVIDA TÉCNICA — Fase 4.4 — PADRAO_B_ADIANTAMENTO_13_TX_JUROS_MIN".
+  const skipTxJurosMin = categoriaProduto === "ADIANTAMENTO_13";
+  if (
+    !skipTxJurosMin &&
+    typeof cat.tx_juros_min === "number" &&
+    taxa < cat.tx_juros_min - EPS
+  ) {
     return {
       pct: null,
       celula: `${categoriaProduto}: taxa ${taxa} < tx_juros_min ${cat.tx_juros_min} (FORA_DA_TABELA)`,
@@ -128,7 +144,23 @@ export function lookupPctInRegra(
   }
 
   // Categoria tem prazo_min/prazo_max global? Validar antes de iterar células.
-  if (typeof cat.prazo_min === "number" && prazo < cat.prazo_min) {
+  //
+  // TODO Fase 4.4: revisar prazo_min para FGTS.
+  //   V9 humana IGNORA prazo_min=36 declarado em TRP15+ FGTS, usando
+  //   pct_geral=0.042 mesmo para prazo<36. Mudança Jan/2025 (TRP15)
+  //   prazo_min=2→36 é DELIBERADA conforme histórico longitudinal dos 41
+  //   JSONs. Suporte documental: confirmar nos PDFs TRP15 originais se
+  //   prazo_min é regra dura ou orientação. Motor TS espelha v9 nesta fase
+  //   (skip APENAS para FGTS) por consistência com email enviado 07/05/2026.
+  //   NÃO ESTENDER esta regra a outras categorias (INSS, NAO_CONSIGNADO, etc.)
+  //   sem revisão Fase 4.4. Impacto: ~R$ 267 em 3 contratos.
+  //   Ver gap_analysis.md "DÍVIDA TÉCNICA — Fase 4.4 — PADRAO_C_FGTS_PRAZO_MIN".
+  const skipPrazoMin = categoriaProduto === "FGTS";
+  if (
+    !skipPrazoMin &&
+    typeof cat.prazo_min === "number" &&
+    prazo < cat.prazo_min
+  ) {
     return {
       pct: null,
       celula: `${categoriaProduto}: prazo ${prazo} < prazo_min ${cat.prazo_min} (FORA_DA_TABELA)`,
@@ -458,5 +490,355 @@ export function getRegraEnquadramento(mes: string): RegraEnquadramento {
     metaTiers,
     volumeTiers,
     opp099: buildOpp099(mes, regime),
+  };
+}
+
+// ===========================================================================
+// API: getMatrizTRPParaContrato — Fase 4.3 (Camada 2 À Vista)
+// ===========================================================================
+//
+// Encapsula em uma única função tudo que auditoriaAvista.ts precisa para
+// resolver o pct devido de um contrato sob a Cat_Devida da Camada 1.
+//
+// Estratégia (ordem):
+//   1. catDevidaCanonical → tabLabel do JSON (TABELA 2 → "Tabela 2", FAIXA 3 → "Faixa 3", etc).
+//   2. produto+tipo+convenio → lista ordenada de categorias candidatas (G24).
+//   3. Para cada candidato, lookupPctInRegra(taxa, prazo, tabLabel) com EPS=1e-7.
+//   4. Para PORTAB sem variação por categoria, fallback para "pct_geral".
+//   5. Retorna primeiro pct não-null + trace completo.
+//
+// NÃO aplica teto BACEN aqui — o caller (auditoriaAvista.ts) faz min(pct, teto).
+// `pct` retornado é "pct cheio" da matriz.
+
+/** Mapeia categoria canônica (UPPERCASE v9) → tabLabel usado nas chaves dos JSONs. */
+export function categoriaCanonicalToJsonKey(catCanonical: string | null): string | null {
+  if (!catCanonical) return null;
+  const u = catCanonical.normalize("NFC").trim().toUpperCase().replace(/\s+/g, " ");
+  switch (u) {
+    case "TABELA 1": return "Tabela 1";
+    case "TABELA 2": return "Tabela 2";
+    case "TABELA INTERMEDIÁRIA 1":
+    case "TABELA INTERMEDIARIA 1":
+    case "INTER 1":
+    case "INTERMEDIÁRIA 1":
+    case "INTERMEDIARIA 1":
+      return "Tabela Intermediaria 1";
+    case "TABELA INTERMEDIÁRIA 2":
+    case "TABELA INTERMEDIARIA 2":
+    case "INTER 2":
+    case "INTERMEDIÁRIA 2":
+    case "INTERMEDIARIA 2":
+      return "Tabela Intermediaria 2";
+    case "RUBI": return "Rubi";
+    case "SAFIRA": return "Safira";
+    case "DIAMANTE": return "Diamante";
+    case "VAREJO I": return "Varejo I";
+    case "VAREJO II": return "Varejo II";
+    case "MIDDLE": return "Middle";
+    case "UPPER MIDDLE": return "Upper Middle";
+    case "CORPORATE": return "Corporate";
+    case "LARGE CORPORATE": return "Large Corporate";
+    case "FAIXA 1": return "Faixa 1";
+    case "FAIXA 2": return "Faixa 2";
+    case "FAIXA 3": return "Faixa 3";
+    case "FAIXA 4": return "Faixa 4";
+    case "FAIXA 5": return "Faixa 5";
+    default: return null;
+  }
+}
+
+/**
+ * Mapeia (mes, produto, tipo, convenio) → lista ordenada de candidatos a
+ * categoria do JSON. Implementa G24 (validação extra 2 da Fase 4.1):
+ * PORTAB checa antes de INSS, INSS_RENOV antes de INSS, NÃO CONSIGNADO antes
+ * de qualquer CONSIG.
+ *
+ * Lista de produtos observada em audit_v9_avista (23.879 contratos):
+ *   CONSIGNADO INSS (8638), NÃO CONSIGNADO (5933), CRÉDITO ADIANTAMENTO (3033),
+ *   CONSIGNADO (2399), CONSIGNADO PÚBLICO/PUBLICO (1315+1201=2516),
+ *   PORTABILIDADE INSS (479), CONSIGNADO PRIVADO (422), CONSIGNADO MPDG (420),
+ *   CDC FGTS (17), PORTABILIDADE (9), CONSIGNADO SP (8), CONSIGNADO EXÉRCITO (4),
+ *   CONSIGNADO SPMG (1).
+ *
+ * Variações temporais (relevantes para escolher categoria do JSON):
+ *   - INSS_NOVO/INSS_RENOV existem só a partir de 2025-04 (TRP20).
+ *   - PORTAB_PUBLICO/PORTAB_PRIVADO a partir de 2025-07 (TRP24).
+ *   - CONSIG_PUBLICO/CONSIG_PRIVADO a partir de 2024-08 (TRP10).
+ *   - CONSIG_SP_MG (merge SP+MG) a partir de 2025-01 (TRP15).
+ */
+export function categoriasCandidatasFor(
+  mes: string,
+  produto: string | null,
+  tipo: string | null,
+  convenio: number | string | null
+): string[] {
+  const p = String(produto ?? "").toUpperCase();
+  const t = String(tipo ?? "").toUpperCase();
+  const cv = String(convenio ?? "");
+
+  // FGTS (raro — 17 contratos)
+  if (p.includes("FGTS")) return ["FGTS"];
+
+  // ADIANTAMENTO 13º — produto típico "CRÉDITO ADIANTAMENTO" (3033 contratos)
+  if (p.includes("ADIANTAMENTO") || p.includes("13º") || p.includes("13°") || p === "13") {
+    return ["ADIANTAMENTO_13"];
+  }
+
+  // PORTABILIDADE — checa ANTES de INSS porque produto pode ser "PORTABILIDADE INSS"
+  if (p.includes("PORTAB")) {
+    if (mes >= "2025-07") {
+      // VOLUME 6 / 3 / 5 → PORTAB_PUBLICO + PORTAB_PRIVADO
+      return ["PORTAB_PUBLICO", "PORTAB_PRIVADO", "PORTAB_GERAL", "PORTAB_INSS"];
+    }
+    if (p.includes("INSS")) return ["PORTAB_INSS", "PORTAB_GERAL"];
+    return ["PORTAB_GERAL", "PORTAB_INSS"];
+  }
+
+  // NÃO CONSIGNADO — checa ANTES de INSS para evitar Bug roteamento por convenio
+  // (G24 caso 2): 455 contratos em audit_v9_avista têm produto='NÃO CONSIGNADO'
+  // com convenio=1640 (INSS). Esses são contratos não-consignados oferecidos
+  // a aposentados INSS — devem usar matriz NAO_CONSIGNADO, não INSS. Se a
+  // checagem `cv === "1640"` rodar antes do NÃO CONSIGNADO, esses contratos
+  // caem em INSS Tab2 prazo 36-48 (=4,50%) em vez de NAO_CONSIGNADO Tab2
+  // (=8,05% pré-teto, =6,00% após teto). Detectado em CHECKPOINT B.
+  if (
+    p.includes("NÃO CONSIGNADO") || p.includes("NAO CONSIGNADO") ||
+    p.includes("SALÁRIO") || p.includes("SALARIO") ||
+    p.includes("BENEFÍCIO") || p.includes("BENEFICIO")
+  ) {
+    return ["NAO_CONSIGNADO"];
+  }
+
+  // INSS — produto contém "INSS" OR (produto genérico AND convênio 1640).
+  // O fallback por convênio só dispara para produtos genéricos ("CONSIGNADO"),
+  // protegendo contra o bug acima. Há uns 455 contratos NÃO CONSIGNADO conv=1640
+  // — esses já caíram no branch acima.
+  if (p.includes("INSS") || cv === "1640") {
+    if (mes >= "2025-04") {
+      // TRP20+ tem split INSS_NOVO / INSS_RENOV
+      if (t.includes("RENOV")) return ["INSS_RENOV", "INSS_NOVO", "INSS"];
+      return ["INSS_NOVO", "INSS_RENOV", "INSS"];
+    }
+    return ["INSS"];
+  }
+
+  // SIAPE/MPDG — convênio 1078 ou produto contém MPDG/SIAPE
+  if (p.includes("MPDG") || p.includes("SIAPE") || cv === "1078") {
+    return ["SIAPE", "CONSIG_GERAL"];
+  }
+
+  // EXÉRCITO — convênio 14661 ou produto contém EXÉRCITO
+  if (p.includes("EXÉRCITO") || p.includes("EXERCITO") || cv === "14661") {
+    return ["EXERCITO", "CONSIG_GERAL"];
+  }
+
+  // CONSIG SP_MG (merge a partir de 2025-01)
+  if (p.includes("SPMG") || (p.includes("SP") && p.includes("MG"))) {
+    if (mes >= "2025-01") return ["CONSIG_SP_MG", "CONSIG_GERAL"];
+    return ["CONSIG_SP", "CONSIG_MG", "CONSIG_GERAL"];
+  }
+  if (p.includes("CONSIGNADO MG") || p === "MG") {
+    if (mes >= "2025-01") return ["CONSIG_SP_MG", "CONSIG_GERAL"];
+    return ["CONSIG_MG", "CONSIG_GERAL"];
+  }
+  if (p.includes("CONSIGNADO SP") || p === "SP") {
+    if (mes >= "2025-01") return ["CONSIG_SP_MG", "CONSIG_GERAL"];
+    if (mes >= "2024-01") return ["CONSIG_SP", "CONSIG_GERAL"];
+    return ["CONSIG_GERAL"];
+  }
+  if (p.includes("PÚBLICO") || p.includes("PUBLICO")) {
+    return ["CONSIG_PUBLICO", "CONSIG_GERAL"];
+  }
+  if (p.includes("PRIVADO")) {
+    return ["CONSIG_PRIVADO", "CONSIG_GERAL"];
+  }
+  if (p.includes("CONSIGNADO")) {
+    if (mes >= "2024-08") return ["CONSIG_PUBLICO", "CONSIG_PRIVADO", "CONSIG_GERAL"];
+    return ["CONSIG_GERAL"];
+  }
+  return [];
+}
+
+/**
+ * Teto BACEN à vista por categoria canônica.
+ *
+ * Spec v9 §8 e gap_analysis G11: regimes VOLUME (Jul/2025+) usam 6,00%
+ * universal mesmo quando o JSON declara teto inferior (ex.: TRP24 declara
+ * 5,4% para Varejo I, 5,6% Varejo II). A política de cobrança real é 6,00%.
+ *
+ * META 2 (Tabela 1/2): teto 5,40% / 6,00%.
+ * META 4 (4 níveis):  Tabela 1=5,40%, Inter1=5,60%, Inter2=5,80%, Tabela 2=6,00%.
+ * VOLUME (todos):     6,00% universal.
+ */
+export function tetoBacenForCategoria(catCanonical: string | null): number | null {
+  if (!catCanonical) return null;
+  const u = catCanonical.normalize("NFC").trim().toUpperCase().replace(/\s+/g, " ");
+  switch (u) {
+    case "TABELA 1": return 0.054;
+    case "TABELA 2": return 0.06;
+    case "TABELA INTERMEDIÁRIA 1":
+    case "TABELA INTERMEDIARIA 1":
+      return 0.056;
+    case "TABELA INTERMEDIÁRIA 2":
+    case "TABELA INTERMEDIARIA 2":
+      return 0.058;
+    case "RUBI":
+    case "SAFIRA":
+    case "DIAMANTE":
+    case "VAREJO I":
+    case "VAREJO II":
+    case "MIDDLE":
+    case "UPPER MIDDLE":
+    case "CORPORATE":
+    case "LARGE CORPORATE":
+    case "FAIXA 1":
+    case "FAIXA 2":
+    case "FAIXA 3":
+    case "FAIXA 4":
+    case "FAIXA 5":
+      return 0.06;
+    default: return null;
+  }
+}
+
+/** Input mínimo para o lookup de matriz (subset de audit_v9_avista). */
+export interface ContratoAvistaInput {
+  /** ISO YYYY-MM. */
+  mes: string;
+  /** "CONSIGNADO INSS", "PORTABILIDADE INSS", etc. */
+  produto: string | null;
+  /** "NOVO" | "RENOVACAO". */
+  tipo: string | null;
+  /** Código do convênio (ex.: 1640 = INSS, 1078 = MPDG). */
+  convenio: number | string | null;
+  /** Taxa de juros do contrato. Aceita unidade percentual (1.65) ou decimal
+   * (0.0165) — função detecta e normaliza para decimal antes do lookup. */
+  txJuros: number;
+  /** Prazo em meses. */
+  prazo: number;
+}
+
+/** Resultado do lookup de matriz para um contrato. */
+export interface MatrizTRPLookup {
+  /** Pct cheio da matriz (sem teto BACEN aplicado). null = lookup falhou. */
+  pct: number | null;
+  /** Categoria de produto JSON em que o lookup achou (ex.: "INSS"). */
+  categoriaProduto: string | null;
+  /** Descrição da célula que matchou (G22 trace). */
+  celula: string | null;
+  /** Nome do JSON usado. */
+  jsonRegra: string | null;
+  /** True se mês usou fallback (Jun/2023, Set-Dez/2023, Mai/2024). */
+  regraInferida: boolean;
+  /** tabLabel JSON usado no lookup (ex.: "Tabela 2", "Faixa 3"). */
+  tabLabelUsado: string | null;
+  /** Categoria canônica usada na decisão (input do caller). */
+  catCanonicalUsada: string | null;
+  /** Lista de motivos de falha por candidato tentado (debug). */
+  motivos: string[];
+}
+
+/**
+ * Resolve o pct da matriz para um contrato, dado o regime do mês e a
+ * categoria canônica devida (ex.: "TABELA 2", "FAIXA 3").
+ *
+ * Lança nada — sempre retorna estrutura com pct possivelmente null. Caller
+ * (lib/auditoriaAvista.ts) classifica em SEM_LOOKUP / FORA_DA_TABELA quando
+ * pct=null.
+ *
+ * @param contrato       subset de audit_v9_avista (mes/produto/tipo/convenio/taxa/prazo)
+ * @param regime         do mês (vide getRegime — não usado para decisão, só para trace)
+ * @param catCanonical   categoria devida em formato canônico v9 (UPPERCASE)
+ *
+ * Estratégia para PORTAB com pct_geral: se tabLabel não existe na célula mas
+ * pct_geral existe, usa pct_geral (compatível com como check_lookup_vs_v9.cjs
+ * fazia).
+ */
+export function getMatrizTRPParaContrato(
+  contrato: ContratoAvistaInput,
+  regime: Regime,
+  catCanonical: string | null
+): MatrizTRPLookup {
+  const motivos: string[] = [];
+  const r = getRegra(contrato.mes);
+  if (!r) {
+    motivos.push(`mes ${contrato.mes} sem cobertura em MAPA_MES_REGRA`);
+    return {
+      pct: null, categoriaProduto: null, celula: null,
+      jsonRegra: null, regraInferida: false, tabLabelUsado: null,
+      catCanonicalUsada: catCanonical, motivos,
+    };
+  }
+  const tabLabel = categoriaCanonicalToJsonKey(catCanonical);
+  if (!tabLabel) {
+    motivos.push(`catCanonical '${catCanonical}' não mapeada para tabLabel JSON`);
+    return {
+      pct: null, categoriaProduto: null, celula: null,
+      jsonRegra: r.jsonRegra, regraInferida: r.regraInferida, tabLabelUsado: null,
+      catCanonicalUsada: catCanonical, motivos,
+    };
+  }
+  const candidatos = categoriasCandidatasFor(contrato.mes, contrato.produto, contrato.tipo, contrato.convenio);
+  if (candidatos.length === 0) {
+    motivos.push(`produto '${contrato.produto}' tipo '${contrato.tipo}' não mapeia em nenhuma categoria JSON`);
+    return {
+      pct: null, categoriaProduto: null, celula: null,
+      jsonRegra: r.jsonRegra, regraInferida: r.regraInferida, tabLabelUsado: tabLabel,
+      catCanonicalUsada: catCanonical, motivos,
+    };
+  }
+
+  // Normalizar taxa: o XLSX pode trazer percentual (1.65) ou decimal (0.0165).
+  // Heurística: valor > 1 é percentual; senão decimal. Auditoria valida 100%
+  // dos contratos usando essa convenção em check_lookup_vs_v9.cjs.
+  const taxaDec = !Number.isFinite(contrato.txJuros)
+    ? NaN
+    : contrato.txJuros > 1 ? contrato.txJuros / 100 : contrato.txJuros;
+
+  for (const cand of candidatos) {
+    const out = lookupPctInRegra(
+      r.regra, cand, taxaDec, contrato.prazo, tabLabel, r.jsonRegra, r.regraInferida
+    );
+    if (out.pct != null) {
+      return {
+        pct: out.pct,
+        categoriaProduto: cand,
+        celula: out.celula,
+        jsonRegra: out.jsonRegra,
+        regraInferida: out.regraInferida,
+        tabLabelUsado: tabLabel,
+        catCanonicalUsada: catCanonical,
+        motivos,
+      };
+    }
+    motivos.push(`${cand}: ${out.celula ?? "sem match"}`);
+    // PORTAB: alguns JSONs trazem "pct_geral" em vez de "Tabela X" (sem
+    // variação por categoria — pct é o mesmo independente de Cat_Devida).
+    // Tenta pct_geral como fallback antes de descartar este candidato.
+    if (tabLabel !== "pct_geral") {
+      const g = lookupPctInRegra(
+        r.regra, cand, taxaDec, contrato.prazo, "pct_geral", r.jsonRegra, r.regraInferida
+      );
+      if (g.pct != null) {
+        return {
+          pct: g.pct,
+          categoriaProduto: cand,
+          celula: g.celula,
+          jsonRegra: g.jsonRegra,
+          regraInferida: g.regraInferida,
+          tabLabelUsado: "pct_geral",
+          catCanonicalUsada: catCanonical,
+          motivos,
+        };
+      }
+    }
+  }
+
+  // Marca regime explicitamente nos motivos (debug)
+  motivos.push(`regime=${regime} tabLabel=${tabLabel} candidatos=[${candidatos.join(",")}]`);
+  return {
+    pct: null, categoriaProduto: null, celula: null,
+    jsonRegra: r.jsonRegra, regraInferida: r.regraInferida, tabLabelUsado: tabLabel,
+    catCanonicalUsada: catCanonical, motivos,
   };
 }
