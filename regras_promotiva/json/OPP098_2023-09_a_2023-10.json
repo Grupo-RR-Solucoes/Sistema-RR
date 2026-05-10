@@ -1,0 +1,577 @@
+{
+  "_meta": {
+    "trp": "OPP PR2023/098 + ERRATA PR2023/099 + COMPLEMENTO PR2023/100",
+    "competencia_inicial": "2023-09",
+    "competencia_final": "2023-10",
+    "regime": "META_2_NIVEIS",
+    "subregime": "FAIXA_TAXA",
+    "fonte_pdf": "09-10 de 2023.pdf p.7-12 (OPP098 base p.7-11; OPP099 errata p.7 textual; OPP100 complemento p.7 textual)",
+    "categorias_publicadas": [
+      "Tabela 1",
+      "Tabela 2"
+    ],
+    "limites_categoria": {
+      "Tabela 1": {
+        "meta_max": 1.0,
+        "teto_avista": 0.054
+      },
+      "Tabela 2": {
+        "meta_min": 1.0,
+        "teto_avista": 0.06
+      }
+    },
+    "regra_promocional_opp099": {
+      "vigencia_inicial": "2023-09-06",
+      "regra": "Caso desempenho fique entre 90% e 99,99% da meta de producao do credito em conjunto com indice de penetracao financeira minima de 30% no PRESTAMISTA, goza Tabela 2 (a vista E PRT)",
+      "meta_min_trigger": 0.9,
+      "meta_max_trigger": 1.0,
+      "pct_pen_prestamista_trigger": 0.3,
+      "upgrade_to_categoria": "Tabela 2",
+      "nota_loader": "Logica ja codificada em lib/regrasLoader.ts:431 buildOpp099 — JSON apenas documenta. CP6 pode mover dados-driven."
+    },
+    "complemento_opp100": {
+      "vigencia_inicial": "2023-09-08",
+      "regra": "NAO_CONSIGNADO (3.1 Auto/Benef/Salario) prazo_min reduzido para 13 meses",
+      "nota": "Tabela exibida ja reflete prazo_min=13 — provavelmente PDF foi reimpresso pos-OPP100"
+    },
+    "bonus_tabela_3_seguro_prestamista": {
+      "descricao": "Atingindo meta de producao + indice prestamista >= 30%, comissao adicional sobre seguro prestamista (NAO sobre credito a vista — fora escopo desta auditoria)",
+      "varejo_prod_max": 5000000,
+      "varejo_pct": 0.03,
+      "middle_prod_min": 5000000,
+      "middle_prod_max": 10000000,
+      "middle_pct": 0.04,
+      "corporate_prod_min": 10000000,
+      "corporate_pct": 0.045
+    },
+    "convenios_sp_publicados": [
+      "108643 (PMSP)",
+      "215441 (Gov SP)",
+      "218603 (PM SP)",
+      "218982 (SPPREV)"
+    ],
+    "convenios_sp_anexo_opp099": "Anexo 'Convenios – Grupo Gov. SP.pdf' nao incluido neste PDF — lista completa SP nao disponivel para esta auditoria",
+    "obs": [
+      "Vigente 01/09/2023 a out/2023 (cobre 2023-09 e 2023-10 conforme MAPA_MES_REGRA)",
+      "Mudanca estrutural vs OPP072: regime FAIXA_TAXA — CONSIG_GERAL/MPDG/SP/PORTAB tem 1 unico prazo por faixa (sem matriz taxa-prazo); apenas INSS mantem 3 prazos (36-48 / 49-83 / 84) com prazo 84 dobrado",
+      "Categorias NEW vs OPP072: CONSIG_MPDG (chave SIAPE para compat loader, conv 1078), CONSIG_SP (4 conv publicados + anexo)",
+      "Categoria REMOVIDA vs OPP072: CONSIG_MG — Gov MG agora cai em CONSIG_GERAL",
+      "PORTAB_INSS e PORTAB_GERAL voltam a usar pct_geral (single Tabela coluna no PDF) — diferente de OPP072 que tinha T1/T2",
+      "FGTS tem 2 cells distintas (taxa 1,55% comissao 1,60/1,80; taxa 2,03% comissao 4,00/4,50) — NAO mais tx_juros_fixa",
+      "ADIANTAMENTO_13 mantido como categoria separada (compat loader); valor T1=1,60% T2=1,80% (igual OPP072, dif OPP060=2,00%)",
+      "OPP099 errata: clarifica regra promocional Tab2 (90-99,99% meta + 30% prestamista) — sem mudanca de valores",
+      "OPP100 complemento: NAO_CONSIG prazo_min=13 (PDF ja exibe pos-aplicacao)",
+      "Convenios MG (1529, 2308, 314075-080, etc.) caem em CONSIG_GERAL nesta OPP; rever em CP6 se isso causa subpagamento"
+    ]
+  },
+  "CONSIG_GERAL": {
+    "_titulo": "1.1 - Credito Consignado - Geral (Publicos + Privados, exceto INSS)",
+    "tiquete_min": 100.0,
+    "custo_processamento_max_pct": 0.025,
+    "custo_processamento_max_abs": 5.0,
+    "celulas_taxa_prazo": [
+      {
+        "tx_min": 0.0147,
+        "tx_max": 0.0155,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "Tabela 1": 0.007,
+        "Tabela 2": 0.009
+      },
+      {
+        "tx_min": 0.0156,
+        "tx_max": 0.0165,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "Tabela 1": 0.023,
+        "Tabela 2": 0.027
+      },
+      {
+        "tx_min": 0.0166,
+        "tx_max": 0.0175,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "Tabela 1": 0.052,
+        "Tabela 2": 0.06
+      },
+      {
+        "tx_min": 0.0176,
+        "tx_max": 0.0185,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "Tabela 1": 0.068,
+        "Tabela 2": 0.078
+      },
+      {
+        "tx_min": 0.0186,
+        "tx_max": 0.0195,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "Tabela 1": 0.07,
+        "Tabela 2": 0.078
+      },
+      {
+        "tx_min": 0.0196,
+        "tx_max": 0.0205,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "Tabela 1": 0.088,
+        "Tabela 2": 0.099
+      },
+      {
+        "tx_min": 0.0206,
+        "tx_max": 0.0215,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "Tabela 1": 0.104,
+        "Tabela 2": 0.117
+      },
+      {
+        "tx_min": 0.0216,
+        "tx_max": 0.0225,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "Tabela 1": 0.124,
+        "Tabela 2": 0.144
+      },
+      {
+        "tx_min": 0.0226,
+        "tx_max": 999,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "Tabela 1": 0.132,
+        "Tabela 2": 0.153
+      }
+    ]
+  },
+  "INSS": {
+    "_titulo": "1.2 - Credito Consignado - Convenio INSS",
+    "convenio": "1640",
+    "tiquete_min": 100.0,
+    "custo_processamento": 1.8,
+    "celulas_taxa_prazo": [
+      {
+        "tx_min": 0.0165,
+        "tx_max": 0.0169,
+        "prazo_min": 36,
+        "prazo_max": 48,
+        "Tabela 1": 0.0375,
+        "Tabela 2": 0.045
+      },
+      {
+        "tx_min": 0.0165,
+        "tx_max": 0.0169,
+        "prazo_min": 49,
+        "prazo_max": 83,
+        "Tabela 1": 0.0675,
+        "Tabela 2": 0.081
+      },
+      {
+        "tx_min": 0.0165,
+        "tx_max": 0.0169,
+        "prazo_min": 84,
+        "prazo_max": 84,
+        "Tabela 1": 0.135,
+        "Tabela 2": 0.162
+      },
+      {
+        "tx_min": 0.017,
+        "tx_max": 0.018,
+        "prazo_min": 36,
+        "prazo_max": 48,
+        "Tabela 1": 0.045,
+        "Tabela 2": 0.054
+      },
+      {
+        "tx_min": 0.017,
+        "tx_max": 0.018,
+        "prazo_min": 49,
+        "prazo_max": 83,
+        "Tabela 1": 0.075,
+        "Tabela 2": 0.09
+      },
+      {
+        "tx_min": 0.017,
+        "tx_max": 0.018,
+        "prazo_min": 84,
+        "prazo_max": 84,
+        "Tabela 1": 0.15,
+        "Tabela 2": 0.18
+      },
+      {
+        "tx_min": 0.0181,
+        "tx_max": 0.019,
+        "prazo_min": 36,
+        "prazo_max": 48,
+        "Tabela 1": 0.0525,
+        "Tabela 2": 0.063
+      },
+      {
+        "tx_min": 0.0181,
+        "tx_max": 0.019,
+        "prazo_min": 49,
+        "prazo_max": 83,
+        "Tabela 1": 0.0825,
+        "Tabela 2": 0.099
+      },
+      {
+        "tx_min": 0.0181,
+        "tx_max": 0.019,
+        "prazo_min": 84,
+        "prazo_max": 84,
+        "Tabela 1": 0.165,
+        "Tabela 2": 0.198
+      },
+      {
+        "tx_min": 0.0191,
+        "tx_max": 999,
+        "prazo_min": 36,
+        "prazo_max": 48,
+        "Tabela 1": 0.06,
+        "Tabela 2": 0.072
+      },
+      {
+        "tx_min": 0.0191,
+        "tx_max": 999,
+        "prazo_min": 49,
+        "prazo_max": 83,
+        "Tabela 1": 0.09,
+        "Tabela 2": 0.108
+      },
+      {
+        "tx_min": 0.0191,
+        "tx_max": 999,
+        "prazo_min": 84,
+        "prazo_max": 84,
+        "Tabela 1": 0.18,
+        "Tabela 2": 0.216
+      }
+    ]
+  },
+  "SIAPE": {
+    "_titulo": "1.3 - Credito Consignado - Convenio MPDG (Ministerio Economia / SIAPE conv 1078)",
+    "_observacao": "Chave JSON 'SIAPE' espelha categoriasCandidatasFor em lib/regrasLoader.ts:625-628 (que retorna 'SIAPE' para produto MPDG/SIAPE ou conv 1078); PDF chama 'Convenio MPDG'",
+    "convenio": "1078",
+    "tiquete_min": 100.0,
+    "custo_processamento_max_pct": 0.025,
+    "custo_processamento_max_abs": 5.0,
+    "celulas_taxa_prazo": [
+      {
+        "tx_min": 0.0147,
+        "tx_max": 0.0155,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.011,
+        "Tabela 2": 0.013
+      },
+      {
+        "tx_min": 0.0156,
+        "tx_max": 0.0165,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.037,
+        "Tabela 2": 0.042
+      },
+      {
+        "tx_min": 0.0166,
+        "tx_max": 0.0175,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.07,
+        "Tabela 2": 0.081
+      },
+      {
+        "tx_min": 0.0176,
+        "tx_max": 0.0185,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.078,
+        "Tabela 2": 0.09
+      },
+      {
+        "tx_min": 0.0186,
+        "tx_max": 0.0195,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.097,
+        "Tabela 2": 0.112
+      },
+      {
+        "tx_min": 0.0196,
+        "tx_max": 0.0205,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.109,
+        "Tabela 2": 0.126
+      }
+    ]
+  },
+  "CONSIG_SP": {
+    "_titulo": "1.4 - Credito Consignado - Convenio Sao Paulo",
+    "_observacao": "Convenios listados no PDF: 108643 (PMSP), 215441 (Gov SP), 218603 (PM SP), 218982 (SPPREV); lista completa em anexo 'Convenios – Grupo Gov. SP.pdf' nao incluido",
+    "convenios": [
+      "108643",
+      "215441",
+      "218603",
+      "218982"
+    ],
+    "tiquete_min": 100.0,
+    "custo_processamento_max_pct": 0.025,
+    "custo_processamento_max_abs": 5.0,
+    "celulas_taxa_prazo": [
+      {
+        "tx_min": 0.0147,
+        "tx_max": 0.0155,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.033,
+        "Tabela 2": 0.038
+      },
+      {
+        "tx_min": 0.0156,
+        "tx_max": 0.0165,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.041,
+        "Tabela 2": 0.047
+      },
+      {
+        "tx_min": 0.0166,
+        "tx_max": 0.0175,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.049,
+        "Tabela 2": 0.056
+      },
+      {
+        "tx_min": 0.0176,
+        "tx_max": 0.0185,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.064,
+        "Tabela 2": 0.074
+      },
+      {
+        "tx_min": 0.0186,
+        "tx_max": 0.0195,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.066,
+        "Tabela 2": 0.076
+      },
+      {
+        "tx_min": 0.0196,
+        "tx_max": 0.0205,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.093,
+        "Tabela 2": 0.108
+      },
+      {
+        "tx_min": 0.0206,
+        "tx_max": 0.0215,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.109,
+        "Tabela 2": 0.126
+      },
+      {
+        "tx_min": 0.0216,
+        "tx_max": 0.0225,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.124,
+        "Tabela 2": 0.144
+      },
+      {
+        "tx_min": 0.0226,
+        "tx_max": 999,
+        "prazo_min": 36,
+        "prazo_max": 96,
+        "Tabela 1": 0.132,
+        "Tabela 2": 0.153
+      }
+    ]
+  },
+  "PORTAB_INSS": {
+    "_titulo": "2.1 - Portabilidade Compra (INSS)",
+    "_observacao": "Sem variacao por categoria (Tabela coluna unica no PDF) — pct_geral por celula",
+    "convenio": "1640",
+    "tiquete_min": 1000.0,
+    "custo_processamento": 1.8,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.015,
+        "tx_max": 0.0177,
+        "prazo_min": 36,
+        "prazo_max": 84,
+        "pct_geral": 0.009
+      },
+      {
+        "tx_min": 0.0178,
+        "tx_max": 0.018,
+        "prazo_min": 36,
+        "prazo_max": 84,
+        "pct_geral": 0.011
+      },
+      {
+        "tx_min": 0.0181,
+        "tx_max": 0.0184,
+        "prazo_min": 36,
+        "prazo_max": 84,
+        "pct_geral": 0.013
+      },
+      {
+        "tx_min": 0.0185,
+        "tx_max": 0.0187,
+        "prazo_min": 36,
+        "prazo_max": 84,
+        "pct_geral": 0.018
+      },
+      {
+        "tx_min": 0.0188,
+        "tx_max": 0.019,
+        "prazo_min": 36,
+        "prazo_max": 84,
+        "pct_geral": 0.022
+      },
+      {
+        "tx_min": 0.0191,
+        "tx_max": 999,
+        "prazo_min": 36,
+        "prazo_max": 84,
+        "pct_geral": 0.027
+      }
+    ]
+  },
+  "PORTAB_GERAL": {
+    "_titulo": "2.2 - Portabilidade Compra - Demais convenios",
+    "_observacao": "Convenios Publicos e Privados, exceto INSS — pct_geral por celula",
+    "tiquete_min": 2500.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.0155,
+        "tx_max": 0.0158,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "pct_geral": 0.009
+      },
+      {
+        "tx_min": 0.0159,
+        "tx_max": 0.0162,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "pct_geral": 0.011
+      },
+      {
+        "tx_min": 0.0163,
+        "tx_max": 0.0176,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "pct_geral": 0.013
+      },
+      {
+        "tx_min": 0.0177,
+        "tx_max": 0.019,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "pct_geral": 0.018
+      },
+      {
+        "tx_min": 0.0191,
+        "tx_max": 0.0204,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "pct_geral": 0.022
+      },
+      {
+        "tx_min": 0.0205,
+        "tx_max": 999,
+        "prazo_min": 36,
+        "prazo_max": 120,
+        "pct_geral": 0.027
+      }
+    ]
+  },
+  "NAO_CONSIGNADO": {
+    "_titulo": "3.1 - Credito Nao Consignado (Automatico/Salario/Beneficio)",
+    "_observacao": "OPP100 (08/09/2023) reduziu prazo_min para 13 meses",
+    "prazo_min": 13,
+    "prazo_max": 96,
+    "tiquete_min": 100.0,
+    "celulas_taxa": [
+      {
+        "tx_min": 0.024,
+        "tx_max": 0.0374,
+        "Tabela 1": 0.016,
+        "Tabela 2": 0.018
+      },
+      {
+        "tx_min": 0.0375,
+        "tx_max": 0.046,
+        "Tabela 1": 0.048,
+        "Tabela 2": 0.054
+      },
+      {
+        "tx_min": 0.0461,
+        "tx_max": 0.055,
+        "Tabela 1": 0.072,
+        "Tabela 2": 0.0805
+      },
+      {
+        "tx_min": 0.0551,
+        "tx_max": 999,
+        "Tabela 1": 0.096,
+        "Tabela 2": 0.1075
+      }
+    ]
+  },
+  "ADIANTAMENTO_13": {
+    "_titulo": "3.1 (linha 13o Salario)",
+    "tx_juros_min": 0.0286,
+    "prazo_min": 5,
+    "tiquete_min": 100.0,
+    "celulas": [
+      {
+        "prazo_min": 5,
+        "prazo_max": 999,
+        "Tabela 1": 0.016,
+        "Tabela 2": 0.018
+      }
+    ]
+  },
+  "FGTS": {
+    "_titulo": "3.2 - CDC FGTS Saque Aniversario",
+    "_observacao": "OPP098 alterou para 2 cells distintas (taxa 1,55% vs 2,03%) — nao mais tx_juros_fixa unica",
+    "prazo_min": 2,
+    "prazo_max": 60,
+    "tiquete_min": 1000.0,
+    "celulas_taxa_prazo": [
+      {
+        "tx_min": 0.0155,
+        "tx_max": 0.0155,
+        "prazo_min": 2,
+        "prazo_max": 60,
+        "Tabela 1": 0.016,
+        "Tabela 2": 0.018
+      },
+      {
+        "tx_min": 0.0203,
+        "tx_max": 0.0203,
+        "prazo_min": 2,
+        "prazo_max": 60,
+        "Tabela 1": 0.04,
+        "Tabela 2": 0.045
+      }
+    ]
+  },
+  "PORTAB_SALARIO": {
+    "_titulo": "4 - Portabilidade Salario",
+    "_observacao": "Remuneracao em valor fixo (R$) por porto, nao em percentual",
+    "tipo": "VALOR_FIXO_BRL",
+    "valor_total_brl": 23.5,
+    "parcela_1_brl": 11.8,
+    "parcela_fixa_brl": 1.95,
+    "parcelas_n": 6
+  }
+}

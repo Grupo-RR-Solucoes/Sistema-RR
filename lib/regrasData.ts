@@ -26,7 +26,11 @@ import OPP060_2023_03 from "../regras_promotiva/json/OPP060_2023-03.json";
 import OPP060_2023_04 from "../regras_promotiva/json/OPP060_2023-04.json";
 import OPP060_2023_05 from "../regras_promotiva/json/OPP060_2023-05.json";
 import OPP060_periodo from "../regras_promotiva/json/OPP060_2022-12_a_2023-05.json";
+import OPP042_2023_06 from "../regras_promotiva/json/OPP042_2023-06.json";
 import OPP072_2023_07_a_2023_08 from "../regras_promotiva/json/OPP072_2023-07_a_2023-08.json";
+import OPP098_2023_09_a_2023_10 from "../regras_promotiva/json/OPP098_2023-09_a_2023-10.json";
+import OPP126_2023_11 from "../regras_promotiva/json/OPP126_2023-11.json";
+import OPP139_2023_12 from "../regras_promotiva/json/OPP139_2023-12.json";
 import TRP01_2024_01 from "../regras_promotiva/json/TRP01_2024-01.json";
 import TRP02_2024_02 from "../regras_promotiva/json/TRP02_2024-02.json";
 import TRP03_2024_03 from "../regras_promotiva/json/TRP03_2024-03.json";
@@ -151,20 +155,22 @@ export const MAPA_MES_REGRA: Record<
   "2023-04": { regra: OPP060_2023_04 as RegraMes, jsonRegra: "OPP060_2023-04.json", regraInferida: false },
   "2023-05": { regra: OPP060_2023_05 as RegraMes, jsonRegra: "OPP060_2023-05.json", regraInferida: false },
 
-  // === 2023-06 — sem JSON nativo, fallback OPP060 (período) ===
-  // Spec v9 §4.3: validado em 15 contratos, 100% bate com OPP060.
-  "2023-06": { regra: OPP060_periodo as RegraMes, jsonRegra: "OPP060_2022-12_a_2023-05.json", regraInferida: true },
+  // === 2023-06 — OPP042 (CP6B: substitui fallback OPP060) ===
+  "2023-06": { regra: OPP042_2023_06 as RegraMes, jsonRegra: "OPP042_2023-06.json", regraInferida: false },
 
   // === 2023-07 a 2023-08 — OPP072 (CP6A: substitui OPP061 errado, fundação Promotiva fase 4.3.B etapa 3) ===
   "2023-07": { regra: OPP072_2023_07_a_2023_08 as RegraMes, jsonRegra: "OPP072_2023-07_a_2023-08.json", regraInferida: false },
   "2023-08": { regra: OPP072_2023_07_a_2023_08 as RegraMes, jsonRegra: "OPP072_2023-07_a_2023-08.json", regraInferida: false },
 
-  // === 2023-09 a 2023-12 — sem JSON nativo, fallback TRP01 ===
-  // Spec v9 §4.3: validado amostralmente, 39/40 contratos (97,5%) batem com TRP01.
-  "2023-09": { regra: TRP01_2024_01 as RegraMes, jsonRegra: "TRP01_2024-01.json", regraInferida: true },
-  "2023-10": { regra: TRP01_2024_01 as RegraMes, jsonRegra: "TRP01_2024-01.json", regraInferida: true },
-  "2023-11": { regra: TRP01_2024_01 as RegraMes, jsonRegra: "TRP01_2024-01.json", regraInferida: true },
-  "2023-12": { regra: TRP01_2024_01 as RegraMes, jsonRegra: "TRP01_2024-01.json", regraInferida: true },
+  // === 2023-09 a 2023-10 — OPP098 (CP6B: substitui fallback TRP01) ===
+  "2023-09": { regra: OPP098_2023_09_a_2023_10 as RegraMes, jsonRegra: "OPP098_2023-09_a_2023-10.json", regraInferida: false },
+  "2023-10": { regra: OPP098_2023_09_a_2023_10 as RegraMes, jsonRegra: "OPP098_2023-09_a_2023-10.json", regraInferida: false },
+
+  // === 2023-11 — OPP126 (CP6B: substitui fallback TRP01) ===
+  "2023-11": { regra: OPP126_2023_11 as RegraMes, jsonRegra: "OPP126_2023-11.json", regraInferida: false },
+
+  // === 2023-12 — OPP139 (CP6B: substitui fallback TRP01) ===
+  "2023-12": { regra: OPP139_2023_12 as RegraMes, jsonRegra: "OPP139_2023-12.json", regraInferida: false },
 
   // === 2024-01 a 2024-12 — TRP01 a TRP14 (com erratas TRP05b, TRP08b) ===
   "2024-01": { regra: TRP01_2024_01 as RegraMes, jsonRegra: "TRP01_2024-01.json", regraInferida: false },
