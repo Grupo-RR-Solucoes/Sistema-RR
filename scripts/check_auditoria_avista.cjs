@@ -61,7 +61,7 @@ const MAPA = {
   "2023-02":{j:"OPP060_2023-02.json",inf:false}, "2023-03":{j:"OPP060_2023-03.json",inf:false},
   "2023-04":{j:"OPP060_2023-04.json",inf:false}, "2023-05":{j:"OPP060_2023-05.json",inf:false},
   "2023-06":{j:"OPP060_2022-12_a_2023-05.json",inf:true},
-  "2023-07":{j:"OPP061_2023-07_a_2023-08.json",inf:false}, "2023-08":{j:"OPP061_2023-07_a_2023-08.json",inf:false},
+  "2023-07":{j:"OPP072_2023-07_a_2023-08.json",inf:false}, "2023-08":{j:"OPP072_2023-07_a_2023-08.json",inf:false},
   "2023-09":{j:"TRP01_2024-01.json",inf:true}, "2023-10":{j:"TRP01_2024-01.json",inf:true},
   "2023-11":{j:"TRP01_2024-01.json",inf:true}, "2023-12":{j:"TRP01_2024-01.json",inf:true},
   "2024-01":{j:"TRP01_2024-01.json",inf:false}, "2024-02":{j:"TRP02_2024-02.json",inf:false},
