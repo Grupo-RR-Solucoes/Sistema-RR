@@ -35,6 +35,7 @@
  */
 
 import {
+  EPS,
   getMatrizTRPParaContrato,
   tetoBacenForCategoria,
 } from "./regrasLoader.ts";
@@ -167,9 +168,12 @@ export interface ResultadoFase2Cash {
  *   if abs(diferenca) < EPS_VALOR:
  *       → OK:  bloco=EXCLUIDO_AUDITORIA
  *   elif diferenca < 0:                            ← subpagamento
- *       if regime VOLUME:
+ *       if regime VOLUME e pct_cheio + EPS < teto:
  *           → SUBPAGAMENTO_ABAIXO_TETO: bloco=PEDIDO_FIRME_2.1
- *       else:
+ *           (uncapped genuíno — pct_cheio estritamente menor que teto)
+ *       elif regime VOLUME (capped ou fronteira):
+ *           → SUBPAGAMENTO: bloco=PEDIDO_FIRME_2.1, sem submotivo
+ *       else:                                      ← regime META
  *           → SUBPAGAMENTO: bloco=PEDIDO_FIRME_2.1
  *           subpagamentoMotivo = ENQUADRAMENTO_ERRADO se status_fase1==DIVERGENTE_ENQUADRAMENTO
  *                              else PCT_INTERNO_ERRADO
@@ -286,6 +290,12 @@ export function auditAvistaContrato(
     mesContext.regime === "VOLUME_3_PERFIS" ||
     mesContext.regime === "VOLUME_5_FAIXAS";
 
+  // Spec v9 §6 + lib/types/blocos.ts:52-53: SUBPAGAMENTO_ABAIXO_TETO ⇔
+  // pct_cheio < teto (estritamente). Fronteira (pct_cheio == teto) e capped
+  // (pct_cheio > teto) caem em SUBPAGAMENTO. Reusa EPS do regrasLoader.
+  const isAbaixoTetoEstrito =
+    teto != null && lookup.pct + EPS < teto;
+
   let statusFase2: StatusFase2;
   let subpagamentoMotivo: ResultadoFase2Cash["subpagamentoMotivo"] = null;
   let superpagamentoMotivo: ResultadoFase2Cash["superpagamentoMotivo"] = null;
@@ -296,14 +306,16 @@ export function auditAvistaContrato(
     bloco = "EXCLUIDO_AUDITORIA";
   } else if (diferenca < -EPS_VALOR) {
     // Subpagamento — Promotiva pagou menos que devido.
-    if (isVolume) {
+    if (isVolume && isAbaixoTetoEstrito) {
       statusFase2 = "SUBPAGAMENTO_ABAIXO_TETO";
     } else {
       statusFase2 = "SUBPAGAMENTO";
-      subpagamentoMotivo =
-        mesContext.statusFase1 === "DIVERGENTE_ENQUADRAMENTO"
-          ? "ENQUADRAMENTO_ERRADO"
-          : "PCT_INTERNO_ERRADO";
+      if (!isVolume) {
+        subpagamentoMotivo =
+          mesContext.statusFase1 === "DIVERGENTE_ENQUADRAMENTO"
+            ? "ENQUADRAMENTO_ERRADO"
+            : "PCT_INTERNO_ERRADO";
+      }
     }
     bloco = "PEDIDO_FIRME_2.1";
 

@@ -353,14 +353,21 @@ function auditAvistaContrato(contrato, mesContext) {
   const comissaoDevida = contrato.valorLiquido * pctDevido;
   const diferenca = contrato.comissaoPaga - comissaoDevida;
   const isVolume = mesContext.regime.startsWith("VOLUME_");
+  // Spec v9 §6 + lib/types/blocos.ts:52-53: SUBPAGAMENTO_ABAIXO_TETO ⇔
+  // pct_cheio < teto (estritamente). Fronteira (pct_cheio == teto) e capped
+  // caem em SUBPAGAMENTO. Reusa EPS de regrasLoader (bug 2D fix Fase 4.3.B).
+  const isAbaixoTetoEstrito = teto != null && lk.pct + EPS < teto;
   let statusFase2, subpag = null, superpag = null, bloco;
   if (Math.abs(diferenca) < EPS_VALOR) {
     statusFase2 = "OK"; bloco = "EXCLUIDO_AUDITORIA";
   } else if (diferenca < -EPS_VALOR) {
-    if (isVolume) statusFase2 = "SUBPAGAMENTO_ABAIXO_TETO";
-    else {
+    if (isVolume && isAbaixoTetoEstrito) {
+      statusFase2 = "SUBPAGAMENTO_ABAIXO_TETO";
+    } else {
       statusFase2 = "SUBPAGAMENTO";
-      subpag = mesContext.statusFase1 === "DIVERGENTE_ENQUADRAMENTO" ? "ENQUADRAMENTO_ERRADO" : "PCT_INTERNO_ERRADO";
+      if (!isVolume) {
+        subpag = mesContext.statusFase1 === "DIVERGENTE_ENQUADRAMENTO" ? "ENQUADRAMENTO_ERRADO" : "PCT_INTERNO_ERRADO";
+      }
     }
     bloco = "PEDIDO_FIRME_2.1";
     // Padrão D mirror v9: bloco=EXCLUIDO_AUDITORIA quando contrato consta em
@@ -605,7 +612,11 @@ function classificarBugFase43B(c, m, r) {
   const motorDif = m.diferenca;
   const dimDif = Math.abs(motorDif - v9Dif) < EPS_VALOR;
 
-  // bug_2D — VOLUME relabel SUBPAGAMENTO_ABAIXO_TETO vs SUBPAGAMENTO
+  // bug_2D — VOLUME relabel SUBPAGAMENTO_ABAIXO_TETO vs SUBPAGAMENTO.
+  //
+  // Após fix Fase 4.3.B Etapa 2 (09/05/2026), este bucket deve permanecer vazio.
+  // Mantido como detector de regressão: se voltar a aparecer, motor regrediu
+  // para a regra antiga "VOLUME → SUBPAGAMENTO_ABAIXO_TETO sempre".
   const isVolume = c.mes >= "2025-07";
   if (isVolume && motorStatus === "SUBPAGAMENTO_ABAIXO_TETO" && v9Status === "SUBPAGAMENTO") {
     return "bug_2D_SUBPAG_ABAIXO_TETO_REGRA";

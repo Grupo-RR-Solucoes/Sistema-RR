@@ -13,9 +13,10 @@
  *           92059/1701/137478 mal mapeados (~150 contratos, ~R$ 14k).
  * - BUG_2C: FORA_DA_TABELA + SRCC com diferença inconsistente (~200 contratos,
  *           sub-padrão 3 pode ser leitura errada de dados).
- * - BUG_2D: regra SUBPAGAMENTO_ABAIXO_TETO mal escopada — motor classifica
- *           TODO subpagamento VOLUME como ABAIXO_TETO; correto é só quando
- *           pct_cheio < teto BACEN (~1.300 contratos, label errado, números OK).
+ * - BUG_2D: regra SUBPAGAMENTO_ABAIXO_TETO mal escopada — RESOLVIDO Fase 4.3.B
+ *           Etapa 2 (09/05/2026). Motor agora aplica regra estrita: ABAIXO_TETO
+ *           ⇔ pct_cheio + EPS < teto. Capped e fronteira caem em SUBPAGAMENTO.
+ *           Testes #7a/#7b/#7c/#7d cobrem os 3 ramos + META.
  * - BUG_2E: CRÉDITO ADIANTAMENTO conv=137478 roteado para ADIANTAMENTO_13
  *           quando v9 usou outra matriz (~150 contratos, ~R$ 8k).
  *
@@ -35,8 +36,10 @@
  * 4. SUBPAGAMENTO + PCT_INTERNO_ERRADO: motor catDev=TABELA 2 sob status_fase1=OK (cat aplicada errada localmente).
  * 5. SUPERPAGAMENTO_FAVORAVEL + BONUS_PERFORMANCE: cat correta, pct pago > pct devido.
  * 6. SUPERPAGAMENTO_FAVORAVEL + ENQUADRAMENTO_FAVORAVEL: status_fase1=ENQUADRAMENTO_FAVORAVEL.
- * 7. SUBPAGAMENTO_ABAIXO_TETO: regime VOLUME, dif < 0 (NB: comportamento atual
- *    classifica TODO subpagamento VOLUME — BUG_2D, regra correta na Fase 4.3.B).
+ * 7a. SUBPAGAMENTO_ABAIXO_TETO: regime VOLUME, uncapped genuíno (pct_cheio + EPS < teto).
+ * 7b. SUBPAGAMENTO em VOLUME: pct_cheio capped (pct_cheio > teto + EPS).
+ * 7c. SUBPAGAMENTO em VOLUME: fronteira (pct_cheio == teto, dentro de EPS).
+ * 7d. SUBPAGAMENTO em META: comportamento legado preservado.
  * 8. FORA_DA_TABELA: lookup falha + pct_aplicado=0 → dif=0, status=FORA_DA_TABELA.
  * 9. SEM_LOOKUP: lookup falha + pct_aplicado>0 → dif=0, status=SEM_LOOKUP, pct_devido=null.
  * 10. Convenção de sinal: dif = comPg - comDev (negativo=subpagamento).
@@ -243,9 +246,10 @@ test("SUPERPAGAMENTO_FAVORAVEL + ENQUADRAMENTO_FAVORAVEL: mes Set/2023 (motor TS
   assert.equal(r.bloco, "REGISTRO_INTERNO_BONUS_FAVORAVEL");
 });
 
-// ----------------------------------- 7. SUBPAGAMENTO_ABAIXO_TETO (VOLUME) --
-test("SUBPAGAMENTO_ABAIXO_TETO: regime VOLUME, dif<0", () => {
-  // Jul/2025 VOLUME 6, MIDDLE: Promotiva pagou 0, deveria ter pago algo.
+// ------------------------- 7a. SUBPAGAMENTO_ABAIXO_TETO (VOLUME, uncapped) -
+test("7a. SUBPAGAMENTO_ABAIXO_TETO: VOLUME uncapped genuíno (pct_cheio < teto)", () => {
+  // Jul/2025 VOLUME 6, MIDDLE, CONSIG_PRIVADO tx 3.99 prazo 36 → matriz=0.04
+  // (estritamente < teto 6%) → ABAIXO_TETO genuíno.
   const c = mkContrato({
     mes: "2025-07",
     produto: "CONSIGNADO PRIVADO",
@@ -268,6 +272,104 @@ test("SUBPAGAMENTO_ABAIXO_TETO: regime VOLUME, dif<0", () => {
   const r = auditAvistaContrato(c, m);
   assert.equal(r.statusFase2, "SUBPAGAMENTO_ABAIXO_TETO");
   assert.equal(r.subpagamentoMotivo, null);  // ABAIXO_TETO não tem submotivo
+  assert.equal(r.bloco, "PEDIDO_FIRME_2.1");
+  assert.ok(r.diferenca < -EPS_VALOR);
+  // pct_cheio (uncapped) deve estar abaixo do teto
+  assert.ok(r.pctTabelaCalculado != null && r.pctTabelaCalculado < 0.06);
+});
+
+// ----------------------------------- 7b. SUBPAGAMENTO em VOLUME (capped) --
+test("7b. SUBPAGAMENTO: VOLUME capped (pct_cheio > teto, motor capou)", () => {
+  // Jul/2025 VOLUME 6, MIDDLE, NÃO_CONSIGNADO tx 5.9 prazo 60 → matriz=0.0855
+  // (acima do teto 6%) → motor capa, pctDev=0.06, label=SUBPAGAMENTO.
+  const c = mkContrato({
+    mes: "2025-07",
+    produto: "NÃO CONSIGNADO",
+    convenio: 0,
+    txJuros: 5.9,
+    prazo: 60,
+    catAplicada: "MIDDLE",
+    valorLiquido: 4_441.49,
+    pctAplicado: 0.058,
+    comissaoPaga: 257.61,  // 0.058 × 4441.49 ~= 257.61 (subpagamento vs 6% = 266.49)
+  });
+  const m = mkContext({
+    ym: "2025-07",
+    regime: "VOLUME_6_PERFIS",
+    catDevida: null,
+    catAplicada: "MIDDLE",
+    statusFase1: "INDETERMINADO",
+    jsonRegra: "TRP24_2025-07.json",
+  });
+  const r = auditAvistaContrato(c, m);
+  assert.equal(r.statusFase2, "SUBPAGAMENTO");
+  assert.equal(r.subpagamentoMotivo, null);  // VOLUME não emite submotivo
+  assert.equal(r.bloco, "PEDIDO_FIRME_2.1");
+  assert.ok(r.diferenca < -EPS_VALOR);
+  // pct_cheio acima do teto, pct_devido capado em 0.06
+  assert.ok(r.pctTabelaCalculado != null && r.pctTabelaCalculado > 0.06);
+  assert.equal(r.pctDevido, 0.06);
+});
+
+// ---------------------------------- 7c. SUBPAGAMENTO em VOLUME (fronteira) -
+test("7c. SUBPAGAMENTO: VOLUME pct_cheio == teto (fronteira)", () => {
+  // Ago/2025 VOLUME 6, MIDDLE, CONSIG_PUBLICO tx 2.19 prazo 72 → matriz=0.06
+  // (exatamente igual ao teto). Sob regra estrita: SUBPAGAMENTO (não ABAIXO).
+  const c = mkContrato({
+    mes: "2025-08",
+    produto: "CONSIGNADO PUBLICO",
+    convenio: 92059,
+    txJuros: 2.19,
+    prazo: 72,
+    catAplicada: "MIDDLE",
+    valorLiquido: 12_700,
+    pctAplicado: 0.057,
+    comissaoPaga: 723.90,  // 0.057 × 12700 = 723.90 (subpagamento vs 6% = 762)
+  });
+  const m = mkContext({
+    ym: "2025-08",
+    regime: "VOLUME_6_PERFIS",
+    catDevida: null,
+    catAplicada: "MIDDLE",
+    statusFase1: "INDETERMINADO",
+    jsonRegra: "TRP25_2025-08.json",
+  });
+  const r = auditAvistaContrato(c, m);
+  assert.equal(r.statusFase2, "SUBPAGAMENTO");
+  assert.equal(r.subpagamentoMotivo, null);
+  assert.equal(r.bloco, "PEDIDO_FIRME_2.1");
+  assert.ok(r.diferenca < -EPS_VALOR);
+  // pct_cheio exatamente == teto (fronteira)
+  assert.ok(r.pctTabelaCalculado != null && Math.abs(r.pctTabelaCalculado - 0.06) < 1e-7);
+});
+
+// ------------------------------- 7d. SUBPAGAMENTO em META (sem mudança) ---
+test("7d. SUBPAGAMENTO em META: comportamento legado preservado (com submotivo)", () => {
+  // Set/2024 META 2, Tab 2 (catDev), Promotiva subpagou. Em META o motor
+  // emite SUBPAGAMENTO sempre, com submotivo PCT_INTERNO_ERRADO ou
+  // ENQUADRAMENTO_ERRADO. Não muda com o fix do bug 2D.
+  const c = mkContrato({
+    mes: "2024-09",
+    produto: "NÃO CONSIGNADO",
+    convenio: 0,
+    txJuros: 4.61,
+    prazo: 24,
+    catAplicada: "TABELA 2",
+    valorLiquido: 10_000,
+    pctAplicado: 0.05,        // pagou 5%, deveria ter pago teto 6% (NAO_CONSIG Tab2 capped)
+    comissaoPaga: 500,
+  });
+  const m = mkContext({
+    ym: "2024-09",
+    regime: "META_2_NIVEIS",
+    catDevida: "TABELA 2",
+    catAplicada: "TABELA 2",
+    statusFase1: "OK",
+    jsonRegra: "TRP11_2024-09.json",
+  });
+  const r = auditAvistaContrato(c, m);
+  assert.equal(r.statusFase2, "SUBPAGAMENTO");
+  assert.equal(r.subpagamentoMotivo, "PCT_INTERNO_ERRADO");
   assert.equal(r.bloco, "PEDIDO_FIRME_2.1");
   assert.ok(r.diferenca < -EPS_VALOR);
 });
