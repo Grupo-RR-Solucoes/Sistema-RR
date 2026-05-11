@@ -994,7 +994,7 @@ Após CP4 (commit 2b4b575) o universo foi reduzido a 181 contratos UNCLASSIFIED 
 - **CP4 (bug_outros):** 4 contratos SRCC|SRCC com comPg=0 — variante de HD3 (dimDif=true, cai no else do classificador). Sem ação.
 - **A3 zona cinza PRT:** inventário completo `audit_v9_prt` (2.835 contratos com status PROVAVEL_LEGITIMO/SUSPEITO/AUSENTE/INTERROMPIDO). Cruzamento com 56 DEBITs e 219.039 PRT entries de `monthly_closing_entries`. SUBSET_X (1.762 contratos defensáveis) 100% já cobrados na Seção 2.2 de 07/05; SUBSET_Y (1.071) sumiu do PRT após interrupção, sem amparo documental. Σ NOVA = R$ 0,00. Artefatos: `zona_cinza_consolidado.md` + `zona_cinza_dump.json`.
 
-### HDs documentados (HD3–HD12)
+### HDs documentados (HD3–HD13)
 
 | HD | sessão | cluster motor×v9 (ou padrão) | n | receita nova (R$) | status | artefato |
 |----|--------|------------------------------|---:|-------------------|--------|----------|
@@ -1008,6 +1008,7 @@ Após CP4 (commit 2b4b575) o universo foi reduzido a 181 contratos UNCLASSIFIED 
 | HD10 | 11/05 CP3 Fase 4.5 | SEM_LOOKUP \| OK (INSS jun/2024 tx=1,67% prazo=84) | 2 | 0 | PDF TRP08b lista literal "1,65%" apenas; motor respeita JSON, v9 extrapolou. Edge documental. Sem ação. | `scratch/fase_4_5/hipoteses_documentadas.md` |
 | HD11 | 11/05 CP3 Fase 4.5 | SUB \| FORA_DA_TABELA (MPDG jul/2024 fallback CONSIG_GERAL) | 1 | 1.530,00 (disputável) | Motor agressivo (fallback CONSIG_GERAL automático); v9 conservadora FORA. Não recomendado isolado. | `scratch/fase_4_5/hipoteses_documentadas.md` |
 | HD12 | 11/05 A3 Fase 4.5 | Zona cinza PRT esgotada na Seção 2.2 | 2.833 | 0 | 1.762 SUBSET_X já cobrados (Σ valor_sol_reg R$ 43.142,79 ⊂ R$ 47.581,88 do bloco 2.2); 1.071 SUBSET_Y sem amparo. Sem ação. | `scratch/fase_4_5/zona_cinza_consolidado.md` |
+| HD13 | 11/05 Etapa C | PR2023/134 (Estorno cancelamento) operacionalmente coberta pela aba Débito | 7 | 0 | 7 entradas "Déb.Cancelamento" (R$ 6.788,98) refletem PR2023/134; v9 humana já incorporou (0/7 na cobrança 07/05). Cobrança 07/05 out-nov/2023 (178 contratos R$ 4.330,57) também sem sobreposição. Risco residual: ETL futuro que atualize `comissao_paga` para valor pós-estorno exigirá motor reconhecer regra explicitamente. | `scratch/fase_4_5/PR2023_134_estorno.md` |
 | CP3.5 | 10/05 4.3.B | SEM_LOOKUP \| SUB (CONSIG_PRIVADO 2025-04, sustentados na cobrança) | 2 | 0 (já cobrado R$ 671,77) | Decisão: sustentar via continuidade TRP17 (TRP18/19/20 sem CONSIG_PRIVADO). | sessão 10/05 |
 
 **Cobertura UNCLASSIFIED:** HD3 (58 contando bug_outros) + HD5 (31) + HD6/HD9 (66, com HD6 subset de HD9) + HD7 (21) + HD8 (4) + HD10 (2) + HD11 (1) + CP3.5 (2) = **181** ✓.
@@ -1040,10 +1041,11 @@ Após CP4 (commit 2b4b575) o universo foi reduzido a 181 contratos UNCLASSIFIED 
 
 | pendência | local | severidade |
 |---|---|---|
-| PR2023/134 estorno (dívida técnica Etapa C) | dívida técnica antiga, sessão Etapa C | BAIXA |
+| ~~PR2023/134 estorno (dívida técnica Etapa C)~~ | resolvido como HD13 (operacionalmente coberta) | — |
 | 2 INSS conv=1640 não-EXÉRCITO descobertos no CP4 (157892844, 157789511 jun/2024 tx=1,67% prazo=84) | HD10 — caso-edge JSON TRP08b lista literal "1,65%" | BAIXA |
 | CP6_integracao_pendente.md (8 schema variants) | `scratch/etapa_3_fundacao/` | BAIXA |
 | TEST_RUNNER_TSX_AUSENTE — testes `lib/__tests__/auditoriaAvista.test.ts` não executáveis localmente | seção dedicada acima | BAIXA |
+| Risco residual HD13: ETL futuro que atualize `comissao_paga` para valor pós-estorno PR2023/134 sem motor conhecer regra explicitamente | `lib/auditoriaAvista.ts` + cruzamento aba Débito | BAIXA |
 
 ### Estado documental Fase 4.5
 
@@ -1052,3 +1054,4 @@ Após CP4 (commit 2b4b575) o universo foi reduzido a 181 contratos UNCLASSIFIED 
 - `scratch/fase_4_5/hipoteses_documentadas.md` — HD3 a HD12 consolidados
 - `scratch/fase_4_5/bug_outros_4_contratos.md` — CP4 bug_outros (variante HD3)
 - `scratch/fase_4_5/zona_cinza_consolidado.md` + `zona_cinza_dump.json` — A3 zona cinza esgotada
+- `scratch/fase_4_5/PR2023_134_estorno.md` — Etapa C HD13 (PR2023/134 estorno cancelamento)
