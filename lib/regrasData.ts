@@ -1,13 +1,17 @@
 /**
- * Imports estáticos dos 41 JSONs de regras Promotiva e mapa mês → JSON.
+ * Imports estáticos dos JSONs de regras Promotiva e mapa mês → JSON.
  *
- * Fonte: regras_promotiva/json/*.json (41 arquivos: 35 OPP/TRP mensais + 4
- * alternates/erratas + convenios_oficiais.json + 1 fallback período).
+ * Fonte: regras_promotiva/json/*.json — 41 imports estáticos:
+ *   12 OPP de 2022-2023 (6× OPP060 mensais + 1× OPP060 agregado/fallback +
+ *     OPP042 + OPP072 + OPP098 + OPP126 + OPP139),
+ *   35 TRP de 2024-2026 (TRP01..TRP35, incluindo erratas TRP04/05, TRP07/08,
+ *     TRP26/27, TRP28/29 e a inferência TRP06_2024-05),
+ *   1 convenios_oficiais.json.
  *
- * Cobertura:
- * - 35 meses com JSON nativo (regraInferida=false)
- * - 6 meses com fallback documentado (regraInferida=true): Jun/2023, Set/2023,
- *   Out/2023, Nov/2023, Dez/2023, Mai/2024.
+ * Cobertura mensal (após CP6A+CP6B da Fase 4.3.B Etapa 3):
+ * - 40 meses com JSON nativo (regraInferida=false)
+ * - 1 mês com fallback documentado (regraInferida=true): Mai/2024 — Promotiva
+ *   não publicou TRP separado; TRP05_2024-04b é estendida.
  * - Total: 41 meses cobertos (Dez/2022 a Abr/2026).
  *
  * Erratas que substituem JSON original (vigente = errata, NÃO o original):
@@ -254,11 +258,16 @@ export const JSONS_SUBSTITUIDOS_POR_ERRATA: Record<string, RegraMes> = {
 /**
  * Quantidade total de JSONs importados (auditoria interna).
  *
- * 41 imports estáticos:
- * - 7 OPP060 (Dez/2022 a Mai/2023 + período)
- * - 1 OPP061 (Jul-Ago/2023)
+ * 41 imports estáticos (após CP6A+CP6B da Fase 4.3.B Etapa 3):
+ * - 7 OPP060 (Dez/2022 a Mai/2023 + período agregado)
+ * - 1 OPP042 (Jun/2023, fundação CP6B)
+ * - 1 OPP072 (Jul-Ago/2023, fundação CP6A)
+ * - 1 OPP098 (Set-Out/2023, fundação CP6B)
+ * - 1 OPP126 (Nov/2023, fundação CP6B)
+ * - 1 OPP139 (Dez/2023, fundação CP6B)
  * - 14 TRP01–TRP14 (Jan-Dez/2024)
  * - 2 erratas Abr/Jun/2024 (TRP05b, TRP08b)
+ * - 1 inferência (TRP06_2024-05 — Promotiva não publicou; mantido p/ auditoria)
  * - 6 TRP15-17, 20, 22-23 (Jan-Jun/2025 META 4)
  * - 8 TRP24-31 (Jul-Dez/2025 VOLUME 6 perfis)
  * - 2 erratas Set/Out/2025 (TRP27, TRP29)
@@ -267,8 +276,8 @@ export const JSONS_SUBSTITUIDOS_POR_ERRATA: Record<string, RegraMes> = {
  * TOTAL = 41 ✓
  *
  * Cobertura mensal MAPA_MES_REGRA:
- * - 35 meses com JSON nativo (regraInferida=false)
- * - 6 meses com fallback (regraInferida=true): Jun/23, Set-Dez/23, Mai/24
+ * - 40 meses com JSON nativo (regraInferida=false)
+ * - 1 mês com fallback (regraInferida=true): Mai/2024
  * - Total: 41 meses (Dez/2022 a Abr/2026)
  */
 export const TOTAL_JSONS_IMPORTADOS = 41;

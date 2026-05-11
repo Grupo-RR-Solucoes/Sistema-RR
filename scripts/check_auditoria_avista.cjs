@@ -140,17 +140,18 @@ function categoriasCandidatasFor(mes, produto, tipo, convenio) {
     return ["INSS"];
   }
   if (p.includes("MPDG") || p.includes("SIAPE") || cv === "1078") return ["SIAPE", "CONSIG_GERAL"];
-  if (p.includes("EXÉRCITO") || p.includes("EXERCITO") || cv === "14661") return ["EXERCITO", "CONSIG_GERAL"];
+  if (p.includes("EXÉRCITO") || p.includes("EXERCITO") || cv === "14661") return ["EXERCITO", "CONSIG_PUBLICO", "CONSIG_GERAL"];
+  const SP_MG_UNIFICADO = mes >= "2025-01" || mes === "2023-12";
   if (p.includes("SPMG") || (p.includes("SP") && p.includes("MG"))) {
-    if (mes >= "2025-01") return ["CONSIG_SP_MG", "CONSIG_GERAL"];
+    if (SP_MG_UNIFICADO) return ["CONSIG_SP_MG", "CONSIG_GERAL"];
     return ["CONSIG_SP", "CONSIG_MG", "CONSIG_GERAL"];
   }
   if (p.includes("CONSIGNADO MG") || p === "MG") {
-    if (mes >= "2025-01") return ["CONSIG_SP_MG", "CONSIG_GERAL"];
+    if (SP_MG_UNIFICADO) return ["CONSIG_SP_MG", "CONSIG_GERAL"];
     return ["CONSIG_MG", "CONSIG_GERAL"];
   }
   if (p.includes("CONSIGNADO SP") || p === "SP") {
-    if (mes >= "2025-01") return ["CONSIG_SP_MG", "CONSIG_GERAL"];
+    if (SP_MG_UNIFICADO) return ["CONSIG_SP_MG", "CONSIG_GERAL"];
     if (mes >= "2024-01") return ["CONSIG_SP", "CONSIG_GERAL"];
     return ["CONSIG_GERAL"];
   }
