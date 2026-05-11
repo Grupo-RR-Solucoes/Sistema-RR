@@ -15,5 +15,6 @@ Thumbs.db
 # regra de negócio canônica.
 /auditorias/
 /producao/
-/stress_test_workspace_local/
+/stress_test_workspace_local/*
+!/stress_test_workspace_local/gap_analysis.md
 /.claude/
