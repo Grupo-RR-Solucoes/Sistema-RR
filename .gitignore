@@ -18,3 +18,6 @@ Thumbs.db
 /stress_test_workspace_local/*
 !/stress_test_workspace_local/gap_analysis.md
 /.claude/
+
+# Supabase CLI local cache
+supabase/.temp/
