@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "./BrandLogo";
+import { useUser } from "../lib/auth/useUser";
 
 type NavItem = {
   href: string;
@@ -152,6 +153,7 @@ const GROUPS_STORAGE_KEY = "rr-shell-open-groups";
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { user } = useUser();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -300,6 +302,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
       ...current,
       [groupId]: !current[groupId],
     }));
+  }
+
+  // Página de login renderiza sem sidebar/header — layout próprio.
+  if (pathname === "/login") {
+    return <>{children}</>;
   }
 
   return (
@@ -528,6 +535,24 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <span style={styles.topbarBadgeLabel}>Itens visiveis</span>
               <strong style={styles.topbarBadgeValue}>{currentGroup.items.length} modulos</strong>
             </div>
+            {user ? (
+              <div style={styles.userChip} title={user.email}>
+                <div style={styles.userInfo}>
+                  <span style={styles.userName}>{user.fullName ?? user.email}</span>
+                  <span style={styles.userRole}>{user.role}</span>
+                </div>
+                <form action="/api/auth/logout" method="post" style={styles.userLogoutForm}>
+                  <button
+                    type="submit"
+                    style={styles.userLogoutButton}
+                    aria-label="Sair"
+                    title="Sair"
+                  >
+                    ↩
+                  </button>
+                </form>
+              </div>
+            ) : null}
             <div style={styles.brandChip}>
               <BrandLogo compact size={34} />
             </div>
@@ -923,5 +948,56 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: "20px",
     padding: "8px 12px",
     boxShadow: "var(--rr-shadow-soft)",
+  },
+  userChip: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "8px 12px",
+    borderRadius: 20,
+    background: "rgba(255,255,255,0.92)",
+    border: "1px solid rgba(13,77,227,0.12)",
+    boxShadow: "var(--rr-shadow-soft)",
+    maxWidth: 280,
+  },
+  userInfo: {
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+  },
+  userName: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "var(--rr-ink)",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    maxWidth: 200,
+  },
+  userRole: {
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    color: "var(--rr-muted)",
+  },
+  userLogoutForm: {
+    margin: 0,
+    display: "inline-flex",
+  },
+  userLogoutButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    border: "1px solid rgba(13,77,227,0.18)",
+    background: "linear-gradient(135deg, rgba(13,77,227,0.08) 0%, rgba(255,240,0,0.10) 100%)",
+    color: "var(--rr-blue-deep)",
+    fontSize: 16,
+    fontWeight: 700,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "transform 120ms ease",
   },
 };
