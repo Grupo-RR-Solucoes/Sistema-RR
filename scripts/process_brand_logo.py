@@ -1,59 +1,42 @@
 #!/usr/bin/env python3
-"""
-scripts/process_brand_logo.py — Fase 1.5/1.6/1.7
+"""scripts/process_brand_logo.py — Fase 1.7
 
-Processa o JPEG original da logo Grupo RR Cred em 4 variantes:
+Processa o PNG novo (Grupo RR Cred — so RR + arco, sem texto "Cred")
+em 2 variantes, cada uma em 3 tamanhos.
 
-  LIGHT       (PNG com RR azul + arco dourado + texto "Cred" original, bg transparente)
-  DARK        (PNG com RR branco + arco dourado preservado + texto branco antialiased)
-  MARK-LIGHT  (Light SEM o texto "Cred" recortado — para composicao com texto via CSS)
-  MARK-DARK   (Dark SEM o texto "Cred" recortado)
+Source: public/brand/source/logo-rr-cred-mark-original.png  (1024x1280)
+
+Variantes:
+  MARK-LIGHT  — bg branco removido, RR azul + arco dourado preservados
+  MARK-DARK   — bg removido, RR vira branco, arco dourado preservado
+                (correcoes 1.6.4 chroma<=3 + 1.6.5 gold_light_antialias)
 
 Saidas em public/brand/:
-  logo-rr-cred-full.png                          (canonical 1024px, light)
-  logo-rr-cred-light-{64,120,200}.png + .webp
-  logo-rr-cred-dark-{64,120,200}.png + .webp
-  logo-rr-cred-mark-light-{64,120,200}.png + .webp
-  logo-rr-cred-mark-dark-{64,120,200}.png + .webp
+  logo-rr-cred-mark-light-{64,120,200}.png + .webp   (6 arquivos)
+  logo-rr-cred-mark-dark-{64,120,200}.png + .webp    (6 arquivos)
+  logo-dimensions.json                               (metadata)
 
 Uso: python scripts/process_brand_logo.py
 """
 
+import json
 import sys
 from pathlib import Path
 from typing import Callable
 
 from PIL import Image
 
-SRC = Path("public/brand/source/logo-rr-cred-original.jpeg")
+SRC = Path("public/brand/source/logo-rr-cred-mark-original.png")
 OUT_DIR = Path("public/brand")
+METADATA_PATH = OUT_DIR / "logo-dimensions.json"
 
 BG_THRESHOLD = 245
 WIDTHS = (200, 120, 64)
-
-# Bounding box do texto "Cred" na arte original (1024x1280).
-# Confirmada por inspecao de runs/segmentos pixel-por-pixel:
-#   - Letras Cred ("C","r","e","d") vivem em x=628-797, y=855-919
-#   - Pixel azul puro do RR (B>=210) tem cor saturada vs Cred azul tipografico
-#
-# Estrategia: BB geografica + filtro de cor. Dentro da BB, recortamos APENAS
-# pixels que NAO sao azul-RR-puro (B<210). Pixels do RR (B>=210 saturado)
-# preservados mesmo dentro da BB — evita comer a perna direita do 2o R.
-CRED_X_MIN = 625
-CRED_X_MAX = 810
-CRED_Y_MIN = 853
-CRED_Y_MAX = 935
-RR_BLUE_B_THRESHOLD = 210  # B>=210 = RR puro saturado, preservar
+CROP_MARGIN = 20  # Fase 1.7 — margem 20px ao redor da BB do conteudo
 
 
 def is_background(r: int, g: int, b: int) -> bool:
-    """Pixel BG = branco NEUTRO (claro + sem cromia detectavel).
-
-    Fase 1.6.4: criterio anterior (R,G,B >= 245) absorvia pixels do
-    gradiente claro do arco dourado (RGB tipo 250,248,245) — criando
-    'falhas' no meio do swoosh. Agora exigimos tambem chroma<=3 (sem vies
-    de cor) para distinguir branco puro de antialiasing tonalizado.
-    """
+    """BG = branco neutro (claro + chroma<=3). Fase 1.6.4."""
     if r < BG_THRESHOLD or g < BG_THRESHOLD or b < BG_THRESHOLD:
         return False
     chroma = max(r, g, b) - min(r, g, b)
@@ -61,30 +44,26 @@ def is_background(r: int, g: int, b: int) -> bool:
 
 
 def is_blue_rr(r: int, g: int, b: int) -> bool:
-    """Pixels azuis das letras RR — B dominante sobre R e G."""
+    """Pixels azuis das letras RR."""
     return b > r + 30 and b > g + 30 and b >= 120
 
 
 def is_gold(r: int, g: int, b: int) -> bool:
-    """Pixels dourados do arco (faixa larga para antialiasing)."""
+    """Pixels dourados centrais do arco."""
     return r > 150 and 100 <= g <= 220 and b < r - 20
 
 
-def is_cred_text(_r: int, _g: int, b: int, x: int, y: int) -> bool:
-    """Pixel pertence ao texto 'Cred' por BB + filtro de cor.
+def is_gold_light_antialias(r: int, g: int, b: int) -> bool:
+    """Fase 1.6.5 — pixels claros antialiased do gradiente dourado.
 
-    Filtro: dentro da BB, recortar APENAS pixels com B<RR_BLUE_B_THRESHOLD
-    (210). Isso pega o Cred (azul tipografico nao-saturado) e antialiasing
-    claro, mas preserva pixels do RR saturado (B>=210) caso a BB pegue
-    parte da perna inferior do 2o R.
+    Tons creme/dourado-claro (ex. 250,240,230) com vies dourado estrito
+    (R > G AND R > B AND chroma >= 6) para evitar capturar pixels
+    cinza-neutros que viram halo branco fantasma sobre navy.
     """
-    if not (CRED_X_MIN <= x <= CRED_X_MAX and CRED_Y_MIN <= y <= CRED_Y_MAX):
-        return False
-    return b < RR_BLUE_B_THRESHOLD
+    return r >= 200 and r > g and r > b and (r - b) >= 6
 
 
 def ink_alpha(r: int, g: int, b: int) -> int:
-    """Quantidade de 'tinta' do pixel para conversao para branco proporcional."""
     brightness = max(r, g, b)
     return max(0, 255 - brightness)
 
@@ -102,33 +81,16 @@ def transform_dark(r: int, g: int, b: int, _x: int, _y: int) -> tuple[int, int, 
         return (255, 255, 255, 0)
     if is_gold(r, g, b):
         return (r, g, b, 255)
-    if is_blue_rr(r, g, b):
-        return (255, 255, 255, 255)
-    a = ink_alpha(r, g, b)
-    if a < 8:
-        return (255, 255, 255, 0)
-    return (255, 255, 255, a)
-
-
-def transform_mark_light(r: int, g: int, b: int, x: int, y: int) -> tuple[int, int, int, int]:
-    if is_background(r, g, b):
-        return (255, 255, 255, 0)
-    if is_cred_text(r, g, b, x, y):
-        return (255, 255, 255, 0)
-    return (r, g, b, 255)
-
-
-def transform_mark_dark(r: int, g: int, b: int, x: int, y: int) -> tuple[int, int, int, int]:
-    if is_background(r, g, b):
-        return (255, 255, 255, 0)
-    if is_cred_text(r, g, b, x, y):
-        return (255, 255, 255, 0)
-    if is_gold(r, g, b):
+    # Fase 1.6.5 — preservar gradiente claro dourado antialiased
+    if is_gold_light_antialias(r, g, b):
         return (r, g, b, 255)
     if is_blue_rr(r, g, b):
         return (255, 255, 255, 255)
     a = ink_alpha(r, g, b)
-    if a < 8:
+    # Fase 1.6.5 — threshold elevado (25) elimina halo branco fantasma de
+    # pixels cinza-claros antialiased em fundo navy. Texto/RR centrais
+    # tem alpha bem maior, nao sao afetados.
+    if a < 25:
         return (255, 255, 255, 0)
     return (255, 255, 255, a)
 
@@ -149,20 +111,41 @@ def apply_transform(
     return result
 
 
-def save_variants(processed: Image.Image, variant: str) -> None:
-    aspect = processed.size[1] / processed.size[0]
+def crop_with_margin(img: Image.Image, margin: int) -> Image.Image:
+    """Crop pela BB dos pixels visiveis + margem."""
+    bbox = img.getbbox()
+    if bbox is None:
+        return img
+    x0, y0, x1, y1 = bbox
+    w, h = img.size
+    expanded = (
+        max(0, x0 - margin),
+        max(0, y0 - margin),
+        min(w, x1 + margin),
+        min(h, y1 + margin),
+    )
+    return img.crop(expanded)
+
+
+def save_variants(processed: Image.Image, variant: str, dims_acc: dict) -> None:
+    """Cropa, redimensiona e salva. Atualiza dims_acc com dimensoes finais."""
+    cropped = crop_with_margin(processed, CROP_MARGIN)
+    cw, ch = cropped.size
+    aspect = ch / cw
+    print(f"  crop+margin: {cw}x{ch} (aspect {aspect:.3f})")
     for w in WIDTHS:
         h = round(w * aspect)
-        resized = processed.resize((w, h), Image.LANCZOS)
+        resized = cropped.resize((w, h), Image.LANCZOS)
         png_path = OUT_DIR / f"logo-rr-cred-{variant}-{w}.png"
         webp_path = OUT_DIR / f"logo-rr-cred-{variant}-{w}.webp"
         resized.save(png_path, "PNG", optimize=True)
         resized.save(webp_path, "WEBP", quality=92, method=6)
+        dims_acc[f"{variant}-{w}"] = {"width": w, "height": h}
         print(
-            f"  {png_path.name:38s} {png_path.stat().st_size / 1024:6.1f} KB  ({w}x{h})"
+            f"  {png_path.name:42s} {png_path.stat().st_size / 1024:6.1f} KB  ({w}x{h})"
         )
         print(
-            f"  {webp_path.name:38s} {webp_path.stat().st_size / 1024:6.1f} KB  ({w}x{h})"
+            f"  {webp_path.name:42s} {webp_path.stat().st_size / 1024:6.1f} KB  ({w}x{h})"
         )
 
 
@@ -174,31 +157,21 @@ def main() -> int:
     original = Image.open(SRC)
     print(f"Loaded {SRC} -> {original.size} mode={original.mode}\n")
 
-    # LIGHT (full art)
-    print("=== LIGHT variant (RR + arco + Cred original) ===")
+    dimensions: dict = {}
+
+    print("=== MARK-LIGHT (RR azul + arco dourado, bg transparente) ===")
     light = apply_transform(original, transform_light)
-    full_path = OUT_DIR / "logo-rr-cred-full.png"
-    light.save(full_path, "PNG", optimize=True)
-    print(
-        f"  {full_path.name:38s} {full_path.stat().st_size / 1024:6.1f} KB  ({light.size[0]}x{light.size[1]})"
-    )
-    save_variants(light, "light")
+    save_variants(light, "mark-light", dimensions)
 
-    # DARK
-    print("\n=== DARK variant (RR branco + arco + texto branco) ===")
+    print("\n=== MARK-DARK (RR branco + arco dourado, bg transparente) ===")
     dark = apply_transform(original, transform_dark)
-    save_variants(dark, "dark")
+    save_variants(dark, "mark-dark", dimensions)
 
-    # MARK-LIGHT
-    print("\n=== MARK-LIGHT variant (sem Cred, light) ===")
-    mark_light = apply_transform(original, transform_mark_light)
-    save_variants(mark_light, "mark-light")
-
-    # MARK-DARK
-    print("\n=== MARK-DARK variant (sem Cred, dark) ===")
-    mark_dark = apply_transform(original, transform_mark_dark)
-    save_variants(mark_dark, "mark-dark")
-
+    METADATA_PATH.write_text(
+        json.dumps(dimensions, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    print(f"\nMetadata salva: {METADATA_PATH}")
     print("\nDone.")
     return 0
 

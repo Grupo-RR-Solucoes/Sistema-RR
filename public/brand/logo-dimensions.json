@@ -1,0 +1,26 @@
+{
+  "mark-light-200": {
+    "width": 200,
+    "height": 210
+  },
+  "mark-light-120": {
+    "width": 120,
+    "height": 126
+  },
+  "mark-light-64": {
+    "width": 64,
+    "height": 67
+  },
+  "mark-dark-200": {
+    "width": 200,
+    "height": 207
+  },
+  "mark-dark-120": {
+    "width": 120,
+    "height": 124
+  },
+  "mark-dark-64": {
+    "width": 64,
+    "height": 66
+  }
+}

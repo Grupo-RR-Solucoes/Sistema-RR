@@ -196,7 +196,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         {/* Header do sidebar: logo + toggle */}
         <div style={styles.sidebarHeader}>
           {collapsed ? (
-            <BrandLogo size="sm" tone="dark" showText={false} />
+            <BrandLogo size="sm" tone="dark" />
           ) : (
             <BrandLogo size="md" tone="dark" />
           )}
@@ -340,8 +340,12 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     gap: 8,
-    paddingInline: 4,
-    minHeight: 40,
+    paddingInline: 0,
+    paddingTop: 24,
+    paddingBottom: 20,
+    width: "100%",
+    boxSizing: "border-box",
+    overflow: "visible",
   },
   toggleBtn: {
     width: 28,
@@ -366,7 +370,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 14,
-    paddingTop: 4,
+    paddingTop: 12,
   },
   groupSection: {
     display: "grid",

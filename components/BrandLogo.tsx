@@ -1,154 +1,152 @@
-import type { CSSProperties } from "react";
+"use client";
+
 import Image from "next/image";
 
-type BrandLogoSize = "sm" | "md" | "lg";
+import dimensions from "../public/brand/logo-dimensions.json";
 
-type BrandLogoProps = {
-  size?: BrandLogoSize | number;
+interface BrandLogoProps {
+  size?: "sm" | "md" | "lg" | number;
+  tone?: "light" | "dark";
   compact?: boolean;
-  tone?: "dark" | "light";
   subtitle?: string;
-  showText?: boolean;
+}
+
+const SIZE_MAP: Record<"sm" | "md" | "lg", number> = {
+  sm: 48,
+  md: 80,
+  lg: 140,
 };
 
-/**
- * Logo Grupo RR Cred — composicao hibrida (Fase 1.7):
- *   - PNG mark (RR + arco dourado, Cred recortado) servido em 3 tamanhos
- *     x 2 variantes (light/dark) — qualidade identica a arte original.
- *   - "GRUPO" + "CRED" renderizados ao lado via CSS (font-family,
- *     letter-spacing, cor controlados pelo tone).
- *
- * Tones:
- *   light  -> mark com RR azul + arco original; texto GRUPO azul, CRED dourado
- *   dark   -> mark com RR branco + arco dourado preservado; GRUPO branco, CRED amarelo
- *
- * API:
- *   - size: 'sm'|'md'|'lg' OU number (legacy compat).
- *           Number map: <=80 -> sm | 81-140 -> md | >140 -> lg.
- *   - compact: reduz uma tier (md->sm, lg->md).
- *   - tone: seleciona variante PNG + cores do texto + cor do subtitle.
- *   - subtitle: texto opcional renderizado a direita (fonte legibilidade).
- *   - showText: se false, oculta GRUPO+CRED (uso: sidebar collapsed).
- */
+const TEXT_GAP: Record<"sm" | "md" | "lg", number> = {
+  sm: 2,
+  md: 4,
+  lg: 6,
+};
+
+const BRAND_FONT_SIZE: {
+  grupo: Record<"sm" | "md" | "lg", number>;
+  cred: Record<"sm" | "md" | "lg", number>;
+} = {
+  grupo: { sm: 10, md: 14, lg: 22 },
+  cred: { sm: 13, md: 20, lg: 30 },
+};
+
+const COLORS = {
+  light: { grupo: "#0d4de3", cred: "#d6a13f" },
+  dark: { grupo: "#FFFFFF", cred: "#FFF000" },
+} as const;
+
+type DimsMap = Record<string, { width: number; height: number }>;
+const dims = dimensions as DimsMap;
+
 export default function BrandLogo({
   size = "md",
-  compact = false,
   tone = "dark",
+  compact,
   subtitle,
-  showText = true,
 }: BrandLogoProps) {
-  const tier = applyCompact(resolveSize(size), compact);
-  const { markW, markH, grupo, cred, gap } = TIER_DIMENSIONS[tier];
-  const variant = tone === "dark" ? "dark" : "light";
+  const tier = resolveTier(size, compact);
+  const w = SIZE_MAP[tier];
 
-  const grupoColor = tone === "dark" ? "#FFFFFF" : "#0d4de3";
-  const credColor = tone === "dark" ? "#fff000" : "#d6a13f";
-  const subtitleColor =
-    tone === "dark" ? "rgba(255,255,255,0.78)" : "var(--rr-muted)";
+  const variant = tone === "dark" ? "mark-dark" : "mark-light";
+  const sourceKey = `${variant}-200`;
+  const sourceDims = dims[sourceKey];
+  const aspect = sourceDims.height / sourceDims.width;
+  const h = Math.round(w * aspect);
+
+  const palette = COLORS[tone];
+  const fontSizeGrupo = BRAND_FONT_SIZE.grupo[tier];
+  const fontSizeCred = BRAND_FONT_SIZE.cred[tier];
+  const textGap = TEXT_GAP[tier];
 
   return (
-    <div style={{ ...styles.wrap, gap }}>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: textGap + 4,
+        maxWidth: "100%",
+        overflow: "hidden",
+      }}
+    >
       <Image
-        src={`/brand/logo-rr-cred-mark-${variant}-${markW}.png`}
+        src={`/brand/logo-rr-cred-${variant}-200.png`}
         alt="Grupo RR Cred"
-        width={markW}
-        height={markH}
+        width={w}
+        height={h}
+        sizes={`${w}px`}
         priority
-        style={styles.image}
+        quality={92}
+        style={{
+          display: "block",
+          width: w,
+          height: h,
+          flexShrink: 0,
+          objectFit: "contain",
+        }}
       />
-
-      {showText ? (
-        <div style={styles.textStack}>
-          <span
-            style={{
-              ...styles.grupoLabel,
-              fontSize: grupo,
-              color: grupoColor,
-            }}
-          >
-            GRUPO
-          </span>
-          <span
-            style={{
-              ...styles.credLabel,
-              fontSize: cred,
-              color: credColor,
-            }}
-          >
-            CRED
-          </span>
-        </div>
-      ) : null}
-
-      {subtitle ? (
-        <span style={{ ...styles.subtitle, color: subtitleColor }}>
-          {subtitle}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          lineHeight: 1,
+          gap: textGap,
+          minWidth: 0,
+        }}
+      >
+        <span
+          style={{
+            fontSize: fontSizeGrupo,
+            fontWeight: 800,
+            color: palette.grupo,
+            letterSpacing: "0.04em",
+            whiteSpace: "nowrap",
+          }}
+        >
+          GRUPO
         </span>
-      ) : null}
+        <span
+          style={{
+            fontSize: fontSizeCred,
+            fontWeight: 800,
+            color: palette.cred,
+            letterSpacing: "0.04em",
+            whiteSpace: "nowrap",
+          }}
+        >
+          CRED
+        </span>
+        {subtitle ? (
+          <span
+            style={{
+              marginTop: textGap + 2,
+              fontSize: Math.max(10, Math.round(fontSizeCred * 0.5)),
+              color: tone === "dark" ? "rgba(255,255,255,0.6)" : "#5A6B82",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              fontWeight: 400,
+              letterSpacing: 0,
+            }}
+          >
+            {subtitle}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-const TIER_DIMENSIONS: Record<
-  BrandLogoSize,
-  { markW: number; markH: number; grupo: number; cred: number; gap: number }
-> = {
-  sm: { markW: 64, markH: 80, grupo: 9, cred: 13, gap: 6 },
-  md: { markW: 120, markH: 150, grupo: 14, cred: 20, gap: 12 },
-  lg: { markW: 200, markH: 250, grupo: 22, cred: 32, gap: 18 },
-};
-
-function resolveSize(size: BrandLogoSize | number): BrandLogoSize {
+function resolveTier(
+  size: BrandLogoProps["size"],
+  compact?: boolean
+): "sm" | "md" | "lg" {
   if (typeof size === "number") {
-    if (size <= 80) return "sm";
-    if (size <= 140) return "md";
-    return "lg";
+    if (size <= 60) return "sm";
+    if (size <= 100) return compact ? "sm" : "md";
+    return compact ? "md" : "lg";
   }
-  return size;
+  if (compact && size === "md") return "sm";
+  if (compact && size === "lg") return "md";
+  return size ?? "md";
 }
-
-function applyCompact(size: BrandLogoSize, compact: boolean): BrandLogoSize {
-  if (!compact) return size;
-  if (size === "lg") return "md";
-  if (size === "md") return "sm";
-  return "sm";
-}
-
-const styles: Record<string, CSSProperties> = {
-  wrap: {
-    display: "inline-flex",
-    alignItems: "center",
-  },
-  image: {
-    display: "block",
-    height: "auto",
-    objectFit: "contain",
-    flexShrink: 0,
-  },
-  textStack: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-start",
-    justifyContent: "center",
-    gap: 2,
-    lineHeight: 1,
-  },
-  grupoLabel: {
-    fontFamily: "var(--font-heading)",
-    fontWeight: 700,
-    letterSpacing: "0.5px",
-    lineHeight: 1,
-  },
-  credLabel: {
-    fontFamily: "var(--font-heading)",
-    fontWeight: 800,
-    letterSpacing: "0.3px",
-    lineHeight: 1,
-  },
-  subtitle: {
-    fontSize: 12,
-    lineHeight: 1.45,
-    maxWidth: 240,
-    marginLeft: 8,
-  },
-};
