@@ -1,356 +1,304 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 
-import BrandLogo from "../components/BrandLogo";
+type Shortcut = {
+  href: string;
+  number: string;
+  category: string;
+  title: string;
+  description: string;
+  icon: ReactNode;
+};
 
-const quickAccess = [
+const shortcuts: Shortcut[] = [
   {
-    href: "/dashboard",
-    title: "Dashboard executivo",
-    badge: "Diretoria",
-    accent:
-      "linear-gradient(135deg, rgba(13,77,227,0.14) 0%, rgba(255,240,0,0.18) 100%)",
-    description:
-      "Consolida o mes, organiza o previsto x recebido e abre o painel central do grupo.",
+    href: "/promotores",
+    number: "01",
+    category: "Comercial",
+    title: "Promotores",
+    description: "Gestão de promotores e comissões",
+    icon: <IconUsers />,
   },
   {
     href: "/producao",
-    title: "Producao",
-    badge: "Operacao",
-    accent:
-      "linear-gradient(135deg, rgba(255,240,0,0.18) 0%, rgba(214,161,63,0.16) 100%)",
-    description:
-      "Controla a entrada diaria, status das propostas e consolidacao por empresa e promotor.",
+    number: "02",
+    category: "Operação",
+    title: "Produção",
+    description: "Operação diária e carteira ativa",
+    icon: <IconChartLine />,
   },
   {
-    href: "/fechamento",
-    title: "Fechamento",
-    badge: "Conferencia",
-    accent:
-      "linear-gradient(135deg, rgba(13,77,227,0.1) 0%, rgba(214,161,63,0.16) 100%)",
-    description:
-      "Conecta previsao, PRT, cancelamentos e auditoria do recebido real.",
-  },
-  {
-    href: "/promotores",
-    title: "Promotores",
-    badge: "Comercial",
-    accent:
-      "linear-gradient(135deg, rgba(255,240,0,0.22) 0%, rgba(13,77,227,0.1) 100%)",
-    description:
-      "Resume comissoes, metas, estornos e regras especiais de repasse.",
+    href: "/auditoria",
+    number: "03",
+    category: "Controle",
+    title: "Auditoria",
+    description: "Divergências e conferências",
+    icon: <IconShieldCheck />,
   },
   {
     href: "/financeiro",
+    number: "04",
+    category: "Controle",
     title: "Financeiro",
-    badge: "Fluxo de caixa",
-    accent:
-      "linear-gradient(135deg, rgba(214,161,63,0.16) 0%, rgba(13,77,227,0.12) 100%)",
-    description:
-      "Acompanha PRT, despesas, saldo inicial, resultado liquido e fluxo de caixa.",
+    description: "Despesas, fluxo de caixa",
+    icon: <IconWallet />,
+  },
+  {
+    href: "/fechamento",
+    number: "05",
+    category: "Operação",
+    title: "Fechamento",
+    description: "Conciliação mensal",
+    icon: <IconFileCheck />,
   },
   {
     href: "/importacoes",
-    title: "Importacoes",
-    badge: "Dados",
-    accent:
-      "linear-gradient(135deg, rgba(13,77,227,0.12) 0%, rgba(255,240,0,0.18) 100%)",
-    description:
-      "Centraliza o envio da planilha diaria, das tabelas mensais e dos fechamentos por CNPJ.",
-  },
-];
-
-const strategicPillars = [
-  "Arquitetura reorganizada em modulos de negocio para diretoria, operacao e auditoria.",
-  "Identidade visual alinhada com a marca, usando logo, azul forte, amarelo vivo e dourado como assinatura.",
-  "Base preparada para fechar schema, conectar Supabase e seguir para deploy com menos improviso.",
-];
-
-const liveSignals = [
-  {
-    label: "Marca",
-    value: "Grupo RR Cred",
-  },
-  {
-    label: "Escopo",
-    value: "Comissao, financeiro e auditoria",
-  },
-  {
-    label: "Etapa",
-    value: "Fundacao visual e estrutural",
+    number: "06",
+    category: "Dados",
+    title: "Importações",
+    description: "Cargas diárias e tabelas",
+    icon: <IconUpload />,
   },
 ];
 
 export default function Home() {
   return (
     <section style={styles.page}>
-      <div style={styles.hero}>
-        <article style={styles.heroMain}>
-          <div style={styles.kicker}>Plataforma Grupo RR Cred</div>
-          <h2 style={styles.title}>Sistema com identidade da marca e estrutura profissional</h2>
-          <p style={styles.description}>
-            A home agora vira uma sala de comando: apresenta a marca, distribui
-            os modulos principais e prepara a experiencia para operacao diaria,
-            fechamento, auditoria e acompanhamento financeiro com a cara do Grupo RR Cred.
-          </p>
-
-          <div style={styles.signalGrid}>
-            {liveSignals.map((item) => (
-              <div key={item.label} style={styles.signalItem}>
-                <span style={styles.signalLabel}>{item.label}</span>
-                <strong style={styles.signalValue}>{item.value}</strong>
-              </div>
-            ))}
-          </div>
-        </article>
-
-        <article style={styles.heroAside}>
-          <BrandLogo size={110} tone="light" />
-
-          <div style={styles.heroAsideList}>
-            {strategicPillars.map((item) => (
-              <div key={item} style={styles.heroAsideItem}>
-                {item}
-              </div>
-            ))}
-          </div>
-        </article>
-      </div>
+      <header style={styles.header}>
+        <div style={styles.kicker}>ATALHOS RÁPIDOS</div>
+        <h2 style={styles.title}>Operação Grupo RR Cred</h2>
+        <p style={styles.description}>
+          Acesso rápido aos módulos principais. Operação, controle e gestão
+          centralizados em um único ambiente.
+        </p>
+      </header>
 
       <div style={styles.grid}>
-        <section style={styles.panel}>
-          <div style={styles.panelHeader}>
-            <div style={styles.panelKicker}>Modulos principais</div>
-            <h3 style={styles.panelTitle}>Acesso rapido da operacao</h3>
-          </div>
-
-          <div style={styles.cardGrid}>
-            {quickAccess.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                style={{
-                  ...styles.linkCard,
-                  background: item.accent,
-                }}
-              >
-                <div style={styles.cardTop}>
-                  <span style={styles.badge}>{item.badge}</span>
-                  <span style={styles.arrow}>-&gt;</span>
-                </div>
-                <div style={styles.linkCardTitle}>{item.title}</div>
-                <div style={styles.linkCardDescription}>{item.description}</div>
-              </Link>
-            ))}
-          </div>
-        </section>
-
-        <section style={styles.sidePanel}>
-          <div style={styles.panelHeader}>
-            <div style={styles.panelKicker}>Direcao tecnica</div>
-            <h3 style={styles.panelTitle}>Prioridades desta fase</h3>
-          </div>
-
-          <div style={styles.foundationList}>
-            {strategicPillars.map((item) => (
-              <div key={item} style={styles.foundationItem}>
-                {item}
-              </div>
-            ))}
-          </div>
-        </section>
+        {shortcuts.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            style={styles.card}
+            className="rr-home-card"
+          >
+            <div style={styles.cardLabel}>
+              <span style={styles.cardLabelNumber}>{item.number}</span>
+              <span style={styles.cardLabelDot}>·</span>
+              <span style={styles.cardLabelCategory}>
+                {item.category.toUpperCase()}
+              </span>
+            </div>
+            <span style={styles.cardIcon}>{item.icon}</span>
+            <span style={styles.cardTitle}>{item.title}</span>
+            <span style={styles.cardDescription}>{item.description}</span>
+          </Link>
+        ))}
       </div>
     </section>
+  );
+}
+
+function IconUsers() {
+  return (
+    <svg
+      width={32}
+      height={32}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx={9} cy={8} r={3.5} />
+      <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+      <circle cx={17} cy={9} r={2.5} />
+      <path d="M16 14c2.8 0 5 2.2 5 5" />
+    </svg>
+  );
+}
+
+function IconChartLine() {
+  return (
+    <svg
+      width={32}
+      height={32}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 3v18h18" />
+      <path d="M7 15l4-4 3 3 6-7" />
+    </svg>
+  );
+}
+
+function IconShieldCheck() {
+  return (
+    <svg
+      width={32}
+      height={32}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 3l8 3v6c0 4.5-3.5 8.5-8 9-4.5-.5-8-4.5-8-9V6l8-3z" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  );
+}
+
+function IconWallet() {
+  return (
+    <svg
+      width={32}
+      height={32}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x={3} y={6} width={18} height={13} rx={2} />
+      <path d="M3 10h18" />
+      <circle cx={17} cy={14} r={1.2} fill="currentColor" />
+    </svg>
+  );
+}
+
+function IconFileCheck() {
+  return (
+    <svg
+      width={32}
+      height={32}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z" />
+      <path d="M14 3v5h5" />
+      <path d="M9 15l2 2 4-4" />
+    </svg>
+  );
+}
+
+function IconUpload() {
+  return (
+    <svg
+      width={32}
+      height={32}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 4v12" />
+      <path d="M7 9l5-5 5 5" />
+      <path d="M4 18h16" />
+    </svg>
   );
 }
 
 const styles: Record<string, CSSProperties> = {
   page: {
     display: "grid",
-    gap: "22px",
+    gap: 28,
   },
-  hero: {
+  header: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: "18px",
-  },
-  heroMain: {
-    background:
-      "linear-gradient(145deg, rgba(255,255,255,0.94) 0%, rgba(255,253,245,0.96) 100%)",
-    borderRadius: "28px",
-    padding: "30px",
-    border: "1px solid var(--rr-line)",
-    boxShadow: "var(--rr-shadow)",
-    position: "relative",
-    overflow: "hidden",
+    gap: 8,
+    maxWidth: 760,
   },
   kicker: {
-    fontSize: "12px",
+    fontSize: 13,
+    fontWeight: 700,
+    letterSpacing: "2.5px",
     textTransform: "uppercase",
-    letterSpacing: "0.18em",
-    color: "var(--rr-blue)",
-    fontWeight: 800,
-    marginBottom: "12px",
+    color: "#0d4de3",
   },
   title: {
     margin: 0,
-    fontSize: "clamp(2.3rem, 4vw, 4.2rem)",
-    lineHeight: 1,
-    color: "var(--rr-ink)",
-    maxWidth: 720,
+    fontSize: "clamp(2rem, 4vw, 2.6rem)",
+    fontWeight: 700,
+    color: "#0F1F4A",
+    lineHeight: 1.1,
   },
   description: {
-    margin: "18px 0 0",
-    fontSize: "16px",
-    lineHeight: 1.8,
-    color: "var(--rr-muted)",
-    maxWidth: 760,
-  },
-  signalGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: "12px",
-    marginTop: "24px",
-  },
-  signalItem: {
-    display: "grid",
-    gap: "8px",
-    padding: "16px 18px",
-    borderRadius: "18px",
-    background: "rgba(13,77,227,0.06)",
-    border: "1px solid rgba(13,77,227,0.1)",
-  },
-  signalLabel: {
-    fontSize: "11px",
-    textTransform: "uppercase",
-    letterSpacing: "0.14em",
-    color: "var(--rr-blue)",
-    fontWeight: 800,
-  },
-  signalValue: {
-    fontSize: "16px",
-    lineHeight: 1.45,
-    color: "var(--rr-ink)",
-  },
-  heroAside: {
-    borderRadius: "28px",
-    padding: "26px",
-    background:
-      "linear-gradient(180deg, rgba(13,77,227,0.95) 0%, rgba(7,37,125,0.98) 100%)",
-    boxShadow: "var(--rr-shadow)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    display: "grid",
-    gap: "18px",
-    alignContent: "start",
-  },
-  heroAsideList: {
-    display: "grid",
-    gap: "12px",
-  },
-  heroAsideItem: {
-    padding: "14px 16px",
-    borderRadius: "18px",
-    background: "rgba(255,240,0,0.12)",
-    border: "1px solid rgba(255,240,0,0.2)",
-    color: "rgba(255,255,255,0.94)",
-    fontSize: "14px",
-    lineHeight: 1.65,
+    margin: 0,
+    fontSize: 15,
+    color: "#5A6B82",
+    lineHeight: 1.6,
+    maxWidth: 720,
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: "18px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gap: 16,
   },
-  panel: {
-    background: "rgba(255,255,255,0.9)",
-    borderRadius: "26px",
-    padding: "24px",
-    border: "1px solid var(--rr-line)",
-    boxShadow: "var(--rr-shadow-soft)",
-  },
-  sidePanel: {
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.92) 0%, rgba(255,253,245,0.96) 100%)",
-    borderRadius: "26px",
-    padding: "24px",
-    border: "1px solid var(--rr-line)",
-    boxShadow: "var(--rr-shadow-soft)",
-  },
-  panelHeader: {
-    marginBottom: "18px",
-  },
-  panelKicker: {
-    fontSize: "12px",
-    textTransform: "uppercase",
-    letterSpacing: "0.14em",
-    color: "var(--rr-blue)",
-    fontWeight: 800,
-    marginBottom: "8px",
-  },
-  panelTitle: {
-    margin: 0,
-    fontSize: "28px",
-    color: "var(--rr-ink)",
-  },
-  cardGrid: {
+  card: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: "14px",
-  },
-  linkCard: {
-    display: "grid",
-    gap: "12px",
-    padding: "20px",
-    borderRadius: "22px",
+    gap: 12,
+    padding: 24,
+    background: "#FFFFFF",
+    border: "1px solid #D0D7E2",
+    borderRadius: 20,
     textDecoration: "none",
-    border: "1px solid rgba(13,77,227,0.12)",
-    color: "var(--rr-ink)",
-    boxShadow: "0 18px 30px rgba(11, 22, 51, 0.06)",
+    color: "#0F1F4A",
+    transition:
+      "border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease",
   },
-  cardTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  badge: {
+  cardLabel: {
     display: "inline-flex",
     alignItems: "center",
-    padding: "6px 10px",
-    borderRadius: "999px",
-    background: "rgba(255,255,255,0.76)",
-    color: "var(--rr-blue-deep)",
-    fontSize: "11px",
-    textTransform: "uppercase",
-    letterSpacing: "0.12em",
+    gap: 6,
+  },
+  cardLabelNumber: {
+    fontSize: 11,
     fontWeight: 800,
+    letterSpacing: "1.5px",
+    color: "#0d4de3",
   },
-  arrow: {
-    fontSize: "20px",
-    color: "var(--rr-blue)",
-    fontWeight: 800,
+  cardLabelDot: {
+    color: "#0d4de3",
+    fontWeight: 700,
   },
-  linkCardTitle: {
-    fontSize: "21px",
-    fontWeight: 800,
-    fontFamily: "var(--font-heading)",
+  cardLabelCategory: {
+    fontSize: 11,
+    fontWeight: 700,
+    letterSpacing: "1.5px",
+    color: "#0d4de3",
   },
-  linkCardDescription: {
-    fontSize: "14px",
-    lineHeight: 1.65,
-    color: "rgba(11,22,51,0.76)",
+  cardIcon: {
+    color: "#0F1F4A",
+    display: "inline-flex",
+    marginTop: 4,
   },
-  foundationList: {
-    display: "grid",
-    gap: "12px",
+  cardTitle: {
+    fontSize: 19,
+    fontWeight: 600,
+    color: "#0F1F4A",
   },
-  foundationItem: {
-    borderRadius: "18px",
-    border: "1px solid rgba(13,77,227,0.12)",
-    background:
-      "linear-gradient(135deg, rgba(255,240,0,0.1) 0%, rgba(255,255,255,0.9) 100%)",
-    padding: "16px",
-    fontSize: "14px",
-    lineHeight: 1.7,
-    color: "var(--rr-muted)",
+  cardDescription: {
+    fontSize: 14,
+    color: "#5A6B82",
+    lineHeight: 1.5,
   },
 };

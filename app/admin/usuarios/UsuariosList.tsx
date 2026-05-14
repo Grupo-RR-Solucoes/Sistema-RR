@@ -95,11 +95,13 @@ export default function UsuariosList({
   return (
     <div style={styles.page}>
       <header style={styles.header}>
-        <div>
-          <h2 style={styles.title}>Usuarios do sistema</h2>
+        <div style={styles.headerCopy}>
+          <div style={styles.kicker}>GESTÃO DE ACESSO</div>
+          <h2 style={styles.title}>Usuários do sistema</h2>
           <p style={styles.subtitle}>
             Sócios gerenciam usuários, atribuem perfis e geram senhas
-            provisórias. Promotores não veem esta área.
+            provisórias. Promotores não veem esta área. Toda criação, reset de
+            senha e remoção são auditadas automaticamente.
           </p>
         </div>
         <button
@@ -146,7 +148,14 @@ export default function UsuariosList({
                   </td>
                   <td style={styles.td}>
                     <span style={u.active ? styles.activeChip : styles.inactiveChip}>
-                      {u.active ? "Ativo" : "Inativo"}
+                      {u.active ? (
+                        <>
+                          <span style={styles.activeDot} aria-hidden="true" />
+                          Ativo
+                        </>
+                      ) : (
+                        "Inativo"
+                      )}
                     </span>
                   </td>
                   <td style={styles.td}>{formatDate(u.created_at)}</td>
@@ -217,54 +226,68 @@ function formatDate(iso: string): string {
 function roleChip(role: UsuarioRow["role"]): CSSProperties {
   const base: CSSProperties = {
     display: "inline-block",
-    padding: "3px 8px",
+    padding: "4px 12px",
     borderRadius: 999,
     fontSize: 11,
-    fontWeight: 800,
-    letterSpacing: "0.06em",
+    fontWeight: 700,
+    letterSpacing: "0.3px",
   };
   if (role === "socio")
-    return { ...base, background: "rgba(13,77,227,0.12)", color: "var(--rr-blue-deep)" };
+    return { ...base, background: "#0d4de3", color: "#FFFFFF" };
   if (role === "funcionario")
-    return { ...base, background: "rgba(214,161,63,0.18)", color: "#7a4e10" };
+    return { ...base, background: "#d6a13f", color: "#FFFFFF" };
   return { ...base, background: "rgba(40,140,80,0.14)", color: "#185a36" };
 }
 
 const styles: Record<string, CSSProperties> = {
-  page: { display: "grid", gap: 20 },
+  page: { display: "grid", gap: 24 },
   header: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "flex-end",
-    gap: 16,
+    alignItems: "flex-start",
+    gap: 20,
     flexWrap: "wrap",
+    marginBottom: 4,
+  },
+  headerCopy: {
+    display: "grid",
+    gap: 8,
+    maxWidth: 760,
+  },
+  kicker: {
+    fontSize: 13,
+    fontWeight: 700,
+    letterSpacing: "2.5px",
+    textTransform: "uppercase",
+    color: "#0d4de3",
   },
   title: {
     margin: 0,
-    fontSize: 22,
-    fontWeight: 800,
-    color: "var(--rr-ink)",
+    fontSize: "clamp(2rem, 3.5vw, 2.4rem)",
+    fontWeight: 700,
+    color: "#0F1F4A",
+    lineHeight: 1.1,
   },
   subtitle: {
-    margin: "6px 0 0 0",
-    fontSize: 13,
-    color: "var(--rr-muted)",
+    margin: 0,
+    fontSize: 15,
+    color: "#5A6B82",
     maxWidth: 720,
-    lineHeight: 1.5,
+    lineHeight: 1.6,
   },
   primaryBtn: {
-    padding: "11px 18px",
+    padding: "12px 20px",
     borderRadius: 12,
     border: "none",
     cursor: "pointer",
-    background:
-      "linear-gradient(135deg, var(--rr-blue) 0%, var(--rr-blue-deep) 100%)",
+    background: "#0d4de3",
     color: "#fff",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 700,
-    letterSpacing: "0.04em",
+    letterSpacing: "0.5px",
     textTransform: "uppercase",
-    boxShadow: "0 12px 24px rgba(13,77,227,0.28)",
+    boxShadow: "0 4px 12px rgba(13,77,227,0.18)",
+    alignSelf: "flex-start",
   },
   errorBanner: {
     padding: "10px 14px",
@@ -279,7 +302,7 @@ const styles: Record<string, CSSProperties> = {
     overflowX: "auto",
     background: "var(--rr-surface-elevated)",
     border: "1px solid var(--rr-line)",
-    borderRadius: 20,
+    borderRadius: 16,
     boxShadow: "var(--rr-shadow-soft)",
   },
   table: {
@@ -294,9 +317,9 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     letterSpacing: "0.1em",
     textTransform: "uppercase",
-    color: "var(--rr-muted)",
+    color: "#0F1F4A",
     borderBottom: "1px solid var(--rr-line)",
-    background: "rgba(13,77,227,0.04)",
+    background: "#E8EDF5",
   },
   thActions: {
     textAlign: "right",
@@ -305,9 +328,9 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     letterSpacing: "0.1em",
     textTransform: "uppercase",
-    color: "var(--rr-muted)",
+    color: "#0F1F4A",
     borderBottom: "1px solid var(--rr-line)",
-    background: "rgba(13,77,227,0.04)",
+    background: "#E8EDF5",
   },
   td: {
     padding: "12px 14px",
@@ -331,26 +354,36 @@ const styles: Record<string, CSSProperties> = {
     fontStyle: "italic",
   },
   activeChip: {
-    display: "inline-block",
-    padding: "3px 8px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "4px 12px",
     borderRadius: 999,
     fontSize: 11,
-    fontWeight: 800,
-    background: "rgba(40,140,80,0.14)",
-    color: "#185a36",
+    fontWeight: 700,
+    background: "#fff000",
+    color: "#0F1F4A",
+    letterSpacing: "0.3px",
+  },
+  activeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    background: "#1f9d55",
   },
   inactiveChip: {
     display: "inline-block",
-    padding: "3px 8px",
+    padding: "4px 12px",
     borderRadius: 999,
     fontSize: 11,
-    fontWeight: 800,
-    background: "rgba(110,110,110,0.14)",
-    color: "#555",
+    fontWeight: 700,
+    background: "#E8EDF5",
+    color: "#5A6B82",
+    letterSpacing: "0.3px",
   },
   actionBtn: {
-    marginLeft: 6,
-    padding: "7px 12px",
+    marginLeft: 8,
+    padding: "8px 14px",
     borderRadius: 10,
     border: "1px solid var(--rr-line-strong)",
     background: "#fff",
@@ -360,8 +393,8 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
   },
   dangerBtn: {
-    marginLeft: 6,
-    padding: "7px 12px",
+    marginLeft: 8,
+    padding: "8px 14px",
     borderRadius: 10,
     border: "1px solid rgba(180,30,30,0.32)",
     background: "rgba(180,30,30,0.06)",

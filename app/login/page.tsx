@@ -16,7 +16,7 @@ export default async function LoginPage() {
     <div style={styles.page}>
       <div style={styles.card}>
         <div style={styles.brand}>
-          <BrandLogo size={84} tone="dark" subtitle="Sistema operacional do Grupo RR Cred" />
+          <BrandLogo size="lg" tone="light" subtitle="Sistema operacional do Grupo RR Cred" />
         </div>
 
         <div style={styles.intro}>

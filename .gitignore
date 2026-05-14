@@ -21,3 +21,8 @@ Thumbs.db
 
 # Supabase CLI local cache
 supabase/.temp/
+
+# Brand: arquivos de diagnostico/comparacao gerados por scripts (nao
+# versionar — sao saidas auxiliares). PNGs/WebPs canonicos da logo
+# (logo-rr-cred-*.{png,webp}) ficam versionados.
+public/brand/_*.png

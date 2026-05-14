@@ -122,16 +122,15 @@ const styles: Record<string, CSSProperties> = {
   submit: {
     marginTop: 4,
     padding: "13px 18px",
-    borderRadius: 12,
+    borderRadius: 10,
     border: "none",
     cursor: "pointer",
-    background:
-      "linear-gradient(135deg, var(--rr-blue) 0%, var(--rr-blue-deep) 100%)",
+    background: "#0d4de3",
     color: "#fff",
     fontSize: 15,
     fontWeight: 700,
     letterSpacing: "0.04em",
     textTransform: "uppercase",
-    boxShadow: "0 12px 24px rgba(13,77,227,0.32)",
+    boxShadow: "0 4px 12px rgba(13,77,227,0.18)",
   },
 };
