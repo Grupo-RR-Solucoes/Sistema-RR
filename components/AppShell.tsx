@@ -117,6 +117,20 @@ const navGroups: NavGroup[] = [
       },
     ],
   },
+  {
+    id: "admin",
+    label: "Admin",
+    description: "Gestao de usuarios e acesso ao sistema",
+    items: [
+      {
+        href: "/admin/usuarios",
+        label: "Usuarios",
+        description:
+          "Criar, ativar, resetar senha e remover usuarios do sistema",
+        icon: "US",
+      },
+    ],
+  },
 ];
 
 const quickItems: NavItem[] = [
@@ -145,6 +159,7 @@ const initialOpenGroups = {
   operacao: true,
   comercial: true,
   controle: true,
+  admin: false,
   atalhos: false,
 };
 
@@ -213,15 +228,26 @@ export default function AppShell({ children }: { children: ReactNode }) {
     return pathname === item.href || pathname.startsWith(`${item.href}/`);
   };
 
+  // Grupo "admin" so aparece para socio. Demais grupos sao visiveis a todos
+  // os roles autenticados. Durante o loading inicial (user === null), admin
+  // fica oculto ate confirmarmos a role.
+  const visibleNavGroups = useMemo(
+    () =>
+      navGroups.filter((g) => g.id !== "admin" || user?.role === "socio"),
+    [user?.role]
+  );
+
   const currentItem =
-    [...navGroups.flatMap((group) => group.items), ...quickItems].find((item) =>
-      isItemActive(item)
-    ) || navGroups[0].items[0];
+    [...visibleNavGroups.flatMap((group) => group.items), ...quickItems].find(
+      (item) => isItemActive(item)
+    ) || visibleNavGroups[0]?.items[0] || navGroups[0].items[0];
 
   const currentGroup = useMemo(
     () =>
-      navGroups.find((group) => group.items.some((item) => isItemActive(item))) || navGroups[0],
-    [pathname]
+      visibleNavGroups.find((group) =>
+        group.items.some((item) => isItemActive(item))
+      ) || visibleNavGroups[0] || navGroups[0],
+    [pathname, visibleNavGroups]
   );
 
   useEffect(() => {
@@ -359,7 +385,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
 
           <nav style={styles.navWrap}>
-            {navGroups.map((group) => {
+            {visibleNavGroups.map((group) => {
               const groupActive = group.items.some((item) => isItemActive(item));
               const groupOpen = sidebarCollapsed ? true : Boolean(openGroups[group.id]);
 
