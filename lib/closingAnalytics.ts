@@ -1,5 +1,6 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { calcularOperacao } from "@/lib/motor";
-import { withMemoryCache } from "@/lib/memoryCache";
 import { getCompanyDisplayIdentity } from "@/lib/knownCompanies";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { fetchAllRows } from "@/lib/queryHelpers";
@@ -249,8 +250,6 @@ export type ClosingAnalyticsPayload = {
   highlights: ClosingHighlight[];
   alerts: string[];
 };
-
-const CLOSING_ANALYTICS_CACHE_TTL_MS = 20_000;
 
 function toNumber(value: unknown) {
   if (typeof value === "number") {
@@ -1067,17 +1066,15 @@ function mergeExpectedTotals(
   };
 }
 
-export async function buildClosingAnalytics(filters?: {
-  year?: number;
-  month?: number;
-  fastDashboardMode?: boolean;
-}): Promise<ClosingAnalyticsPayload> {
-  const cacheKey = `closing:${filters?.year || "latest"}:${filters?.month || "latest"}:${
-    filters?.fastDashboardMode ? "fast" : "full"
-  }`;
-
-  return withMemoryCache(cacheKey, CLOSING_ANALYTICS_CACHE_TTL_MS, async () => {
-  const supabaseAdmin = getSupabaseAdmin();
+export async function buildClosingAnalytics(
+  supabase: SupabaseClient,
+  filters?: {
+    year?: number;
+    month?: number;
+    fastDashboardMode?: boolean;
+  }
+): Promise<ClosingAnalyticsPayload> {
+  const supabaseAdmin = supabase;
 
   const [
     companies,
@@ -1784,14 +1781,29 @@ export async function buildClosingAnalytics(filters?: {
     }
   }
 
-    return {
-      periods: periods.sort((a, b) => comparePeriods(b, a)),
-      selectedPeriod,
-      summary,
-      companyRows: selectedRows,
-      trend,
-      highlights,
-      alerts,
-    };
-  });
+  return {
+    periods: periods.sort((a, b) => comparePeriods(b, a)),
+    selectedPeriod,
+    summary,
+    companyRows: selectedRows,
+    trend,
+    highlights,
+    alerts,
+  };
+}
+
+/**
+ * @deprecated Wrapper temporario do Dia 4.2 Etapa 3.2. Os 4 callers
+ * pendentes (auditoria, fechamento, relatorios, relatorios/export) usam
+ * esta variante enquanto nao sao refatorados nas Etapas 3.3, 3.4 e 3.7.
+ * Sera removido no final do Dia 4.2 quando todos os callers passarem
+ * o supabase client diretamente para buildClosingAnalytics.
+ */
+export async function buildClosingAnalyticsLegacy(filters?: {
+  year?: number;
+  month?: number;
+  fastDashboardMode?: boolean;
+}): Promise<ClosingAnalyticsPayload> {
+  const supabase = getSupabaseAdmin();
+  return buildClosingAnalytics(supabase, filters);
 }

@@ -1,6 +1,9 @@
 import * as XLSX from "xlsx";
 
-import { buildClosingAnalytics } from "@/lib/closingAnalytics";
+import {
+  buildClosingAnalytics,
+  buildClosingAnalyticsLegacy,
+} from "@/lib/closingAnalytics";
 import { buildFinancialAnalytics } from "@/lib/financialAnalytics";
 import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
 
@@ -1057,7 +1060,8 @@ export async function buildReportPreview(
   }
 
   if (reportType === "fechamento") {
-    const data = await buildClosingAnalytics(input);
+    // TODO Dia 4.2 Etapa 3.7: passar supabase client apos refator do bucket OUTROS (/api/relatorios)
+    const data = await buildClosingAnalyticsLegacy(input);
 
     return {
       reportType,
@@ -1106,7 +1110,8 @@ export async function buildReportPreview(
   }
 
   if (reportType === "auditoria") {
-    const audit = makeAuditView(await buildClosingAnalytics(input));
+    // TODO Dia 4.2 Etapa 3.7: passar supabase client apos refator do bucket OUTROS (/api/relatorios)
+    const audit = makeAuditView(await buildClosingAnalyticsLegacy(input));
     const criticalCount = audit.rows.filter((row) => row.severity === "critico").length;
 
     return {
@@ -1286,7 +1291,8 @@ export async function buildReportExport(
   }
 
   if (reportType === "fechamento") {
-    const data = await buildClosingAnalytics(input);
+    // TODO Dia 4.2 Etapa 3.7: passar supabase client apos refator do bucket OUTROS (/api/relatorios/export)
+    const data = await buildClosingAnalyticsLegacy(input);
 
     return {
       buffer:
@@ -1306,7 +1312,8 @@ export async function buildReportExport(
   }
 
   if (reportType === "auditoria") {
-    const data = makeAuditView(await buildClosingAnalytics(input));
+    // TODO Dia 4.2 Etapa 3.7: passar supabase client apos refator do bucket OUTROS (/api/relatorios/export)
+    const data = makeAuditView(await buildClosingAnalyticsLegacy(input));
 
     return {
       buffer:

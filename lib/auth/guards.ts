@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "./getUser";
+import { createSupabaseServerClient } from "./supabaseServerClient";
 import type { AuthSession, UserRole } from "./types";
+import { getSupabaseAdmin } from "../supabaseAdmin";
 
 /**
  * Erro estruturado lancado pelos guards. Os handlers de API devem capturar
@@ -109,4 +111,51 @@ export async function requireSocioOrFuncionario(): Promise<{
     );
   }
   return { session, role };
+}
+
+// ============================================================
+// Composicoes guard + client (Dia 4.2)
+// ============================================================
+//
+// Helpers que combinam um guard com a inicializacao do cliente Supabase
+// apropriado, para reduzir boilerplate nos handlers de API:
+//
+//   - *Anon  → createSupabaseServerClient (Escola B: anon autenticado + RLS)
+//   - *Admin → getSupabaseAdmin            (Escola A: service_role com guard)
+//
+// Mapeamento bucket -> helper (Dia 4.2 mapa de decisoes):
+//   withAuthenticatedAnon       → D11, D17, D24, D25
+//   withSocioAnon               → D12-D16, D18, D20, D21, D30, D32, D33
+//   withSocioOrFuncionarioAnon  → D19, D22, D23, D31
+//   withSocioAdmin              → D26, D27, D34, D35, D36
+//   withSocioOrFuncionarioAdmin → D28
+
+export async function withAuthenticatedAnon() {
+  const user = await requireAuthenticated();
+  const supabase = await createSupabaseServerClient();
+  return { user, supabase };
+}
+
+export async function withSocioAnon() {
+  const user = await requireSocio();
+  const supabase = await createSupabaseServerClient();
+  return { user, supabase };
+}
+
+export async function withSocioOrFuncionarioAnon() {
+  const user = await requireSocioOrFuncionario();
+  const supabase = await createSupabaseServerClient();
+  return { user, supabase };
+}
+
+export async function withSocioAdmin() {
+  const user = await requireSocio();
+  const supabase = getSupabaseAdmin();
+  return { user, supabase };
+}
+
+export async function withSocioOrFuncionarioAdmin() {
+  const user = await requireSocioOrFuncionario();
+  const supabase = getSupabaseAdmin();
+  return { user, supabase };
 }

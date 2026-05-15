@@ -1,9 +1,10 @@
+import { NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withAuthenticatedAnon } from "@/lib/auth/guards";
 import { buildClosingAnalytics } from "@/lib/closingAnalytics";
-import { withMemoryCache } from "@/lib/memoryCache";
 import { getCompanyDisplayIdentity } from "@/lib/knownCompanies";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { fetchAllRows } from "@/lib/queryHelpers";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 const MONTH_NAMES = [
   "jan",
@@ -88,8 +89,6 @@ type DashboardResponsePayload = {
   }>;
   alerts: string[];
 };
-
-const DASHBOARD_CACHE_TTL_MS = 90_000;
 
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
@@ -212,6 +211,8 @@ function classifyProduct(record: {
 
 export async function GET(request: Request) {
   try {
+    const { supabase } = await withAuthenticatedAnon();
+
     const { searchParams } = new URL(request.url);
     const yearParam = Number(searchParams.get("year"));
     const monthParam = Number(searchParams.get("month"));
@@ -221,22 +222,15 @@ export async function GET(request: Request) {
       Number.isInteger(monthParam) && monthParam >= 1 && monthParam <= 12
         ? monthParam
         : undefined;
-    const cacheKey = `${year || "latest"}-${month || "latest"}`;
-
-    const payload = await withMemoryCache(
-      `dashboard:${cacheKey}`,
-      DASHBOARD_CACHE_TTL_MS,
-      async () => {
-        const supabaseAdmin = getSupabaseAdmin();
 
         const [closingPayload, productionRows, promoters] = await Promise.all([
-          buildClosingAnalytics({
+          buildClosingAnalytics(supabase, {
             year,
             month,
             fastDashboardMode: true,
           }),
           fetchAllRows<ProductionRow>(() =>
-            supabaseAdmin
+            supabase
               .from("daily_production_records")
               .select(
                 "assigned_promoter_id, status, net_value, product_description, convenio_type, convenio_segment, is_srcc_restricted, movement_date, contract_date, proposal_date"
@@ -244,7 +238,7 @@ export async function GET(request: Request) {
               .order("id", { ascending: true })
           ),
           fetchAllRows<PromoterRow>(() =>
-            supabaseAdmin
+            supabase
               .from("promoters")
               .select("id")
               .eq("active", true)
@@ -446,15 +440,8 @@ export async function GET(request: Request) {
           alerts: closingPayload.alerts,
         };
 
-        return payload;
-      },
-    );
-
-    return Response.json(payload);
-  } catch (error: any) {
-    return Response.json(
-      { error: error.message || "Erro ao carregar dashboard." },
-      { status: 500 }
-    );
+    return NextResponse.json(payload);
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }
