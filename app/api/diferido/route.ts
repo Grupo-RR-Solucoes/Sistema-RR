@@ -1,11 +1,20 @@
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 
 export async function GET() {
-  const supabaseAdmin = getSupabaseAdmin();
-  const { data } = await supabaseAdmin
-    .from("diferido_parcelas")
-    .select("*")
-    .order("data_prevista");
+  try {
+    const { supabase } = await withSocioAnon();
 
-  return Response.json(data);
+    const { data, error } = await supabase
+      .from("diferido_parcelas")
+      .select("*")
+      .order("data_prevista");
+
+    if (error) throw error;
+
+    return NextResponse.json(data);
+  } catch (error) {
+    return apiGuardErrorResponse(error);
+  }
 }

@@ -1,4 +1,7 @@
-import { getSupabaseAdmin, hasSupabaseEnv } from "@/lib/supabaseAdmin";
+import { NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
+import { hasSupabaseEnv } from "@/lib/supabaseAdmin";
 
 const criticalTables = [
   "companies",
@@ -21,10 +24,11 @@ type TableStatus = {
   error?: string;
 };
 
-async function checkTable(table: string): Promise<TableStatus> {
+type GuardSupabase = Awaited<ReturnType<typeof withSocioAnon>>["supabase"];
+
+async function checkTable(supabase: GuardSupabase, table: string): Promise<TableStatus> {
   try {
-    const supabaseAdmin = getSupabaseAdmin();
-    const { count, error } = await supabaseAdmin
+    const { count, error } = await supabase
       .from(table)
       .select("*", { count: "exact", head: true });
 
@@ -53,44 +57,52 @@ async function checkTable(table: string): Promise<TableStatus> {
 }
 
 export async function GET() {
-  const env = {
-    supabaseUrl: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
-    supabaseAnonKey: Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
-    supabaseServiceRole: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
-  };
+  try {
+    const { supabase } = await withSocioAnon();
 
-  if (!hasSupabaseEnv()) {
-    return Response.json({
-      status: "warning",
+    const env = {
+      supabaseUrl: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
+      supabaseAnonKey: Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+      supabaseServiceRole: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+    };
+
+    if (!hasSupabaseEnv()) {
+      return NextResponse.json({
+        status: "warning",
+        timestamp: new Date().toISOString(),
+        env,
+        database: {
+          connected: false,
+          checkedTables: 0,
+          healthyTables: 0,
+        },
+        tables: [] satisfies TableStatus[],
+        message:
+          "As variaveis principais do Supabase ainda nao foram configuradas. O sistema pode compilar, mas nao consegue consultar o banco.",
+      });
+    }
+
+    const tableChecks = await Promise.all(
+      criticalTables.map((table) => checkTable(supabase, table))
+    );
+    const healthyTables = tableChecks.filter((table) => table.ok).length;
+
+    return NextResponse.json({
+      status: healthyTables === criticalTables.length ? "ok" : "warning",
       timestamp: new Date().toISOString(),
       env,
       database: {
-        connected: false,
-        checkedTables: 0,
-        healthyTables: 0,
+        connected: healthyTables > 0,
+        checkedTables: criticalTables.length,
+        healthyTables,
       },
-      tables: [] satisfies TableStatus[],
+      tables: tableChecks,
       message:
-        "As variaveis principais do Supabase ainda nao foram configuradas. O sistema pode compilar, mas nao consegue consultar o banco.",
+        healthyTables === criticalTables.length
+          ? "Ambiente e banco responderam normalmente."
+          : "O ambiente respondeu, mas ainda existe tabela critica sem leitura valida.",
     });
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
-
-  const tableChecks = await Promise.all(criticalTables.map((table) => checkTable(table)));
-  const healthyTables = tableChecks.filter((table) => table.ok).length;
-
-  return Response.json({
-    status: healthyTables === criticalTables.length ? "ok" : "warning",
-    timestamp: new Date().toISOString(),
-    env,
-    database: {
-      connected: healthyTables > 0,
-      checkedTables: criticalTables.length,
-      healthyTables,
-    },
-    tables: tableChecks,
-    message:
-      healthyTables === criticalTables.length
-        ? "Ambiente e banco responderam normalmente."
-        : "O ambiente respondeu, mas ainda existe tabela critica sem leitura valida.",
-  });
 }

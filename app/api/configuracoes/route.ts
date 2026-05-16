@@ -1,6 +1,14 @@
+/**
+ * @deprecated Use /api/admin/usuarios e /api/admin/usuarios/[id]
+ * (Dia 4.1). Este endpoint duplica funcionalidade e sera
+ * removido em fase futura. Mantido requireSocio aqui para
+ * seguranca imediata enquanto cleanup nao acontece.
+ */
+import { NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import { fetchAllRows } from "@/lib/queryHelpers";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { clearMemoryCache, withMemoryCache } from "@/lib/memoryCache";
 
 type AccessProfileRow = {
   id: string;
@@ -18,7 +26,15 @@ type AppUserRow = {
   created_at?: string | null;
 };
 
-async function writeAudit(description: string, payload: Record<string, unknown>) {
+// audit_logs RLS bloqueia INSERT via PostgREST para todos os roles
+// (Dia 3 grupo G). writeAudit usa service_role para escrever, idem
+// pattern Dia 4.1 (/api/admin/usuarios). createdBy recebe o email do
+// usuario autenticado vindo do guard (T5 do mapa de decisoes).
+async function writeAudit(
+  description: string,
+  payload: Record<string, unknown>,
+  createdBy: string
+) {
   try {
     const supabaseAdmin = getSupabaseAdmin();
 
@@ -27,7 +43,7 @@ async function writeAudit(description: string, payload: Record<string, unknown>)
       action: "MANUAL_CHANGE",
       description,
       payload,
-      created_by: "sistema",
+      created_by: createdBy,
     });
   } catch {
     // Mantem o fluxo principal.
@@ -36,75 +52,72 @@ async function writeAudit(description: string, payload: Record<string, unknown>)
 
 export async function GET() {
   try {
-    const payload = await withMemoryCache("route:configuracoes", 20_000, async () => {
-      const supabaseAdmin = getSupabaseAdmin();
+    const { supabase } = await withSocioAnon();
 
-      const [profiles, users] = await Promise.all([
-        fetchAllRows<AccessProfileRow>(() =>
-          supabaseAdmin
-            .from("access_profiles")
-            .select("id, name, description, created_at")
-            .order("name", { ascending: true })
-        ),
-        fetchAllRows<AppUserRow>(() =>
-          supabaseAdmin
-            .from("app_users")
-            .select("id, email, full_name, access_profile_id, active, created_at")
-            .order("created_at", { ascending: false })
-        ),
-      ]);
+    const [profiles, users] = await Promise.all([
+      fetchAllRows<AccessProfileRow>(() =>
+        supabase
+          .from("access_profiles")
+          .select("id, name, description, created_at")
+          .order("name", { ascending: true })
+      ),
+      fetchAllRows<AppUserRow>(() =>
+        supabase
+          .from("app_users")
+          .select("id, email, full_name, access_profile_id, active, created_at")
+          .order("created_at", { ascending: false })
+      ),
+    ]);
 
-      const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+    const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
 
-      return {
-        summary: {
-          profiles: profiles.length,
-          users: users.length,
-          activeUsers: users.filter((user) => user.active !== false).length,
-          monthPolicy: "EDITAVEL",
-          retroactivePolicy: "LIBERADA",
+    const payload = {
+      summary: {
+        profiles: profiles.length,
+        users: users.length,
+        activeUsers: users.filter((appUser) => appUser.active !== false).length,
+        monthPolicy: "EDITAVEL",
+        retroactivePolicy: "LIBERADA",
+      },
+      profiles,
+      users: users.map((appUser) => ({
+        ...appUser,
+        profile_name: profileById.get(appUser.access_profile_id || "")?.name || "Sem perfil",
+      })),
+      governance: [
+        {
+          title: "Competencia",
+          detail: "Mes aberto e editavel, sem travamento obrigatorio.",
         },
-        profiles,
-        users: users.map((user) => ({
-          ...user,
-          profile_name: profileById.get(user.access_profile_id || "")?.name || "Sem perfil",
-        })),
-        governance: [
-          {
-            title: "Competencia",
-            detail: "Mes aberto e editavel, sem travamento obrigatorio.",
-          },
-          {
-            title: "Retroatividade",
-            detail: "Lancamentos passados e futuros podem ser recalculados.",
-          },
-          {
-            title: "Financeiro",
-            detail: "Saldo inicial e categorias continuam sob controle manual.",
-          },
-          {
-            title: "Acesso",
-            detail:
-              "Os cadastros de perfil e usuario ficam prontos agora. O bloqueio por login entra quando o Supabase Auth for conectado.",
-          },
-        ],
-      };
-    });
+        {
+          title: "Retroatividade",
+          detail: "Lancamentos passados e futuros podem ser recalculados.",
+        },
+        {
+          title: "Financeiro",
+          detail: "Saldo inicial e categorias continuam sob controle manual.",
+        },
+        {
+          title: "Acesso",
+          detail:
+            "Os cadastros de perfil e usuario ficam prontos agora. O bloqueio por login entra quando o Supabase Auth for conectado.",
+        },
+      ],
+    };
 
-    return Response.json(payload);
-  } catch (error: any) {
-    return Response.json(
-      { error: error.message || "Erro ao carregar configuracoes." },
-      { status: 500 }
-    );
+    return NextResponse.json(payload);
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }
 
 export async function POST(req: Request) {
   try {
+    const { user, supabase } = await withSocioAnon();
+    const auditActor = user.session.appUser.email;
+
     const body = await req.json();
     const action = String(body?.action || "").trim();
-    const supabaseAdmin = getSupabaseAdmin();
 
     if (action === "profile_upsert") {
       const id = body.id ? String(body.id) : null;
@@ -112,14 +125,14 @@ export async function POST(req: Request) {
       const description = body.description ? String(body.description) : null;
 
       if (!name) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe o nome do perfil." },
           { status: 400 }
         );
       }
 
       if (id) {
-        const { error } = await supabaseAdmin
+        const { error } = await supabase
           .from("access_profiles")
           .update({
             name,
@@ -129,16 +142,16 @@ export async function POST(req: Request) {
 
         if (error) throw error;
 
-        clearMemoryCache("route:configuracoes");
-        await writeAudit("Atualizacao manual de perfil de acesso", {
-          profile_id: id,
-          name,
-        });
+        await writeAudit(
+          "Atualizacao manual de perfil de acesso",
+          { profile_id: id, name },
+          auditActor
+        );
 
-        return Response.json({ success: true, updated: true });
+        return NextResponse.json({ success: true, updated: true });
       }
 
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await supabase
         .from("access_profiles")
         .upsert(
           {
@@ -154,13 +167,13 @@ export async function POST(req: Request) {
 
       if (error) throw error;
 
-      clearMemoryCache("route:configuracoes");
-      await writeAudit("Criacao ou reativacao de perfil de acesso", {
-        profile_id: data.id,
-        name,
-      });
+      await writeAudit(
+        "Criacao ou reativacao de perfil de acesso",
+        { profile_id: data.id, name },
+        auditActor
+      );
 
-      return Response.json({ success: true, updated: false, id: data.id });
+      return NextResponse.json({ success: true, updated: false, id: data.id });
     }
 
     if (action === "user_upsert") {
@@ -170,21 +183,21 @@ export async function POST(req: Request) {
       const accessProfileId = body.accessProfileId ? String(body.accessProfileId) : null;
 
       if (!email) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe o email do usuario." },
           { status: 400 }
         );
       }
 
       if (!accessProfileId) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Selecione o perfil de acesso do usuario." },
           { status: 400 }
         );
       }
 
       if (id) {
-        const { error } = await supabaseAdmin
+        const { error } = await supabase
           .from("app_users")
           .update({
             email,
@@ -195,17 +208,16 @@ export async function POST(req: Request) {
 
         if (error) throw error;
 
-        clearMemoryCache("route:configuracoes");
-        await writeAudit("Atualizacao manual de usuario interno", {
-          user_id: id,
-          email,
-          access_profile_id: accessProfileId,
-        });
+        await writeAudit(
+          "Atualizacao manual de usuario interno",
+          { user_id: id, email, access_profile_id: accessProfileId },
+          auditActor
+        );
 
-        return Response.json({ success: true, updated: true });
+        return NextResponse.json({ success: true, updated: true });
       }
 
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await supabase
         .from("app_users")
         .upsert(
           {
@@ -223,14 +235,13 @@ export async function POST(req: Request) {
 
       if (error) throw error;
 
-      clearMemoryCache("route:configuracoes");
-      await writeAudit("Criacao ou reativacao de usuario interno", {
-        user_id: data.id,
-        email,
-        access_profile_id: accessProfileId,
-      });
+      await writeAudit(
+        "Criacao ou reativacao de usuario interno",
+        { user_id: data.id, email, access_profile_id: accessProfileId },
+        auditActor
+      );
 
-      return Response.json({ success: true, updated: false, id: data.id });
+      return NextResponse.json({ success: true, updated: false, id: data.id });
     }
 
     if (action === "toggle_user") {
@@ -238,13 +249,13 @@ export async function POST(req: Request) {
       const active = Boolean(body.active);
 
       if (!id) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe o usuario que sera atualizado." },
           { status: 400 }
         );
       }
 
-      const { error } = await supabaseAdmin
+      const { error } = await supabase
         .from("app_users")
         .update({
           active,
@@ -253,20 +264,17 @@ export async function POST(req: Request) {
 
       if (error) throw error;
 
-      clearMemoryCache("route:configuracoes");
-      await writeAudit(active ? "Reativacao de usuario" : "Inativacao de usuario", {
-        user_id: id,
-        active,
-      });
+      await writeAudit(
+        active ? "Reativacao de usuario" : "Inativacao de usuario",
+        { user_id: id, active },
+        auditActor
+      );
 
-      return Response.json({ success: true });
+      return NextResponse.json({ success: true });
     }
 
-    return Response.json({ error: "Acao invalida." }, { status: 400 });
-  } catch (error: any) {
-    return Response.json(
-      { error: error.message || "Erro ao salvar configuracao." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Acao invalida." }, { status: 400 });
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }
