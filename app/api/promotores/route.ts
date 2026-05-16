@@ -80,9 +80,21 @@ function clearPromoterReadCaches() {
 
 export async function GET(req: Request) {
   try {
-    const { supabase } = await withAuthenticatedAnon();
+    const { user, supabase } = await withAuthenticatedAnon();
 
     const { searchParams } = new URL(req.url);
+
+    // 3.5.6.1 - Promotor sempre recebe propria carteira (handler-level
+    // hardening). Socio/funcionario controlam via query param normalmente.
+    // Necessario porque buildPromoterAnalytics so popula proposalRows
+    // quando selectedPromoterId existe (lib originalmente assumia UI
+    // com dropdown). RLS ja filtra os records, mas a lib precisa do id
+    // explicito para sair do early-return em proposalRows = [].
+    const queryPromoterId = searchParams.get("promoterId") || undefined;
+    const effectivePromoterId =
+      user.session.appUser.role === "promotor"
+        ? user.session.appUser.promoterId ?? undefined
+        : queryPromoterId;
 
     // buildPromoterAnalytics agora recebe o cliente do guard (Etapa 3.7).
     // Promotor passa supabase autenticado anon -> RLS filtra para o
@@ -91,7 +103,7 @@ export async function GET(req: Request) {
       year: Number(searchParams.get("year") || 0) || undefined,
       month: Number(searchParams.get("month") || 0) || undefined,
       companyId: searchParams.get("companyId") || undefined,
-      promoterId: searchParams.get("promoterId") || undefined,
+      promoterId: effectivePromoterId,
     });
 
     return NextResponse.json(payload);

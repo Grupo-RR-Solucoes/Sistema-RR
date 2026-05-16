@@ -4,6 +4,8 @@ import type { CSSProperties, FormEvent, ReactNode } from "react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import FeedbackBanner from "../../components/FeedbackBanner";
+import { useUser } from "../../lib/auth/useUser";
+import PromotorView from "./PromotorView";
 
 type PeriodOption = {
   key: string;
@@ -150,6 +152,20 @@ const emptyPayload: PromoterPayload = {
 };
 
 export default function PromotoresPage() {
+  // 3.5.6 - Branch role-aware: promotor recebe UI somente leitura
+  // (PromotorView, modelo LUCIANA MATIAS.xlsx); socio/funcionario veem a
+  // UI completa de edicao + multiplas abas. Backend /api/promotores ja
+  // filtra por RLS (Etapa 3.7) e bloqueia POST de promotor com 403
+  // explicito (Etapa 3.5.5) — esta camada e estritamente cosmetica/UX.
+  const { user, loading: userLoading } = useUser();
+  if (!userLoading && user?.role === "promotor") {
+    return <PromotorView />;
+  }
+
+  return <PromotoresFullPage />;
+}
+
+function PromotoresFullPage() {
   const [activeSection, setActiveSection] = useState<
     "resumo" | "descontos" | "detalhamento" | "migracao"
   >("resumo");
