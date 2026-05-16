@@ -1,67 +1,79 @@
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 
+import { getCurrentUser } from "@/lib/auth/getUser";
+import type { UserRole } from "@/lib/auth/types";
+
+export const dynamic = "force-dynamic";
+
 type Shortcut = {
   href: string;
-  number: string;
   category: string;
   title: string;
   description: string;
   icon: ReactNode;
+  visibleTo: UserRole[];
 };
 
-const shortcuts: Shortcut[] = [
+const HOME_SHORTCUTS: Shortcut[] = [
   {
     href: "/promotores",
-    number: "01",
     category: "Comercial",
     title: "Promotores",
     description: "Gestão de promotores e comissões",
     icon: <IconUsers />,
+    visibleTo: ["socio", "funcionario", "promotor"],
   },
   {
     href: "/producao",
-    number: "02",
     category: "Operação",
     title: "Produção",
     description: "Operação diária e carteira ativa",
     icon: <IconChartLine />,
+    visibleTo: ["socio"],
   },
   {
     href: "/auditoria",
-    number: "03",
     category: "Controle",
     title: "Auditoria",
     description: "Divergências e conferências",
     icon: <IconShieldCheck />,
+    visibleTo: ["socio"],
   },
   {
     href: "/financeiro",
-    number: "04",
     category: "Controle",
     title: "Financeiro",
     description: "Despesas, fluxo de caixa",
     icon: <IconWallet />,
+    visibleTo: ["socio"],
   },
   {
     href: "/fechamento",
-    number: "05",
     category: "Operação",
     title: "Fechamento",
     description: "Conciliação mensal",
     icon: <IconFileCheck />,
+    visibleTo: ["socio"],
   },
   {
     href: "/importacoes",
-    number: "06",
     category: "Dados",
     title: "Importações",
     description: "Cargas diárias e tabelas",
     icon: <IconUpload />,
+    visibleTo: ["socio", "funcionario"],
   },
 ];
 
-export default function Home() {
+export default async function Home() {
+  const session = await getCurrentUser();
+  const role = session?.appUser.role;
+
+  const visibleShortcuts = role
+    ? HOME_SHORTCUTS.filter((shortcut) => shortcut.visibleTo.includes(role))
+    : [];
+
   return (
     <section style={styles.page}>
       <header style={styles.header}>
@@ -73,27 +85,35 @@ export default function Home() {
         </p>
       </header>
 
-      <div style={styles.grid}>
-        {shortcuts.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            style={styles.card}
-            className="rr-home-card"
-          >
-            <div style={styles.cardLabel}>
-              <span style={styles.cardLabelNumber}>{item.number}</span>
-              <span style={styles.cardLabelDot}>·</span>
-              <span style={styles.cardLabelCategory}>
-                {item.category.toUpperCase()}
-              </span>
-            </div>
-            <span style={styles.cardIcon}>{item.icon}</span>
-            <span style={styles.cardTitle}>{item.title}</span>
-            <span style={styles.cardDescription}>{item.description}</span>
-          </Link>
-        ))}
-      </div>
+      {visibleShortcuts.length === 0 ? (
+        <div style={styles.empty}>
+          Você não tem atalhos disponíveis no momento.
+        </div>
+      ) : (
+        <div style={styles.grid}>
+          {visibleShortcuts.map((item, i) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              style={styles.card}
+              className="rr-home-card"
+            >
+              <div style={styles.cardLabel}>
+                <span style={styles.cardLabelNumber}>
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <span style={styles.cardLabelDot}>·</span>
+                <span style={styles.cardLabelCategory}>
+                  {item.category.toUpperCase()}
+                </span>
+              </div>
+              <span style={styles.cardIcon}>{item.icon}</span>
+              <span style={styles.cardTitle}>{item.title}</span>
+              <span style={styles.cardDescription}>{item.description}</span>
+            </Link>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -252,6 +272,15 @@ const styles: Record<string, CSSProperties> = {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
     gap: 16,
+  },
+  empty: {
+    padding: 24,
+    background: "#FFFFFF",
+    border: "1px solid #D0D7E2",
+    borderRadius: 20,
+    color: "#5A6B82",
+    fontSize: 14,
+    lineHeight: 1.5,
   },
   card: {
     display: "grid",
