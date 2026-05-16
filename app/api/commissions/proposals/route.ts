@@ -1,13 +1,39 @@
-import { createClient } from "@supabase/supabase-js";
+import { NextResponse } from "next/server";
 
-function getSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-  );
-}
+import { apiGuardErrorResponse, withSocioOrFuncionarioAnon } from "@/lib/auth/guards";
 
-function getMonthRange(year, month) {
+type ProductionRecord = {
+  id: string;
+  company_id: string | null;
+  assigned_promoter_id: string | null;
+  proposal_number: string | null;
+  product_description: string | null;
+  gross_value: number | null;
+  net_value: number | null;
+  insurance_value: number | null;
+  promoter_commission_percent: number | null;
+  promoter_commission_amount: number | null;
+  insurance_commission_percent: number | null;
+  insurance_commission_amount: number | null;
+  commission_rule_source: string | null;
+  movement_date: string | null;
+};
+
+type PromoterRow = {
+  id: string;
+  name: string;
+};
+
+type ManualRuleRow = {
+  daily_production_record_id: string;
+  promoter_id: string;
+  commission_percent: number | null;
+  insurance_commission_percent: number | null;
+  notes: string | null;
+  active: boolean | null;
+};
+
+function getMonthRange(year: number, month: number) {
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 1));
   return {
@@ -16,10 +42,10 @@ function getMonthRange(year, month) {
   };
 }
 
-async function fetchAllPaged(baseQueryBuilder) {
+async function fetchAllPaged<T>(baseQueryBuilder: () => any): Promise<T[]> {
   let from = 0;
   const pageSize = 1000;
-  const all = [];
+  const all: T[] = [];
 
   while (true) {
     const { data, error } = await baseQueryBuilder().range(
@@ -30,7 +56,7 @@ async function fetchAllPaged(baseQueryBuilder) {
     if (error) throw error;
     if (!data || data.length === 0) break;
 
-    all.push(...data);
+    all.push(...(data as T[]));
 
     if (data.length < pageSize) break;
     from += pageSize;
@@ -39,9 +65,9 @@ async function fetchAllPaged(baseQueryBuilder) {
   return all;
 }
 
-export async function GET(req) {
+export async function GET(req: Request) {
   try {
-    const supabase = getSupabase();
+    const { supabase } = await withSocioOrFuncionarioAnon();
     const { searchParams } = new URL(req.url);
 
     const year = Number(searchParams.get("year"));
@@ -50,7 +76,7 @@ export async function GET(req) {
     const promoterId = searchParams.get("promoterId");
 
     if (!year || !month) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Informe year e month." },
         { status: 400 }
       );
@@ -58,7 +84,7 @@ export async function GET(req) {
 
     const { start, end } = getMonthRange(year, month);
 
-    const records = await fetchAllPaged(() => {
+    const records = await fetchAllPaged<ProductionRecord>(() => {
       let query = supabase
         .from("daily_production_records")
         .select(`
@@ -93,9 +119,11 @@ export async function GET(req) {
       return query;
     });
 
-    const promoterIds = [...new Set(records.map((r) => r.assigned_promoter_id).filter(Boolean))];
+    const promoterIds = [
+      ...new Set(records.map((r) => r.assigned_promoter_id).filter(Boolean)),
+    ];
 
-    let promoters = [];
+    let promoters: PromoterRow[] = [];
     if (promoterIds.length > 0) {
       const { data, error } = await supabase
         .from("promoters")
@@ -103,12 +131,12 @@ export async function GET(req) {
         .in("id", promoterIds);
 
       if (error) throw error;
-      promoters = data || [];
+      promoters = (data || []) as PromoterRow[];
     }
 
     const proposalIds = records.map((r) => r.id);
 
-    let manualRules = [];
+    let manualRules: ManualRuleRow[] = [];
     if (proposalIds.length > 0) {
       const { data, error } = await supabase
         .from("promoter_proposal_commissions")
@@ -118,7 +146,7 @@ export async function GET(req) {
         .in("daily_production_record_id", proposalIds);
 
       if (error) throw error;
-      manualRules = data || [];
+      manualRules = (data || []) as ManualRuleRow[];
     }
 
     const rows = records.map((record) => {
@@ -140,19 +168,22 @@ export async function GET(req) {
       };
     });
 
-    return Response.json({ rows });
+    return NextResponse.json({ rows });
   } catch (error) {
-    return Response.json(
-      { error: error.message || "Erro ao listar propostas." },
-      { status: 500 }
-    );
+    return apiGuardErrorResponse(error);
   }
 }
 
-export async function POST(req) {
+export async function POST(req: Request) {
   try {
-    const supabase = getSupabase();
-    const body = await req.json();
+    const { supabase } = await withSocioOrFuncionarioAnon();
+    const body = (await req.json()) as {
+      dailyProductionRecordId?: string;
+      promoterId?: string;
+      commissionPercent?: number | null;
+      insuranceCommissionPercent?: number | null;
+      notes?: string | null;
+    };
 
     const dailyProductionRecordId = body.dailyProductionRecordId;
     const promoterId = body.promoterId;
@@ -161,7 +192,7 @@ export async function POST(req) {
     const notes = body.notes;
 
     if (!dailyProductionRecordId || !promoterId) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Informe dailyProductionRecordId e promoterId." },
         { status: 400 }
       );
@@ -185,26 +216,23 @@ export async function POST(req) {
 
     if (error) throw error;
 
-    return Response.json({
+    return NextResponse.json({
       success: true,
       message: "Regra manual da proposta salva com sucesso.",
     });
   } catch (error) {
-    return Response.json(
-      { error: error.message || "Erro ao salvar comissão." },
-      { status: 500 }
-    );
+    return apiGuardErrorResponse(error);
   }
 }
 
-export async function DELETE(req) {
+export async function DELETE(req: Request) {
   try {
-    const supabase = getSupabase();
-    const body = await req.json();
+    const { supabase } = await withSocioOrFuncionarioAnon();
+    const body = (await req.json()) as { dailyProductionRecordId?: string };
     const dailyProductionRecordId = body.dailyProductionRecordId;
 
     if (!dailyProductionRecordId) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Informe dailyProductionRecordId." },
         { status: 400 }
       );
@@ -217,14 +245,11 @@ export async function DELETE(req) {
 
     if (error) throw error;
 
-    return Response.json({
+    return NextResponse.json({
       success: true,
       message: "Regra manual removida com sucesso.",
     });
   } catch (error) {
-    return Response.json(
-      { error: error.message || "Erro ao remover regra manual." },
-      { status: 500 }
-    );
+    return apiGuardErrorResponse(error);
   }
 }

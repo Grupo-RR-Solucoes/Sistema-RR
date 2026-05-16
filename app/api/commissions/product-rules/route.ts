@@ -1,13 +1,25 @@
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { NextResponse } from "next/server";
 
-function toNumber(value) {
+import { apiGuardErrorResponse, withSocioOrFuncionarioAnon } from "@/lib/auth/guards";
+
+type ProductRuleInput = {
+  product_code?: string | null;
+  product_description?: string | null;
+  company_received_percent_from?: number | string | null;
+  company_received_percent_to?: number | string | null;
+  commission_percent?: number | string | null;
+  insurance_commission_percent?: number | string | null;
+  notes?: string | null;
+};
+
+function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export async function GET(req) {
+export async function GET(req: Request) {
   try {
-    const supabase = getSupabaseAdmin();
+    const { supabase } = await withSocioOrFuncionarioAnon();
     const { searchParams } = new URL(req.url);
     const year = Number(searchParams.get("year") || 0);
     const month = Number(searchParams.get("month") || 0);
@@ -15,7 +27,7 @@ export async function GET(req) {
     const promoterId = searchParams.get("promoterId");
 
     if (!year || !month) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Informe year e month." },
         { status: 400 }
       );
@@ -41,22 +53,25 @@ export async function GET(req) {
 
     if (error) throw error;
 
-    return Response.json({ rows: data || [] });
+    return NextResponse.json({ rows: data || [] });
   } catch (error) {
-    return Response.json(
-      { error: error.message || "Erro ao carregar regras por produto." },
-      { status: 500 }
-    );
+    return apiGuardErrorResponse(error);
   }
 }
 
-export async function POST(req) {
+export async function POST(req: Request) {
   try {
-    const supabase = getSupabaseAdmin();
-    const { year, month, companyId, promoterId, rows } = await req.json();
+    const { supabase } = await withSocioOrFuncionarioAnon();
+    const { year, month, companyId, promoterId, rows } = (await req.json()) as {
+      year?: number;
+      month?: number;
+      companyId?: string | null;
+      promoterId?: string | null;
+      rows?: ProductRuleInput[];
+    };
 
     if (!year || !month || !promoterId || !Array.isArray(rows)) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Informe competencia, promotor e linhas validas." },
         { status: 400 }
       );
@@ -118,11 +133,8 @@ export async function POST(req) {
       if (insertError) throw insertError;
     }
 
-    return Response.json({ success: true, count: cleanRows.length });
+    return NextResponse.json({ success: true, count: cleanRows.length });
   } catch (error) {
-    return Response.json(
-      { error: error.message || "Erro ao salvar regras por produto." },
-      { status: 500 }
-    );
+    return apiGuardErrorResponse(error);
   }
 }

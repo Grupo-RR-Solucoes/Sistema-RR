@@ -1,17 +1,13 @@
-import { createClient } from "@supabase/supabase-js";
+import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { findImportedProductionRule } from "@/lib/promoterRemuneration";
 import { calcularOperacao, getProductionBandByValue } from "@/lib/motor";
 import { getProductionWindow } from "@/lib/productionPeriod";
 
-function getSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-  );
-}
-
-function toNumber(value) {
+function toNumber(value: unknown): number {
   if (value === null || value === undefined || value === "") return 0;
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : 0;
@@ -25,13 +21,13 @@ function toNumber(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function toPercentUnits(value) {
+function toPercentUnits(value: unknown): number {
   const parsed = toNumber(value);
   if (!parsed) return 0;
   return Math.abs(parsed) <= 1 ? parsed * 100 : parsed;
 }
 
-function toPercentRate(value) {
+function toPercentRate(value: unknown): number {
   const parsed = toNumber(value);
   if (!parsed) return 0;
   return Math.abs(parsed) > 1 ? parsed / 100 : parsed;
@@ -39,15 +35,15 @@ function toPercentRate(value) {
 
 const DEFAULT_PROMOTER_SHARE_PERCENT = 58.33;
 
-function normalizeText(value) {
+function normalizeText(value: unknown): string {
   return String(value || "")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .trim()
     .toUpperCase();
 }
 
-function readRawPayloadValue(record, aliases) {
+function readRawPayloadValue(record: any, aliases: string[]) {
   const payload = record?.raw_payload;
   if (!payload || typeof payload !== "object") return null;
 
@@ -63,7 +59,7 @@ function readRawPayloadValue(record, aliases) {
   return null;
 }
 
-function getPersistedCompanyReceivedPercent(record, fallbackImportedRule) {
+function getPersistedCompanyReceivedPercent(record: any, fallbackImportedRule: any) {
   const rawPercent = toPercentUnits(
     readRawPayloadValue(record, [
       "% A VISTA",
@@ -91,7 +87,7 @@ function getPersistedCompanyReceivedPercent(record, fallbackImportedRule) {
   return 0;
 }
 
-function deriveCompanyReceivedPercentFromMotor(record, companyProductionValue) {
+function deriveCompanyReceivedPercentFromMotor(record: any, companyProductionValue: number) {
   const netValue = toNumber(record.net_value);
   if (netValue <= 0) return 0;
 
@@ -157,7 +153,7 @@ function deriveCompanyReceivedPercentFromMotor(record, companyProductionValue) {
   return (avistaEmpresa / netValue) * 100;
 }
 
-function getMonthRange(year, month) {
+function getMonthRange(year: number, month: number) {
   const window = getProductionWindow(year, month);
   return {
     start: window.start,
@@ -165,7 +161,7 @@ function getMonthRange(year, month) {
   };
 }
 
-function countBusinessDaysInMonth(year, month) {
+function countBusinessDaysInMonth(year: number, month: number) {
   const lastDay = new Date(year, month, 0).getDate();
   let count = 0;
 
@@ -178,7 +174,7 @@ function countBusinessDaysInMonth(year, month) {
   return count;
 }
 
-function countElapsedBusinessDays(year, month) {
+function countElapsedBusinessDays(year: number, month: number) {
   const today = new Date();
   const isCurrentMonth =
     today.getFullYear() === year && today.getMonth() + 1 === month;
@@ -198,36 +194,28 @@ function countElapsedBusinessDays(year, month) {
   return Math.max(count, 1);
 }
 
-function getProductionBand(value) {
-  if (value >= 20000000) return "FAIXA_5";
-  if (value >= 7000000) return "FAIXA_4";
-  if (value >= 3000000) return "FAIXA_3";
-  if (value >= 1000000) return "FAIXA_2";
-  return "FAIXA_1";
-}
-
-function isCancelledStatus(status) {
+function isCancelledStatus(status: unknown) {
   const s = normalizeText(status);
   return s.includes("CANCEL") || s.includes("ESTORN") || s.includes("RECUS");
 }
 
-function isPendingStatus(status) {
+function isPendingStatus(status: unknown) {
   const s = normalizeText(status);
   return s.includes("PEND") || s.includes("ANALIS") || s.includes("PROCESS");
 }
 
-function isProductionStatus(status) {
+function isProductionStatus(status: unknown) {
   const s = normalizeText(status);
   return s === "PRODUCAO" || s === "PRODUCTION";
 }
 
-function isRenewedStatus(status, productDescription) {
+function isRenewedStatus(status: unknown, productDescription: unknown) {
   const s = normalizeText(status);
   const p = normalizeText(productDescription);
   return s.includes("RENOVA") || p.includes("RENOVA");
 }
 
-function isValidRecord(record) {
+function isValidRecord(record: any) {
   if (record.cancellation_date) return false;
   if (isCancelledStatus(record.status)) return false;
   if (isPendingStatus(record.status)) return false;
@@ -235,12 +223,12 @@ function isValidRecord(record) {
   return true;
 }
 
-function calculateInsurancePenetration(productionValue, insuredValue) {
+function calculateInsurancePenetration(productionValue: number, insuredValue: number) {
   if (productionValue <= 0) return 0;
   return (insuredValue / productionValue) * 100;
 }
 
-function getInsuranceCompanyRate(record) {
+function getInsuranceCompanyRate(record: any) {
   const insuranceType = normalizeText(record.insurance_type);
   const prazo = Number(record.term_months || 0);
 
@@ -251,7 +239,7 @@ function getInsuranceCompanyRate(record) {
   return 0.15;
 }
 
-function calculateCompanyInsuranceCommission(record) {
+function calculateCompanyInsuranceCommission(record: any) {
   const gross = toNumber(record.gross_value);
 
   if (!gross) return 0;
@@ -260,7 +248,7 @@ function calculateCompanyInsuranceCommission(record) {
   return gross * (getInsuranceCompanyRate(record) / 100);
 }
 
-function pickCommissionRow(rows, metricValue) {
+function pickCommissionRow(rows: any[], metricValue: number) {
   const ordered = [...rows].sort(
     (a, b) => toNumber(a.range_from) - toNumber(b.range_from)
   );
@@ -276,11 +264,11 @@ function pickCommissionRow(rows, metricValue) {
   );
 }
 
-function calculatePercentValue(baseValue, percent) {
+function calculatePercentValue(baseValue: unknown, percent: unknown) {
   return toNumber(baseValue) * toPercentRate(percent);
 }
 
-function getDefaultPromoterPercentFromCompany(companyReceivedPercent) {
+function getDefaultPromoterPercentFromCompany(companyReceivedPercent: number) {
   const companyPercent = toPercentUnits(companyReceivedPercent);
   if (!companyPercent || companyPercent <= 0) return 0;
   return Math.min(
@@ -289,56 +277,65 @@ function getDefaultPromoterPercentFromCompany(companyReceivedPercent) {
   );
 }
 
-function isMeaningfulImportedProductionRule(rule) {
+function isMeaningfulImportedProductionRule(rule: any) {
   if (!rule) return false;
   const promoterPercent = toPercentUnits(rule.promoter_percent);
   const receivedPercent = toPercentUnits(rule.received_percent);
   return promoterPercent > 0 || receivedPercent > 0;
 }
 
-function isMeaningfulAgreement(agreement) {
+function isMeaningfulAgreement(agreement: any) {
   if (!agreement || agreement.active === false) return false;
   const value = toNumber(agreement.commission_value);
   return value > 0;
 }
 
-function resolveTargetStatus(productionValue, target, target1, target2) {
+function resolveTargetStatus(
+  productionValue: number,
+  target: number,
+  target1: number,
+  target2: number
+) {
   if (target2 > 0 && productionValue >= target2) return "META_2";
   if (target1 > 0 && productionValue >= target1) return "META_1";
   if (target > 0 && productionValue >= target) return "META";
   return "BELOW_META";
 }
 
-function groupByCompany(records) {
-  const map = new Map();
+function groupByCompany(records: any[]) {
+  const map = new Map<string, any[]>();
   for (const record of records) {
     if (!record.company_id) continue;
     if (!map.has(record.company_id)) map.set(record.company_id, []);
-    map.get(record.company_id).push(record);
+    map.get(record.company_id)!.push(record);
   }
   return map;
 }
 
-function groupByPromoter(records) {
-  const map = new Map();
+function groupByPromoter(records: any[]) {
+  const map = new Map<string, any[]>();
   for (const record of records) {
     const promoterId = record.assigned_promoter_id;
     if (!promoterId) continue;
     if (!map.has(promoterId)) map.set(promoterId, []);
-    map.get(promoterId).push(record);
+    map.get(promoterId)!.push(record);
   }
   return map;
 }
 
-function chunkArray(items, size) {
-  const chunks = [];
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
   for (let index = 0; index < items.length; index += size) {
     chunks.push(items.slice(index, index + size));
   }
   return chunks;
 }
 
-async function getLatestImportedPromoterRemuneration(supabase, year, month) {
+async function getLatestImportedPromoterRemuneration(
+  supabase: SupabaseClient,
+  year: number,
+  month: number
+) {
   const { data, error } = await supabase
     .from("audit_logs")
     .select("payload, created_at")
@@ -351,17 +348,17 @@ async function getLatestImportedPromoterRemuneration(supabase, year, month) {
 
   return (
     (data || []).find(
-      (row) =>
+      (row: any) =>
         Number(row?.payload?.year) === Number(year) &&
         Number(row?.payload?.month) === Number(month)
     )?.payload || null
   );
 }
 
-async function fetchAllPaged(baseQueryBuilder) {
+async function fetchAllPaged<T = any>(baseQueryBuilder: () => any): Promise<T[]> {
   let from = 0;
   const pageSize = 1000;
-  const all = [];
+  const all: T[] = [];
 
   while (true) {
     const { data, error } = await baseQueryBuilder().range(
@@ -372,7 +369,7 @@ async function fetchAllPaged(baseQueryBuilder) {
     if (error) throw error;
     if (!data || data.length === 0) break;
 
-    all.push(...data);
+    all.push(...(data as T[]));
 
     if (data.length < pageSize) break;
     from += pageSize;
@@ -381,7 +378,7 @@ async function fetchAllPaged(baseQueryBuilder) {
   return all;
 }
 
-function calculateCompanyExpectedValues(records) {
+function calculateCompanyExpectedValues(records: any[]) {
   let grossProduction = 0;
   let netValidProduction = 0;
   let cancelledValue = 0;
@@ -472,6 +469,10 @@ function chooseMonthlyDefaultPercent({
   productionValue,
   targetStatus,
   productionRows,
+}: {
+  productionValue: number;
+  targetStatus: string;
+  productionRows: any[];
 }) {
   const baseRow = pickCommissionRow(productionRows, productionValue);
   if (!baseRow) return 0;
@@ -488,7 +489,7 @@ function chooseMonthlyDefaultPercent({
   return Math.min(percent, 5.8);
 }
 
-function findProductRule(productRules, record) {
+function findProductRule(productRules: any[], record: any) {
   const code = normalizeText(record.product_code);
   const desc = normalizeText(record.product_description);
   const received = toPercentUnits(record.company_received_percent);
@@ -537,10 +538,13 @@ function findProductRule(productRules, record) {
   return matchingRules[0];
 }
 
-export async function POST(req) {
-  const supabase = getSupabase();
-
+export async function POST(req: Request) {
   try {
+    // D26 - Escola A (withSocioAdmin). Esta rota faz batch invasivo
+    // recalculando consolidacao mensal em N tabelas; service_role com
+    // guard de socio eh a escolha apropriada (vs RLS por linha).
+    const { supabase } = await withSocioAdmin();
+
     const body = await req.json();
     const year = Number(body.year);
     const month = Number(body.month);
@@ -548,7 +552,7 @@ export async function POST(req) {
     const promoterId = body.promoterId || null;
 
     if (!year || !month || month < 1 || month > 12) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Informe year e month válidos." },
         { status: 400 }
       );
@@ -556,7 +560,7 @@ export async function POST(req) {
 
     const { start, end } = getMonthRange(year, month);
 
-    const companies = await fetchAllPaged(() => {
+    const companies = await fetchAllPaged<any>(() => {
       let query = supabase
         .from("companies")
         .select("id, name, cnpj")
@@ -566,7 +570,7 @@ export async function POST(req) {
       return query;
     });
 
-    const dailyRecords = await fetchAllPaged(() => {
+    const dailyRecords = await fetchAllPaged<any>(() => {
       let query = supabase
         .from("daily_production_records")
         .select(`
@@ -603,7 +607,7 @@ export async function POST(req) {
       return query;
     });
 
-    const promoters = await fetchAllPaged(() => {
+    const promoters = await fetchAllPaged<any>(() => {
       let query = supabase
         .from("promoters")
         .select("id, company_id, name, active")
@@ -614,7 +618,7 @@ export async function POST(req) {
       return query;
     });
 
-    const targets = await fetchAllPaged(() => {
+    const targets = await fetchAllPaged<any>(() => {
       let query = supabase
         .from("monthly_targets")
         .select("*")
@@ -626,7 +630,7 @@ export async function POST(req) {
       return query;
     });
 
-    const agreements = await fetchAllPaged(() => {
+    const agreements = await fetchAllPaged<any>(() => {
       let query = supabase
         .from("promoter_agreements")
         .select("*")
@@ -639,7 +643,7 @@ export async function POST(req) {
       return query;
     });
 
-    const commissionTables = await fetchAllPaged(() => {
+    const commissionTables = await fetchAllPaged<any>(() => {
       let query = supabase
         .from("commission_tables")
         .select("id, company_id, year, month, active, version")
@@ -651,11 +655,11 @@ export async function POST(req) {
       return query;
     });
 
-    const tableIds = commissionTables.map((t) => t.id);
+    const tableIds = commissionTables.map((t: any) => t.id);
 
-    let commissionRows = [];
+    let commissionRows: any[] = [];
     if (tableIds.length > 0) {
-      commissionRows = await fetchAllPaged(() =>
+      commissionRows = await fetchAllPaged<any>(() =>
         supabase
           .from("commission_table_rows")
           .select("*")
@@ -663,7 +667,7 @@ export async function POST(req) {
       );
     }
 
-    const productRules = await fetchAllPaged(() => {
+    const productRules = await fetchAllPaged<any>(() => {
       let query = supabase
         .from("promoter_product_commissions")
         .select("*")
@@ -682,17 +686,15 @@ export async function POST(req) {
       month
     );
 
-    const proposalRules = await fetchAllPaged(() =>
-      {
-        let query = supabase
-          .from("promoter_proposal_commissions")
-          .select("*")
-          .eq("active", true);
+    const proposalRules = await fetchAllPaged<any>(() => {
+      let query = supabase
+        .from("promoter_proposal_commissions")
+        .select("*")
+        .eq("active", true);
 
-        if (promoterId) query = query.eq("promoter_id", promoterId);
-        return query;
-      }
-    );
+      if (promoterId) query = query.eq("promoter_id", promoterId);
+      return query;
+    });
 
     const hasPromoterRemunerationBase =
       !!importedPromoterRemuneration ||
@@ -702,8 +704,8 @@ export async function POST(req) {
       agreements.length > 0;
 
     const companyGroups = groupByCompany(dailyRecords);
-    const expectedClosingsUpserts = [];
-    const companyExpectedMap = new Map();
+    const expectedClosingsUpserts: any[] = [];
+    const companyExpectedMap = new Map<string, any>();
 
     for (const company of companies) {
       const records = companyGroups.get(company.id) || [];
@@ -739,8 +741,8 @@ export async function POST(req) {
     }
 
     const promoterGroups = groupByPromoter(dailyRecords);
-    const promoterUpserts = [];
-    const recordUpdates = [];
+    const promoterUpserts: any[] = [];
+    const recordUpdates: any[] = [];
     let unmatchedImportedRules = 0;
 
     const elapsedBusinessDays = countElapsedBusinessDays(year, month);
@@ -749,33 +751,33 @@ export async function POST(req) {
     for (const promoter of promoters) {
       const records = promoterGroups.get(promoter.id) || [];
       const validRecords = records.filter(
-        (record) => isProductionStatus(record.status) && isValidRecord(record)
+        (record: any) => isProductionStatus(record.status) && isValidRecord(record)
       );
 
       const productionValue = validRecords.reduce(
-        (sum, record) => sum + toNumber(record.net_value),
+        (sum: number, record: any) => sum + toNumber(record.net_value),
         0
       );
 
       const grossProductionValue = validRecords.reduce(
-        (sum, record) => sum + toNumber(record.gross_value),
+        (sum: number, record: any) => sum + toNumber(record.gross_value),
         0
       );
 
       const proposalCount = validRecords.length;
 
       const insuredRecords = validRecords.filter(
-        (record) => toNumber(record.insurance_value) > 0 || record.has_insurance
+        (record: any) => toNumber(record.insurance_value) > 0 || record.has_insurance
       );
 
       const insuredProposalCount = insuredRecords.length;
       const insuredProductionValue = insuredRecords.reduce(
-        (sum, record) => sum + toNumber(record.net_value),
+        (sum: number, record: any) => sum + toNumber(record.net_value),
         0
       );
 
       const insuredGrossValue = insuredRecords.reduce(
-        (sum, record) => sum + toNumber(record.gross_value),
+        (sum: number, record: any) => sum + toNumber(record.gross_value),
         0
       );
 
@@ -784,7 +786,7 @@ export async function POST(req) {
         insuredGrossValue
       );
 
-      const target = targets.find((t) => t.promoter_id === promoter.id);
+      const target = targets.find((t: any) => t.promoter_id === promoter.id);
       const targetValue = target ? toNumber(target.meta) : 0;
       const target1Value = target ? toNumber(target.meta_1) : 0;
       const target2Value = target ? toNumber(target.meta_2) : 0;
@@ -802,36 +804,36 @@ export async function POST(req) {
       );
 
       const companyTable = commissionTables
-        .filter((t) => t.company_id === promoter.company_id)
-        .sort((a, b) => b.version - a.version)[0];
+        .filter((t: any) => t.company_id === promoter.company_id)
+        .sort((a: any, b: any) => b.version - a.version)[0];
 
       const rowsForTable = companyTable
-        ? commissionRows.filter((r) => r.commission_table_id === companyTable.id)
+        ? commissionRows.filter((r: any) => r.commission_table_id === companyTable.id)
         : [];
 
       const productionRows = rowsForTable.filter(
-        (r) => r.rule_type === "PRODUCTION"
+        (r: any) => r.rule_type === "PRODUCTION"
       );
 
       const insuranceRows = rowsForTable.filter(
-        (r) => r.rule_type === "INSURANCE"
+        (r: any) => r.rule_type === "INSURANCE"
       );
 
       const promoterAgreements = agreements.filter(
-        (a) => a.promoter_id === promoter.id && isMeaningfulAgreement(a)
+        (a: any) => a.promoter_id === promoter.id && isMeaningfulAgreement(a)
       );
       const productionAgreement = promoterAgreements.find(
-        (agreement) => agreement.agreement_type === "PRODUCTION"
+        (agreement: any) => agreement.agreement_type === "PRODUCTION"
       );
       const insuranceAgreement = promoterAgreements.find(
-        (agreement) => agreement.agreement_type === "INSURANCE"
+        (agreement: any) => agreement.agreement_type === "INSURANCE"
       );
       const specialAgreements = promoterAgreements.filter(
-        (agreement) => agreement.agreement_type === "SPECIAL"
+        (agreement: any) => agreement.agreement_type === "SPECIAL"
       );
 
       const promoterProductRules = productRules.filter(
-        (r) => r.promoter_id === promoter.id
+        (r: any) => r.promoter_id === promoter.id
       );
 
       let productionCommissionValue = 0;
@@ -840,7 +842,7 @@ export async function POST(req) {
 
       for (const record of validRecords) {
         const manualRule = proposalRules.find(
-          (r) => r.daily_production_record_id === record.id
+          (r: any) => r.daily_production_record_id === record.id
         );
 
         const productRule = manualRule
@@ -977,12 +979,12 @@ export async function POST(req) {
         const productionBase = toNumber(record.net_value);
         const insuranceBase = calculateCompanyInsuranceCommission(record);
 
-        let promoterCommissionAmount = calculatePercentValue(
+        const promoterCommissionAmount = calculatePercentValue(
           productionBase,
           commissionPercent
         );
 
-        let insuranceCommissionAmount = calculatePercentValue(
+        const insuranceCommissionAmount = calculatePercentValue(
           insuranceBase,
           insuranceCommissionPercent
         );
@@ -1078,7 +1080,7 @@ export async function POST(req) {
     clearMemoryCache("promoters:");
     clearMemoryCache("dashboard:");
 
-    return Response.json({
+    return NextResponse.json({
       success: true,
       year,
       month,
@@ -1092,11 +1094,6 @@ export async function POST(req) {
         "Cálculo mensal concluído com regra por produto e percentual recebido.",
     });
   } catch (error) {
-    return Response.json(
-      {
-        error: error.message || "Erro ao calcular fechamento mensal.",
-      },
-      { status: 500 }
-    );
+    return apiGuardErrorResponse(error);
   }
 }

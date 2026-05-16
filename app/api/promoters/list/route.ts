@@ -1,15 +1,10 @@
-import { createClient } from "@supabase/supabase-js";
+import { NextResponse } from "next/server";
 
-function getSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-  );
-}
+import { apiGuardErrorResponse, withAuthenticatedAnon } from "@/lib/auth/guards";
 
-export async function GET(req) {
+export async function GET(req: Request) {
   try {
-    const supabase = getSupabase();
+    const { supabase } = await withAuthenticatedAnon();
     const { searchParams } = new URL(req.url);
     const companyId = searchParams.get("companyId");
 
@@ -27,13 +22,10 @@ export async function GET(req) {
 
     if (error) throw error;
 
-    return Response.json({
+    return NextResponse.json({
       promoters: data || [],
     });
   } catch (error) {
-    return Response.json(
-      { error: error.message || "Erro ao listar promotores." },
-      { status: 500 }
-    );
+    return apiGuardErrorResponse(error);
   }
 }
