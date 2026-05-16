@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 
-import { apiGuardErrorResponse, withAuthenticatedAnon } from "@/lib/auth/guards";
+import {
+  apiGuardErrorResponse,
+  withAuthenticatedAnon,
+  withSocioOrFuncionarioAnon,
+} from "@/lib/auth/guards";
 import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
@@ -97,8 +101,14 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  // Hardening 3.5.5: GET continua withAuthenticatedAnon (D17 - promotor
+  // le suas proprias rows via RLS), mas TODAS as 5 POST actions
+  // (target_upsert, reassign_proposal, agreement_upsert, discount_upsert,
+  // discount_delete) exigem socio ou funcionario. Promotor que tenta
+  // qualquer escrita recebe 403 explicito do guard (vs erro silencioso
+  // do RLS no INSERT/UPDATE).
   try {
-    const { user, supabase } = await withAuthenticatedAnon();
+    const { user, supabase } = await withSocioOrFuncionarioAnon();
     const auditActor = user.session.appUser.email;
 
     const body = await req.json();
