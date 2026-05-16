@@ -7,11 +7,13 @@ import { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "./BrandLogo";
 import { useUser } from "../lib/auth/useUser";
+import type { UserRole } from "../lib/auth/types";
 
 type NavItem = {
   href: string;
   label: string;
   icon: string;
+  visibleTo: UserRole[];
 };
 
 type NavGroup = {
@@ -25,41 +27,41 @@ const navGroups: NavGroup[] = [
     id: "painel",
     label: "Painel",
     items: [
-      { href: "/", label: "Visão geral", icon: "VG" },
-      { href: "/dashboard", label: "Dashboard", icon: "DB" },
+      { href: "/", label: "Visão geral", icon: "VG", visibleTo: ["socio"] },
+      { href: "/dashboard", label: "Dashboard", icon: "DB", visibleTo: ["socio"] },
     ],
   },
   {
     id: "operacao",
     label: "Operação",
     items: [
-      { href: "/producao", label: "Produção", icon: "PD" },
-      { href: "/importacoes", label: "Importações", icon: "IM" },
-      { href: "/fechamento", label: "Fechamento", icon: "FC" },
+      { href: "/producao", label: "Produção", icon: "PD", visibleTo: ["socio"] },
+      { href: "/importacoes", label: "Importações", icon: "IM", visibleTo: ["socio", "funcionario"] },
+      { href: "/fechamento", label: "Fechamento", icon: "FC", visibleTo: ["socio"] },
     ],
   },
   {
     id: "comercial",
     label: "Comercial",
     items: [
-      { href: "/promotores", label: "Promotores", icon: "PM" },
-      { href: "/cadastros", label: "Cadastros", icon: "CD" },
+      { href: "/promotores", label: "Promotores", icon: "PM", visibleTo: ["socio", "funcionario", "promotor"] },
+      { href: "/cadastros", label: "Cadastros", icon: "CD", visibleTo: ["socio", "funcionario"] },
     ],
   },
   {
     id: "controle",
     label: "Controle",
     items: [
-      { href: "/financeiro", label: "Financeiro", icon: "FN" },
-      { href: "/auditoria", label: "Auditoria", icon: "AU" },
-      { href: "/relatorios", label: "Relatórios", icon: "RL" },
-      { href: "/configuracoes", label: "Configurações", icon: "CF" },
+      { href: "/financeiro", label: "Financeiro", icon: "FN", visibleTo: ["socio"] },
+      { href: "/auditoria", label: "Auditoria", icon: "AU", visibleTo: ["socio"] },
+      { href: "/relatorios", label: "Relatórios", icon: "RL", visibleTo: ["socio", "funcionario"] },
+      { href: "/configuracoes", label: "Configurações", icon: "CF", visibleTo: ["socio"] },
     ],
   },
   {
     id: "admin",
     label: "Admin",
-    items: [{ href: "/admin/usuarios", label: "Usuários", icon: "US" }],
+    items: [{ href: "/admin/usuarios", label: "Usuários", icon: "US", visibleTo: ["socio"] }],
   },
 ];
 
@@ -144,12 +146,18 @@ export default function AppShell({ children }: { children: ReactNode }) {
     return pathname === item.href || pathname.startsWith(`${item.href}/`);
   };
 
-  // Grupo "admin" so para socio. Durante loading inicial (user === null) admin
-  // fica oculto ate confirmarmos a role.
-  const visibleNavGroups = useMemo(
-    () => navGroups.filter((g) => g.id !== "admin" || user?.role === "socio"),
-    [user?.role]
-  );
+  // Filtro item-a-item por role. Durante loading (user?.role undefined) o
+  // menu fica vazio para nao vazar visibilidade. Grupos sem itens visiveis
+  // sao removidos para nao mostrar cabecalho de grupo orfao.
+  const visibleNavGroups = useMemo(() => {
+    const role = user?.role;
+    return navGroups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => role && item.visibleTo.includes(role)),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [user?.role]);
 
   const allItems = visibleNavGroups.flatMap((g) => g.items);
   const currentItem =

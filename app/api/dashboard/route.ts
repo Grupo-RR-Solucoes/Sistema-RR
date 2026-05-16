@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { apiGuardErrorResponse, withAuthenticatedAnon } from "@/lib/auth/guards";
+import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import { buildClosingAnalytics } from "@/lib/closingAnalytics";
 import { getCompanyDisplayIdentity } from "@/lib/knownCompanies";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
@@ -211,7 +211,7 @@ function classifyProduct(record: {
 
 export async function GET(request: Request) {
   try {
-    const { supabase } = await withAuthenticatedAnon();
+    const { supabase } = await withSocioAnon();
 
     const { searchParams } = new URL(request.url);
     const yearParam = Number(searchParams.get("year"));
