@@ -1,3 +1,6 @@
+import { NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withAuthenticatedAnon } from "@/lib/auth/guards";
 import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
@@ -41,16 +44,24 @@ function resolveDiscountAmount(
   return companyAmount;
 }
 
-async function writeAudit(description: string, payload: Record<string, unknown>) {
+// audit_logs RLS bloqueia INSERT via PostgREST para todos os roles
+// (Dia 3 grupo G). writeAudit usa service_role para escrever, idem
+// pattern Dia 4.1 (/api/admin/usuarios). createdBy recebe o email do
+// usuario autenticado vindo do guard (T5 do mapa de decisoes).
+async function writeAudit(
+  description: string,
+  payload: Record<string, unknown>,
+  createdBy: string
+) {
   try {
-    const supabaseAdmin = getSupabaseAdmin();
+    const supabase = getSupabaseAdmin();
 
-    await supabaseAdmin.from("audit_logs").insert({
+    await supabase.from("audit_logs").insert({
       entity_name: "promotores",
       action: "MANUAL_CHANGE",
       description,
       payload,
-      created_by: "sistema",
+      created_by: createdBy,
     });
   } catch {
     // Mantem fluxo principal.
@@ -65,8 +76,13 @@ function clearPromoterReadCaches() {
 
 export async function GET(req: Request) {
   try {
+    await withAuthenticatedAnon();
+
     const { searchParams } = new URL(req.url);
 
+    // buildPromoterAnalytics usa getSupabaseAdmin internamente (assinatura
+    // preservada nesta etapa; sera parametrizada quando os outros 2 callers
+    // em lib/report.ts forem refatorados).
     const payload = await buildPromoterAnalytics({
       year: Number(searchParams.get("year") || 0) || undefined,
       month: Number(searchParams.get("month") || 0) || undefined,
@@ -74,20 +90,19 @@ export async function GET(req: Request) {
       promoterId: searchParams.get("promoterId") || undefined,
     });
 
-    return Response.json(payload);
-  } catch (error: any) {
-    return Response.json(
-      { error: error.message || "Erro ao carregar promotores." },
-      { status: 500 }
-    );
+    return NextResponse.json(payload);
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }
 
 export async function POST(req: Request) {
   try {
+    const { user, supabase } = await withAuthenticatedAnon();
+    const auditActor = user.session.appUser.email;
+
     const body = await req.json();
     const action = String(body?.action || "");
-    const supabaseAdmin = getSupabaseAdmin();
 
     if (action === "target_upsert") {
       const promoterId = String(body.promoterId || "");
@@ -96,13 +111,13 @@ export async function POST(req: Request) {
       const month = Number(body.month);
 
       if (!promoterId || !year || !month) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe promotor e competencia da meta." },
           { status: 400 }
         );
       }
 
-      const { error } = await supabaseAdmin
+      const { error } = await supabase
         .from("monthly_targets")
         .upsert(
           {
@@ -122,13 +137,13 @@ export async function POST(req: Request) {
       if (error) throw error;
 
       clearPromoterReadCaches();
-      await writeAudit("Atualizacao manual de meta mensal", {
-        promoter_id: promoterId,
-        year,
-        month,
-      });
+      await writeAudit(
+        "Atualizacao manual de meta mensal",
+        { promoter_id: promoterId, year, month },
+        auditActor
+      );
 
-      return Response.json({ success: true });
+      return NextResponse.json({ success: true });
     }
 
     if (action === "reassign_proposal") {
@@ -137,13 +152,13 @@ export async function POST(req: Request) {
       const reason = body.reason ? String(body.reason) : null;
 
       if (!dailyProductionRecordId || !toPromoterId) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe a proposta e o promotor de destino." },
           { status: 400 }
         );
       }
 
-      const { data: currentRecord, error: currentError } = await supabaseAdmin
+      const { data: currentRecord, error: currentError } = await supabase
         .from("daily_production_records")
         .select("id, assigned_promoter_id")
         .eq("id", dailyProductionRecordId)
@@ -151,7 +166,7 @@ export async function POST(req: Request) {
 
       if (currentError) throw currentError;
 
-      const { error: updateError } = await supabaseAdmin
+      const { error: updateError } = await supabase
         .from("daily_production_records")
         .update({
           assigned_promoter_id: toPromoterId,
@@ -162,26 +177,30 @@ export async function POST(req: Request) {
 
       if (updateError) throw updateError;
 
-      const { error: insertError } = await supabaseAdmin
+      const { error: insertError } = await supabase
         .from("proposal_reassignments")
         .insert({
           daily_production_record_id: dailyProductionRecordId,
           from_promoter_id: currentRecord.assigned_promoter_id,
           to_promoter_id: toPromoterId,
           reason,
-          changed_by: "sistema",
+          changed_by: auditActor,
         });
 
       if (insertError) throw insertError;
 
       clearPromoterReadCaches();
-      await writeAudit("Migracao manual de proposta", {
-        daily_production_record_id: dailyProductionRecordId,
-        from_promoter_id: currentRecord.assigned_promoter_id,
-        to_promoter_id: toPromoterId,
-      });
+      await writeAudit(
+        "Migracao manual de proposta",
+        {
+          daily_production_record_id: dailyProductionRecordId,
+          from_promoter_id: currentRecord.assigned_promoter_id,
+          to_promoter_id: toPromoterId,
+        },
+        auditActor
+      );
 
-      return Response.json({ success: true });
+      return NextResponse.json({ success: true });
     }
 
     if (action === "agreement_upsert") {
@@ -194,13 +213,13 @@ export async function POST(req: Request) {
       const notes = body.notes ? String(body.notes).trim() : null;
 
       if (!promoterId || !year || !month) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe promotor e competencia do acordo comercial." },
           { status: 400 }
         );
       }
 
-      let deactivateQuery = supabaseAdmin
+      let deactivateQuery = supabase
         .from("promoter_agreements")
         .update({ active: false })
         .eq("promoter_id", promoterId)
@@ -246,7 +265,7 @@ export async function POST(req: Request) {
       }
 
       if (rows.length > 0) {
-        const { error: insertError } = await supabaseAdmin
+        const { error: insertError } = await supabase
           .from("promoter_agreements")
           .insert(rows);
 
@@ -254,16 +273,20 @@ export async function POST(req: Request) {
       }
 
       clearPromoterReadCaches();
-      await writeAudit("Atualizacao de acordo comercial do promotor", {
-        promoter_id: promoterId,
-        company_id: companyId,
-        year,
-        month,
-        production_share: productionShare || null,
-        insurance_share: insuranceShare || null,
-      });
+      await writeAudit(
+        "Atualizacao de acordo comercial do promotor",
+        {
+          promoter_id: promoterId,
+          company_id: companyId,
+          year,
+          month,
+          production_share: productionShare || null,
+          insurance_share: insuranceShare || null,
+        },
+        auditActor
+      );
 
-      return Response.json({ success: true });
+      return NextResponse.json({ success: true });
     }
 
     if (action === "discount_upsert") {
@@ -299,14 +322,14 @@ export async function POST(req: Request) {
       }
 
       if (!promoterId || !year || !month) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe promotor e competencia do desconto." },
           { status: 400 }
         );
       }
 
       if (amount <= 0) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe um valor valido para o desconto do promotor." },
           { status: 400 }
         );
@@ -327,14 +350,14 @@ export async function POST(req: Request) {
       };
 
       if (id) {
-        const { error: updateError } = await supabaseAdmin
+        const { error: updateError } = await supabase
           .from("promoter_discounts")
           .update(payload)
           .eq("id", id);
 
         if (updateError) throw updateError;
       } else {
-        const { error: insertError } = await supabaseAdmin
+        const { error: insertError } = await supabase
           .from("promoter_discounts")
           .insert(payload);
 
@@ -342,33 +365,37 @@ export async function POST(req: Request) {
       }
 
       clearPromoterReadCaches();
-      await writeAudit("Lancamento manual de desconto do promotor", {
-        id,
-        promoter_id: promoterId,
-        company_id: companyId,
-        year,
-        month,
-        discount_type: discountType,
-        amount,
-        installments,
-        installment_number: installmentNumber,
-        apply_to_company: applyToCompany,
-      });
+      await writeAudit(
+        "Lancamento manual de desconto do promotor",
+        {
+          id,
+          promoter_id: promoterId,
+          company_id: companyId,
+          year,
+          month,
+          discount_type: discountType,
+          amount,
+          installments,
+          installment_number: installmentNumber,
+          apply_to_company: applyToCompany,
+        },
+        auditActor
+      );
 
-      return Response.json({ success: true });
+      return NextResponse.json({ success: true });
     }
 
     if (action === "discount_delete") {
       const id = String(body.id || "");
 
       if (!id) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe o desconto que deve ser removido." },
           { status: 400 }
         );
       }
 
-      const { error: deleteError } = await supabaseAdmin
+      const { error: deleteError } = await supabase
         .from("promoter_discounts")
         .delete()
         .eq("id", id);
@@ -376,18 +403,17 @@ export async function POST(req: Request) {
       if (deleteError) throw deleteError;
 
       clearPromoterReadCaches();
-      await writeAudit("Remocao manual de desconto do promotor", {
-        id,
-      });
+      await writeAudit(
+        "Remocao manual de desconto do promotor",
+        { id },
+        auditActor
+      );
 
-      return Response.json({ success: true });
+      return NextResponse.json({ success: true });
     }
 
-    return Response.json({ error: "Acao invalida." }, { status: 400 });
-  } catch (error: any) {
-    return Response.json(
-      { error: error.message || "Erro ao salvar acao de promotor." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Acao invalida." }, { status: 400 });
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }
