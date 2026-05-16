@@ -76,14 +76,14 @@ function clearPromoterReadCaches() {
 
 export async function GET(req: Request) {
   try {
-    await withAuthenticatedAnon();
+    const { supabase } = await withAuthenticatedAnon();
 
     const { searchParams } = new URL(req.url);
 
-    // buildPromoterAnalytics usa getSupabaseAdmin internamente (assinatura
-    // preservada nesta etapa; sera parametrizada quando os outros 2 callers
-    // em lib/report.ts forem refatorados).
-    const payload = await buildPromoterAnalytics({
+    // buildPromoterAnalytics agora recebe o cliente do guard (Etapa 3.7).
+    // Promotor passa supabase autenticado anon -> RLS filtra para o
+    // proprio promoter_id; socio/funcionario veem dados completos.
+    const payload = await buildPromoterAnalytics(supabase, {
       year: Number(searchParams.get("year") || 0) || undefined,
       month: Number(searchParams.get("month") || 0) || undefined,
       companyId: searchParams.get("companyId") || undefined,

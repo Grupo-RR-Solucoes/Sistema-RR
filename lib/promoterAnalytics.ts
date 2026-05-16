@@ -1,6 +1,7 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { calcularOperacao } from "@/lib/motor";
-import { withMemoryCache } from "@/lib/memoryCache";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { fetchAllRows } from "@/lib/queryHelpers";
 
@@ -199,8 +200,6 @@ export type PromoterAnalyticsPayload = {
   promoterLookup: Array<{ id: string; name: string }>;
   companies: CompanyRow[];
 };
-
-const PROMOTER_ANALYTICS_CACHE_TTL_MS = 15_000;
 
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
@@ -441,33 +440,30 @@ function resolveTargetStatus(
   return "ABAIXO";
 }
 
-export async function buildPromoterAnalytics(filters?: {
-  year?: number;
-  month?: number;
-  companyId?: string;
-  promoterId?: string;
-}): Promise<PromoterAnalyticsPayload> {
-  const cacheKey = `promoters:${filters?.year || "latest"}:${filters?.month || "latest"}:${
-    filters?.companyId || "all"
-  }:${filters?.promoterId || "all"}`;
-
-  return withMemoryCache(cacheKey, PROMOTER_ANALYTICS_CACHE_TTL_MS, async () => {
+export async function buildPromoterAnalytics(
+  supabase: SupabaseClient,
+  filters?: {
+    year?: number;
+    month?: number;
+    companyId?: string;
+    promoterId?: string;
+  }
+): Promise<PromoterAnalyticsPayload> {
   const yearParam = filters?.year;
   const monthParam = filters?.month;
   const companyId = filters?.companyId || "";
   const promoterId = filters?.promoterId || "";
-  const supabaseAdmin = getSupabaseAdmin();
 
   const [companies, promoters, jKeys, targets, monthlyResults, discounts, agreements, records] =
     await Promise.all([
       fetchAllRows<CompanyRow>(() =>
-        supabaseAdmin
+        supabase
           .from("companies")
           .select("id, name, cnpj")
           .order("name", { ascending: true })
       ),
       fetchAllRows<PromoterRow>(() => {
-        let query = supabaseAdmin
+        let query = supabase
           .from("promoters")
           .select("id, company_id, name, status, active")
           .order("name", { ascending: true });
@@ -478,35 +474,35 @@ export async function buildPromoterAnalytics(filters?: {
 
         return query;
       }),
-      fetchAllRows<JKeyRow>(() => supabaseAdmin.from("j_keys").select("id, promoter_id")),
+      fetchAllRows<JKeyRow>(() => supabase.from("j_keys").select("id, promoter_id")),
       fetchAllRows<TargetRow>(() =>
-        supabaseAdmin
+        supabase
           .from("monthly_targets")
           .select("promoter_id, company_id, year, month, meta, meta_1, meta_2")
       ),
       fetchAllRows<MonthlyResultRow>(() =>
-        supabaseAdmin
+        supabase
           .from("promoter_monthly_results")
           .select(
             "promoter_id, company_id, year, month, production_value, proposal_count, insured_proposal_count, insured_production_value, insurance_penetration_percent, production_commission_value, insurance_commission_value, agreement_adjustment_value, final_commission_value, discount_value, target_status"
           )
       ),
       fetchAllRows<DiscountRow>(() =>
-        supabaseAdmin
+        supabase
           .from("promoter_discounts")
           .select(
             "id, promoter_id, company_id, daily_production_record_id, year, month, discount_type, amount, installments, installment_number, apply_to_company, notes"
           )
       ),
       fetchAllRows<AgreementRow>(() =>
-        supabaseAdmin
+        supabase
           .from("promoter_agreements")
           .select(
             "id, promoter_id, company_id, year, month, agreement_type, commission_type, commission_value, active, notes"
           )
       ),
       fetchAllRows<ProductionRow>(() => {
-        let query = supabaseAdmin
+        let query = supabase
           .from("daily_production_records")
           .select(
             "id, company_id, j_key, assigned_promoter_id, original_promoter_id, proposal_number, contract_number, product_description, status, movement_date, contract_date, proposal_date, net_value, gross_value, insurance_value, has_insurance, interest_rate, term_months, installments, company_received_percent, is_srcc_restricted, promoter_commission_percent, promoter_commission_amount, insurance_commission_percent, insurance_commission_amount, commission_rule_source, raw_payload"
@@ -799,33 +795,48 @@ export async function buildPromoterAnalytics(filters?: {
     }
   );
 
-    return {
-      periods,
-      selectedPeriod: latestPeriod,
-      selectedPromoterId,
-      selectedCompanyId: companyId,
-      summary: {
-        promoters: summary.promoters,
-        production: summary.production,
-        finalCommission: summary.finalCommission,
-        payableCommission: summary.payableCommission,
-        discounts: summary.discounts,
-        averageInsurancePenetration:
-          summary.promoters > 0 ? summary.insurancePenetration / summary.promoters : 0,
-      },
-      summaryRows: visibleSummaryRows,
-      proposalRows,
-      agreementRows,
-      discountRows,
-      promoterOptions: filteredSummaryRows.map((row) => ({
-        id: row.promoter_id,
-        name: row.promoter_name,
-      })),
-      promoterLookup: promoters.map((promoter) => ({
-        id: promoter.id,
-        name: promoter.name,
-      })),
-      companies,
-    };
-  });
+  return {
+    periods,
+    selectedPeriod: latestPeriod,
+    selectedPromoterId,
+    selectedCompanyId: companyId,
+    summary: {
+      promoters: summary.promoters,
+      production: summary.production,
+      finalCommission: summary.finalCommission,
+      payableCommission: summary.payableCommission,
+      discounts: summary.discounts,
+      averageInsurancePenetration:
+        summary.promoters > 0 ? summary.insurancePenetration / summary.promoters : 0,
+    },
+    summaryRows: visibleSummaryRows,
+    proposalRows,
+    agreementRows,
+    discountRows,
+    promoterOptions: filteredSummaryRows.map((row) => ({
+      id: row.promoter_id,
+      name: row.promoter_name,
+    })),
+    promoterLookup: promoters.map((promoter) => ({
+      id: promoter.id,
+      name: promoter.name,
+    })),
+    companies,
+  };
+}
+
+/**
+ * @deprecated Wrapper temporario do Dia 4.2 Etapa 3.7. Os callers em
+ * lib/report.ts (2 callsites) usam esta variante enquanto nao sao
+ * refatorados. Sera removido no final do Dia 4.2 quando todos os callers
+ * passarem o supabase client diretamente para buildPromoterAnalytics.
+ */
+export async function buildPromoterAnalyticsLegacy(filters?: {
+  year?: number;
+  month?: number;
+  companyId?: string;
+  promoterId?: string;
+}): Promise<PromoterAnalyticsPayload> {
+  const supabase = getSupabaseAdmin();
+  return buildPromoterAnalytics(supabase, filters);
 }

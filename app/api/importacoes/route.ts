@@ -1,5 +1,6 @@
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { withMemoryCache } from "@/lib/memoryCache";
+import { NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withSocioOrFuncionarioAnon } from "@/lib/auth/guards";
 
 type DailyImportRow = {
   id: string;
@@ -55,53 +56,46 @@ async function fetchAllRows<T>(queryFactory: () => any) {
 
 export async function GET() {
   try {
-    const payload = await withMemoryCache("route:importacoes", 20_000, async () => {
-      const supabaseAdmin = getSupabaseAdmin();
+    const { supabase } = await withSocioOrFuncionarioAnon();
 
-      const [companies, dailyImports, monthlyImports] = await Promise.all([
-        fetchAllRows<CompanyRow>(() =>
-          supabaseAdmin.from("companies").select("id, name, cnpj").order("name", {
-            ascending: true,
-          })
-        ),
-        fetchAllRows<DailyImportRow>(() =>
-          supabaseAdmin
-            .from("daily_imports")
-            .select("id, file_name, status, rows_count, created_at, finished_at, processing_notes")
-            .order("created_at", { ascending: false })
-        ),
-        fetchAllRows<MonthlyImportRow>(() =>
-          supabaseAdmin
-            .from("monthly_closing_imports")
-            .select("id, company_id, year, month, file_name, status, created_at, finished_at")
-            .order("created_at", { ascending: false })
-        ),
-      ]);
+    const [companies, dailyImports, monthlyImports] = await Promise.all([
+      fetchAllRows<CompanyRow>(() =>
+        supabase.from("companies").select("id, name, cnpj").order("name", {
+          ascending: true,
+        })
+      ),
+      fetchAllRows<DailyImportRow>(() =>
+        supabase
+          .from("daily_imports")
+          .select("id, file_name, status, rows_count, created_at, finished_at, processing_notes")
+          .order("created_at", { ascending: false })
+      ),
+      fetchAllRows<MonthlyImportRow>(() =>
+        supabase
+          .from("monthly_closing_imports")
+          .select("id, company_id, year, month, file_name, status, created_at, finished_at")
+          .order("created_at", { ascending: false })
+      ),
+    ]);
 
-      const companyById = new Map(companies.map((company) => [company.id, company]));
+    const companyById = new Map(companies.map((company) => [company.id, company]));
 
-      return {
-        summary: {
-          dailyImports: dailyImports.length,
-          monthlyClosingImports: monthlyImports.length,
-          lastDailyImportAt: dailyImports[0]?.created_at || null,
-          lastMonthlyClosingImportAt: monthlyImports[0]?.created_at || null,
-        },
-        companies,
-        dailyImports: dailyImports.slice(0, 12),
-        monthlyClosingImports: monthlyImports.slice(0, 12).map((row) => ({
-          ...row,
-          company_name: companyById.get(row.company_id || "")?.name || "Empresa nao identificada",
-          company_cnpj: companyById.get(row.company_id || "")?.cnpj || "",
-        })),
-      };
+    return NextResponse.json({
+      summary: {
+        dailyImports: dailyImports.length,
+        monthlyClosingImports: monthlyImports.length,
+        lastDailyImportAt: dailyImports[0]?.created_at || null,
+        lastMonthlyClosingImportAt: monthlyImports[0]?.created_at || null,
+      },
+      companies,
+      dailyImports: dailyImports.slice(0, 12),
+      monthlyClosingImports: monthlyImports.slice(0, 12).map((row) => ({
+        ...row,
+        company_name: companyById.get(row.company_id || "")?.name || "Empresa nao identificada",
+        company_cnpj: companyById.get(row.company_id || "")?.cnpj || "",
+      })),
     });
-
-    return Response.json(payload);
-  } catch (error: any) {
-    return Response.json(
-      { error: error.message || "Erro ao carregar importacoes." },
-      { status: 500 }
-    );
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }

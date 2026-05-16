@@ -1,5 +1,7 @@
+import { NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import { buildFinancialAnalytics } from "@/lib/financialAnalytics";
-import { clearMemoryCache } from "@/lib/memoryCache";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 function toNumber(value: unknown) {
@@ -7,7 +9,15 @@ function toNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-async function writeAuditLog(description: string, payload: Record<string, unknown>) {
+// audit_logs RLS bloqueia INSERT via PostgREST para todos os roles
+// (Dia 3 grupo G). writeAuditLog usa service_role para escrever, idem
+// pattern Dia 4.1 (/api/admin/usuarios) + Etapa 3.3/3.4. createdBy recebe
+// o email do usuario autenticado vindo do guard (T5 do mapa de decisoes).
+async function writeAuditLog(
+  description: string,
+  payload: Record<string, unknown>,
+  createdBy: string
+) {
   try {
     const supabaseAdmin = getSupabaseAdmin();
 
@@ -16,40 +26,35 @@ async function writeAuditLog(description: string, payload: Record<string, unknow
       action: "MANUAL_ENTRY",
       description,
       payload,
-      created_by: "sistema",
+      created_by: createdBy,
     });
   } catch {
     // Nao interrompe o fluxo principal se a trilha falhar.
   }
 }
 
-function clearFinancialReadCaches() {
-  clearMemoryCache("financial:");
-  clearMemoryCache("closing:");
-  clearMemoryCache("dashboard:");
-}
-
 export async function GET(req: Request) {
   try {
+    const { supabase } = await withSocioAnon();
+
     const { searchParams } = new URL(req.url);
     const year = Number(searchParams.get("year") || 0) || undefined;
     const month = Number(searchParams.get("month") || 0) || undefined;
 
-    const payload = await buildFinancialAnalytics({ year, month });
-    return Response.json(payload);
-  } catch (error: any) {
-    return Response.json(
-      { error: error.message || "Erro ao carregar financeiro." },
-      { status: 500 }
-    );
+    const payload = await buildFinancialAnalytics(supabase, { year, month });
+    return NextResponse.json(payload);
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }
 
 export async function POST(req: Request) {
   try {
+    const { user, supabase } = await withSocioAnon();
+    const auditActor = user.session.appUser.email;
+
     const body = await req.json();
     const action = String(body?.action || "").trim();
-    const supabaseAdmin = getSupabaseAdmin();
 
     if (action === "expense") {
       const year = Number(body.year);
@@ -65,13 +70,13 @@ export async function POST(req: Request) {
       const notes = body.notes ? String(body.notes) : null;
 
       if (!year || !month || amount <= 0 || !description) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe competencia, descricao e valor valido para a despesa." },
           { status: 400 }
         );
       }
 
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await supabase
         .from("financial_expenses")
         .insert({
           company_id: scope === "COMPANY" ? companyId : null,
@@ -93,17 +98,20 @@ export async function POST(req: Request) {
         throw error;
       }
 
-      clearFinancialReadCaches();
-      await writeAuditLog("Lancamento manual de despesa", {
-        expense_id: data.id,
-        year,
-        month,
-        scope,
-        company_id: scope === "COMPANY" ? companyId : null,
-        amount,
-      });
+      await writeAuditLog(
+        "Lancamento manual de despesa",
+        {
+          expense_id: data.id,
+          year,
+          month,
+          scope,
+          company_id: scope === "COMPANY" ? companyId : null,
+          amount,
+        },
+        auditActor
+      );
 
-      return Response.json({ success: true, id: data.id });
+      return NextResponse.json({ success: true, id: data.id });
     }
 
     if (action === "opening_balance") {
@@ -114,13 +122,13 @@ export async function POST(req: Request) {
       const companyId = body.companyId ? String(body.companyId) : null;
 
       if (!year || !month) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe a competencia do saldo inicial." },
           { status: 400 }
         );
       }
 
-      const query = supabaseAdmin
+      const query = supabase
         .from("cash_opening_balances")
         .select("id")
         .eq("year", year)
@@ -138,7 +146,7 @@ export async function POST(req: Request) {
       }
 
       if (existing) {
-        const { error } = await supabaseAdmin
+        const { error } = await supabase
           .from("cash_opening_balances")
           .update({
             opening_balance: openingBalance,
@@ -149,20 +157,23 @@ export async function POST(req: Request) {
           throw error;
         }
 
-        clearFinancialReadCaches();
-        await writeAuditLog("Atualizacao manual de saldo inicial", {
-          opening_balance_id: existing.id,
-          year,
-          month,
-          scope,
-          company_id: scope === "COMPANY" ? companyId : null,
-          opening_balance: openingBalance,
-        });
+        await writeAuditLog(
+          "Atualizacao manual de saldo inicial",
+          {
+            opening_balance_id: existing.id,
+            year,
+            month,
+            scope,
+            company_id: scope === "COMPANY" ? companyId : null,
+            opening_balance: openingBalance,
+          },
+          auditActor
+        );
 
-        return Response.json({ success: true, id: existing.id, updated: true });
+        return NextResponse.json({ success: true, id: existing.id, updated: true });
       }
 
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await supabase
         .from("cash_opening_balances")
         .insert({
           company_id: scope === "COMPANY" ? companyId : null,
@@ -177,30 +188,33 @@ export async function POST(req: Request) {
         throw error;
       }
 
-      clearFinancialReadCaches();
-      await writeAuditLog("Lancamento manual de saldo inicial", {
-        opening_balance_id: data.id,
-        year,
-        month,
-        scope,
-        company_id: scope === "COMPANY" ? companyId : null,
-        opening_balance: openingBalance,
-      });
+      await writeAuditLog(
+        "Lancamento manual de saldo inicial",
+        {
+          opening_balance_id: data.id,
+          year,
+          month,
+          scope,
+          company_id: scope === "COMPANY" ? companyId : null,
+          opening_balance: openingBalance,
+        },
+        auditActor
+      );
 
-      return Response.json({ success: true, id: data.id, updated: false });
+      return NextResponse.json({ success: true, id: data.id, updated: false });
     }
 
     if (action === "category") {
       const name = String(body.name || "").trim();
 
       if (!name) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Informe o nome da categoria." },
           { status: 400 }
         );
       }
 
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await supabase
         .from("expense_categories")
         .upsert(
           {
@@ -219,20 +233,20 @@ export async function POST(req: Request) {
         throw error;
       }
 
-      clearFinancialReadCaches();
-      await writeAuditLog("Criacao ou reativacao de categoria de despesa", {
-        category_id: data.id,
-        name: data.name,
-      });
+      await writeAuditLog(
+        "Criacao ou reativacao de categoria de despesa",
+        {
+          category_id: data.id,
+          name: data.name,
+        },
+        auditActor
+      );
 
-      return Response.json({ success: true, category: data });
+      return NextResponse.json({ success: true, category: data });
     }
 
-    return Response.json({ error: "Acao invalida." }, { status: 400 });
-  } catch (error: any) {
-    return Response.json(
-      { error: error.message || "Erro ao salvar informacao financeira." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Acao invalida." }, { status: 400 });
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }

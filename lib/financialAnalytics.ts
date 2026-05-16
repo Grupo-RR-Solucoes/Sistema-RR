@@ -1,6 +1,7 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { fetchAllRows } from "@/lib/queryHelpers";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { withMemoryCache } from "@/lib/memoryCache";
 
 const MONTH_NAMES = [
   "jan",
@@ -170,8 +171,6 @@ export type FinancialAnalyticsPayload = {
   alerts: string[];
 };
 
-const FINANCIAL_ANALYTICS_CACHE_TTL_MS = 20_000;
-
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -222,32 +221,30 @@ function makeSelectedPeriod(periods: FinancePeriodOption[], year?: number, month
   return periods[0];
 }
 
-export async function buildFinancialAnalytics(filters?: {
-  year?: number;
-  month?: number;
-}): Promise<FinancialAnalyticsPayload> {
-  const cacheKey = `financial:${filters?.year || "latest"}:${filters?.month || "latest"}`;
-
-  return withMemoryCache(cacheKey, FINANCIAL_ANALYTICS_CACHE_TTL_MS, async () => {
-  const supabaseAdmin = getSupabaseAdmin();
-
+export async function buildFinancialAnalytics(
+  supabase: SupabaseClient,
+  filters?: {
+    year?: number;
+    month?: number;
+  }
+): Promise<FinancialAnalyticsPayload> {
   const [companies, categories, closings, expenses, openingBalances, deferredRows] =
     await Promise.all([
       fetchAllRows<CompanyRow>(() =>
-        supabaseAdmin
+        supabase
           .from("companies")
           .select("id, name, cnpj, active")
           .order("name", { ascending: true })
       ),
       fetchAllRows<ExpenseCategoryRow>(() =>
-        supabaseAdmin
+        supabase
           .from("expense_categories")
           .select("id, name, is_default, active")
           .eq("active", true)
           .order("name", { ascending: true })
       ),
       fetchAllRows<ClosingRow>(() =>
-        supabaseAdmin
+        supabase
           .from("fechamento_mensal_empresa")
           .select(
             "empresa_cnpj, ano, mes, valor_avista, valor_diferido, valor_seguro, valor_estorno, valor_renovacao, valor_liquido"
@@ -257,7 +254,7 @@ export async function buildFinancialAnalytics(filters?: {
           .order("empresa_cnpj", { ascending: true })
       ),
       fetchAllRows<ExpenseRow>(() =>
-        supabaseAdmin
+        supabase
           .from("financial_expenses")
           .select(
             "id, company_id, year, month, category_id, scope, description, amount, due_date, payment_date, status, notes, created_at"
@@ -267,7 +264,7 @@ export async function buildFinancialAnalytics(filters?: {
           .order("created_at", { ascending: false })
       ),
       fetchAllRows<OpeningBalanceRow>(() =>
-        supabaseAdmin
+        supabase
           .from("cash_opening_balances")
           .select("id, company_id, year, month, opening_balance, created_at")
           .order("year", { ascending: true })
@@ -275,7 +272,7 @@ export async function buildFinancialAnalytics(filters?: {
           .order("created_at", { ascending: false })
       ),
       fetchAllRows<DeferredRow>(() =>
-        supabaseAdmin
+        supabase
           .from("diferido_parcelas")
           .select("id, valor, status, data_prevista")
           .order("data_prevista", { ascending: true })
@@ -639,18 +636,31 @@ export async function buildFinancialAnalytics(filters?: {
     );
   }
 
-    return {
-      periods,
-      selectedPeriod,
-      summary,
-      categoryTotals,
-      cashTrend: trendPeriods,
-      companyRows,
-      expenseRows,
-      openingBalanceRows,
-      categories,
-      companies: companies.filter((company) => company.active !== false),
-      alerts,
-    };
-  });
+  return {
+    periods,
+    selectedPeriod,
+    summary,
+    categoryTotals,
+    cashTrend: trendPeriods,
+    companyRows,
+    expenseRows,
+    openingBalanceRows,
+    categories,
+    companies: companies.filter((company) => company.active !== false),
+    alerts,
+  };
+}
+
+/**
+ * @deprecated Wrapper temporario do Dia 4.2 Etapa 3.7. Os callers em
+ * lib/report.ts (2 callsites) usam esta variante enquanto nao sao
+ * refatorados. Sera removido no final do Dia 4.2 quando todos os callers
+ * passarem o supabase client diretamente para buildFinancialAnalytics.
+ */
+export async function buildFinancialAnalyticsLegacy(filters?: {
+  year?: number;
+  month?: number;
+}): Promise<FinancialAnalyticsPayload> {
+  const supabase = getSupabaseAdmin();
+  return buildFinancialAnalytics(supabase, filters);
 }

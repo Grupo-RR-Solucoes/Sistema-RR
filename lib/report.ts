@@ -4,8 +4,14 @@ import {
   buildClosingAnalytics,
   buildClosingAnalyticsLegacy,
 } from "@/lib/closingAnalytics";
-import { buildFinancialAnalytics } from "@/lib/financialAnalytics";
-import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
+import {
+  buildFinancialAnalytics,
+  buildFinancialAnalyticsLegacy,
+} from "@/lib/financialAnalytics";
+import {
+  buildPromoterAnalytics,
+  buildPromoterAnalyticsLegacy,
+} from "@/lib/promoterAnalytics";
 
 export type ReportKind = "financeiro" | "fechamento" | "auditoria" | "promotores";
 export type ReportFormat = "pdf" | "xlsx";
@@ -1006,7 +1012,7 @@ export async function buildReportPreview(
   const reportType = normalizeReportKind(input.type);
 
   if (reportType === "financeiro") {
-    const data = await buildFinancialAnalytics(input);
+    const data = await buildFinancialAnalyticsLegacy(input);
 
     return {
       reportType,
@@ -1160,7 +1166,7 @@ export async function buildReportPreview(
     };
   }
 
-  const data = await buildPromoterAnalytics(input);
+  const data = await buildPromoterAnalyticsLegacy(input);
   const promoterScope = normalizePromoterReportScope(input.scope);
   const selectedPromoter =
     data.summaryRows.find((row) => row.promoter_id === data.selectedPromoterId) || null;
@@ -1275,7 +1281,7 @@ export async function buildReportExport(
   const reportFormat = normalizeReportFormat(input.format);
 
   if (reportType === "financeiro") {
-    const data = await buildFinancialAnalytics(input);
+    const data = await buildFinancialAnalyticsLegacy(input);
 
     return {
       buffer:
@@ -1330,7 +1336,7 @@ export async function buildReportExport(
     };
   }
 
-  const data = await buildPromoterAnalytics(input);
+  const data = await buildPromoterAnalyticsLegacy(input);
   const promoterScope = normalizePromoterReportScope(input.scope);
 
   if (promoterScope === "individual" && !data.selectedPromoterId) {
