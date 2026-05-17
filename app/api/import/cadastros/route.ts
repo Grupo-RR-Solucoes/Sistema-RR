@@ -1,7 +1,9 @@
 import * as XLSX from "xlsx";
 
+import { NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
 import { fetchAllRows } from "@/lib/queryHelpers";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 type CompanyRow = {
   id: string;
@@ -111,18 +113,24 @@ function getPreferredCompanyId(usageMap?: Map<string, DailyUsage>) {
 
 export async function POST(req: Request) {
   try {
+    // D27 - Escola A: service_role com guard de socio. Bulk write em
+    // companies, company_identifiers, promoters, j_keys, audit_logs.
+    // Configurar base cadastral eh decisao de socio (funcionario faz
+    // CRUD unitario via /api/cadastros — D19 — mas bulk de planilha
+    // afeta toda a estrutura comercial e fica restrito ao socio).
+    const { user, supabase: supabaseAdmin } = await withSocioAdmin();
+    const auditActor = user.session.appUser.email;
+
     const body = await req.json();
     const keysFile = body.keysFile ? String(body.keysFile) : "";
     const dailyFile = body.dailyFile ? String(body.dailyFile) : "";
 
     if (!keysFile && !dailyFile) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Envie a planilha de Chaves J ou a planilha diaria de referencia." },
         { status: 400 }
       );
     }
-
-    const supabaseAdmin = getSupabaseAdmin();
 
     const [companies, identifiers, promoters, jKeys] = await Promise.all([
       fetchAllRows<CompanyRow>(() =>
@@ -509,22 +517,19 @@ export async function POST(req: Request) {
           dailyFileName: body.dailyFileName || null,
           summary,
         },
-        created_by: "sistema",
+        created_by: auditActor,
       });
     } catch {
       // Nao bloqueia o fluxo principal.
     }
 
-    return Response.json({
+    return NextResponse.json({
       success: true,
       summary,
       message:
         "Base cadastral atualizada com sucesso a partir da planilha de Chaves J e da diaria de referencia.",
     });
-  } catch (error: any) {
-    return Response.json(
-      { error: error.message || "Erro ao importar base cadastral." },
-      { status: 500 }
-    );
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }

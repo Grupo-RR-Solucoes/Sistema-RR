@@ -1,5 +1,8 @@
 import * as XLSX from "xlsx";
-import { createClient } from "@supabase/supabase-js";
+import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { apiGuardErrorResponse, withSocioOrFuncionarioAdmin } from "@/lib/auth/guards";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import {
   getProductionPeriodFromValue,
@@ -9,15 +12,15 @@ import {
 const EXISTING_LOOKUP_CHUNK_SIZE = 200;
 const UPSERT_CHUNK_SIZE = 500;
 
-function normalizeText(value) {
+function normalizeText(value: unknown) {
   return String(value ?? "")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .trim()
     .toUpperCase();
 }
 
-function parseNumber(value) {
+function parseNumber(value: unknown) {
   if (value === null || value === undefined || value === "") return 0;
 
   const normalized = String(value)
@@ -29,7 +32,7 @@ function parseNumber(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function parsePercent(value) {
+function parsePercent(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
 
   const raw = String(value).trim().replace("%", "");
@@ -43,7 +46,7 @@ function parsePercent(value) {
   return parsed > 1 ? parsed / 100 : parsed;
 }
 
-function parseRate(value) {
+function parseRate(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
 
   const raw = String(value).trim().replace("%", "");
@@ -56,7 +59,7 @@ function parseRate(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function parseSrccRestricted(value) {
+function parseSrccRestricted(value: unknown) {
   const normalized = normalizeText(value);
   if (!normalized) return false;
   if (normalized === "SIM") return true;
@@ -64,7 +67,7 @@ function parseSrccRestricted(value) {
   return false;
 }
 
-function firstPositiveNumber(values) {
+function firstPositiveNumber(values: unknown[]) {
   for (const value of values) {
     const parsed = parseNumber(value);
     if (parsed > 0) return parsed;
@@ -73,7 +76,7 @@ function firstPositiveNumber(values) {
   return 0;
 }
 
-function parseDate(value) {
+function parseDate(value: unknown) {
   if (!value) return null;
 
   if (typeof value === "number") {
@@ -93,7 +96,7 @@ function parseDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().split("T")[0];
 }
 
-function getField(lookup, keys) {
+function getField(lookup: Map<string, any> | Record<string, any>, keys: string[]) {
   const aliases = keys.map((key) => normalizeText(key));
 
   if (lookup instanceof Map) {
@@ -120,8 +123,8 @@ function getField(lookup, keys) {
   return null;
 }
 
-function buildRowLookup(row) {
-  const lookup = new Map();
+function buildRowLookup(row: Record<string, any>) {
+  const lookup = new Map<string, any>();
 
   for (const [key, value] of Object.entries(row)) {
     if (value === undefined || value === null || value === "") continue;
@@ -131,8 +134,8 @@ function buildRowLookup(row) {
   return lookup;
 }
 
-function chunkArray(items, size) {
-  const chunks = [];
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
 
   for (let index = 0; index < items.length; index += size) {
     chunks.push(items.slice(index, index + size));
@@ -141,11 +144,11 @@ function chunkArray(items, size) {
   return chunks;
 }
 
-function makeRecordKey(companyId, proposalNumber) {
+function makeRecordKey(companyId: string, proposalNumber: string) {
   return `${companyId}::${proposalNumber}`;
 }
 
-function extractYearMonthFromPayload(payload) {
+function extractYearMonthFromPayload(payload: any) {
   const sourceDate =
     payload.movement_date ||
     payload.contract_date ||
@@ -154,8 +157,14 @@ function extractYearMonthFromPayload(payload) {
   return getProductionPeriodFromValue(sourceDate);
 }
 
-function groupAffectedPeriods(records) {
-  const grouped = new Map();
+type AffectedPeriod = {
+  year: number;
+  month: number;
+  companyIds: string[];
+};
+
+function groupAffectedPeriods(records: any[]): AffectedPeriod[] {
+  const grouped = new Map<string, { year: number; month: number; companyIds: Set<string> }>();
 
   for (const record of records) {
     const period = extractYearMonthFromPayload(record);
@@ -165,7 +174,7 @@ function groupAffectedPeriods(records) {
     const current = grouped.get(key) || {
       year: period.year,
       month: period.month,
-      companyIds: new Set(),
+      companyIds: new Set<string>(),
     };
 
     current.companyIds.add(record.company_id);
@@ -179,8 +188,12 @@ function groupAffectedPeriods(records) {
   }));
 }
 
-async function fetchExistingRecords(supabase, companyIds, proposalNumbers) {
-  const existingByKey = new Map();
+async function fetchExistingRecords(
+  supabase: SupabaseClient,
+  companyIds: string[],
+  proposalNumbers: string[]
+) {
+  const existingByKey = new Map<string, any>();
 
   if (companyIds.length === 0 || proposalNumbers.length === 0) {
     return existingByKey;
@@ -203,7 +216,10 @@ async function fetchExistingRecords(supabase, companyIds, proposalNumbers) {
   return existingByKey;
 }
 
-async function invalidateMonthlySnapshots(supabase, affectedPeriods) {
+async function invalidateMonthlySnapshots(
+  supabase: SupabaseClient,
+  affectedPeriods: AffectedPeriod[]
+) {
   for (const period of affectedPeriods) {
     for (const companyChunk of chunkArray(period.companyIds, 100)) {
       const { error: expectedError } = await supabase
@@ -227,17 +243,18 @@ async function invalidateMonthlySnapshots(supabase, affectedPeriods) {
   }
 }
 
-export async function POST(req) {
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-  );
-
+export async function POST(req: Request) {
   try {
+    // D28 - Escola A: service_role com guard que permite socio OU
+    // funcionario. P3 do mapa: Italo opera import diario de producao
+    // como rotina operacional. Bulk upsert em daily_production_records
+    // + invalidacao de monthly_expected_closings + promoter_monthly_results.
+    const { supabase } = await withSocioOrFuncionarioAdmin();
+
     const { file, fileName } = await req.json();
 
     if (!file) {
-      return Response.json({ error: "Arquivo nao enviado" }, { status: 400 });
+      return NextResponse.json({ error: "Arquivo nao enviado" }, { status: 400 });
     }
 
     const { data: importLog, error: importLogError } = await supabase
@@ -255,7 +272,7 @@ export async function POST(req) {
 
     const workbook = XLSX.read(Buffer.from(file, "base64"), { type: "buffer" });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet);
+    const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet);
 
     const { data: companies, error: companiesError } = await supabase
       .from("company_identifiers")
@@ -270,8 +287,8 @@ export async function POST(req) {
 
     if (jKeysError) throw jKeysError;
 
-    const companyByMci = new Map();
-    const companyByCoban = new Map();
+    const companyByMci = new Map<string, any>();
+    const companyByCoban = new Map<string, any>();
     for (const company of companies || []) {
       const mci = company.mci ? String(company.mci).trim() : "";
       const coban = company.coban_code ? String(company.coban_code).trim() : "";
@@ -280,7 +297,7 @@ export async function POST(req) {
       if (coban) companyByCoban.set(coban, company);
     }
 
-    const jKeyByValue = new Map();
+    const jKeyByValue = new Map<string, any>();
     for (const item of jKeys || []) {
       const key = String(item.j_key || "").trim().toUpperCase();
       if (key) jKeyByValue.set(key, item);
@@ -290,8 +307,8 @@ export async function POST(req) {
     let inserted = 0;
     let updated = 0;
     let duplicatesInFile = 0;
-    const errors = [];
-    const recordsByKey = new Map();
+    const errors: any[] = [];
+    const recordsByKey = new Map<string, any>();
 
     for (const row of rows) {
       try {
@@ -389,7 +406,7 @@ export async function POST(req) {
           ])
         );
 
-        const payload = {
+        const payload: any = {
           daily_import_id: importLog.id,
           company_id: company.company_id,
           j_key: jKey,
@@ -477,7 +494,7 @@ export async function POST(req) {
 
         recordsByKey.set(recordKey, payload);
         processed += 1;
-      } catch (error) {
+      } catch (error: any) {
         errors.push({
           row,
           error: error.message || "Erro ao processar linha.",
@@ -545,7 +562,7 @@ export async function POST(req) {
 
     if (finishError) throw finishError;
 
-    return Response.json({
+    return NextResponse.json({
       success: true,
       processed,
       inserted,
@@ -559,9 +576,6 @@ export async function POST(req) {
       errors_count: errors.length,
     });
   } catch (error) {
-    return Response.json(
-      { error: error.message || "Erro interno na importacao diaria." },
-      { status: 500 }
-    );
+    return apiGuardErrorResponse(error);
   }
 }

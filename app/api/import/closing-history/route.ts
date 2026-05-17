@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
 import {
   buildHistoricalClosingCoverage,
   groupHistoricalClosingCandidates,
@@ -9,7 +12,6 @@ import {
 } from "@/lib/historicalClosingFiles";
 import { resolveKnownCompanyIdentity } from "@/lib/knownCompanies";
 import { importMonthlyClosingWorkbook } from "@/lib/monthlyClosingImport";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 function toNumber(value: unknown) {
   const parsed = Number(value);
@@ -59,6 +61,11 @@ function hasMeaningfulClosingPayload(payload: {
 
 export async function POST(req: Request) {
   try {
+    // D35 - Escola A: service_role com guard de socio. Bulk re-import
+    // de fechamentos historicos lendo planilhas do disco e gravando
+    // em fechamento_mensal_empresa + monthly_closing_entries.
+    const { supabase: supabaseAdmin } = await withSocioAdmin();
+
     const body = await req.json().catch(() => ({}));
     const requestedCnpjs = Array.isArray(body.cnpjs)
       ? body.cnpjs.map((value: unknown) => String(value).replace(/\D/g, ""))
@@ -98,7 +105,7 @@ export async function POST(req: Request) {
     const coverage = buildHistoricalClosingCoverage(officialFiles);
 
     if (!execute) {
-      return Response.json({
+      return NextResponse.json({
         success: true,
         execute: false,
         filesFound: officialFiles.length,
@@ -114,7 +121,6 @@ export async function POST(req: Request) {
       });
     }
 
-    const supabaseAdmin = getSupabaseAdmin();
     const companies = await supabaseAdmin
       .from("companies")
       .select("id, name, cnpj")
@@ -228,7 +234,7 @@ export async function POST(req: Request) {
       });
     }
 
-    return Response.json({
+    return NextResponse.json({
       success: errors.length === 0,
       execute: true,
       filesFound: officialFiles.length,
@@ -238,10 +244,7 @@ export async function POST(req: Request) {
       imported,
       errors,
     });
-  } catch (error: any) {
-    return Response.json(
-      { error: error.message || "Erro ao importar historico de fechamentos." },
-      { status: 500 }
-    );
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }

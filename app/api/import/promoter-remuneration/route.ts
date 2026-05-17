@@ -1,4 +1,6 @@
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
 import {
   getImportedInsuranceBands,
   parsePromoterRemunerationWorkbook,
@@ -6,7 +8,11 @@ import {
 
 export async function POST(req: Request) {
   try {
-    const supabaseAdmin = getSupabaseAdmin();
+    // D36 - Escola A: service_role com guard de socio. Bulk write em
+    // commission_tables + commission_table_rows + audit_logs.
+    // Configurar regras de remuneracao eh decisao de socio.
+    const { user, supabase: supabaseAdmin } = await withSocioAdmin();
+    const auditActor = user.session.appUser.email;
     const body = await req.json();
     const file = String(body?.file || "");
     const fileName = String(body?.fileName || "tabela-remuneracao-promotores.xlsx");
@@ -14,7 +20,7 @@ export async function POST(req: Request) {
     const month = Number(body?.month);
 
     if (!file || !year || !month) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Informe arquivo, ano e mes da tabela de remuneracao." },
         { status: 400 }
       );
@@ -123,7 +129,7 @@ export async function POST(req: Request) {
       entity_name: "promoter_remuneration_table",
       action: "IMPORT",
       description: "Importacao da tabela mensal de remuneracao dos promotores.",
-      created_by: "sistema",
+      created_by: auditActor,
       payload: imported,
     });
 
@@ -131,7 +137,7 @@ export async function POST(req: Request) {
       throw auditError;
     }
 
-    return Response.json({
+    return NextResponse.json({
       success: true,
       year,
       month,
@@ -141,12 +147,7 @@ export async function POST(req: Request) {
         companiesUpdated: tableByCompany.size,
       },
     });
-  } catch (error: any) {
-    return Response.json(
-      {
-        error: error.message || "Erro ao importar tabela de remuneracao dos promotores.",
-      },
-      { status: 500 }
-    );
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }
