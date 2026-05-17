@@ -38,3 +38,24 @@ export function allowedTargetRoles(actor: AppRole): ManageableRole[] {
   if (actor === "funcionario") return ["promotor"];
   return [];
 }
+
+/**
+ * Decide se um usuario com role `actor` pode criar/editar uma despesa
+ * em financial_expenses (lancar, marcar como paga, ajustar valor).
+ *
+ * Espelha a RLS Dia 3 Grupo F (socio_all + funcionario_select/insert/update).
+ * Promotor sempre bloqueado.
+ */
+export function canManageExpense(actor: AppRole): boolean {
+  return actor === "socio" || actor === "funcionario";
+}
+
+/**
+ * Decide se um usuario com role `actor` pode DELETAR uma despesa
+ * em financial_expenses. Apenas socio — DELETE de despesa eh evento
+ * auditavel (Dia 3 Grupo F: "DELETE de despesa eh evento auditavel e
+ * fica restrito ao socio").
+ */
+export function canDeleteExpense(actor: AppRole): boolean {
+  return actor === "socio";
+}

@@ -53,6 +53,7 @@ const navGroups: NavGroup[] = [
     label: "Controle",
     items: [
       { href: "/financeiro", label: "Financeiro", icon: "FN", visibleTo: ["socio"] },
+      { href: "/despesas", label: "Despesas", icon: "DE", visibleTo: ["socio", "funcionario"] },
       { href: "/auditoria", label: "Auditoria", icon: "AU", visibleTo: ["socio"] },
       { href: "/relatorios", label: "Relatórios", icon: "RL", visibleTo: ["socio", "funcionario"] },
       { href: "/configuracoes", label: "Configurações", icon: "CF", visibleTo: ["socio"] },

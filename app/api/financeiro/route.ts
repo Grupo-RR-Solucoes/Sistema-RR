@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
+import {
+  apiGuardErrorResponse,
+  withSocioOrFuncionarioAnon,
+} from "@/lib/auth/guards";
+import { canManageExpense } from "@/lib/auth/permissions";
+import { fetchAllRows } from "@/lib/queryHelpers";
 import { buildFinancialAnalytics } from "@/lib/financialAnalytics";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -35,11 +40,62 @@ async function writeAuditLog(
 
 export async function GET(req: Request) {
   try {
-    const { supabase } = await withSocioAnon();
+    const { user, supabase } = await withSocioOrFuncionarioAnon();
 
     const { searchParams } = new URL(req.url);
     const year = Number(searchParams.get("year") || 0) || undefined;
     const month = Number(searchParams.get("month") || 0) || undefined;
+
+    // Funcionario recebe payload slim: companies + categorias ativas +
+    // despesas. Fluxo de caixa (closings, opening balances, deferred) fica
+    // bloqueado tanto via RLS Grupo F quanto explicitamente aqui — evita
+    // queries inuteis e mantem o shape de resposta previsivel para a
+    // /despesas (Etapa 4.3.2). /financeiro continua socio-only via menu.
+    if (user.role === "funcionario") {
+      const [companies, categories, expenses] = await Promise.all([
+        fetchAllRows<{ id: string; name: string; cnpj: string; active: boolean | null }>(
+          () =>
+            supabase
+              .from("companies")
+              .select("id, name, cnpj, active")
+              .order("name", { ascending: true })
+        ),
+        fetchAllRows<{ id: string; name: string; is_default: boolean | null; active: boolean | null }>(
+          () =>
+            supabase
+              .from("expense_categories")
+              .select("id, name, is_default, active")
+              .eq("active", true)
+              .order("name", { ascending: true })
+        ),
+        fetchAllRows<{
+          id: string;
+          company_id: string | null;
+          year: number;
+          month: number;
+          category_id: string | null;
+          scope: string | null;
+          description: string;
+          amount: number | null;
+          due_date: string | null;
+          payment_date: string | null;
+          status: string | null;
+          notes: string | null;
+          created_at: string | null;
+        }>(() =>
+          supabase
+            .from("financial_expenses")
+            .select(
+              "id, company_id, year, month, category_id, scope, description, amount, due_date, payment_date, status, notes, created_at"
+            )
+            .order("year", { ascending: true })
+            .order("month", { ascending: true })
+            .order("created_at", { ascending: false })
+        ),
+      ]);
+
+      return NextResponse.json({ companies, categories, expenses });
+    }
 
     const payload = await buildFinancialAnalytics(supabase, { year, month });
     return NextResponse.json(payload);
@@ -50,13 +106,19 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const { user, supabase } = await withSocioAnon();
+    const { user, supabase } = await withSocioOrFuncionarioAnon();
     const auditActor = user.session.appUser.email;
 
     const body = await req.json();
     const action = String(body?.action || "").trim();
 
     if (action === "expense") {
+      if (!canManageExpense(user.role)) {
+        return NextResponse.json(
+          { error: "Voce nao tem permissao para lancar despesa." },
+          { status: 403 }
+        );
+      }
       const year = Number(body.year);
       const month = Number(body.month);
       const amount = toNumber(body.amount);
@@ -115,6 +177,12 @@ export async function POST(req: Request) {
     }
 
     if (action === "opening_balance") {
+      if (user.role !== "socio") {
+        return NextResponse.json(
+          { error: "Apenas socios podem lancar saldo inicial." },
+          { status: 403 }
+        );
+      }
       const year = Number(body.year);
       const month = Number(body.month);
       const openingBalance = toNumber(body.openingBalance);
@@ -205,6 +273,12 @@ export async function POST(req: Request) {
     }
 
     if (action === "category") {
+      if (user.role !== "socio") {
+        return NextResponse.json(
+          { error: "Apenas socios podem gerenciar categorias." },
+          { status: 403 }
+        );
+      }
       const name = String(body.name || "").trim();
 
       if (!name) {
