@@ -61,7 +61,7 @@ const navGroups: NavGroup[] = [
   {
     id: "admin",
     label: "Admin",
-    items: [{ href: "/admin/usuarios", label: "Usuários", icon: "US", visibleTo: ["socio"] }],
+    items: [{ href: "/admin/usuarios", label: "Usuários", icon: "US", visibleTo: ["socio", "funcionario"] }],
   },
 ];
 

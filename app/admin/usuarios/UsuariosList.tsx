@@ -2,6 +2,8 @@
 
 import { useState, type CSSProperties } from "react";
 
+import { canManageUserRole } from "@/lib/auth/permissions";
+
 import CreateUsuarioModal from "./CreateUsuarioModal";
 import ResetPasswordModal from "./ResetPasswordModal";
 
@@ -22,12 +24,16 @@ interface Props {
   initialUsers: UsuarioRow[];
   loadError: string | null;
   currentUserId: string;
+  // Disc.14 Etapa 14.2: propagado do server. Consumo visual (filtros de
+  // dropdown, ocultar botoes para alvos fora do escopo) fica na Etapa 14.3.
+  currentUserRole: UsuarioRow["role"];
 }
 
 export default function UsuariosList({
   initialUsers,
   loadError,
   currentUserId,
+  currentUserRole,
 }: Props) {
   const [users, setUsers] = useState<UsuarioRow[]>(initialUsers);
   const [showCreate, setShowCreate] = useState(false);
@@ -99,9 +105,9 @@ export default function UsuariosList({
           <div style={styles.kicker}>GESTÃO DE ACESSO</div>
           <h2 style={styles.title}>Usuários do sistema</h2>
           <p style={styles.subtitle}>
-            Sócios gerenciam usuários, atribuem perfis e geram senhas
-            provisórias. Promotores não veem esta área. Toda criação, reset de
-            senha e remoção são auditadas automaticamente.
+            Sócios gerenciam todos os usuários do sistema. Funcionários podem
+            cadastrar e gerenciar promotores. Toda criação, edição, reset de
+            senha e remoção é auditada automaticamente.
           </p>
         </div>
         <button
@@ -139,57 +145,68 @@ export default function UsuariosList({
                 </td>
               </tr>
             ) : (
-              users.map((u) => (
-                <tr key={u.id} style={u.active ? undefined : styles.rowInactive}>
-                  <td style={styles.td}>{u.full_name ?? "—"}</td>
-                  <td style={styles.td}>{u.email}</td>
-                  <td style={styles.td}>
-                    <span style={roleChip(u.role)}>{u.role.toUpperCase()}</span>
-                  </td>
-                  <td style={styles.td}>
-                    <span style={u.active ? styles.activeChip : styles.inactiveChip}>
-                      {u.active ? (
+              users.map((u) => {
+                const canManage = canManageUserRole(currentUserRole, u.role);
+                const isSelf = u.id === currentUserId;
+                const showActions = canManage && !isSelf;
+                return (
+                  <tr key={u.id} style={u.active ? undefined : styles.rowInactive}>
+                    <td style={styles.td}>{u.full_name ?? "—"}</td>
+                    <td style={styles.td}>{u.email}</td>
+                    <td style={styles.td}>
+                      <span style={roleChip(u.role)}>{u.role.toUpperCase()}</span>
+                    </td>
+                    <td style={styles.td}>
+                      <span style={u.active ? styles.activeChip : styles.inactiveChip}>
+                        {u.active ? (
+                          <>
+                            <span style={styles.activeDot} aria-hidden="true" />
+                            Ativo
+                          </>
+                        ) : (
+                          "Inativo"
+                        )}
+                      </span>
+                    </td>
+                    <td style={styles.td}>{formatDate(u.created_at)}</td>
+                    <td style={styles.tdActions}>
+                      {showActions ? (
                         <>
-                          <span style={styles.activeDot} aria-hidden="true" />
-                          Ativo
+                          <button
+                            type="button"
+                            style={styles.actionBtn}
+                            disabled={busyId === u.id}
+                            onClick={() => setResetTarget(u)}
+                            title="Gerar nova senha provisória"
+                          >
+                            Resetar senha
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.actionBtn}
+                            disabled={busyId === u.id}
+                            onClick={() => toggleActive(u)}
+                            title={u.active ? "Desativar usuário" : "Ativar usuário"}
+                          >
+                            {u.active ? "Desativar" : "Ativar"}
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.dangerBtn}
+                            disabled={busyId === u.id}
+                            onClick={() => deleteUser(u)}
+                            title="Deletar usuário"
+                          >
+                            Deletar
+                          </button>
                         </>
                       ) : (
-                        "Inativo"
+                        <span style={styles.actionsEmpty}>—</span>
                       )}
-                    </span>
-                  </td>
-                  <td style={styles.td}>{formatDate(u.created_at)}</td>
-                  <td style={styles.tdActions}>
-                    <button
-                      type="button"
-                      style={styles.actionBtn}
-                      disabled={busyId === u.id}
-                      onClick={() => setResetTarget(u)}
-                      title="Gerar nova senha provisória"
-                    >
-                      Resetar senha
-                    </button>
-                    <button
-                      type="button"
-                      style={styles.actionBtn}
-                      disabled={busyId === u.id || u.id === currentUserId}
-                      onClick={() => toggleActive(u)}
-                      title={u.active ? "Desativar usuário" : "Ativar usuário"}
-                    >
-                      {u.active ? "Desativar" : "Ativar"}
-                    </button>
-                    <button
-                      type="button"
-                      style={styles.dangerBtn}
-                      disabled={busyId === u.id || u.id === currentUserId}
-                      onClick={() => deleteUser(u)}
-                      title="Deletar usuário"
-                    >
-                      Deletar
-                    </button>
-                  </td>
-                </tr>
-              ))
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -202,6 +219,7 @@ export default function UsuariosList({
             setShowCreate(false);
             await refetch();
           }}
+          currentUserRole={currentUserRole}
         />
       ) : null}
 
@@ -402,5 +420,9 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     fontWeight: 700,
     cursor: "pointer",
+  },
+  actionsEmpty: {
+    color: "var(--rr-muted)",
+    fontSize: 13,
   },
 };

@@ -1,25 +1,36 @@
 import { NextResponse } from "next/server";
 
-import { apiGuardErrorResponse, requireSocio } from "@/lib/auth/guards";
+import {
+  apiGuardErrorResponse,
+  requireSocioOrFuncionario,
+} from "@/lib/auth/guards";
 import { generateProvisionalPassword } from "@/lib/admin/generatePassword";
+import { canManageUserRole } from "@/lib/auth/permissions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { UserRole } from "@/lib/auth/types";
 
 /**
  * GET /api/admin/usuarios
- * Lista todos os usuarios cadastrados em app_users. So socio.
+ * Lista usuarios cadastrados em app_users. Socio ve todos; funcionario
+ * ve apenas role='promotor' (Disc.14: workflow rolling de bootstrap).
  */
 export async function GET() {
   try {
-    await requireSocio();
+    const { session } = await requireSocioOrFuncionario();
     const supabase = getSupabaseAdmin();
 
-    const { data, error } = await supabase
+    let query = supabase
       .from("app_users")
       .select(
         "id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, active, created_at, created_by"
       )
       .order("created_at", { ascending: false });
+
+    if (session.appUser.role === "funcionario") {
+      query = query.eq("role", "promotor");
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
@@ -50,7 +61,7 @@ interface CreateUserBody {
  */
 export async function POST(req: Request) {
   try {
-    const { session } = await requireSocio();
+    const { session } = await requireSocioOrFuncionario();
     const supabase = getSupabaseAdmin();
 
     const body = (await req.json()) as CreateUserBody;
@@ -71,6 +82,12 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "Role invalido (socio|funcionario|promotor)" },
         { status: 400 }
+      );
+    }
+    if (!canManageUserRole(session.appUser.role, role)) {
+      return NextResponse.json(
+        { error: "Voce nao tem permissao para criar usuario com esse perfil." },
+        { status: 403 }
       );
     }
     if (role === "promotor" && (!cnpj_id || !promoter_id)) {
@@ -156,7 +173,7 @@ export async function POST(req: Request) {
       entity_name: "app_users",
       entity_id: appUserData.id,
       action: "user_created",
-      description: `Socio ${session.appUser.email} criou usuario ${email} (${role})`,
+      description: `${session.appUser.role} ${session.appUser.email} criou usuario ${email} (${role})`,
       payload: {
         performed_by_user_id: session.appUser.id,
         performed_by_email: session.appUser.email,

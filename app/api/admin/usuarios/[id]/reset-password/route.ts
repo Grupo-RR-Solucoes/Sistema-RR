@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 
-import { apiGuardErrorResponse, requireSocio } from "@/lib/auth/guards";
+import {
+  apiGuardErrorResponse,
+  requireSocioOrFuncionario,
+} from "@/lib/auth/guards";
 import { generateProvisionalPassword } from "@/lib/admin/generatePassword";
+import { canManageUserRole } from "@/lib/auth/permissions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 /**
@@ -23,7 +27,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { session } = await requireSocio();
+    const { session } = await requireSocioOrFuncionario();
     const supabase = getSupabaseAdmin();
     const { id } = await params;
 
@@ -38,6 +42,13 @@ export async function POST(
       return NextResponse.json(
         { error: "Usuario nao encontrado" },
         { status: 404 }
+      );
+    }
+
+    if (!canManageUserRole(session.appUser.role, target.role)) {
+      return NextResponse.json(
+        { error: "Voce nao tem permissao para resetar a senha desse usuario." },
+        { status: 403 }
       );
     }
 
@@ -68,7 +79,7 @@ export async function POST(
       entity_name: "app_users",
       entity_id: target.id,
       action: "password_reset_by_admin",
-      description: `Socio ${session.appUser.email} resetou senha de ${target.email} (${target.role})`,
+      description: `${session.appUser.role} ${session.appUser.email} resetou senha de ${target.email} (${target.role})`,
       payload: {
         performed_by_user_id: session.appUser.id,
         performed_by_email: session.appUser.email,

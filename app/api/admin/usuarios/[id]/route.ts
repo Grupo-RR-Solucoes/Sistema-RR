@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 
-import { apiGuardErrorResponse, requireSocio } from "@/lib/auth/guards";
+import {
+  apiGuardErrorResponse,
+  requireSocioOrFuncionario,
+} from "@/lib/auth/guards";
+import {
+  canChangeUserRole,
+  canManageUserRole,
+} from "@/lib/auth/permissions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { UserRole } from "@/lib/auth/types";
 
@@ -26,9 +33,36 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireSocio();
+    const { session } = await requireSocioOrFuncionario();
     const supabase = getSupabaseAdmin();
     const { id } = await params;
+
+    const { data: target, error: targetError } = await supabase
+      .from("app_users")
+      .select("id, role, email")
+      .eq("id", id)
+      .single();
+
+    if (targetError || !target) {
+      return NextResponse.json(
+        { error: "Usuario nao encontrado" },
+        { status: 404 }
+      );
+    }
+
+    if (target.id === session.appUser.id) {
+      return NextResponse.json(
+        { error: "Voce nao pode editar a propria conta por aqui." },
+        { status: 403 }
+      );
+    }
+
+    if (!canManageUserRole(session.appUser.role, target.role)) {
+      return NextResponse.json(
+        { error: "Voce nao tem permissao para editar esse usuario." },
+        { status: 403 }
+      );
+    }
 
     const body = (await req.json()) as PatchUserBody;
     const update: Record<string, unknown> = {};
@@ -42,6 +76,20 @@ export async function PATCH(
           { error: "Role invalido" },
           { status: 400 }
         );
+      }
+      if (body.role !== target.role) {
+        if (!canChangeUserRole(session.appUser.role)) {
+          return NextResponse.json(
+            { error: "Apenas socios podem alterar o perfil de um usuario." },
+            { status: 403 }
+          );
+        }
+        if (!canManageUserRole(session.appUser.role, body.role)) {
+          return NextResponse.json(
+            { error: "Voce nao tem permissao para atribuir esse perfil." },
+            { status: 403 }
+          );
+        }
       }
       update.role = body.role;
 
@@ -87,6 +135,30 @@ export async function PATCH(
       );
     }
 
+    // Disc.15 (incorporada na Disc.14 Etapa 14.3.D): audit em PATCH.
+    // Mesmo padrao de POST/DELETE/reset. Fail-safe: nao reverte o UPDATE
+    // se o insert falhar — operacao primaria ja aconteceu.
+    try {
+      await supabase.from("audit_logs").insert({
+        entity_name: "app_users",
+        entity_id: target.id,
+        action: "user_updated",
+        description: `${session.appUser.role} ${session.appUser.email} editou usuario ${target.email}`,
+        payload: {
+          performed_by_user_id: session.appUser.id,
+          performed_by_email: session.appUser.email,
+          target_user_id: target.id,
+          target_email: target.email,
+          changes: body,
+          old_role: target.role,
+          new_role: body.role ?? target.role,
+        },
+        created_by: session.appUser.email,
+      });
+    } catch (auditErr) {
+      console.error("Falha ao escrever audit_logs em PATCH /api/admin/usuarios", auditErr);
+    }
+
     return NextResponse.json({ user: data });
   } catch (e) {
     return apiGuardErrorResponse(e);
@@ -109,7 +181,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { session } = await requireSocio();
+    const { session } = await requireSocioOrFuncionario();
     const supabase = getSupabaseAdmin();
     const { id } = await params;
 
@@ -124,6 +196,20 @@ export async function DELETE(
       return NextResponse.json(
         { error: "Usuario nao encontrado" },
         { status: 404 }
+      );
+    }
+
+    if (target.id === session.appUser.id) {
+      return NextResponse.json(
+        { error: "Voce nao pode deletar a propria conta." },
+        { status: 403 }
+      );
+    }
+
+    if (!canManageUserRole(session.appUser.role, target.role)) {
+      return NextResponse.json(
+        { error: "Voce nao tem permissao para deletar esse usuario." },
+        { status: 403 }
       );
     }
 
@@ -152,7 +238,7 @@ export async function DELETE(
       entity_name: "app_users",
       entity_id: target.id,
       action: "user_deleted",
-      description: `Socio ${session.appUser.email} deletou usuario ${target.email} (${target.role})`,
+      description: `${session.appUser.role} ${session.appUser.email} deletou usuario ${target.email} (${target.role})`,
       payload: {
         performed_by_user_id: session.appUser.id,
         performed_by_email: session.appUser.email,

@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
+
+import { allowedTargetRoles } from "@/lib/auth/permissions";
+import type { UserRole } from "@/lib/auth/types";
 
 interface Props {
   onClose: () => void;
   onCreated: () => void | Promise<void>;
+  currentUserRole: UserRole;
 }
 
 type Role = "socio" | "funcionario" | "promotor";
@@ -26,10 +30,25 @@ function formatCNPJ(cnpj: string): string {
   );
 }
 
-export default function CreateUsuarioModal({ onClose, onCreated }: Props) {
+export default function CreateUsuarioModal({
+  onClose,
+  onCreated,
+  currentUserRole,
+}: Props) {
+  // Disc.14 Etapa 14.3: roles que o actor pode atribuir.
+  // socio -> [socio, funcionario, promotor]; funcionario -> [promotor].
+  const targetRoles = useMemo(
+    () => allowedTargetRoles(currentUserRole),
+    [currentUserRole]
+  );
+  const roleLocked = targetRoles.length === 1;
+  const defaultRole: Role = roleLocked
+    ? targetRoles[0]
+    : "funcionario";
+
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
-  const [role, setRole] = useState<Role>("funcionario");
+  const [role, setRole] = useState<Role>(defaultRole);
   const [cnpjId, setCnpjId] = useState("");
   const [promoterId, setPromoterId] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -86,6 +105,14 @@ export default function CreateUsuarioModal({ onClose, onCreated }: Props) {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+
+    // Defesa client-side: backend ja bloqueia (canManageUserRole), mas
+    // evita roundtrip se o usuario conseguir burlar a UI.
+    if (!targetRoles.includes(role)) {
+      setError("Voce nao tem permissao para criar usuario com esse perfil.");
+      return;
+    }
+
     setSubmitting(true);
 
     const body: Record<string, unknown> = {
@@ -211,16 +238,27 @@ export default function CreateUsuarioModal({ onClose, onCreated }: Props) {
                 value={role}
                 onChange={(e) => setRole(e.target.value as Role)}
                 style={styles.input}
-                disabled={submitting}
+                disabled={submitting || roleLocked}
               >
-                <option value="socio">Sócio (acesso completo)</option>
-                <option value="funcionario">
-                  Funcionário (operacional, sem fluxo caixa/auditoria)
-                </option>
-                <option value="promotor">
-                  Promotor (acesso apenas aos próprios dados)
-                </option>
+                {targetRoles.includes("socio") ? (
+                  <option value="socio">Sócio (acesso completo)</option>
+                ) : null}
+                {targetRoles.includes("funcionario") ? (
+                  <option value="funcionario">
+                    Funcionário (operacional, sem fluxo caixa/auditoria)
+                  </option>
+                ) : null}
+                {targetRoles.includes("promotor") ? (
+                  <option value="promotor">
+                    Promotor (acesso apenas aos próprios dados)
+                  </option>
+                ) : null}
               </select>
+              {roleLocked ? (
+                <span style={styles.helperInfo}>
+                  Como funcionário, você só pode cadastrar promotores.
+                </span>
+              ) : null}
             </label>
 
             {role === "promotor" ? (
@@ -435,6 +473,11 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 12,
     color: "#8a4a17",
     fontWeight: 600,
+  },
+  helperInfo: {
+    fontSize: 12,
+    color: "var(--rr-muted)",
+    fontStyle: "italic",
   },
   successWrap: { display: "grid", gap: 12 },
   successText: {
