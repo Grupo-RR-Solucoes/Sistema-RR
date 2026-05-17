@@ -4,7 +4,6 @@ import { calcularOperacao } from "@/lib/motor";
 import { getCompanyDisplayIdentity } from "@/lib/knownCompanies";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { fetchAllRows } from "@/lib/queryHelpers";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 const MONTH_NAMES = [
   "jan",
@@ -1792,18 +1791,3 @@ export async function buildClosingAnalytics(
   };
 }
 
-/**
- * @deprecated Wrapper temporario do Dia 4.2 Etapa 3.2. Os 4 callers
- * pendentes (auditoria, fechamento, relatorios, relatorios/export) usam
- * esta variante enquanto nao sao refatorados nas Etapas 3.3, 3.4 e 3.7.
- * Sera removido no final do Dia 4.2 quando todos os callers passarem
- * o supabase client diretamente para buildClosingAnalytics.
- */
-export async function buildClosingAnalyticsLegacy(filters?: {
-  year?: number;
-  month?: number;
-  fastDashboardMode?: boolean;
-}): Promise<ClosingAnalyticsPayload> {
-  const supabase = getSupabaseAdmin();
-  return buildClosingAnalytics(supabase, filters);
-}

@@ -1,19 +1,20 @@
-import { buildClosingAnalyticsLegacy } from "@/lib/closingAnalytics";
+import { NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
+import { buildClosingAnalytics } from "@/lib/closingAnalytics";
 
 export async function GET(req: Request) {
   try {
+    // D18 - socio-only. Fechamento mensal por empresa.
+    const { supabase } = await withSocioAnon();
+
     const { searchParams } = new URL(req.url);
     const year = Number(searchParams.get("year") || 0) || undefined;
     const month = Number(searchParams.get("month") || 0) || undefined;
 
-    // TODO Dia 4.2 Etapa 3.4: passar supabase client apos refator do bucket FECHAMENTO
-    const payload = await buildClosingAnalyticsLegacy({ year, month });
-    return Response.json(payload);
-  } catch (error: any) {
-    return Response.json(
-      { error: error.message || "Erro ao carregar fechamento." },
-      { status: 500 }
-    );
+    const payload = await buildClosingAnalytics(supabase, { year, month });
+    return NextResponse.json(payload);
+  } catch (error) {
+    return apiGuardErrorResponse(error);
   }
 }
-

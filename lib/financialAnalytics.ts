@@ -1,7 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { fetchAllRows } from "@/lib/queryHelpers";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 const MONTH_NAMES = [
   "jan",
@@ -651,16 +650,3 @@ export async function buildFinancialAnalytics(
   };
 }
 
-/**
- * @deprecated Wrapper temporario do Dia 4.2 Etapa 3.7. Os callers em
- * lib/report.ts (2 callsites) usam esta variante enquanto nao sao
- * refatorados. Sera removido no final do Dia 4.2 quando todos os callers
- * passarem o supabase client diretamente para buildFinancialAnalytics.
- */
-export async function buildFinancialAnalyticsLegacy(filters?: {
-  year?: number;
-  month?: number;
-}): Promise<FinancialAnalyticsPayload> {
-  const supabase = getSupabaseAdmin();
-  return buildFinancialAnalytics(supabase, filters);
-}

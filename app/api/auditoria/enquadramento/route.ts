@@ -13,7 +13,8 @@
  * é a Camada 1 da v9 (Cat_Devida × Cat_Aplicada × Status Enquadramento).
  */
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+
+import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import {
   auditEnquadramentoMes,
   auditEnquadramentoIntervalo,
@@ -32,18 +33,22 @@ function parseYearMonth(s: string | null): { year: number; month: number } | nul
 
 export async function GET(req: NextRequest) {
   const startMs = Date.now();
+
+  // D15 - socio-only. Camada 1 v9 (Cat_Devida x Cat_Aplicada x Status
+  // Enquadramento). Tabelas audit_v9_* restritas a socio por D1.
+  let supabase;
+  try {
+    const guard = await withSocioAnon();
+    supabase = guard.supabase;
+  } catch (error) {
+    return apiGuardErrorResponse(error);
+  }
+
   const { searchParams } = new URL(req.url);
   const yearStr = searchParams.get("year");
   const monthStr = searchParams.get("month");
   const fromStr = searchParams.get("from");
   const toStr = searchParams.get("to");
-
-  let supabase;
-  try {
-    supabase = getSupabaseAdmin();
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "supabase env" }, { status: 500 });
-  }
 
   try {
     // Modo 1: mês único

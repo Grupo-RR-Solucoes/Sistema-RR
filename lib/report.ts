@@ -1,17 +1,9 @@
 import * as XLSX from "xlsx";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-import {
-  buildClosingAnalytics,
-  buildClosingAnalyticsLegacy,
-} from "@/lib/closingAnalytics";
-import {
-  buildFinancialAnalytics,
-  buildFinancialAnalyticsLegacy,
-} from "@/lib/financialAnalytics";
-import {
-  buildPromoterAnalytics,
-  buildPromoterAnalyticsLegacy,
-} from "@/lib/promoterAnalytics";
+import { buildClosingAnalytics } from "@/lib/closingAnalytics";
+import { buildFinancialAnalytics } from "@/lib/financialAnalytics";
+import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
 
 export type ReportKind = "financeiro" | "fechamento" | "auditoria" | "promotores";
 export type ReportFormat = "pdf" | "xlsx";
@@ -1007,12 +999,13 @@ async function buildPromoterPdf(
 }
 
 export async function buildReportPreview(
+  supabase: SupabaseClient,
   input: ReportFilters & { type?: string | null }
 ): Promise<ReportPreviewPayload> {
   const reportType = normalizeReportKind(input.type);
 
   if (reportType === "financeiro") {
-    const data = await buildFinancialAnalyticsLegacy(input);
+    const data = await buildFinancialAnalytics(supabase, input);
 
     return {
       reportType,
@@ -1066,8 +1059,7 @@ export async function buildReportPreview(
   }
 
   if (reportType === "fechamento") {
-    // TODO Dia 4.2 Etapa 3.7: passar supabase client apos refator do bucket OUTROS (/api/relatorios)
-    const data = await buildClosingAnalyticsLegacy(input);
+    const data = await buildClosingAnalytics(supabase, input);
 
     return {
       reportType,
@@ -1116,8 +1108,7 @@ export async function buildReportPreview(
   }
 
   if (reportType === "auditoria") {
-    // TODO Dia 4.2 Etapa 3.7: passar supabase client apos refator do bucket OUTROS (/api/relatorios)
-    const audit = makeAuditView(await buildClosingAnalyticsLegacy(input));
+    const audit = makeAuditView(await buildClosingAnalytics(supabase, input));
     const criticalCount = audit.rows.filter((row) => row.severity === "critico").length;
 
     return {
@@ -1166,7 +1157,7 @@ export async function buildReportPreview(
     };
   }
 
-  const data = await buildPromoterAnalyticsLegacy(input);
+  const data = await buildPromoterAnalytics(supabase, input);
   const promoterScope = normalizePromoterReportScope(input.scope);
   const selectedPromoter =
     data.summaryRows.find((row) => row.promoter_id === data.selectedPromoterId) || null;
@@ -1275,13 +1266,14 @@ export async function buildReportPreview(
 }
 
 export async function buildReportExport(
+  supabase: SupabaseClient,
   input: ReportFilters & { type?: string | null; format?: string | null }
 ): Promise<ExportBundle> {
   const reportType = normalizeReportKind(input.type);
   const reportFormat = normalizeReportFormat(input.format);
 
   if (reportType === "financeiro") {
-    const data = await buildFinancialAnalyticsLegacy(input);
+    const data = await buildFinancialAnalytics(supabase, input);
 
     return {
       buffer:
@@ -1297,8 +1289,7 @@ export async function buildReportExport(
   }
 
   if (reportType === "fechamento") {
-    // TODO Dia 4.2 Etapa 3.7: passar supabase client apos refator do bucket OUTROS (/api/relatorios/export)
-    const data = await buildClosingAnalyticsLegacy(input);
+    const data = await buildClosingAnalytics(supabase, input);
 
     return {
       buffer:
@@ -1318,8 +1309,7 @@ export async function buildReportExport(
   }
 
   if (reportType === "auditoria") {
-    // TODO Dia 4.2 Etapa 3.7: passar supabase client apos refator do bucket OUTROS (/api/relatorios/export)
-    const data = makeAuditView(await buildClosingAnalyticsLegacy(input));
+    const data = makeAuditView(await buildClosingAnalytics(supabase, input));
 
     return {
       buffer:
@@ -1336,7 +1326,7 @@ export async function buildReportExport(
     };
   }
 
-  const data = await buildPromoterAnalyticsLegacy(input);
+  const data = await buildPromoterAnalytics(supabase, input);
   const promoterScope = normalizePromoterReportScope(input.scope);
 
   if (promoterScope === "individual" && !data.selectedPromoterId) {

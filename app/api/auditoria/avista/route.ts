@@ -14,7 +14,8 @@
  * /api/auditoria/enquadramento (Camada 1 — Fase 4.2).
  */
 import { NextRequest, NextResponse } from "next/server";
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+
+import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import {
   auditAvistaMes,
   auditAvistaPeriodo,
@@ -34,19 +35,23 @@ function parseYearMonth(s: string | null): { year: number; month: number } | nul
 
 export async function GET(req: NextRequest) {
   const startMs = Date.now();
+
+  // D16 - socio-only. Camada 2 v9 (status_fase2 + diferenca + bloco).
+  // Tabelas audit_v9_avista restritas a socio por D1.
+  let supabase;
+  try {
+    const guard = await withSocioAnon();
+    supabase = guard.supabase;
+  } catch (error) {
+    return apiGuardErrorResponse(error);
+  }
+
   const { searchParams } = new URL(req.url);
   const yearStr = searchParams.get("year");
   const monthStr = searchParams.get("month");
   const fromStr = searchParams.get("from");
   const toStr = searchParams.get("to");
   const includeRows = searchParams.get("include_rows") !== "false"; // default true
-
-  let supabase;
-  try {
-    supabase = getSupabaseAdmin();
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "supabase env" }, { status: 500 });
-  }
 
   try {
     // Modo 1: mês único

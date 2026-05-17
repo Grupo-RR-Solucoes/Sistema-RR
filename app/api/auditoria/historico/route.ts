@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+
+import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import {
   auditCashEntriesForMonth,
   auditPrtForMonth,
@@ -41,6 +43,15 @@ function shouldSkipCache(req: NextRequest): boolean {
 
 export async function GET(req: NextRequest) {
   const startMs = Date.now();
+
+  // D14 - socio-only. Auditoria historica v8 expoe gaps por mes (decisao
+  // executiva). Cache em memoria preservado por performance (15 min TTL).
+  try {
+    await withSocioAnon();
+  } catch (error) {
+    return apiGuardErrorResponse(error);
+  }
+
   const { searchParams } = new URL(req.url);
   const yearStr = searchParams.get("year");
   const monthStr = searchParams.get("month");

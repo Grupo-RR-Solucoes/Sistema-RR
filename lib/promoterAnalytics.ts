@@ -1,6 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { calcularOperacao } from "@/lib/motor";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { fetchAllRows } from "@/lib/queryHelpers";
@@ -825,18 +824,3 @@ export async function buildPromoterAnalytics(
   };
 }
 
-/**
- * @deprecated Wrapper temporario do Dia 4.2 Etapa 3.7. Os callers em
- * lib/report.ts (2 callsites) usam esta variante enquanto nao sao
- * refatorados. Sera removido no final do Dia 4.2 quando todos os callers
- * passarem o supabase client diretamente para buildPromoterAnalytics.
- */
-export async function buildPromoterAnalyticsLegacy(filters?: {
-  year?: number;
-  month?: number;
-  companyId?: string;
-  promoterId?: string;
-}): Promise<PromoterAnalyticsPayload> {
-  const supabase = getSupabaseAdmin();
-  return buildPromoterAnalytics(supabase, filters);
-}
