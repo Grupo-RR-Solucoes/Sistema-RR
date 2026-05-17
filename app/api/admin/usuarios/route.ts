@@ -126,6 +126,25 @@ export async function POST(req: Request) {
       await supabase.auth.admin.deleteUser(authUserId).catch(() => {
         // Best-effort rollback. Se falhou, socio tera que limpar manual.
       });
+
+      // Disc.7 - Mensagem amigavel para FK violation (23503). Race
+      // tipico: socio seleciona empresa/promotor no modal, alguem
+      // deleta antes do submit. UI deve recarregar e tentar de novo.
+      if (
+        appUserError &&
+        typeof appUserError === "object" &&
+        "code" in appUserError &&
+        (appUserError as { code: string }).code === "23503"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Empresa ou promotor selecionado nao existe ou foi removido. Recarregue a pagina e tente novamente.",
+          },
+          { status: 400 }
+        );
+      }
+
       return NextResponse.json(
         { error: appUserError?.message ?? "Falha ao criar app_users" },
         { status: 500 }

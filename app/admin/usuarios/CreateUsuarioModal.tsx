@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 
 interface Props {
   onClose: () => void;
@@ -8,6 +8,23 @@ interface Props {
 }
 
 type Role = "socio" | "funcionario" | "promotor";
+
+type CompanyOption = { id: string; name: string; cnpj: string };
+type PromoterOption = { id: string; company_id: string | null; name: string };
+
+function formatCNPJ(cnpj: string): string {
+  if (!cnpj) return "";
+  // Defesa em profundidade: rejeitar placeholders tipo "TEMP-MCI-COBAN"
+  // que coincidentalmente totalizam 14 digitos apos strip de nao-digitos.
+  // Se input contem QUALQUER letra, eh placeholder - retorna cru.
+  if (/[A-Za-z]/.test(cnpj)) return cnpj;
+  const digits = cnpj.replace(/\D/g, "");
+  if (digits.length !== 14) return cnpj;
+  return digits.replace(
+    /(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/,
+    "$1.$2.$3/$4-$5"
+  );
+}
 
 export default function CreateUsuarioModal({ onClose, onCreated }: Props) {
   const [email, setEmail] = useState("");
@@ -19,6 +36,52 @@ export default function CreateUsuarioModal({ onClose, onCreated }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [createdPassword, setCreatedPassword] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Disc.7 - selects povoados via /api/companies/list +
+  // /api/promoters/list. Lazy load: so dispara quando socio
+  // seleciona role=promotor pela primeira vez. Mantido no state
+  // depois do primeiro fetch (sem refetch ao alternar role).
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  const [promoters, setPromoters] = useState<PromoterOption[]>([]);
+  const [optionsLoading, setOptionsLoading] = useState(false);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (role !== "promotor") return;
+    if (companies.length > 0) return; // ja carregado
+
+    let cancelled = false;
+    setOptionsLoading(true);
+    setOptionsError(null);
+
+    Promise.all([
+      fetch("/api/companies/list").then((r) => r.json()),
+      fetch("/api/promoters/list").then((r) => r.json()),
+    ])
+      .then(([cs, ps]) => {
+        if (cancelled) return;
+        setCompanies((cs?.companies ?? []) as CompanyOption[]);
+        setPromoters((ps?.promoters ?? []) as PromoterOption[]);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOptionsError(
+          "Nao foi possivel carregar empresas e promotores. Recarregue a pagina."
+        );
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setOptionsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [role, companies.length]);
+
+  const filteredPromoters = cnpjId
+    ? promoters.filter((p) => p.company_id === cnpjId)
+    : [];
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -162,33 +225,65 @@ export default function CreateUsuarioModal({ onClose, onCreated }: Props) {
 
             {role === "promotor" ? (
               <>
+                {optionsLoading ? (
+                  <p style={styles.helperLoading}>
+                    Carregando empresas e promotores...
+                  </p>
+                ) : null}
+                {optionsError ? (
+                  <p style={styles.helperError}>{optionsError}</p>
+                ) : null}
+
                 <label style={styles.label}>
                   <span style={styles.labelText}>
-                    CNPJ (UUID da empresa) — obrigatório p/ promotor
+                    Empresa — obrigatório p/ promotor
                   </span>
-                  <input
-                    type="text"
+                  <select
                     required
                     value={cnpjId}
-                    onChange={(e) => setCnpjId(e.target.value)}
+                    onChange={(e) => {
+                      setCnpjId(e.target.value);
+                      setPromoterId("");
+                    }}
                     style={styles.input}
-                    disabled={submitting}
-                    placeholder="ex: 0a1b2c3d-..."
-                  />
+                    disabled={submitting || optionsLoading}
+                  >
+                    <option value="">Selecione uma empresa...</option>
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} — {formatCNPJ(c.cnpj)}
+                      </option>
+                    ))}
+                  </select>
                 </label>
+
                 <label style={styles.label}>
                   <span style={styles.labelText}>
-                    Promoter (UUID em promoters) — obrigatório p/ promotor
+                    Promotor — obrigatório p/ promotor
                   </span>
-                  <input
-                    type="text"
+                  <select
                     required
                     value={promoterId}
                     onChange={(e) => setPromoterId(e.target.value)}
                     style={styles.input}
-                    disabled={submitting}
-                    placeholder="ex: 4e5f6a7b-..."
-                  />
+                    disabled={submitting || optionsLoading || !cnpjId}
+                  >
+                    <option value="">
+                      {!cnpjId
+                        ? "Primeiro selecione uma empresa..."
+                        : "Selecione um promotor..."}
+                    </option>
+                    {filteredPromoters.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  {cnpjId && filteredPromoters.length === 0 && !optionsLoading ? (
+                    <span style={styles.helperWarning}>
+                      Nenhum promotor ativo cadastrado para esta empresa.
+                    </span>
+                  ) : null}
                 </label>
               </>
             ) : null}
@@ -210,7 +305,11 @@ export default function CreateUsuarioModal({ onClose, onCreated }: Props) {
               </button>
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={
+                  submitting ||
+                  (role === "promotor" &&
+                    (!cnpjId || !promoterId || optionsLoading))
+                }
                 style={styles.primaryBtn}
               >
                 {submitting ? "Criando..." : "Criar usuário"}
@@ -316,6 +415,23 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid rgba(180,30,30,0.24)",
     color: "#8a1717",
     fontSize: 13,
+    fontWeight: 600,
+  },
+  helperLoading: {
+    margin: 0,
+    fontSize: 12,
+    color: "var(--rr-muted)",
+    fontStyle: "italic",
+  },
+  helperError: {
+    margin: 0,
+    fontSize: 12,
+    color: "#8a1717",
+    fontWeight: 600,
+  },
+  helperWarning: {
+    fontSize: 12,
+    color: "#8a4a17",
     fontWeight: 600,
   },
   successWrap: { display: "grid", gap: 12 },
