@@ -28,6 +28,7 @@ type PromoterRow = {
   name: string;
   status?: string | null;
   active?: boolean | null;
+  is_master?: boolean | null;
   hired_at?: string | null;
   dismissed_at?: string | null;
   notes?: string | null;
@@ -112,7 +113,7 @@ export async function GET() {
       fetchAllRows<PromoterRow>(() =>
         supabase
           .from("promoters")
-          .select("id, company_id, name, status, active, hired_at, dismissed_at, notes")
+          .select("id, company_id, name, status, active, is_master, hired_at, dismissed_at, notes")
           .order("name", { ascending: true })
       ),
       fetchAllRows<JKeyRow>(() =>
@@ -131,7 +132,12 @@ export async function GET() {
         companies: companies.length,
         activeCompanies: companies.filter((company) => company.active !== false).length,
         promoters: promoters.length,
-        activePromoters: promoters.filter((promoter) => promoter.active !== false).length,
+        // Disc.12: KPI conta promotores reais (pessoa-fisica) — exclui
+        // chaves master operacionais (is_master=true). Master continua
+        // ativa por necessidade do importador (fluxo MASTER_REASSIGNED).
+        activePromoters: promoters.filter(
+          (promoter) => promoter.active !== false && promoter.is_master !== true
+        ).length,
         jKeys: jKeys.length,
         activeJKeys: jKeys.filter((jKey) => jKey.active !== false).length,
         masterKeys: jKeys.filter((jKey) => jKey.key_type === "MASTER").length,
