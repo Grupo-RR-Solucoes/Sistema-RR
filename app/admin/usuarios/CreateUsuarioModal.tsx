@@ -370,6 +370,8 @@ const styles: Record<string, CSSProperties> = {
     letterSpacing: "0.02em",
   },
   input: {
+    width: "100%",
+    boxSizing: "border-box",
     padding: "10px 12px",
     borderRadius: 10,
     border: "1px solid var(--rr-line-strong)",
