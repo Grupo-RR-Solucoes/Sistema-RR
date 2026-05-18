@@ -896,7 +896,10 @@ function PromotoresFullPage() {
           ) : data.summaryRows.length === 0 ? (
             <div style={styles.emptyState}>Nenhum promotor encontrado para esta competencia.</div>
           ) : (
-            <div style={styles.tableWrap}>
+            <div
+              className={`rr-table-wrap${data.summaryRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
+              style={styles.tableWrap}
+            >
               <table style={styles.table}>
                 <thead>
                   <tr>
@@ -1154,7 +1157,10 @@ function PromotoresFullPage() {
         </div>
 
         <div style={styles.contentGrid}>
-          <div style={styles.tableWrap}>
+          <div
+            className={`rr-table-wrap${data.discountRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
+            style={styles.tableWrap}
+          >
             {data.discountRows.length === 0 ? (
               <div style={styles.emptyState}>
                 Nenhum desconto lancado para esta competencia.
@@ -1376,7 +1382,18 @@ function PromotoresFullPage() {
               cancelamentos, estornos e antecipacoes ficam no bloco de descontos.
             </p>
           </div>
-          <div style={styles.sectionChip}>{data.proposalRows.length} propostas</div>
+          <div style={styles.sectionHeaderActions}>
+            <Link
+              href={`/comissoes/editar${specialistQuery}`}
+              style={styles.sectionAction}
+              aria-label="Editar comissões deste promotor por proposta"
+            >
+              Editar comissões →
+            </Link>
+            <div style={styles.sectionChip}>
+              {data.proposalRows.length} propostas
+            </div>
+          </div>
         </div>
 
         {loading ? (
@@ -1388,8 +1405,11 @@ function PromotoresFullPage() {
             Nenhuma proposta com status Producao encontrada para este promotor.
           </div>
         ) : (
-          <div style={styles.tableWrap}>
-            <table style={styles.table}>
+          <div
+            className={`rr-table-wrap${data.proposalRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
+            style={styles.tableWrap}
+          >
+            <table style={styles.tableDetalhamento}>
               <thead>
                 <tr>
                   <th style={styles.th}>Contrato</th>
@@ -1491,7 +1511,10 @@ function PromotoresFullPage() {
         ) : data.proposalRows.length === 0 ? (
           <div style={styles.emptyState}>Nenhuma proposta encontrada para este promotor.</div>
         ) : (
-          <div style={styles.tableWrap}>
+          <div
+            className={`rr-table-wrap${data.proposalRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
+            style={styles.tableWrap}
+          >
             <table style={styles.table}>
               <thead>
                 <tr>
@@ -1916,6 +1939,26 @@ const styles: Record<string, CSSProperties> = {
     fontSize: "12px",
     fontWeight: 800,
   },
+  sectionHeaderActions: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "10px",
+    flexWrap: "wrap",
+  },
+  sectionAction: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "8px 14px",
+    borderRadius: "10px",
+    background: "#0d4de3",
+    color: "#fff",
+    fontSize: "12px",
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    textDecoration: "none",
+    boxShadow: "0 2px 6px rgba(13,77,227,0.22)",
+  },
   sectionHeaderCompact: {
     padding: "18px 18px 0",
   },
@@ -1947,6 +1990,17 @@ const styles: Record<string, CSSProperties> = {
     width: "100%",
     borderCollapse: "separate",
     borderSpacing: 0,
+  },
+  // Variante apenas da aba Detalhamento (20 colunas + descricoes longas).
+  // minWidth garante que a tabela exceda o wrap em qualquer viewport e o
+  // overflow-x: auto da .rr-table-wrap mostre a scrollbar. As outras 3
+  // tabelas da pagina (Resumo, Descontos, Migracao) seguem styles.table
+  // padrao porque tem menos colunas e cabem em viewport tipica.
+  tableDetalhamento: {
+    width: "100%",
+    borderCollapse: "separate",
+    borderSpacing: 0,
+    minWidth: "1800px",
   },
   th: {
     textAlign: "left",

@@ -187,3 +187,74 @@ a {
     transition: none;
   }
 }
+
+/* === Tabela com rolagem horizontal sempre visivel ===
+   Modo BASE: tabela cresce com altura natural; pagina rola vertical;
+   scrollbar horizontal estilizada para ficar permanentemente visivel
+   quando a tabela for mais larga que o container.
+   Modo --scrollable (modificador): ativado quando a tabela tem muitas
+   linhas (threshold definido no JSX, default > 15). Container vira
+   "janela" com maxHeight, scroll vertical interno + thead sticky no
+   topo do container + scrollbar horizontal acessivel no rodape do
+   container sem precisar rolar a pagina. */
+.rr-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  position: relative;
+  border-radius: 12px;
+  /* Forca scrollbar horizontal visivel sempre que houver overflow.
+     Sem isso, Windows + Chrome esconde a barra ate o mouse passar
+     por cima. Cores neutras para nao competir com brand azul/dourado. */
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: #94a3b8 transparent;
+}
+
+/* WebKit (Chrome/Edge/Safari) — escopado a .rr-table-wrap para nao
+   afetar sidebar, modais e popovers do app. */
+.rr-table-wrap::-webkit-scrollbar {
+  height: 10px;
+  background: transparent;
+}
+.rr-table-wrap::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 5px;
+}
+.rr-table-wrap::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+.rr-table-wrap::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 5px;
+}
+
+/* === Modo viewport-bound: ativado quando tabela tem muitas linhas ===
+   Container vira janela fixa com scroll vertical interno; thead sticky
+   gruda no topo do container; scrollbar horizontal fica no rodape do
+   container, acessivel sem rolar a pagina. Calibre maxHeight via inline
+   style por tela quando houver elementos fixos (ex: BulkActionBar em
+   /comissoes/editar reserva 220px adicionais no rodape). */
+.rr-table-wrap--scrollable {
+  overflow-y: auto;
+  max-height: calc(100vh - 240px);
+}
+
+.rr-table-wrap--scrollable thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.rr-table-wrap--scrollable thead th {
+  background: #E8EDF5;
+  position: relative;
+}
+
+.rr-table-wrap--scrollable thead th::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: rgba(15, 31, 74, 0.08);
+}

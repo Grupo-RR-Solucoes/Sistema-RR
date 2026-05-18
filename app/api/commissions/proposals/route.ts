@@ -1,6 +1,36 @@
 import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioOrFuncionarioAnon } from "@/lib/auth/guards";
+import { canManageCommissionRule } from "@/lib/auth/permissions";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+
+// audit_logs RLS bloqueia INSERT via PostgREST. Mesmo padrao usado em
+// /api/financeiro/[id] e /api/admin/usuarios/[id]: service_role para
+// escrever, fail-safe try/catch para nao bloquear a operacao primaria.
+async function writeAuditEntry(
+  description: string,
+  payload: Record<string, unknown>,
+  createdBy: string,
+  entityId: string | null,
+  action: string
+) {
+  try {
+    const admin = getSupabaseAdmin();
+    await admin.from("audit_logs").insert({
+      entity_name: "promoter_proposal_commissions",
+      entity_id: entityId,
+      action,
+      description,
+      payload,
+      created_by: createdBy,
+    });
+  } catch (auditErr) {
+    console.error(
+      "Falha ao escrever audit_logs em /api/commissions/proposals",
+      auditErr
+    );
+  }
+}
 
 type ProductionRecord = {
   id: string;
@@ -25,6 +55,7 @@ type PromoterRow = {
 };
 
 type ManualRuleRow = {
+  id: string;
   daily_production_record_id: string;
   promoter_id: string;
   commission_percent: number | null;
@@ -141,7 +172,7 @@ export async function GET(req: Request) {
       const { data, error } = await supabase
         .from("promoter_proposal_commissions")
         .select(
-          "daily_production_record_id, promoter_id, commission_percent, insurance_commission_percent, notes, active"
+          "id, daily_production_record_id, promoter_id, commission_percent, insurance_commission_percent, notes, active"
         )
         .in("daily_production_record_id", proposalIds);
 
@@ -159,6 +190,10 @@ export async function GET(req: Request) {
         ...record,
         commission_base_value: record.net_value,
         promoter_name: promoter?.name || null,
+        // Dia 4.4: expor commission_rule_id (promoter_proposal_commissions.id)
+        // para a UI poder enviar ao /bulk endpoint. NULL quando nao existe
+        // override ainda — UI precisa criar via POST upsert antes do bulk.
+        commission_rule_id: manual?.id ?? null,
         promoter_commission_percent:
           manual?.commission_percent ?? record.promoter_commission_percent,
         insurance_commission_percent:
@@ -176,7 +211,15 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const { supabase } = await withSocioOrFuncionarioAnon();
+    const { user, supabase } = await withSocioOrFuncionarioAnon();
+
+    if (!canManageCommissionRule(user.role)) {
+      return NextResponse.json(
+        { error: "Voce nao tem permissao para editar regras de comissao." },
+        { status: 403 }
+      );
+    }
+
     const body = (await req.json()) as {
       dailyProductionRecordId?: string;
       promoterId?: string;
@@ -198,7 +241,14 @@ export async function POST(req: Request) {
       );
     }
 
-    const { error } = await supabase
+    // Fetch previo para audit (snapshot do valor anterior, se existir)
+    const { data: previous } = await supabase
+      .from("promoter_proposal_commissions")
+      .select("id, commission_percent, insurance_commission_percent, notes")
+      .eq("daily_production_record_id", dailyProductionRecordId)
+      .maybeSingle();
+
+    const { data: upserted, error } = await supabase
       .from("promoter_proposal_commissions")
       .upsert(
         {
@@ -212,9 +262,31 @@ export async function POST(req: Request) {
         {
           onConflict: "daily_production_record_id",
         }
-      );
+      )
+      .select("id")
+      .single();
 
     if (error) throw error;
+
+    await writeAuditEntry(
+      `${user.role} ${user.session.appUser.email} ${previous ? "atualizou" : "criou"} regra manual de comissao por proposta`,
+      {
+        performed_by_user_id: user.session.appUser.id,
+        performed_by_email: user.session.appUser.email,
+        target_proposal_id: upserted?.id ?? null,
+        target_daily_production_record_id: dailyProductionRecordId,
+        target_promoter_id: promoterId,
+        old_value: previous?.commission_percent ?? null,
+        new_value: commissionPercent ?? null,
+        old_insurance_percent: previous?.insurance_commission_percent ?? null,
+        new_insurance_percent: insuranceCommissionPercent ?? null,
+        old_notes: previous?.notes ?? null,
+        new_notes: notes ?? null,
+      },
+      user.session.appUser.email,
+      upserted?.id ?? null,
+      previous ? "commission_updated" : "commission_created"
+    );
 
     return NextResponse.json({
       success: true,
@@ -227,7 +299,15 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   try {
-    const { supabase } = await withSocioOrFuncionarioAnon();
+    const { user, supabase } = await withSocioOrFuncionarioAnon();
+
+    if (!canManageCommissionRule(user.role)) {
+      return NextResponse.json(
+        { error: "Voce nao tem permissao para remover regras de comissao." },
+        { status: 403 }
+      );
+    }
+
     const body = (await req.json()) as { dailyProductionRecordId?: string };
     const dailyProductionRecordId = body.dailyProductionRecordId;
 
@@ -238,12 +318,34 @@ export async function DELETE(req: Request) {
       );
     }
 
+    // Fetch para audit snapshot antes de deletar
+    const { data: target } = await supabase
+      .from("promoter_proposal_commissions")
+      .select(
+        "id, promoter_id, commission_percent, insurance_commission_percent, notes"
+      )
+      .eq("daily_production_record_id", dailyProductionRecordId)
+      .maybeSingle();
+
     const { error } = await supabase
       .from("promoter_proposal_commissions")
       .delete()
       .eq("daily_production_record_id", dailyProductionRecordId);
 
     if (error) throw error;
+
+    await writeAuditEntry(
+      `${user.role} ${user.session.appUser.email} removeu regra manual de comissao`,
+      {
+        performed_by_user_id: user.session.appUser.id,
+        performed_by_email: user.session.appUser.email,
+        target_daily_production_record_id: dailyProductionRecordId,
+        deleted_proposal: target,
+      },
+      user.session.appUser.email,
+      target?.id ?? null,
+      "commission_deleted"
+    );
 
     return NextResponse.json({
       success: true,

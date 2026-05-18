@@ -559,7 +559,10 @@ export default function FinanceiroPage() {
           ) : data.companyRows.length === 0 ? (
             <div style={styles.emptyState}>Sem movimento financeiro nesta competencia.</div>
           ) : (
-            <div style={styles.tableWrap}>
+            <div
+              className={`rr-table-wrap${data.companyRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
+              style={styles.tableWrap}
+            >
               <table style={styles.table}>
                 <thead>
                   <tr>
@@ -885,7 +888,10 @@ export default function FinanceiroPage() {
           ) : data.expenseRows.length === 0 ? (
             <div style={styles.emptyState}>Nenhuma despesa lancada nesta competencia.</div>
           ) : (
-            <div style={styles.tableWrap}>
+            <div
+              className={`rr-table-wrap${data.expenseRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
+              style={styles.tableWrap}
+            >
               <table style={styles.table}>
                 <thead>
                   <tr>

@@ -2,6 +2,52 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import ColumnFilter from "@/components/ColumnFilter";
+
+import BulkActionBar from "./BulkActionBar";
+
+// Dia 4.4 Etapa 4.4.2 — Filtros estilo Excel por coluna.
+// 4.4.3: estendido com commission_rule_source (Origem MANUAL/DEFAULT).
+// Distinct values derivados client-side a partir de filteredRows (semantica
+// Excel cross-column emerge naturalmente). Labels sao os valores ja
+// formatados como o usuario ve na tabela.
+const ORIGEM_LABELS = {
+  MANUAL: "Manual (override)",
+  MONTHLY_DEFAULT: "Default mensal",
+};
+
+const FILTERABLE_COLUMNS = {
+  assigned_promoter_id: {
+    label: "Promotor",
+    getValue: (row) => row.assigned_promoter_id,
+    getDisplayLabel: (row) => row.promoter_name || "—",
+  },
+  product_description: {
+    label: "Produto",
+    getValue: (row) => row.product_description,
+    getDisplayLabel: (row) => row.product_description || "—",
+  },
+  commission_rule_source: {
+    label: "Origem",
+    getValue: (row) => row.commission_rule_source || "MONTHLY_DEFAULT",
+    getDisplayLabel: (row) => {
+      const v = row.commission_rule_source || "MONTHLY_DEFAULT";
+      return ORIGEM_LABELS[v] || v;
+    },
+  },
+  promoter_commission_percent: {
+    label: "% Promotor",
+    getValue: (row) => row.promoter_commission_percent,
+    getDisplayLabel: (row) =>
+      row.promoter_commission_percent == null ||
+      row.promoter_commission_percent === ""
+        ? "—"
+        : `${Number(row.promoter_commission_percent)
+            .toFixed(2)
+            .replace(".", ",")}%`,
+  },
+};
+
 export default function EditarComissoesPage() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth() + 1);
@@ -16,6 +62,13 @@ export default function EditarComissoesPage() {
   const [savingRowId, setSavingRowId] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  // Map<columnKey, Set<string>> — Set contem os valores SELECIONADOS
+  // (passam pelo filtro). Ausencia da coluna no Map = sem filtro = tudo.
+  const [columnFilters, setColumnFilters] = useState(new Map());
+  // Selecao bulk: Set<daily_production_record_id>. Persiste atraves de
+  // mudancas de filtro (Set tem IDs, nao referencia rows visiveis).
+  // Limpa ao trocar year/month/companyId/promoterId (via loadRows).
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   useEffect(() => {
     loadCompanies();
@@ -112,6 +165,9 @@ export default function EditarComissoesPage() {
       setLoadingRows(true);
       setError("");
       setMessage("");
+      // Evita selecao com IDs orfaos apos refetch (year/month/empresa
+      // podem ter mudado entre selecao e re-fetch).
+      setSelectedIds(new Set());
 
       const params = new URLSearchParams({
         year: String(year),
@@ -235,6 +291,143 @@ export default function EditarComissoesPage() {
     }
   }
 
+  // Aplica todos os filtros EXCETO o da coluna passada (Excel semantics
+  // para distinct values: ao abrir o popover de "Promotor", a lista de
+  // valores reflete o estado FILTRADO pelas outras colunas, mas nao por
+  // ela mesma — assim o usuario sempre consegue voltar a ver tudo dela).
+  function rowsFilteredExcept(exceptColumn) {
+    if (columnFilters.size === 0) return rows;
+    return rows.filter((row) => {
+      for (const [col, selected] of columnFilters) {
+        if (col === exceptColumn) continue;
+        const cfg = FILTERABLE_COLUMNS[col];
+        if (!cfg) continue;
+        const v = cfg.getValue(row);
+        if (!selected.has(String(v ?? ""))) return false;
+      }
+      return true;
+    });
+  }
+
+  function getDistinctValuesForColumn(column) {
+    const cfg = FILTERABLE_COLUMNS[column];
+    if (!cfg) return [];
+    const base = rowsFilteredExcept(column);
+    const map = new Map();
+    for (const row of base) {
+      const raw = cfg.getValue(row);
+      const key = String(raw ?? "");
+      if (!map.has(key)) {
+        map.set(key, { value: key, label: cfg.getDisplayLabel(row) });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      String(a.label).localeCompare(String(b.label), "pt-BR", {
+        numeric: true,
+      })
+    );
+  }
+
+  const filteredRows = useMemo(() => {
+    if (columnFilters.size === 0) return rows;
+    return rows.filter((row) => {
+      for (const [col, selected] of columnFilters) {
+        const cfg = FILTERABLE_COLUMNS[col];
+        if (!cfg) continue;
+        const v = cfg.getValue(row);
+        if (!selected.has(String(v ?? ""))) return false;
+      }
+      return true;
+    });
+  }, [rows, columnFilters]);
+
+  function applyColumnFilter(column, next, allValues) {
+    setColumnFilters((prev) => {
+      const m = new Map(prev);
+      // "Todos selecionados" = sem filtro -> remove a entry
+      if (next.size >= allValues.length) {
+        m.delete(column);
+      } else {
+        m.set(column, next);
+      }
+      return m;
+    });
+  }
+
+  function clearAllFilters() {
+    setColumnFilters(new Map());
+  }
+
+  // -------- Selecao bulk (4.4.3) --------
+  function toggleRow(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAllVisible() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const row of filteredRows) next.add(row.id);
+      return next;
+    });
+  }
+
+  function deselectAllVisible() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const row of filteredRows) next.delete(row.id);
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  // Estado do checkbox header (tri-state sobre VISIVEIS).
+  const visibleSelectedCount = useMemo(() => {
+    let count = 0;
+    for (const row of filteredRows) {
+      if (selectedIds.has(row.id)) count += 1;
+    }
+    return count;
+  }, [filteredRows, selectedIds]);
+
+  const headerSelectState =
+    filteredRows.length === 0
+      ? "none"
+      : visibleSelectedCount === 0
+        ? "none"
+        : visibleSelectedCount === filteredRows.length
+          ? "all"
+          : "some";
+
+  // selectedItems para BulkActionBar. Faz lookup em rows (nao
+  // filteredRows) para preservar selecao quando filtro oculta linhas.
+  const selectedItems = useMemo(() => {
+    if (selectedIds.size === 0) return [];
+    const out = [];
+    for (const row of rows) {
+      if (!selectedIds.has(row.id)) continue;
+      out.push({
+        dailyProductionRecordId: row.id,
+        commissionRuleId: row.commission_rule_id ?? null,
+        currentPercent:
+          row.promoter_commission_percent == null
+            ? null
+            : Number(row.promoter_commission_percent),
+      });
+    }
+    return out;
+  }, [rows, selectedIds]);
+
+  // Totals do header KPI continuam refletindo TODAS as propostas (nao
+  // os filtros visuais) — preserva semantica das summary cards existentes.
+  // Banner separado mostra "X de Y" quando ha filtros ativos.
   const totals = useMemo(() => {
     return rows.reduce(
       (acc, row) => {
@@ -373,17 +566,162 @@ export default function EditarComissoesPage() {
           <h3 style={styles.tableTitle}>Propostas com possibilidade de ajuste manual</h3>
         </div>
 
-        <div style={styles.tableWrap}>
+        {columnFilters.size > 0 ? (
+          <div style={styles.filterBanner}>
+            <span>
+              Mostrando{" "}
+              <strong>{filteredRows.length.toLocaleString("pt-BR")}</strong> de{" "}
+              <strong>{rows.length.toLocaleString("pt-BR")}</strong> propostas
+              {" "}
+              ({columnFilters.size} filtro{columnFilters.size === 1 ? "" : "s"}{" "}
+              ativo{columnFilters.size === 1 ? "" : "s"})
+            </span>
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              style={styles.bannerClearBtn}
+            >
+              Limpar filtros
+            </button>
+          </div>
+        ) : null}
+
+        <div
+          className={`rr-table-wrap${filteredRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
+          style={{
+            ...styles.tableWrap,
+            ...(filteredRows.length > 15
+              ? { maxHeight: "calc(100vh - 460px)" } // BulkActionBar 220px + topo 240px
+              : {}),
+          }}
+        >
           <table style={styles.table}>
             <thead>
               <tr>
+                <th style={styles.thCheckbox}>
+                  <input
+                    type="checkbox"
+                    checked={headerSelectState === "all"}
+                    ref={(el) => {
+                      if (el) el.indeterminate = headerSelectState === "some";
+                    }}
+                    onChange={() => {
+                      if (headerSelectState === "all") deselectAllVisible();
+                      else selectAllVisible();
+                    }}
+                    aria-label="Selecionar todos os visíveis"
+                    disabled={filteredRows.length === 0}
+                  />
+                </th>
                 <th style={styles.th}>Proposta</th>
-                <th style={styles.th}>Promotor</th>
-                <th style={styles.th}>Produto</th>
+                <th style={styles.th}>
+                  <span style={styles.thContent}>
+                    Promotor
+                    <ColumnFilter
+                      columnLabel="Promotor"
+                      values={getDistinctValuesForColumn("assigned_promoter_id")}
+                      selected={
+                        columnFilters.get("assigned_promoter_id") ??
+                        new Set(
+                          getDistinctValuesForColumn(
+                            "assigned_promoter_id"
+                          ).map((v) => String(v.value))
+                        )
+                      }
+                      onApply={(next) =>
+                        applyColumnFilter(
+                          "assigned_promoter_id",
+                          next,
+                          getDistinctValuesForColumn("assigned_promoter_id")
+                        )
+                      }
+                      align="left"
+                    />
+                  </span>
+                </th>
+                <th style={styles.th}>
+                  <span style={styles.thContent}>
+                    Produto
+                    <ColumnFilter
+                      columnLabel="Produto"
+                      values={getDistinctValuesForColumn("product_description")}
+                      selected={
+                        columnFilters.get("product_description") ??
+                        new Set(
+                          getDistinctValuesForColumn(
+                            "product_description"
+                          ).map((v) => String(v.value))
+                        )
+                      }
+                      onApply={(next) =>
+                        applyColumnFilter(
+                          "product_description",
+                          next,
+                          getDistinctValuesForColumn("product_description")
+                        )
+                      }
+                      align="left"
+                    />
+                  </span>
+                </th>
                 <th style={styles.th}>Base</th>
                 <th style={styles.th}>Seguro</th>
-                <th style={styles.th}>Origem</th>
-                <th style={styles.th}>% Promotor</th>
+                <th style={styles.th}>
+                  <span style={styles.thContent}>
+                    Origem
+                    <ColumnFilter
+                      columnLabel="Origem"
+                      values={getDistinctValuesForColumn(
+                        "commission_rule_source"
+                      )}
+                      selected={
+                        columnFilters.get("commission_rule_source") ??
+                        new Set(
+                          getDistinctValuesForColumn(
+                            "commission_rule_source"
+                          ).map((v) => String(v.value))
+                        )
+                      }
+                      onApply={(next) =>
+                        applyColumnFilter(
+                          "commission_rule_source",
+                          next,
+                          getDistinctValuesForColumn("commission_rule_source")
+                        )
+                      }
+                      align="left"
+                    />
+                  </span>
+                </th>
+                <th style={styles.th}>
+                  <span style={styles.thContent}>
+                    % Promotor
+                    <ColumnFilter
+                      columnLabel="% Promotor"
+                      values={getDistinctValuesForColumn(
+                        "promoter_commission_percent"
+                      )}
+                      selected={
+                        columnFilters.get("promoter_commission_percent") ??
+                        new Set(
+                          getDistinctValuesForColumn(
+                            "promoter_commission_percent"
+                          ).map((v) => String(v.value))
+                        )
+                      }
+                      onApply={(next) =>
+                        applyColumnFilter(
+                          "promoter_commission_percent",
+                          next,
+                          getDistinctValuesForColumn(
+                            "promoter_commission_percent"
+                          )
+                        )
+                      }
+                      align="left"
+                    />
+                  </span>
+                </th>
                 <th style={styles.th}>Valor Promotor</th>
                 <th style={styles.th}>% Seguro</th>
                 <th style={styles.th}>Valor Seguro</th>
@@ -392,18 +730,32 @@ export default function EditarComissoesPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 ? (
+              {filteredRows.length === 0 ? (
                 <tr>
-                  <td style={styles.emptyTd} colSpan={12}>
-                    Nenhuma proposta encontrada.
+                  <td style={styles.emptyTd} colSpan={13}>
+                    {rows.length === 0
+                      ? "Nenhuma proposta encontrada."
+                      : "Nenhuma proposta corresponde aos filtros atuais."}
                   </td>
                 </tr>
               ) : (
-                rows.map((row) => {
+                filteredRows.map((row) => {
                   const isSaving = savingRowId === row.id;
+                  const isSelected = selectedIds.has(row.id);
 
                   return (
-                    <tr key={row.id}>
+                    <tr
+                      key={row.id}
+                      style={isSelected ? styles.trSelected : undefined}
+                    >
+                      <td style={styles.tdCheckbox}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleRow(row.id)}
+                          aria-label={`Selecionar proposta ${row.proposal_number || row.id}`}
+                        />
+                      </td>
                       <td style={styles.td}>{row.proposal_number || "-"}</td>
                       <td style={styles.td}>{row.promoter_name || "-"}</td>
                       <td style={styles.td}>{row.product_description || "-"}</td>
@@ -487,6 +839,15 @@ export default function EditarComissoesPage() {
           </table>
         </div>
       </section>
+
+      <BulkActionBar
+        selectedItems={selectedItems}
+        onClearSelection={clearSelection}
+        onApplied={async () => {
+          clearSelection();
+          await loadRows();
+        }}
+      />
     </section>
   );
 }
@@ -703,6 +1064,56 @@ const styles = {
     borderBottom: "1px solid var(--rr-line)",
     whiteSpace: "nowrap",
     fontWeight: 800,
+  },
+  thContent: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "2px",
+  },
+  thCheckbox: {
+    fontSize: "12px",
+    textTransform: "uppercase",
+    letterSpacing: "0.12em",
+    color: "var(--rr-blue)",
+    textAlign: "center",
+    padding: "0 8px 14px 0",
+    borderBottom: "1px solid var(--rr-line)",
+    width: "40px",
+    minWidth: "40px",
+  },
+  tdCheckbox: {
+    borderBottom: "1px solid rgba(13,77,227,0.08)",
+    padding: "12px 8px 12px 0",
+    textAlign: "center",
+    verticalAlign: "middle",
+    width: "40px",
+    minWidth: "40px",
+  },
+  trSelected: {
+    background: "rgba(13,77,227,0.04)",
+  },
+  filterBanner: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    padding: "10px 14px",
+    margin: "12px 0",
+    background: "rgba(13,77,227,0.06)",
+    border: "1px solid rgba(13,77,227,0.20)",
+    borderRadius: "10px",
+    fontSize: "13px",
+    color: "var(--rr-ink)",
+  },
+  bannerClearBtn: {
+    padding: "6px 12px",
+    borderRadius: "8px",
+    border: "1px solid rgba(13,77,227,0.32)",
+    background: "#fff",
+    color: "#0d4de3",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer",
   },
   td: {
     borderBottom: "1px solid rgba(13,77,227,0.08)",

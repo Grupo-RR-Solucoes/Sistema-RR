@@ -321,7 +321,10 @@ export default function FechamentoPage() {
               actionHref="/importacoes"
             />
           ) : (
-            <div style={styles.tableWrap}>
+            <div
+              className={`rr-table-wrap${data.companyRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
+              style={styles.tableWrap}
+            >
               <table style={styles.table}>
                 <thead>
                   <tr>

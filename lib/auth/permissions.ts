@@ -59,3 +59,17 @@ export function canManageExpense(actor: AppRole): boolean {
 export function canDeleteExpense(actor: AppRole): boolean {
   return actor === "socio";
 }
+
+/**
+ * Decide se um usuario com role `actor` pode criar/editar regras de
+ * comissao (promoter_proposal_commissions, promoter_product_commissions,
+ * promoter_agreements).
+ *
+ * Espelha a RLS Dia 3 Grupo D (socio + funcionario tem ALL; promotor
+ * apenas SELECT do proprio promoter_id). Comentario literal da migration:
+ * "funcionario tem ALL (escopo declarado: 've comissoes $$$' + edita
+ * acordos + lanca descontos operacionais)".
+ */
+export function canManageCommissionRule(actor: AppRole): boolean {
+  return actor === "socio" || actor === "funcionario";
+}
