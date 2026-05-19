@@ -2,6 +2,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { calcularOperacao } from "@/lib/motor";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
+import {
+  getAgencyCode as getAgencyCodeShared,
+  getSrccRestrictionLabel as getSrccRestrictionLabelShared,
+} from "@/lib/proposalDetailing";
 import { fetchAllRows } from "@/lib/queryHelpers";
 
 type CompanyRow = {
@@ -353,33 +357,15 @@ function calculateCompanyInsuranceCommission(record: ProductionRow) {
   return gross * (getInsuranceCompanyRate(record) / 100);
 }
 
+// 4.4-fix-1.B.1: helpers extraidos para lib/proposalDetailing.ts.
+// Wrappers locais mantidos com o mesmo nome para preservar
+// chamadores internos sem mudar o restante do arquivo.
 function getSrccRestrictionLabel(record: ProductionRow) {
-  const raw =
-    readRawPayloadValue(record.raw_payload, [
-      "Indicador Restricao SRCC",
-      "Indicador Restrição SRCC",
-      "Restricao SRCC",
-      "Restrição SRCC",
-    ]) || null;
-
-  if (raw !== null && raw !== undefined && raw !== "") {
-    return String(raw);
-  }
-
-  return record.is_srcc_restricted ? "Sim" : "Não";
+  return getSrccRestrictionLabelShared(record);
 }
 
 function getAgencyCode(record: ProductionRow) {
-  const raw = readRawPayloadValue(record.raw_payload, [
-    "Prefixo Ag. Responsavel",
-    "Prefixo Ag. Responsável",
-    "Agencia",
-    "Agência",
-    "Agencia Responsavel",
-    "Agência Responsável",
-  ]);
-
-  return raw === null || raw === undefined || raw === "" ? "-" : String(raw);
+  return getAgencyCodeShared(record);
 }
 
 function getPeriodKey(year: number, month: number) {

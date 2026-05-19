@@ -2,6 +2,15 @@ import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioOrFuncionarioAnon } from "@/lib/auth/guards";
 import { canManageCommissionRule } from "@/lib/auth/permissions";
+import {
+  computePromoterInsuranceAmount,
+  computePromoterShareAmount,
+  getAVistaPercent,
+  getAgencyCode,
+  getCompanyCommissionAmount,
+  getInstallmentCount,
+  getSrccRestrictionLabel,
+} from "@/lib/proposalDetailing";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 // audit_logs RLS bloqueia INSERT via PostgREST. Mesmo padrao usado em
@@ -37,7 +46,16 @@ type ProductionRecord = {
   company_id: string | null;
   assigned_promoter_id: string | null;
   proposal_number: string | null;
+  contract_number: string | null;
+  product_code: string | null;
   product_description: string | null;
+  j_key: string | null;
+  contract_date: string | null;
+  interest_rate: number | null;
+  installments: number | null;
+  term_months: number | null;
+  company_received_percent: number | null;
+  is_srcc_restricted: boolean | null;
   gross_value: number | null;
   net_value: number | null;
   insurance_value: number | null;
@@ -47,6 +65,7 @@ type ProductionRecord = {
   insurance_commission_amount: number | null;
   commission_rule_source: string | null;
   movement_date: string | null;
+  raw_payload: Record<string, unknown> | null;
 };
 
 type PromoterRow = {
@@ -123,7 +142,16 @@ export async function GET(req: Request) {
           company_id,
           assigned_promoter_id,
           proposal_number,
+          contract_number,
+          product_code,
           product_description,
+          j_key,
+          contract_date,
+          interest_rate,
+          installments,
+          term_months,
+          company_received_percent,
+          is_srcc_restricted,
           gross_value,
           net_value,
           insurance_value,
@@ -132,7 +160,8 @@ export async function GET(req: Request) {
           insurance_commission_percent,
           insurance_commission_amount,
           commission_rule_source,
-          movement_date
+          movement_date,
+          raw_payload
         `)
         .gte("movement_date", start)
         .lt("movement_date", end)
@@ -165,6 +194,28 @@ export async function GET(req: Request) {
       promoters = (data || []) as PromoterRow[];
     }
 
+    // 4.4-fix-1.E (D2): "% PENETRACAO" e agregacao mensal por (promoter,
+    // company) vinda de promoter_monthly_results, NAO eh por proposta.
+    // Fetch agregado em batch para todos os promotores que aparecem nas
+    // rows do mes, mapeado para `${promoter_id}|${company_id}`.
+    const penetrationMap = new Map<string, number | null>();
+    if (promoterIds.length > 0) {
+      const { data: penetrationRows, error: penetrationError } = await supabase
+        .from("promoter_monthly_results")
+        .select("promoter_id, company_id, insurance_penetration_percent")
+        .eq("year", year)
+        .eq("month", month)
+        .in("promoter_id", promoterIds);
+
+      if (penetrationError) throw penetrationError;
+      for (const row of penetrationRows ?? []) {
+        penetrationMap.set(
+          `${row.promoter_id}|${row.company_id}`,
+          row.insurance_penetration_percent ?? null
+        );
+      }
+    }
+
     const proposalIds = records.map((r) => r.id);
 
     let manualRules: ManualRuleRow[] = [];
@@ -186,6 +237,18 @@ export async function GET(req: Request) {
         (m) => m.daily_production_record_id === record.id && m.active !== false
       );
 
+      // 4.4-fix-1.E: % efetivo do promotor = override OR Promotiva default.
+      const promoterPercentEffective =
+        manual?.commission_percent ?? record.promoter_commission_percent;
+      const insurancePercentEffective =
+        manual?.insurance_commission_percent ??
+        record.insurance_commission_percent;
+
+      // 4.4-fix-1.E (D2): % PENETRACAO mensal por (promoter, company).
+      const penetrationKey = `${record.assigned_promoter_id ?? ""}|${record.company_id ?? ""}`;
+      const insurancePenetrationPercent =
+        penetrationMap.get(penetrationKey) ?? null;
+
       return {
         ...record,
         commission_base_value: record.net_value,
@@ -194,12 +257,32 @@ export async function GET(req: Request) {
         // para a UI poder enviar ao /bulk endpoint. NULL quando nao existe
         // override ainda — UI precisa criar via POST upsert antes do bulk.
         commission_rule_id: manual?.id ?? null,
-        promoter_commission_percent:
-          manual?.commission_percent ?? record.promoter_commission_percent,
-        insurance_commission_percent:
-          manual?.insurance_commission_percent ??
-          record.insurance_commission_percent,
+        promoter_commission_percent: promoterPercentEffective,
+        insurance_commission_percent: insurancePercentEffective,
         manual_notes: manual?.notes || "",
+        // 4.4-fix-1.B: derivados que o Detalhamento de /promotores ja
+        // expoe; helpers compartilhados em lib/proposalDetailing.ts.
+        agency_code: getAgencyCode(record),
+        srcc_restriction: getSrccRestrictionLabel(record),
+        installment_count: getInstallmentCount(record),
+        company_commission_amount: getCompanyCommissionAmount(record),
+        // 4.4-fix-1.E (D1): "% A VISTA" pura Promotiva, lida do
+        // raw_payload (regra TRP/OPP original, antes da cascata).
+        a_vista_percent: getAVistaPercent(record),
+        // 4.4-fix-1.E (D2): "% PENETRACAO" agregada mensal de seguro,
+        // constante para todas as propostas do mesmo promotor no mes.
+        insurance_penetration_percent: insurancePenetrationPercent,
+        // COMISSAO PROMOTOR = COMISSAO PF * % repasse efetivo / 100.
+        promoter_share_amount: computePromoterShareAmount(
+          record.promoter_commission_amount,
+          promoterPercentEffective
+        ),
+        // COMISSAO SEGURO PROMOTOR = insurance_commission_amount * % seguro
+        // promotor efetivo / 100. Dia 4.5 tornara o % editavel.
+        promoter_insurance_amount: computePromoterInsuranceAmount(
+          record.insurance_commission_amount,
+          insurancePercentEffective
+        ),
       };
     });
 

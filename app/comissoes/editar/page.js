@@ -8,13 +8,13 @@ import BulkActionBar from "./BulkActionBar";
 
 // Dia 4.4 Etapa 4.4.2 — Filtros estilo Excel por coluna.
 // 4.4.3: estendido com commission_rule_source (Origem MANUAL/DEFAULT).
+// 4.4-fix-1.C: Origem REMOVIDA; adicionados srcc_restriction +
+//              promoter_commission_percent_base (depois depreciado).
+// 4.4-fix-1.E: promoter_commission_percent_base SUBSTITUIDO por
+//              a_vista_percent (regra Promotiva pura do raw_payload).
 // Distinct values derivados client-side a partir de filteredRows (semantica
 // Excel cross-column emerge naturalmente). Labels sao os valores ja
 // formatados como o usuario ve na tabela.
-const ORIGEM_LABELS = {
-  MANUAL: "Manual (override)",
-  MONTHLY_DEFAULT: "Default mensal",
-};
 
 const FILTERABLE_COLUMNS = {
   assigned_promoter_id: {
@@ -23,18 +23,33 @@ const FILTERABLE_COLUMNS = {
     getDisplayLabel: (row) => row.promoter_name || "—",
   },
   product_description: {
-    label: "Produto",
+    label: "Descricao",
     getValue: (row) => row.product_description,
     getDisplayLabel: (row) => row.product_description || "—",
   },
-  commission_rule_source: {
-    label: "Origem",
-    getValue: (row) => row.commission_rule_source || "MONTHLY_DEFAULT",
-    getDisplayLabel: (row) => {
-      const v = row.commission_rule_source || "MONTHLY_DEFAULT";
-      return ORIGEM_LABELS[v] || v;
-    },
+  agency_code: {
+    label: "Agencia",
+    getValue: (row) => row.agency_code,
+    getDisplayLabel: (row) => row.agency_code || "—",
   },
+  srcc_restriction: {
+    label: "Restricao SRCC",
+    getValue: (row) => row.srcc_restriction || "Nao",
+    getDisplayLabel: (row) => row.srcc_restriction || "Nao",
+  },
+  // % A VISTA: regra TRP/OPP pura Promotiva, lida de raw_payload via
+  // getAVistaPercent (4.4-fix-1.E D1). Read-only.
+  a_vista_percent: {
+    label: "% A vista",
+    getValue: (row) => row.a_vista_percent,
+    getDisplayLabel: (row) =>
+      row.a_vista_percent == null || row.a_vista_percent === ""
+        ? "—"
+        : `${Number(row.a_vista_percent).toFixed(2).replace(".", ",")}%`,
+  },
+  // % REPASSE PROMOTOR: override editavel (4.4-fix-1.E D3). Renomeado
+  // da antiga "% Penetracao" — esta NAO eh penetracao, eh o %
+  // editavel que vai para promoter_proposal_commissions.commission_percent.
   promoter_commission_percent: {
     label: "% Promotor",
     getValue: (row) => row.promoter_commission_percent,
@@ -613,10 +628,40 @@ export default function EditarComissoesPage() {
                     disabled={filteredRows.length === 0}
                   />
                 </th>
-                <th style={styles.th}>Proposta</th>
+                {/* Ordem espelha planilha LUCIANA_MATIAS.xlsx (4.4-fix-1.C). */}
+                <th style={styles.th}>Contrato</th>
+                <th style={styles.th}>Valor bruto</th>
+                <th style={styles.th}>Valor liquido</th>
+                <th style={styles.th}>Parcela</th>
                 <th style={styles.th}>
                   <span style={styles.thContent}>
-                    Promotor
+                    Agencia
+                    <ColumnFilter
+                      columnLabel="Agencia"
+                      values={getDistinctValuesForColumn("agency_code")}
+                      selected={
+                        columnFilters.get("agency_code") ??
+                        new Set(
+                          getDistinctValuesForColumn("agency_code").map((v) =>
+                            String(v.value)
+                          )
+                        )
+                      }
+                      onApply={(next) =>
+                        applyColumnFilter(
+                          "agency_code",
+                          next,
+                          getDistinctValuesForColumn("agency_code")
+                        )
+                      }
+                      align="left"
+                    />
+                  </span>
+                </th>
+                <th style={styles.th}>Chave J</th>
+                <th style={styles.th}>
+                  <span style={styles.thContent}>
+                    Promotor(a)
                     <ColumnFilter
                       columnLabel="Promotor"
                       values={getDistinctValuesForColumn("assigned_promoter_id")}
@@ -639,11 +684,13 @@ export default function EditarComissoesPage() {
                     />
                   </span>
                 </th>
+                <th style={styles.th}>Data contratacao</th>
+                <th style={styles.th}>Tx juros</th>
                 <th style={styles.th}>
                   <span style={styles.thContent}>
-                    Produto
+                    Descricao do produto
                     <ColumnFilter
-                      columnLabel="Produto"
+                      columnLabel="Descricao"
                       values={getDistinctValuesForColumn("product_description")}
                       selected={
                         columnFilters.get("product_description") ??
@@ -664,35 +711,62 @@ export default function EditarComissoesPage() {
                     />
                   </span>
                 </th>
-                <th style={styles.th}>Base</th>
-                <th style={styles.th}>Seguro</th>
                 <th style={styles.th}>
                   <span style={styles.thContent}>
-                    Origem
+                    % A vista
                     <ColumnFilter
-                      columnLabel="Origem"
-                      values={getDistinctValuesForColumn(
-                        "commission_rule_source"
-                      )}
+                      columnLabel="% A vista"
+                      values={getDistinctValuesForColumn("a_vista_percent")}
                       selected={
-                        columnFilters.get("commission_rule_source") ??
+                        columnFilters.get("a_vista_percent") ??
                         new Set(
-                          getDistinctValuesForColumn(
-                            "commission_rule_source"
-                          ).map((v) => String(v.value))
+                          getDistinctValuesForColumn("a_vista_percent").map(
+                            (v) => String(v.value)
+                          )
                         )
                       }
                       onApply={(next) =>
                         applyColumnFilter(
-                          "commission_rule_source",
+                          "a_vista_percent",
                           next,
-                          getDistinctValuesForColumn("commission_rule_source")
+                          getDistinctValuesForColumn("a_vista_percent")
                         )
                       }
                       align="left"
                     />
                   </span>
                 </th>
+                <th style={styles.th}>Comissao PF</th>
+                <th style={styles.th}>
+                  <span style={styles.thContent}>
+                    Restricao SRCC
+                    <ColumnFilter
+                      columnLabel="Restricao SRCC"
+                      values={getDistinctValuesForColumn("srcc_restriction")}
+                      selected={
+                        columnFilters.get("srcc_restriction") ??
+                        new Set(
+                          getDistinctValuesForColumn("srcc_restriction").map(
+                            (v) => String(v.value)
+                          )
+                        )
+                      }
+                      onApply={(next) =>
+                        applyColumnFilter(
+                          "srcc_restriction",
+                          next,
+                          getDistinctValuesForColumn("srcc_restriction")
+                        )
+                      }
+                      align="left"
+                    />
+                  </span>
+                </th>
+                <th style={styles.th}>Valor seguro</th>
+                <th style={styles.th}>Comissao seguro</th>
+                {/* NOVA col 17 (4.4-fix-1.E D2): % Penetracao mensal de
+                    seguro, constante por promotor. Read-only, sem filtro. */}
+                <th style={styles.th}>% Penetracao</th>
                 <th style={styles.th}>
                   <span style={styles.thContent}>
                     % Promotor
@@ -722,17 +796,15 @@ export default function EditarComissoesPage() {
                     />
                   </span>
                 </th>
-                <th style={styles.th}>Valor Promotor</th>
-                <th style={styles.th}>% Seguro</th>
-                <th style={styles.th}>Valor Seguro</th>
-                <th style={styles.th}>Observacao</th>
+                <th style={styles.th}>Comissao promotor</th>
+                <th style={styles.th}>Comissao seguro promotor</th>
                 <th style={styles.th}>Acoes</th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td style={styles.emptyTd} colSpan={13}>
+                  <td style={styles.emptyTd} colSpan={21}>
                     {rows.length === 0
                       ? "Nenhuma proposta encontrada."
                       : "Nenhuma proposta corresponde aos filtros atuais."}
@@ -756,17 +828,44 @@ export default function EditarComissoesPage() {
                           aria-label={`Selecionar proposta ${row.proposal_number || row.id}`}
                         />
                       </td>
-                      <td style={styles.td}>{row.proposal_number || "-"}</td>
+                      {/* Ordem da planilha LUCIANA_MATIAS.xlsx (4.4-fix-1.C) */}
+                      <td style={styles.td}>{row.contract_number || "-"}</td>
+                      <td style={styles.td}>{formatCurrency(row.gross_value || 0)}</td>
+                      <td style={styles.td}>{formatCurrency(row.net_value || 0)}</td>
+                      <td style={styles.td}>{row.installment_count ?? "-"}</td>
+                      <td style={styles.td}>{row.agency_code || "-"}</td>
+                      <td style={styles.tdMono}>{row.j_key || "-"}</td>
                       <td style={styles.td}>{row.promoter_name || "-"}</td>
+                      <td style={styles.td}>{formatDateBR(row.contract_date)}</td>
+                      <td style={styles.td}>{formatPercentSuffix(row.interest_rate)}</td>
                       <td style={styles.td}>{row.product_description || "-"}</td>
                       <td style={styles.td}>
-                        {formatCurrency(row.commission_base_value || row.net_value || 0)}
+                        {formatPercentSuffix(row.a_vista_percent)}
                       </td>
-                      <td style={styles.td}>{formatCurrency(row.insurance_value || 0)}</td>
                       <td style={styles.td}>
-                        <span style={styles.badge}>
-                          {row.commission_rule_source || "MONTHLY_DEFAULT"}
+                        {formatCurrency(row.promoter_commission_amount || 0)}
+                      </td>
+                      <td style={styles.td}>
+                        <span style={srccBadgeStyle(row.srcc_restriction)}>
+                          {row.srcc_restriction || "Nao"}
                         </span>
+                      </td>
+                      <td style={styles.td}>
+                        {Number(row.insurance_value || 0) > 0
+                          ? formatCurrency(row.insurance_value)
+                          : "—"}
+                      </td>
+                      <td style={styles.td}>
+                        {Number(row.insurance_commission_amount || 0) > 0
+                          ? formatCurrency(row.insurance_commission_amount)
+                          : "—"}
+                      </td>
+                      {/* NOVA col 17 (4.4-fix-1.E D2): % Penetracao
+                          mensal de seguro, constante por promotor. */}
+                      <td style={styles.td}>
+                        {formatPercentSuffix(
+                          row.insurance_penetration_percent
+                        )}
                       </td>
                       <td style={styles.td}>
                         <input
@@ -781,34 +880,41 @@ export default function EditarComissoesPage() {
                             )
                           }
                           style={styles.smallInput}
+                          aria-label="% Promotor (editavel)"
                         />
                       </td>
-                      <td style={styles.td}>{formatCurrency(row.promoter_commission_amount || 0)}</td>
                       <td style={styles.td}>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={row.insurance_commission_percent_input}
-                          onChange={(e) =>
-                            updateRowValue(
-                              row.id,
-                              "insurance_commission_percent_input",
-                              e.target.value
-                            )
+                        {/* 4.4-fix-1.E D4: COMISSAO PROMOTOR com cascata
+                            viva: enquanto o usuario digita no input
+                            editavel, recalcula em runtime. Quando o input
+                            esta vazio, cai no valor persistido (promoter_share_amount). */}
+                        {(() => {
+                          const draft = row.promoter_commission_percent_input;
+                          const baseAmount = Number(
+                            row.promoter_commission_amount ?? 0
+                          );
+                          if (
+                            draft !== "" &&
+                            draft !== null &&
+                            draft !== undefined
+                          ) {
+                            const draftNum = Number(draft);
+                            if (Number.isFinite(draftNum) && baseAmount > 0) {
+                              return formatCurrency(
+                                (baseAmount * draftNum) / 100
+                              );
+                            }
                           }
-                          style={styles.smallInput}
-                        />
+                          return row.promoter_share_amount == null
+                            ? "—"
+                            : formatCurrency(row.promoter_share_amount);
+                        })()}
                       </td>
-                      <td style={styles.td}>{formatCurrency(row.insurance_commission_amount || 0)}</td>
                       <td style={styles.td}>
-                        <input
-                          type="text"
-                          value={row.notes_input}
-                          onChange={(e) =>
-                            updateRowValue(row.id, "notes_input", e.target.value)
-                          }
-                          style={styles.notesInput}
-                        />
+                        {row.promoter_insurance_amount == null ||
+                        Number(row.promoter_insurance_amount) === 0
+                          ? "—"
+                          : formatCurrency(row.promoter_insurance_amount)}
                       </td>
                       <td style={styles.td}>
                         <div style={styles.actionButtons}>
@@ -866,6 +972,42 @@ function formatCurrency(value) {
     style: "currency",
     currency: "BRL",
   }).format(Number(value || 0));
+}
+
+// 4.4-fix-1.B: formatadores das colunas novas (Data Contratacao + Tx Juros).
+function formatDateBR(iso) {
+  if (!iso) return "-";
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return String(iso);
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
+function formatPercentSuffix(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "-";
+  return `${n.toFixed(2).replace(".", ",")}%`;
+}
+
+// 4.4-fix-1.C: badge da coluna RESTRICAO SRCC.
+// "Sim" -> vermelho de aviso; demais ("Nao", "Nao se aplica") -> cinza.
+function srccBadgeStyle(label) {
+  const isRestricted = String(label || "").trim().toUpperCase() === "SIM";
+  return {
+    display: "inline-block",
+    padding: "2px 10px",
+    borderRadius: "999px",
+    fontSize: "11px",
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    background: isRestricted
+      ? "rgba(180,30,30,0.10)"
+      : "rgba(15,31,74,0.06)",
+    color: isRestricted ? "#8a1717" : "var(--rr-muted)",
+    border: isRestricted
+      ? "1px solid rgba(180,30,30,0.30)"
+      : "1px solid var(--rr-line)",
+  };
 }
 
 const styles = {
@@ -1052,7 +1194,7 @@ const styles = {
     width: "100%",
     borderCollapse: "separate",
     borderSpacing: 0,
-    minWidth: "1500px",
+    minWidth: "2350px",
   },
   th: {
     fontSize: "12px",
@@ -1121,6 +1263,14 @@ const styles = {
     fontSize: "13px",
     color: "var(--rr-muted)",
     verticalAlign: "middle",
+  },
+  tdMono: {
+    borderBottom: "1px solid rgba(13,77,227,0.08)",
+    padding: "12px 12px 12px 0",
+    fontSize: "13px",
+    color: "var(--rr-muted)",
+    verticalAlign: "middle",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
   },
   emptyTd: {
     padding: "24px",
