@@ -58,41 +58,70 @@ except ImportError:
     sys.exit(1)
 
 
-# ============================================================
-# Classificacao manual dos 44 promotores
-# ============================================================
-# Tuple shape: (nome_planilha, profile_type, fixed_percent, scale_code)
-# fixed_percent ignorado se profile != CLT_FIXO/ACORDO_FIXO
-# scale_code ignorado se profile != ENTRANTE_PADRAO/ENTRANTE_CUSTOM
-# Match por ILIKE com remocao de acentos (ver normalize_name).
+# ============================================================================
+# DICIONARIO DE CLASSIFICACAO MANUAL DE PROMOTORES
+#
+# Cada entry e um tuple de 5 elementos:
+#   (nome_banco, profile_type, fixed_percent, scale_code, notes)
+#
+# REGRAS:
+# - profile_type DEFAULT:           NAO entrar aqui (catch-all aplica)
+# - profile_type CLT_FIXO:          fixed_percent obrigatorio, scale_code=None
+# - profile_type ACORDO_FIXO:       fixed_percent obrigatorio, scale_code=None
+# - profile_type ENTRANTE_PADRAO:   fixed_percent=None, scale_code obrigatorio
+# - profile_type ENTRANTE_CUSTOM:   fixed_percent=None, scale_code obrigatorio
+# - profile_type ACORDO_VARIAVEL:   fixed_percent=None, scale_code=None
+#                                   (override por proposta gerencia via UI)
+#
+# CHAVES MASTER:
+#   As 4 chaves master (is_master=true) NAO devem ser classificadas aqui.
+#   Caem em DEFAULT automaticamente. Recebem producao temporariamente
+#   via fluxo MASTER_REASSIGNED do importador, e quando reatribuidas ao
+#   promotor real, a cascata pega o profile do promotor real.
+#
+# D28 BACKLOG (promotores ausentes do banco mas presentes em abr/2026):
+#   ANA CLARA, ANA PRISCILA, FABIANA BEZERRA, MONICA PEREIRA, MARIA LETICIA
+#   Provavelmente ENTRANTE_PADRAO. Cadastrar primeiro, depois ajustar
+#   profile via UI ou patch SQL.
+#
+# IDEMPOTENCIA: re-executar este script nao quebra. Faz UPSERT em todas
+# as entries. Catch-all aplica DEFAULT em promoters novos nao listados.
+# ============================================================================
 
 PROFILES = [
     # --- CLT_FIXO (2)
-    ("LILIAN CRISLAYNE",   "CLT_FIXO",        0.1666, None),
-    ("MARIA DE FATIMA",    "CLT_FIXO",        0.1666, None),
+    ("LILIAN CRISLAYNE TRINDADE NOBRE",          "CLT_FIXO",        0.1666, None,
+     "CLT 16,66% (funcionaria registrada)"),
+    ("MARIA DE FATIMA TAVARES DA COSTA",         "CLT_FIXO",        0.1666, None,
+     "CLT 16,66% (funcionaria registrada)"),
 
     # --- ACORDO_FIXO (4)
-    ("CARLA MIRELLE",      "ACORDO_FIXO",     0.2500, None),
-    ("ERIKA LILIAM",       "ACORDO_FIXO",     0.6250, None),
-    ("THAYNARA TAVARES",   "ACORDO_FIXO",     0.7500, None),
-    ("JULIANA DOS SANTOS", "ACORDO_FIXO",     1.0000, None),
+    ("CARLA MIRELLE SILVA",                      "ACORDO_FIXO",     0.2500, None,
+     "Acordo fixo comercial 25%"),
+    ("ERIKA LILIAM SILVA DOS SANTOS NASCIMENTO", "ACORDO_FIXO",     0.6250, None,
+     "Acordo fixo comercial 62,50%"),
+    ("THAYNARA TAVARES CORREIA COSTA",           "ACORDO_FIXO",     0.7500, None,
+     "Acordo fixo comercial 75%"),
+    ("JULIANA DOS SANTOS OLIVEIRA",              "ACORDO_FIXO",     1.0000, None,
+     "Acordo fixo comercial 100% (socia/empresa propria)"),
 
-    # --- ENTRANTE_PADRAO (6) — usa scale PADRAO_ENTRANTE
-    ("ANA CLARA",          "ENTRANTE_PADRAO", None,   "PADRAO_ENTRANTE"),
-    ("ANA PRISCILA",       "ENTRANTE_PADRAO", None,   "PADRAO_ENTRANTE"),
-    ("FABIANA BEZERRA",    "ENTRANTE_PADRAO", None,   "PADRAO_ENTRANTE"),
-    ("ISAC NICHOLAS",      "ENTRANTE_PADRAO", None,   "PADRAO_ENTRANTE"),
-    ("MONICA PEREIRA",     "ENTRANTE_PADRAO", None,   "PADRAO_ENTRANTE"),
-    ("MARIA LETICIA",      "ENTRANTE_PADRAO", None,   "PADRAO_ENTRANTE"),
+    # --- ENTRANTE_PADRAO (1) — usa scale PADRAO_ENTRANTE
+    ("ISAC NICHOLAS AZEVEDO",                    "ENTRANTE_PADRAO", None,   "PADRAO_ENTRANTE",
+     "Entrante padrao (escala 50k=43,85%; 80k=48,24%; 100k=52,63%; 136k=58,33%)"),
 
     # --- ENTRANTE_CUSTOM (1) — usa scale LETICIA_JAYENE
-    ("LETICIA JAYENE",     "ENTRANTE_CUSTOM", None,   "LETICIA_JAYENE"),
+    ("LETICIA JAYENE MONTEIRO",                  "ENTRANTE_CUSTOM", None,   "LETICIA_JAYENE",
+     "Entrante com escala personalizada (0 ate 100k = 0%, 100k+ = 25%)"),
 
     # --- ACORDO_VARIAVEL (4) — sem fixed, sem scale (override por proposta)
-    ("ADRIANA MARIA",      "ACORDO_VARIAVEL", None,   None),
-    ("ALDALENE FREITAS",   "ACORDO_VARIAVEL", None,   None),
-    ("LUCIANA MATIAS",     "ACORDO_VARIAVEL", None,   None),
-    ("JARLLES MARLON",     "ACORDO_VARIAVEL", None,   None),
+    ("ADRIANA MARIA DA SILVA DOS SANTOS",        "ACORDO_VARIAVEL", None,   None,
+     "Acordo variavel por proposta (faixa 5,80% -> 66,66%)"),
+    ("ALDALENE DE FREITAS ABRAAO",               "ACORDO_VARIAVEL", None,   None,
+     "Acordo variavel por proposta (faixa 5,80% -> 61,20%; INSS novo+renovacao 3,34% -> 65,85%)"),
+    ("JARLES MARLON DE OLIVEIRA",                "ACORDO_VARIAVEL", None,   None,
+     "Acordo variavel por proposta (faixa 5,80% -> 62,50%)"),
+    ("LUCIANA MATIAS DA SILVA",                  "ACORDO_VARIAVEL", None,   None,
+     "Acordo variavel por proposta (faixa 5,80% -> 66,66%)"),
 ]
 
 
@@ -162,7 +191,7 @@ def main() -> int:
     ambiguous: list[tuple[str, list[str]]] = []  # (search_name, matched_names)
     errors: list[tuple[str, str]] = []
 
-    for search_name, profile_type, fixed_pct, scale_code in PROFILES:
+    for search_name, profile_type, fixed_pct, scale_code, note in PROFILES:
         nk = normalize_name(search_name)
         matches = index.get(nk, [])
         # Match parcial: nome buscado eh prefixo do nome cadastrado?
@@ -189,6 +218,7 @@ def main() -> int:
             "scale_id": (
                 scale_id_by_code.get(scale_code) if scale_code else None
             ),
+            "notes": note,
         }
 
         # Validar scale_id presente quando profile espera
