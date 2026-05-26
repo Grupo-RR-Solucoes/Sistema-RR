@@ -462,29 +462,10 @@ function calculateCompanyExpectedValues(records: any[]) {
   };
 }
 
-function chooseMonthlyDefaultPercent({
-  productionValue,
-  targetStatus,
-  productionRows,
-}: {
-  productionValue: number;
-  targetStatus: string;
-  productionRows: any[];
-}) {
-  const baseRow = pickCommissionRow(productionRows, productionValue);
-  if (!baseRow) return 0;
-
-  let percent = toNumber(baseRow.commission_value);
-  percent = toPercentUnits(percent);
-
-  if (targetStatus === "META_1") {
-    percent = Math.min(percent + 0.1, 5.8);
-  } else if (targetStatus === "META_2") {
-    percent = Math.min(percent + 0.2, 5.8);
-  }
-
-  return Math.min(percent, 5.8);
-}
+// Dia 4.5 FIX-1.B: chooseMonthlyDefaultPercent removido. Era o fallback
+// "MONTHLY_DEFAULT" antigo (tabela mensal de comissao por banda) que
+// nunca seria usado depois do desacoplamento: sem company_received_percent,
+// agora retornamos NULL em vez de fallback para tabela.
 
 function findProductRule(productRules: any[], record: any) {
   const code = normalizeText(record.product_code);
@@ -826,10 +807,9 @@ export async function POST(req: Request) {
         ? commissionRows.filter((r: any) => r.commission_table_id === companyTable.id)
         : [];
 
-      const productionRows = rowsForTable.filter(
-        (r: any) => r.rule_type === "PRODUCTION"
-      );
-
+      // FIX-1.B: productionRows nao e mais consumido (chooseMonthlyDefaultPercent
+      // removido). insuranceRows continua sendo usado por pickCommissionRow
+      // no calculo de % seguro.
       const insuranceRows = rowsForTable.filter(
         (r: any) => r.rule_type === "INSURANCE"
       );
@@ -891,52 +871,60 @@ export async function POST(req: Request) {
 
         const effectiveCompanyReceivedPercent = persistedCompanyReceivedPercent;
 
+        // Dia 4.5 FIX-1.B: cascata em 2 fases desacopladas.
+        //
+        // FASE 1 (% A VISTA): identifica de onde veio o
+        // company_received_percent persistido (raw_payload, stored,
+        // importedRule.received_percent ou motor). aVistaSource e
+        // conceitual — descreve a fonte mas nao re-multiplica nada.
+        //
+        // FASE 2 (% REPASSE Etapa B): SEMPRE aplica resolvePromoterShareSync
+        // (override de proposta > profile > DEFAULT 58,33%), exceto pelos
+        // ramos LEGACY que gravam % FINAL pre-calculado por back-compat
+        // (manualRule.commission_percent, productRule.commission_percent,
+        // AGREEMENT.FIXED).
+        //
+        // Source final: '${aVistaSource}+DIA45_${shareSource}'
+        // ou '<RULE>_LEGACY' para o bypass.
+        const isShareOfCompanyAgreement =
+          productionAgreement &&
+          normalizeText(productionAgreement.commission_type) ===
+            "SHARE_OF_COMPANY";
+
         if (manualRule && manualRule.commission_percent !== null) {
-          commissionPercent =
-            manualRule.commission_percent !== null
-              ? Math.min(toPercentUnits(manualRule.commission_percent), 5.8)
-              : 0;
-          productionRuleSource = "MANUAL_PROPOSAL";
+          commissionPercent = Math.min(
+            toPercentUnits(manualRule.commission_percent),
+            5.8
+          );
+          productionRuleSource = "MANUAL_PROPOSAL_LEGACY";
         } else if (productRule && productRule.commission_percent !== null) {
           commissionPercent = Math.min(
             toPercentUnits(productRule.commission_percent),
             5.8
           );
-          productionRuleSource = "PRODUCT_RULE";
-        } else if (productionAgreement) {
-          if (
-            normalizeText(productionAgreement.commission_type) ===
-            "SHARE_OF_COMPANY"
-          ) {
-            const shareRate = toPercentRate(productionAgreement.commission_value);
-            const basePercent =
-              effectiveCompanyReceivedPercent > 0
-                ? effectiveCompanyReceivedPercent
-                : commissionPercent;
-
-            commissionPercent = Math.min(basePercent * shareRate, 5.8);
-          } else {
-            commissionPercent = Math.min(
-              toPercentUnits(productionAgreement.commission_value),
-              5.8
-            );
-          }
-          productionRuleSource = "PROMOTER_AGREEMENT";
+          productionRuleSource = "PRODUCT_RULE_LEGACY";
+        } else if (productionAgreement && !isShareOfCompanyAgreement) {
+          commissionPercent = Math.min(
+            toPercentUnits(productionAgreement.commission_value),
+            5.8
+          );
+          productionRuleSource = "PROMOTER_AGREEMENT_LEGACY";
         } else {
+          // FASE 1: identifica aVistaSource (conceitual, nao recalcula).
+          let aVistaSource: string;
           if (importedRule) {
-            commissionPercent = Math.min(
-              toPercentUnits(importedRule.promoter_percent),
-              5.8
-            );
-            productionRuleSource = "IMPORTED_MONTHLY_TABLE";
+            aVistaSource = "IMPORTED_MONTHLY_TABLE";
+          } else if (isShareOfCompanyAgreement) {
+            aVistaSource = "PROMOTER_AGREEMENT";
           } else {
-            // Dia 4.5 FIX-1: cascata viva Etapa B substitui o hardcode
-            // 58,33%. resolvePromoterShareSync resolve sharePercent (0..1)
-            // por override de proposta > profile (CLT_FIXO / ACORDO_FIXO /
-            // ENTRANTE_* via escala por volume) > DEFAULT 58,33%. Teto
-            // 5,80% aplicado sobre % A VISTA ANTES de multiplicar pelo
-            // share (regra RR: Promotiva paga ate 6%, visao promotor
-            // limitada a 5,80%, spread fica empresa).
+            aVistaSource = "DEFAULT_PERSISTED";
+          }
+
+          // FASE 2: cascata viva Etapa B aplica share por cima do % A VISTA.
+          // Teto 5,80% sobre % A VISTA ANTES de multiplicar pelo share
+          // (regra RR: Promotiva paga ate 6%, visao promotor limitada
+          // a 5,80%, spread fica empresa).
+          if (effectiveCompanyReceivedPercent > 0) {
             const resolution = resolvePromoterShareSync({
               record: {
                 assigned_promoter_id: record.assigned_promoter_id,
@@ -947,36 +935,19 @@ export async function POST(req: Request) {
               scalesMap,
               monthlyVolumesMap,
             });
-
-            if (effectiveCompanyReceivedPercent > 0) {
-              const aVistaClamped = Math.min(
-                effectiveCompanyReceivedPercent,
-                5.8
-              );
-              commissionPercent = aVistaClamped * resolution.sharePercent;
-              productionRuleSource = `DIA45_${resolution.source}`;
-            } else if (
-              record.company_received_percent === null ||
-              record.company_received_percent === undefined
-            ) {
-              // 30 propostas em abr/2026 com company_received_percent NULL.
-              // Investigar importador separadamente (nao escopo deste fix).
-              // Por ora, manter NULL para visibilidade do problema.
-              commissionPercent = null;
-              productionRuleSource = "NULL_COMPANY_PERCENT";
-            } else {
-              commissionPercent = chooseMonthlyDefaultPercent({
-                productionValue,
-                targetStatus,
-                productionRows,
-              });
-
-              if (!commissionPercent) {
-                unmatchedImportedRules += 1;
-              }
-
-              productionRuleSource = "MONTHLY_DEFAULT";
-            }
+            const aVistaClamped = Math.min(
+              effectiveCompanyReceivedPercent,
+              5.8
+            );
+            commissionPercent = aVistaClamped * resolution.sharePercent;
+            productionRuleSource = `${aVistaSource}+DIA45_${resolution.source}`;
+          } else {
+            // Sem % A VISTA valido em nenhuma fonte (raw_payload / stored
+            // / importedRule / motor) — manter NULL. 30 propostas em
+            // abr/2026 nesse estado (D29 backlog: investigar importador,
+            // fora do escopo deste fix).
+            commissionPercent = null;
+            productionRuleSource = "NULL_COMPANY_PERCENT";
           }
         }
 
