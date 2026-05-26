@@ -68,6 +68,7 @@ type ProductionRecord = {
   insurance_commission_amount: number | null;
   commission_rule_source: string | null;
   movement_date: string | null;
+  status: string | null;
   raw_payload: Record<string, unknown> | null;
 };
 
@@ -165,11 +166,19 @@ export async function GET(req: Request) {
           insurance_commission_amount,
           commission_rule_source,
           movement_date,
+          status,
           raw_payload
         `)
         .gte("movement_date", start)
         .lt("movement_date", end)
         .not("assigned_promoter_id", "is", null)
+        // FIX-1.E.2: filtra Status='Produção' server-side. Cancelados +
+        // Em Aberto inflavam a tela /comissoes/editar (Thaynara 36 vs 31
+        // real abr/2026) e geravam falsos NULL em company_received_percent.
+        // Promotiva exporta exatamente "Produção" (com acento). Cancelados
+        // ficam em /promotores -> bloco Descontos. /api/calculate/monthly
+        // ja faz o mesmo filtro via isProductionStatus(record.status).
+        .eq("status", "Produção")
         .order("movement_date", { ascending: false });
 
       if (companyId) {
@@ -313,6 +322,11 @@ export async function GET(req: Request) {
           record.insurance_commission_amount,
           insurancePercentEffective
         ),
+        // FIX-1.E.2: expoe status da Promotiva. SELECT filtra por
+        // 'Produção', entao todos os rows tem esse valor; manter no
+        // shape facilita debug/auditoria e prepara para futura coluna
+        // visual (badge "Cancelado"/"Em Aberto" se filtro for relaxado).
+        promotiva_status: record.status,
       };
     });
 
