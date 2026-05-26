@@ -628,9 +628,13 @@ export default function EditarComissoesPage() {
           className={`rr-table-wrap${filteredRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
           style={{
             ...styles.tableWrap,
-            ...(filteredRows.length > 15
-              ? { maxHeight: "calc(100vh - 460px)" } // BulkActionBar 220px + topo 240px
-              : {}),
+            // FIX-1.D.6 (scroll): sempre permite scroll vertical com
+            // teto consistente. Antes so aplicava maxHeight para >15
+            // rows e sem overflowY explicito; combinado com
+            // tableCard.overflow:hidden (parent), poucas rows ficavam
+            // cortadas em ~3 linhas visiveis sem barra de scroll.
+            maxHeight: "calc(100vh - 460px)",
+            overflowY: "auto",
           }}
         >
           <table style={styles.table}>
@@ -863,7 +867,17 @@ export default function EditarComissoesPage() {
                       <td style={styles.td}>{formatPercentSuffix(row.interest_rate)}</td>
                       <td style={styles.td}>{row.product_description || "-"}</td>
                       <td style={styles.td}>
-                        {formatPercentSuffix(row.a_vista_percent)}
+                        {/* FIX-1.D.6 (display): teto operacional 5,80%
+                            visivel APENAS na celula (visao do promotor).
+                            row.a_vista_percent armazena o RAW Promotiva
+                            para outros consumidores (calculo persistido,
+                            export, IIFE de cascata viva — todos aplicam
+                            seu proprio clamp). */}
+                        {formatPercentSuffix(
+                          row.a_vista_percent != null
+                            ? Math.min(Number(row.a_vista_percent), 5.8)
+                            : row.a_vista_percent
+                        )}
                       </td>
                       <td style={styles.td}>
                         {formatCurrency(row.promoter_commission_amount || 0)}
@@ -925,11 +939,19 @@ export default function EditarComissoesPage() {
                         </div>
                       </td>
                       <td style={styles.td}>
-                        {/* Cascata viva (Etapa B): COMISSAO PROMOTOR
-                            recalcula enquanto digita. Formula:
-                            net_value × min(a_vista, 5.8) / 100 × sharePct.
-                            Quando o input fica vazio, mostra o valor
-                            persistido (promoter_share_amount do GET). */}
+                        {/* FIX-1.D.6 (calculo): COMISSAO PROMOTOR =
+                            COMISSAO PF × sharePct, sempre. Cascata viva
+                            (Etapa B) recalcula enquanto digita.
+                            Formula: net_value × min(a_vista, 5.8) / 100
+                            × sharePct (decimal 0..1).
+                            sharePct cascata:
+                              1) draft do input (escala 0..100, ÷100)
+                              2) row.share_percent_effective (cascata
+                                 Etapa B, ja em 0..1)
+                              3) 0 (sem share — render "—")
+                            NAO usa row.promoter_share_amount (que para
+                            rows MANUAL_PROPOSAL_LEGACY pode vir
+                            dessincronizado com a cascata viva). */}
                         {(() => {
                           const draft = row.share_percent_input;
                           const netValue = Number(row.net_value ?? 0);
@@ -940,24 +962,24 @@ export default function EditarComissoesPage() {
                           );
                           const comissaoPF =
                             (netValue * aVistaClamped) / 100;
+                          let sharePct = 0;
                           if (
                             draft !== "" &&
                             draft !== null &&
                             draft !== undefined
                           ) {
                             const draftNum = Number(draft);
-                            if (
-                              Number.isFinite(draftNum) &&
-                              comissaoPF > 0
-                            ) {
-                              return formatCurrency(
-                                (comissaoPF * draftNum) / 100
-                              );
+                            if (Number.isFinite(draftNum)) {
+                              sharePct = draftNum / 100;
                             }
+                          } else if (row.share_percent_effective != null) {
+                            const eff = Number(row.share_percent_effective);
+                            if (Number.isFinite(eff)) sharePct = eff;
                           }
-                          return row.promoter_share_amount == null
-                            ? "—"
-                            : formatCurrency(row.promoter_share_amount);
+                          const comissaoPromotor = comissaoPF * sharePct;
+                          return comissaoPromotor > 0
+                            ? formatCurrency(comissaoPromotor)
+                            : "—";
                         })()}
                       </td>
                       <td style={styles.td}>
