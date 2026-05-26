@@ -880,7 +880,24 @@ export default function EditarComissoesPage() {
                         )}
                       </td>
                       <td style={styles.td}>
-                        {formatCurrency(row.promoter_commission_amount || 0)}
+                        {/* FIX-1.D.8 (calculo): COMISSAO PF = net x min(a_vista, 5.8) / 100,
+                            derivado client-side. NAO le row.promoter_commission_amount do
+                            banco — esse campo armazena valor POS-share gravado por
+                            /api/calculate/monthly e nao corresponde ao COMISSAO PF puro
+                            (visao do promotor antes do share). Col 19 usa mesma cascata e
+                            multiplica por sharePct. */}
+                        {(() => {
+                          const net = Number(row.net_value ?? 0);
+                          const aVista = Number(row.a_vista_percent ?? 0);
+                          const aVistaClamped = Math.min(
+                            Math.max(aVista, 0),
+                            5.8
+                          );
+                          const comissaoPF = (net * aVistaClamped) / 100;
+                          return comissaoPF > 0
+                            ? formatCurrency(comissaoPF)
+                            : "—";
+                        })()}
                       </td>
                       <td style={styles.td}>
                         <span style={srccBadgeStyle(row.srcc_restriction)}>
