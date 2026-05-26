@@ -87,7 +87,7 @@ export default function BulkActionBar({
 
     const confirmMessage =
       mode === "absolute"
-        ? `Aplicar % = ${parsedValue.toFixed(2).replace(".", ",")}% em ${willTotalAffected} proposta(s)?\n\n` +
+        ? `Aplicar % Promotor = ${parsedValue.toFixed(2).replace(".", ",")}% em ${willTotalAffected} proposta(s)?\n\n` +
           `- ${willUpdateCount} override(s) existente(s) ser${willUpdateCount === 1 ? "a" : "ao"} atualizado(s)\n` +
           `- ${willCreateCount} novo(s) override(s) ser${willCreateCount === 1 ? "a" : "ao"} criado(s)`
         : `Aplicar ajuste de ${parsedValue >= 0 ? "+" : ""}${parsedValue.toFixed(2).replace(".", ",")}pp em ${willTotalAffected} proposta(s)?\n\n` +
@@ -118,6 +118,9 @@ export default function BulkActionBar({
           productionRecordIds,
           mode,
           value: parsedValue,
+          // Dia 4.5 Etapa B: bulk alvo agora e o override de repasse
+          // (escala 0..1 no DB; backend converte do input 0..100).
+          targetField: "share_percent_override",
         }),
       });
 
@@ -154,7 +157,7 @@ export default function BulkActionBar({
       {/* Spacer para evitar que a barra cubra o conteudo */}
       <div style={styles.spacer} aria-hidden="true" />
 
-      <div role="region" aria-label="Acao em lote" style={styles.bar}>
+      <div role="region" aria-label="Aplicar % Promotor em lote" style={styles.bar}>
         <div style={styles.row}>
           <span style={styles.summary}>
             <strong>{counts.total.toLocaleString("pt-BR")}</strong>{" "}
@@ -214,7 +217,9 @@ export default function BulkActionBar({
               style={styles.valueInput}
               disabled={submitting}
               aria-label={
-                mode === "absolute" ? "Novo valor em %" : "Ajuste em pp"
+                mode === "absolute"
+                  ? "% Promotor (override) em %"
+                  : "Ajuste de % Promotor em pp"
               }
             />
             <span style={styles.unit}>{mode === "absolute" ? "%" : "pp"}</span>

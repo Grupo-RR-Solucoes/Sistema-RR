@@ -3,13 +3,16 @@ import { NextResponse } from "next/server";
 import { apiGuardErrorResponse, withSocioOrFuncionarioAnon } from "@/lib/auth/guards";
 import { canManageCommissionRule } from "@/lib/auth/permissions";
 import {
+  computeComissaoPromotor,
   computePromoterInsuranceAmount,
-  computePromoterShareAmount,
+  fetchPromoterShareData,
   getAVistaPercent,
   getAgencyCode,
   getCompanyCommissionAmount,
   getInstallmentCount,
   getSrccRestrictionLabel,
+  recalculateSingleProposal,
+  resolvePromoterShareSync,
 } from "@/lib/proposalDetailing";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -79,6 +82,7 @@ type ManualRuleRow = {
   promoter_id: string;
   commission_percent: number | null;
   insurance_commission_percent: number | null;
+  share_percent_override: number | null;
   notes: string | null;
   active: boolean | null;
 };
@@ -179,8 +183,12 @@ export async function GET(req: Request) {
       return query;
     });
 
-    const promoterIds = [
-      ...new Set(records.map((r) => r.assigned_promoter_id).filter(Boolean)),
+    const promoterIds: string[] = [
+      ...new Set(
+        records
+          .map((r) => r.assigned_promoter_id)
+          .filter((id): id is string => Boolean(id))
+      ),
     ];
 
     let promoters: PromoterRow[] = [];
@@ -223,7 +231,7 @@ export async function GET(req: Request) {
       const { data, error } = await supabase
         .from("promoter_proposal_commissions")
         .select(
-          "id, daily_production_record_id, promoter_id, commission_percent, insurance_commission_percent, notes, active"
+          "id, daily_production_record_id, promoter_id, commission_percent, insurance_commission_percent, share_percent_override, notes, active"
         )
         .in("daily_production_record_id", proposalIds);
 
@@ -231,13 +239,21 @@ export async function GET(req: Request) {
       manualRules = (data || []) as ManualRuleRow[];
     }
 
+    // Dia 4.5 Etapa B: pre-carrega 3 maps (profiles + escalas + volume
+    // mensal) para a cascata sync de share_percent. fetchPromoterShareData
+    // faz no maximo 3-4 queries em batch independente do numero de rows.
+    const { profilesMap, scalesMap, monthlyVolumesMap } =
+      await fetchPromoterShareData(supabase, promoterIds, year, month);
+
     const rows = records.map((record) => {
       const promoter = promoters.find((p) => p.id === record.assigned_promoter_id);
       const manual = manualRules.find(
         (m) => m.daily_production_record_id === record.id && m.active !== false
       );
 
-      // 4.4-fix-1.E: % efetivo do promotor = override OR Promotiva default.
+      // 4.4-fix-1.E: % efetivo legacy (mantido em promoter_commission_percent
+      // para back-compat com outras telas/consumidores). 4.5 Etapa B nao
+      // mexe nesse comportamento.
       const promoterPercentEffective =
         manual?.commission_percent ?? record.promoter_commission_percent;
       const insurancePercentEffective =
@@ -249,36 +265,50 @@ export async function GET(req: Request) {
       const insurancePenetrationPercent =
         penetrationMap.get(penetrationKey) ?? null;
 
+      // Dia 4.5 Etapa B: cascata nova de share_percent.
+      const aVistaPercent = getAVistaPercent(record);
+      const overrideValue = manual?.share_percent_override ?? null;
+      const shareResolution = resolvePromoterShareSync({
+        record: {
+          assigned_promoter_id: record.assigned_promoter_id,
+          share_percent_override: overrideValue,
+        },
+        profilesMap,
+        scalesMap,
+        monthlyVolumesMap,
+      });
+
       return {
         ...record,
         commission_base_value: record.net_value,
         promoter_name: promoter?.name || null,
-        // Dia 4.4: expor commission_rule_id (promoter_proposal_commissions.id)
-        // para a UI poder enviar ao /bulk endpoint. NULL quando nao existe
-        // override ainda — UI precisa criar via POST upsert antes do bulk.
         commission_rule_id: manual?.id ?? null,
         promoter_commission_percent: promoterPercentEffective,
         insurance_commission_percent: insurancePercentEffective,
         manual_notes: manual?.notes || "",
-        // 4.4-fix-1.B: derivados que o Detalhamento de /promotores ja
-        // expoe; helpers compartilhados em lib/proposalDetailing.ts.
+        // 4.4-fix-1.B
         agency_code: getAgencyCode(record),
         srcc_restriction: getSrccRestrictionLabel(record),
         installment_count: getInstallmentCount(record),
         company_commission_amount: getCompanyCommissionAmount(record),
-        // 4.4-fix-1.E (D1): "% A VISTA" pura Promotiva, lida do
-        // raw_payload (regra TRP/OPP original, antes da cascata).
-        a_vista_percent: getAVistaPercent(record),
-        // 4.4-fix-1.E (D2): "% PENETRACAO" agregada mensal de seguro,
-        // constante para todas as propostas do mesmo promotor no mes.
+        // 4.4-fix-1.E (D1+D2)
+        a_vista_percent: aVistaPercent,
         insurance_penetration_percent: insurancePenetrationPercent,
-        // COMISSAO PROMOTOR = COMISSAO PF * % repasse efetivo / 100.
-        promoter_share_amount: computePromoterShareAmount(
-          record.promoter_commission_amount,
-          promoterPercentEffective
+        // Dia 4.5 Etapa B: novos campos de cascata.
+        // share_percent_effective vem em DECIMAL (0..1). UI multiplica
+        // por 100 para exibir "66,66%". sharePercent === 1.0 = 100%.
+        share_percent_effective: shareResolution.sharePercent,
+        share_percent_source: shareResolution.source,
+        share_percent_override: overrideValue,
+        // COMISSAO PROMOTOR recalculada com a cascata nova:
+        // net_value × min(a_vista, 5.8) / 100 × sharePercent
+        promoter_share_amount: computeComissaoPromotor(
+          record.net_value,
+          aVistaPercent,
+          shareResolution.sharePercent
         ),
-        // COMISSAO SEGURO PROMOTOR = insurance_commission_amount * % seguro
-        // promotor efetivo / 100. Dia 4.5 tornara o % editavel.
+        // COMISSAO SEGURO PROMOTOR: formula legada mantida (Etapa C
+        // refatora). insurance_commission_amount × % seguro / 100.
         promoter_insurance_amount: computePromoterInsuranceAmount(
           record.insurance_commission_amount,
           insurancePercentEffective
@@ -308,6 +338,7 @@ export async function POST(req: Request) {
       promoterId?: string;
       commissionPercent?: number | null;
       insuranceCommissionPercent?: number | null;
+      sharePercentOverride?: number | null;
       notes?: string | null;
     };
 
@@ -315,6 +346,8 @@ export async function POST(req: Request) {
     const promoterId = body.promoterId;
     const commissionPercent = body.commissionPercent;
     const insuranceCommissionPercent = body.insuranceCommissionPercent;
+    // Dia 4.5 Etapa B: novo campo de override editavel pela UI.
+    const sharePercentOverride = body.sharePercentOverride;
     const notes = body.notes;
 
     if (!dailyProductionRecordId || !promoterId) {
@@ -327,25 +360,36 @@ export async function POST(req: Request) {
     // Fetch previo para audit (snapshot do valor anterior, se existir)
     const { data: previous } = await supabase
       .from("promoter_proposal_commissions")
-      .select("id, commission_percent, insurance_commission_percent, notes")
+      .select(
+        "id, commission_percent, insurance_commission_percent, share_percent_override, notes"
+      )
       .eq("daily_production_record_id", dailyProductionRecordId)
       .maybeSingle();
 
+    // Monta payload preservando os campos NAO enviados (back-compat).
+    const upsertPayload: Record<string, unknown> = {
+      daily_production_record_id: dailyProductionRecordId,
+      promoter_id: promoterId,
+      active: true,
+    };
+    if (commissionPercent !== undefined) {
+      upsertPayload.commission_percent = commissionPercent;
+    }
+    if (insuranceCommissionPercent !== undefined) {
+      upsertPayload.insurance_commission_percent = insuranceCommissionPercent;
+    }
+    if (sharePercentOverride !== undefined) {
+      upsertPayload.share_percent_override = sharePercentOverride;
+    }
+    if (notes !== undefined) {
+      upsertPayload.notes = notes;
+    }
+
     const { data: upserted, error } = await supabase
       .from("promoter_proposal_commissions")
-      .upsert(
-        {
-          daily_production_record_id: dailyProductionRecordId,
-          promoter_id: promoterId,
-          commission_percent: commissionPercent,
-          insurance_commission_percent: insuranceCommissionPercent,
-          notes,
-          active: true,
-        },
-        {
-          onConflict: "daily_production_record_id",
-        }
-      )
+      .upsert(upsertPayload, {
+        onConflict: "daily_production_record_id",
+      })
       .select("id")
       .single();
 
@@ -370,6 +414,20 @@ export async function POST(req: Request) {
       upserted?.id ?? null,
       previous ? "commission_updated" : "commission_created"
     );
+
+    // Dia 4.5 Etapa B: recalcula promoter_commission_amount em
+    // daily_production_records usando a cascata nova. Fail-safe: erro
+    // de recalc nao desfaz o upsert (ja gravado).
+    const recalc = await recalculateSingleProposal(
+      supabase,
+      dailyProductionRecordId
+    );
+    if (!recalc.ok) {
+      console.error(
+        "[recalculateSingleProposal] falhou apos POST:",
+        recalc.error
+      );
+    }
 
     return NextResponse.json({
       success: true,
@@ -429,6 +487,19 @@ export async function DELETE(req: Request) {
       target?.id ?? null,
       "commission_deleted"
     );
+
+    // Dia 4.5 Etapa B: recalc apos DELETE (override removido -> cascata
+    // cai no profile do promotor).
+    const recalc = await recalculateSingleProposal(
+      supabase,
+      dailyProductionRecordId
+    );
+    if (!recalc.ok) {
+      console.error(
+        "[recalculateSingleProposal] falhou apos DELETE:",
+        recalc.error
+      );
+    }
 
     return NextResponse.json({
       success: true,

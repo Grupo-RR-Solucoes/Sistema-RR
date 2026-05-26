@@ -6,6 +6,10 @@ import { clearMemoryCache } from "@/lib/memoryCache";
 import { findImportedProductionRule } from "@/lib/promoterRemuneration";
 import { calcularOperacao, getProductionBandByValue } from "@/lib/motor";
 import { getProductionWindow } from "@/lib/productionPeriod";
+import {
+  fetchPromoterShareData,
+  resolvePromoterShareSync,
+} from "@/lib/proposalDetailing";
 
 function toNumber(value: unknown): number {
   if (value === null || value === undefined || value === "") return 0;
@@ -33,7 +37,9 @@ function toPercentRate(value: unknown): number {
   return Math.abs(parsed) > 1 ? parsed / 100 : parsed;
 }
 
-const DEFAULT_PROMOTER_SHARE_PERCENT = 58.33;
+// Dia 4.5 FIX-1: hardcode 58,33% removido daqui. A cascata viva esta em
+// lib/proposalDetailing.ts (resolvePromoterShareSync), que centraliza o
+// DEFAULT_SHARE como fallback dentro do helper.
 
 function normalizeText(value: unknown): string {
   return String(value || "")
@@ -266,15 +272,6 @@ function pickCommissionRow(rows: any[], metricValue: number) {
 
 function calculatePercentValue(baseValue: unknown, percent: unknown) {
   return toNumber(baseValue) * toPercentRate(percent);
-}
-
-function getDefaultPromoterPercentFromCompany(companyReceivedPercent: number) {
-  const companyPercent = toPercentUnits(companyReceivedPercent);
-  if (!companyPercent || companyPercent <= 0) return 0;
-  return Math.min(
-    companyPercent * toPercentRate(DEFAULT_PROMOTER_SHARE_PERCENT),
-    5.8
-  );
 }
 
 function isMeaningfulImportedProductionRule(rule: any) {
@@ -696,6 +693,24 @@ export async function POST(req: Request) {
       return query;
     });
 
+    // Dia 4.5 FIX-1: pre-carrega dados da cascata Etapa B em batch (3-4
+    // queries: profiles + scales/tiers + volumes mensais). Evita N+1 dentro
+    // do loop de records que segue abaixo.
+    const uniquePromoterIdsForShare = Array.from(
+      new Set(
+        dailyRecords
+          .map((r: any) => r.assigned_promoter_id)
+          .filter((id: any): id is string => Boolean(id))
+      )
+    );
+    const { profilesMap, scalesMap, monthlyVolumesMap } =
+      await fetchPromoterShareData(
+        supabase,
+        uniquePromoterIdsForShare,
+        year,
+        month
+      );
+
     const hasPromoterRemunerationBase =
       !!importedPromoterRemuneration ||
       commissionTables.length > 0 ||
@@ -859,7 +874,7 @@ export async function POST(req: Request) {
           ? importedRuleCandidate
           : null;
 
-        let commissionPercent = 0;
+        let commissionPercent: number | null = 0;
         let insuranceCommissionPercent = 0;
         let productionRuleSource = "MONTHLY_DEFAULT";
         let insuranceRuleSource = "MONTHLY_DEFAULT";
@@ -914,23 +929,54 @@ export async function POST(req: Request) {
               5.8
             );
             productionRuleSource = "IMPORTED_MONTHLY_TABLE";
-          } else if (effectiveCompanyReceivedPercent > 0) {
-            commissionPercent = getDefaultPromoterPercentFromCompany(
-              effectiveCompanyReceivedPercent
-            );
-            productionRuleSource = "DEFAULT_SHARE_OF_COMPANY";
           } else {
-            commissionPercent = chooseMonthlyDefaultPercent({
-              productionValue,
-              targetStatus,
-              productionRows,
+            // Dia 4.5 FIX-1: cascata viva Etapa B substitui o hardcode
+            // 58,33%. resolvePromoterShareSync resolve sharePercent (0..1)
+            // por override de proposta > profile (CLT_FIXO / ACORDO_FIXO /
+            // ENTRANTE_* via escala por volume) > DEFAULT 58,33%. Teto
+            // 5,80% aplicado sobre % A VISTA ANTES de multiplicar pelo
+            // share (regra RR: Promotiva paga ate 6%, visao promotor
+            // limitada a 5,80%, spread fica empresa).
+            const resolution = resolvePromoterShareSync({
+              record: {
+                assigned_promoter_id: record.assigned_promoter_id,
+                share_percent_override:
+                  manualRule?.share_percent_override ?? null,
+              },
+              profilesMap,
+              scalesMap,
+              monthlyVolumesMap,
             });
 
-            if (!commissionPercent) {
-              unmatchedImportedRules += 1;
-            }
+            if (effectiveCompanyReceivedPercent > 0) {
+              const aVistaClamped = Math.min(
+                effectiveCompanyReceivedPercent,
+                5.8
+              );
+              commissionPercent = aVistaClamped * resolution.sharePercent;
+              productionRuleSource = `DIA45_${resolution.source}`;
+            } else if (
+              record.company_received_percent === null ||
+              record.company_received_percent === undefined
+            ) {
+              // 30 propostas em abr/2026 com company_received_percent NULL.
+              // Investigar importador separadamente (nao escopo deste fix).
+              // Por ora, manter NULL para visibilidade do problema.
+              commissionPercent = null;
+              productionRuleSource = "NULL_COMPANY_PERCENT";
+            } else {
+              commissionPercent = chooseMonthlyDefaultPercent({
+                productionValue,
+                targetStatus,
+                productionRows,
+              });
 
-            productionRuleSource = "MONTHLY_DEFAULT";
+              if (!commissionPercent) {
+                unmatchedImportedRules += 1;
+              }
+
+              productionRuleSource = "MONTHLY_DEFAULT";
+            }
           }
         }
 
@@ -979,10 +1025,12 @@ export async function POST(req: Request) {
         const productionBase = toNumber(record.net_value);
         const insuranceBase = calculateCompanyInsuranceCommission(record);
 
-        const promoterCommissionAmount = calculatePercentValue(
-          productionBase,
-          commissionPercent
-        );
+        // NULL_COMPANY_PERCENT: mantem amount=NULL para sinalizar dado
+        // faltando, em vez de gravar 0 (que somaria como producao real).
+        const promoterCommissionAmount: number | null =
+          commissionPercent === null
+            ? null
+            : calculatePercentValue(productionBase, commissionPercent);
 
         const insuranceCommissionAmount = calculatePercentValue(
           insuranceBase,
@@ -1009,7 +1057,7 @@ export async function POST(req: Request) {
             ? productionRuleSource
             : `${productionRuleSource}+${insuranceRuleSource}`;
 
-        productionCommissionValue += promoterCommissionAmount;
+        productionCommissionValue += promoterCommissionAmount ?? 0;
         insuranceCommissionValue += insuranceCommissionAmount;
 
         recordUpdates.push({

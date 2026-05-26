@@ -6,6 +6,7 @@ import {
   withSocioOrFuncionarioAnon,
 } from "@/lib/auth/guards";
 import { canManageCommissionRule } from "@/lib/auth/permissions";
+import { recalculateSingleProposal } from "@/lib/proposalDetailing";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 interface BulkBody {
@@ -13,9 +14,28 @@ interface BulkBody {
   productionRecordIds?: unknown;
   mode?: unknown;
   value?: unknown;
+  // Dia 4.5 Etapa B: qual coluna em promoter_proposal_commissions o
+  // bulk vai atualizar. Default = share_percent_override (escala 0..1
+  // no DB; input do user em 0..100, convertido aqui).
+  // Legado: commission_percent (escala 0..100 no DB).
+  targetField?: "share_percent_override" | "commission_percent";
 }
 
 const MAX_BATCH = 5000;
+
+// Coluna alvo + escala. Escala 0.01 = grava (input / 100) no DB
+// (share_percent_override armazena decimal). Escala 1 = grava input
+// direto (commission_percent legado armazena 0..100).
+const TARGET_FIELDS = {
+  share_percent_override: {
+    column: "share_percent_override",
+    dbScaleFactor: 0.01,
+  },
+  commission_percent: {
+    column: "commission_percent",
+    dbScaleFactor: 1,
+  },
+} as const;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -96,6 +116,13 @@ export async function POST(req: Request) {
       : null;
     const valueRaw = Number(body.value);
     const value = Number.isFinite(valueRaw) ? valueRaw : NaN;
+    // Dia 4.5 Etapa B: alvo do bulk. Default = override editavel novo;
+    // fallback explicito para legado commission_percent se body pedir.
+    const targetField =
+      body.targetField === "commission_percent"
+        ? "commission_percent"
+        : "share_percent_override";
+    const targetConfig = TARGET_FIELDS[targetField];
 
     const totalIds = proposalIds.length + productionRecordIds.length;
 
@@ -157,11 +184,14 @@ export async function POST(req: Request) {
     // ---------------- UPDATE loop (proposalIds existentes) ----------------
     let deniedIds: string[] = [];
 
+    // Production record IDs afetados nesta operacao (para recalc no fim).
+    const affectedProductionRecordIds = new Set<string>();
+
     if (proposalIds.length > 0) {
       const { data: targets, error: fetchErr } = await supabase
         .from("promoter_proposal_commissions")
         .select(
-          "id, commission_percent, daily_production_record_id, promoter_id"
+          `id, ${targetConfig.column}, daily_production_record_id, promoter_id`
         )
         .in("id", proposalIds);
 
@@ -172,31 +202,43 @@ export async function POST(req: Request) {
         );
       }
 
-      const fetched = targets ?? [];
-      const fetchedIds = new Set(fetched.map((r) => r.id));
+      const fetched = (targets ?? []) as Array<Record<string, unknown>>;
+      const fetchedIds = new Set(fetched.map((r) => String(r.id)));
       deniedIds = proposalIds.filter((id) => !fetchedIds.has(id));
 
       for (const row of fetched) {
-        const oldValue = Number(row.commission_percent ?? 0);
-        const newValue =
+        const oldRaw = Number(row[targetConfig.column] ?? 0);
+        // Display sempre em escala 0..100 para audit; converte com base
+        // no dbScaleFactor (share_percent_override armazena 0..1).
+        const oldValueDisplay = oldRaw / targetConfig.dbScaleFactor;
+        const newValueDisplay =
           mode === "absolute"
             ? clamp(value, 0, 100)
-            : clamp(oldValue + value, 0, 100);
+            : clamp(oldValueDisplay + value, 0, 100);
+        const newValueDb = newValueDisplay * targetConfig.dbScaleFactor;
+
+        const updatePayload: Record<string, unknown> = {
+          [targetConfig.column]: newValueDb,
+          updated_at: nowIso,
+        };
 
         const { error: updateErr } = await supabase
           .from("promoter_proposal_commissions")
-          .update({
-            commission_percent: newValue,
-            updated_at: nowIso,
-          })
+          .update(updatePayload)
           .eq("id", row.id);
 
         if (updateErr) {
-          failures.push({ id: row.id, error: updateErr.message, kind: "update" });
+          failures.push({
+            id: String(row.id),
+            error: updateErr.message,
+            kind: "update",
+          });
           continue;
         }
 
         updatedCount += 1;
+        const dprId = String(row.daily_production_record_id ?? "");
+        if (dprId) affectedProductionRecordIds.add(dprId);
 
         await writeAuditEntry(
           "commission_bulk_updated",
@@ -204,24 +246,26 @@ export async function POST(req: Request) {
           {
             performed_by_user_id: actorUserId,
             performed_by_email: actorEmail,
-            target_proposal_id: row.id,
-            target_daily_production_record_id: row.daily_production_record_id,
+            target_proposal_id: String(row.id),
+            target_daily_production_record_id: dprId,
             target_promoter_id: row.promoter_id,
+            target_field: targetField,
             batch_id: batchId,
             mode,
             value,
-            old_value: oldValue,
-            new_value: newValue,
+            old_value: oldValueDisplay,
+            new_value: newValueDisplay,
           },
           actorEmail,
-          row.id
+          String(row.id)
         );
       }
     }
 
     // ---------------- INSERT loop (productionRecordIds sem override) ----------------
     if (productionRecordIds.length > 0) {
-      const newValue = clamp(value, 0, 100); // garantido absolute (validado acima)
+      const newValueDisplay = clamp(value, 0, 100); // absolute (validado acima)
+      const newValueDb = newValueDisplay * targetConfig.dbScaleFactor;
 
       // Fetch promoter_id obrigatorio (NOT NULL na tabela) — 1 query em batch
       const { data: records, error: recordErr } = await supabase
@@ -253,19 +297,20 @@ export async function POST(req: Request) {
 
         // UPSERT defensivo: UNIQUE (daily_production_record_id) garante que
         // race entre 2 cliques bulk simultaneos nao gera erro 23505 — o
-        // segundo vira UPDATE silencioso do commission_percent.
+        // segundo vira UPDATE silencioso do campo alvo.
+        const upsertPayload: Record<string, unknown> = {
+          daily_production_record_id: recordId,
+          promoter_id: promoterId,
+          [targetConfig.column]: newValueDb,
+          active: true,
+          updated_at: nowIso,
+        };
+
         const { data: upserted, error: upsertErr } = await supabase
           .from("promoter_proposal_commissions")
-          .upsert(
-            {
-              daily_production_record_id: recordId,
-              promoter_id: promoterId,
-              commission_percent: newValue,
-              active: true,
-              updated_at: nowIso,
-            },
-            { onConflict: "daily_production_record_id" }
-          )
+          .upsert(upsertPayload, {
+            onConflict: "daily_production_record_id",
+          })
           .select("id")
           .single();
 
@@ -279,6 +324,7 @@ export async function POST(req: Request) {
         }
 
         createdCount += 1;
+        affectedProductionRecordIds.add(recordId);
 
         await writeAuditEntry(
           "commission_created_via_bulk",
@@ -289,11 +335,12 @@ export async function POST(req: Request) {
             target_proposal_id: upserted.id,
             target_daily_production_record_id: recordId,
             target_promoter_id: promoterId,
+            target_field: targetField,
             batch_id: batchId,
             mode,
             value,
             old_value: null,
-            new_value: newValue,
+            new_value: newValueDisplay,
           },
           actorEmail,
           upserted.id
@@ -301,15 +348,32 @@ export async function POST(req: Request) {
       }
     }
 
+    // Dia 4.5 Etapa B: recalcula promoter_commission_amount em
+    // daily_production_records para cada record afetado. Sequencial
+    // (mantemos previsibilidade; carga tipica < 50 records por bulk).
+    let recalcFailures = 0;
+    for (const dprId of affectedProductionRecordIds) {
+      const res = await recalculateSingleProposal(supabase, dprId);
+      if (!res.ok) {
+        recalcFailures += 1;
+        console.error(
+          `[recalculateSingleProposal] falhou para ${dprId} (bulk batch ${batchId}):`,
+          res.error
+        );
+      }
+    }
+
     return NextResponse.json({
       success: failures.length === 0,
       batch_id: batchId,
+      target_field: targetField,
       updated_count: updatedCount,
       created_count: createdCount,
       denied_count: deniedIds.length,
       denied_ids: deniedIds.length > 0 ? deniedIds : undefined,
       failure_count: failures.length,
       failures: failures.length > 0 ? failures : undefined,
+      recalc_failures: recalcFailures,
     });
   } catch (error) {
     return apiGuardErrorResponse(error);

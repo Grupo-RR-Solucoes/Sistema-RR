@@ -205,14 +205,30 @@ export default function EditarComissoesPage() {
       }
 
       setRows(
-        (data?.rows || []).map((row) => ({
-          ...row,
-          promoter_commission_percent_input:
-            row.promoter_commission_percent ?? "",
-          insurance_commission_percent_input:
-            row.insurance_commission_percent ?? "",
-          notes_input: row.manual_notes ?? "",
-        }))
+        (data?.rows || []).map((row) => {
+          // Dia 4.5 Etapa B: input "% Promotor" agora edita
+          // share_percent_override. UI sempre em escala 0..100 (user
+          // digita "66.66"); DB armazena 0..1 (saveRow converte). Valor
+          // inicial: override existente OU effective resolvido pela
+          // cascata, ambos × 100.
+          const initialShare =
+            row.share_percent_override != null
+              ? Number(row.share_percent_override) * 100
+              : row.share_percent_effective != null
+                ? Number(row.share_percent_effective) * 100
+                : "";
+          return {
+            ...row,
+            // Mantido para compat com handler legado de % Seguro etc.
+            promoter_commission_percent_input:
+              row.promoter_commission_percent ?? "",
+            insurance_commission_percent_input:
+              row.insurance_commission_percent ?? "",
+            notes_input: row.manual_notes ?? "",
+            // Novo input editavel da Etapa B (alvo da cascata).
+            share_percent_input: initialShare,
+          };
+        })
       );
     } catch (err) {
       setError(err.message || "Erro ao carregar propostas.");
@@ -240,6 +256,16 @@ export default function EditarComissoesPage() {
       setError("");
       setMessage("");
 
+      // Dia 4.5 Etapa B: input editavel agora alimenta
+      // share_percent_override (escala 0..1 no DB; converte ÷100).
+      // Mantemos envio de insurance_commission_percent + notes para
+      // back-compat (POST upsert agora preserva campos nao enviados).
+      const shareInput = row.share_percent_input;
+      const sharePercentOverride =
+        shareInput === "" || shareInput === null || shareInput === undefined
+          ? null
+          : Number(shareInput) / 100;
+
       const response = await fetch("/api/commissions/proposals", {
         method: "POST",
         headers: {
@@ -248,10 +274,7 @@ export default function EditarComissoesPage() {
         body: JSON.stringify({
           dailyProductionRecordId: row.id,
           promoterId: row.assigned_promoter_id,
-          commissionPercent:
-            row.promoter_commission_percent_input === ""
-              ? null
-              : Number(row.promoter_commission_percent_input),
+          sharePercentOverride,
           insuranceCommissionPercent:
             row.insurance_commission_percent_input === ""
               ? null
@@ -868,40 +891,67 @@ export default function EditarComissoesPage() {
                         )}
                       </td>
                       <td style={styles.td}>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={row.promoter_commission_percent_input}
-                          onChange={(e) =>
-                            updateRowValue(
-                              row.id,
-                              "promoter_commission_percent_input",
-                              e.target.value
-                            )
-                          }
-                          style={styles.smallInput}
-                          aria-label="% Promotor (editavel)"
-                        />
+                        {/* Dia 4.5 Etapa B: input editavel agora alimenta
+                            share_percent_override (escala 0..100 na UI,
+                            0..1 no DB). Badge mostra a fonte do valor
+                            (override / profile / default) quando nao ha
+                            override pendente do usuario. */}
+                        <div style={styles.shareInputCell}>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={row.share_percent_input}
+                            onChange={(e) =>
+                              updateRowValue(
+                                row.id,
+                                "share_percent_input",
+                                e.target.value
+                              )
+                            }
+                            style={styles.smallInput}
+                            aria-label="% Promotor (editavel)"
+                          />
+                          {(() => {
+                            const badge = badgeForShareSource(
+                              row.share_percent_source,
+                              row.share_percent_override
+                            );
+                            return badge ? (
+                              <span style={badge.style} title={badge.title}>
+                                {badge.label}
+                              </span>
+                            ) : null;
+                          })()}
+                        </div>
                       </td>
                       <td style={styles.td}>
-                        {/* 4.4-fix-1.E D4: COMISSAO PROMOTOR com cascata
-                            viva: enquanto o usuario digita no input
-                            editavel, recalcula em runtime. Quando o input
-                            esta vazio, cai no valor persistido (promoter_share_amount). */}
+                        {/* Cascata viva (Etapa B): COMISSAO PROMOTOR
+                            recalcula enquanto digita. Formula:
+                            net_value × min(a_vista, 5.8) / 100 × sharePct.
+                            Quando o input fica vazio, mostra o valor
+                            persistido (promoter_share_amount do GET). */}
                         {(() => {
-                          const draft = row.promoter_commission_percent_input;
-                          const baseAmount = Number(
-                            row.promoter_commission_amount ?? 0
+                          const draft = row.share_percent_input;
+                          const netValue = Number(row.net_value ?? 0);
+                          const aVista = Number(row.a_vista_percent ?? 0);
+                          const aVistaClamped = Math.min(
+                            Math.max(aVista, 0),
+                            5.8
                           );
+                          const comissaoPF =
+                            (netValue * aVistaClamped) / 100;
                           if (
                             draft !== "" &&
                             draft !== null &&
                             draft !== undefined
                           ) {
                             const draftNum = Number(draft);
-                            if (Number.isFinite(draftNum) && baseAmount > 0) {
+                            if (
+                              Number.isFinite(draftNum) &&
+                              comissaoPF > 0
+                            ) {
                               return formatCurrency(
-                                (baseAmount * draftNum) / 100
+                                (comissaoPF * draftNum) / 100
                               );
                             }
                           }
@@ -987,6 +1037,107 @@ function formatPercentSuffix(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "-";
   return `${n.toFixed(2).replace(".", ",")}%`;
+}
+
+// Dia 4.5 Etapa B: badge para a coluna "% Promotor" indicando a
+// fonte do valor (override manual, perfil, default). Retorna null
+// quando o estado e "default sem destaque" — UX mais limpa para o
+// caso comum.
+function badgeForShareSource(source, override) {
+  const baseStyle = {
+    display: "inline-block",
+    padding: "2px 8px",
+    borderRadius: "999px",
+    fontSize: "10px",
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    marginLeft: "6px",
+    whiteSpace: "nowrap",
+  };
+
+  // Override por proposta (manual) tem precedencia visual.
+  if (
+    override !== null &&
+    override !== undefined &&
+    String(override) !== ""
+  ) {
+    return {
+      label: "Manual",
+      title: "Override por proposta (sobrescreve perfil)",
+      style: {
+        ...baseStyle,
+        background: "rgba(13,77,227,0.12)",
+        color: "#0d4de3",
+        border: "1px solid rgba(13,77,227,0.30)",
+      },
+    };
+  }
+
+  const src = String(source || "");
+  if (src === "OVERRIDE_PROPOSTA") {
+    return {
+      label: "Manual",
+      title: "Override por proposta",
+      style: {
+        ...baseStyle,
+        background: "rgba(13,77,227,0.12)",
+        color: "#0d4de3",
+        border: "1px solid rgba(13,77,227,0.30)",
+      },
+    };
+  }
+  if (src === "PROFILE_CLT_FIXO") {
+    return {
+      label: "CLT",
+      title: "Perfil CLT_FIXO (% fixo de funcionario registrado)",
+      style: {
+        ...baseStyle,
+        background: "rgba(40,140,80,0.14)",
+        color: "#185a36",
+        border: "1px solid rgba(40,140,80,0.30)",
+      },
+    };
+  }
+  if (src === "PROFILE_ACORDO_FIXO") {
+    return {
+      label: "Acordo fixo",
+      title: "Perfil ACORDO_FIXO (% comercial fixo)",
+      style: {
+        ...baseStyle,
+        background: "rgba(40,140,80,0.14)",
+        color: "#185a36",
+        border: "1px solid rgba(40,140,80,0.30)",
+      },
+    };
+  }
+  if (src.startsWith("PROFILE_ENTRANTE_")) {
+    return {
+      label: "Entrante",
+      title: `Perfil entrante (escala por volume mensal): ${src}`,
+      style: {
+        ...baseStyle,
+        background: "rgba(214,140,30,0.14)",
+        color: "#8a4a17",
+        border: "1px solid rgba(214,140,30,0.32)",
+      },
+    };
+  }
+  if (src.startsWith("PROFILE_VARIAVEL")) {
+    return {
+      label: "Variavel",
+      title: "Acordo variavel — sem override -> fallback default 58,33%",
+      style: {
+        ...baseStyle,
+        background: "rgba(214,180,40,0.18)",
+        color: "#735b00",
+        border: "1px solid rgba(214,180,40,0.38)",
+      },
+    };
+  }
+  // PROFILE_DEFAULT, DEFAULT_FALLBACK, DEFAULT_NO_PROFILE: sem badge
+  // (caso comum — visual mais limpo).
+  return null;
 }
 
 // 4.4-fix-1.C: badge da coluna RESTRICAO SRCC.
@@ -1211,6 +1362,12 @@ const styles = {
     display: "inline-flex",
     alignItems: "center",
     gap: "2px",
+  },
+  shareInputCell: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    whiteSpace: "nowrap",
   },
   thCheckbox: {
     fontSize: "12px",

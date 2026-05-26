@@ -21,6 +21,52 @@ export type ProposalRecord = {
   company_received_percent?: number | null;
 };
 
+// ============================================================
+// Dia 4.5 Etapa B — Cascata de % repasse do promotor
+// ============================================================
+//
+// Tipos compartilhados para a resolucao do % repasse a partir do
+// perfil cadastrado + escalas + volume mensal + override por
+// proposta. Convencao de escala: share_percent_* em DECIMAL (0..1).
+// 0.5833 = 58,33% (padrao da casa); 1.0 = 100% (Juliana socia).
+
+export type SharePromoterProfile = {
+  promoter_id: string;
+  profile_type:
+    | "DEFAULT"
+    | "CLT_FIXO"
+    | "ACORDO_FIXO"
+    | "ENTRANTE_PADRAO"
+    | "ENTRANTE_CUSTOM"
+    | "ACORDO_VARIAVEL";
+  fixed_percent: number | null;
+  scale_id: string | null;
+};
+
+export type ShareScaleTier = {
+  volume_min: number;
+  volume_max: number | null;
+  share_percent: number;
+};
+
+export type ShareScaleWithTiers = {
+  id: string;
+  scale_code: string;
+  scale_kind: "CREDIT" | "INSURANCE";
+  tiers: ShareScaleTier[];
+};
+
+export type ShareResolution = {
+  sharePercent: number; // 0..1 decimal
+  source: string;
+};
+
+// Default operacional RR (58,33% sobre % A VISTA) — replica
+// DEFAULT_PROMOTER_SHARE_PERCENT da cascata legada em
+// /api/calculate/monthly. Usado como fallback em todos os nos da
+// arvore que nao encontram outra regra.
+const DEFAULT_SHARE = 0.5833;
+
 function normalizeText(value: unknown) {
   return String(value ?? "")
     .normalize("NFD")
@@ -256,4 +302,450 @@ export function computePromoterInsuranceAmount(
     return null;
   }
   return (baseNum * percentNum) / 100;
+}
+
+// ============================================================
+// Dia 4.5 Etapa B — Helpers da cascata de share_percent
+// ============================================================
+
+/**
+ * Encontra o tier que cobre o valor passado dentro de uma escala
+ * ja pre-carregada. Sync. Retorna null se valor cai fora do range
+ * de todos os tiers (incluindo o caso de estar abaixo do volume_min
+ * do primeiro tier).
+ *
+ * Para escalas CREDIT, `value` eh volume em R$ (ex: 87000).
+ * Para escalas INSURANCE, `value` eh % penetracao em decimal
+ * (ex: 0.27 = 27%).
+ */
+export function findScaleTier(
+  scale: ShareScaleWithTiers | undefined,
+  value: number
+): ShareScaleTier | null {
+  if (!scale) return null;
+  for (const tier of scale.tiers) {
+    const min = Number(tier.volume_min);
+    const max = tier.volume_max == null ? Infinity : Number(tier.volume_max);
+    if (value >= min && value <= max) return tier;
+  }
+  return null;
+}
+
+/**
+ * Resolve o % de repasse para um record especifico aplicando a
+ * cascata da Etapa B sobre maps pre-carregados. Sincrono — todas
+ * as dependencias (profilesMap, scalesMap, monthlyVolumesMap) devem
+ * estar ja em memoria. Use fetchPromoterShareData() para popular
+ * as 3 maps de uma so vez.
+ *
+ * Cascata (em ordem):
+ *   1. share_percent_override (proposal_commissions) — vence tudo
+ *   2. profile CLT_FIXO | ACORDO_FIXO -> fixed_percent
+ *   3. profile ENTRANTE_* -> tier da escala por volume mensal
+ *   4. profile ACORDO_VARIAVEL sem override -> DEFAULT 58,33%
+ *   5. profile DEFAULT (catch-all, inclui chaves master) -> 58,33%
+ *
+ * Retorna sempre {sharePercent: number, source: string}; source
+ * descreve qual no da cascata definiu o valor (alimenta badge na UI).
+ */
+export function resolvePromoterShareSync(args: {
+  record: {
+    assigned_promoter_id: string | null;
+    share_percent_override?: number | null;
+  };
+  profilesMap: Map<string, SharePromoterProfile>;
+  scalesMap: Map<string, ShareScaleWithTiers>;
+  monthlyVolumesMap: Map<string, number>;
+}): ShareResolution {
+  const { record, profilesMap, scalesMap, monthlyVolumesMap } = args;
+  const promoterId = record.assigned_promoter_id;
+
+  if (!promoterId) {
+    return { sharePercent: DEFAULT_SHARE, source: "DEFAULT_FALLBACK" };
+  }
+
+  // Nivel 1: override por proposta vence tudo.
+  if (
+    record.share_percent_override !== null &&
+    record.share_percent_override !== undefined
+  ) {
+    const ov = Number(record.share_percent_override);
+    if (Number.isFinite(ov)) {
+      return { sharePercent: ov, source: "OVERRIDE_PROPOSTA" };
+    }
+  }
+
+  const profile = profilesMap.get(promoterId);
+  if (!profile) {
+    return { sharePercent: DEFAULT_SHARE, source: "DEFAULT_NO_PROFILE" };
+  }
+
+  // Nivel 2: % fixo (CLT ou ACORDO_FIXO).
+  if (
+    profile.profile_type === "CLT_FIXO" ||
+    profile.profile_type === "ACORDO_FIXO"
+  ) {
+    const fixed = Number(profile.fixed_percent);
+    if (Number.isFinite(fixed)) {
+      return { sharePercent: fixed, source: `PROFILE_${profile.profile_type}` };
+    }
+    return { sharePercent: DEFAULT_SHARE, source: "PROFILE_FIXED_INVALID" };
+  }
+
+  // Nivel 3: escala por volume mensal (ENTRANTE_*).
+  if (
+    profile.profile_type === "ENTRANTE_PADRAO" ||
+    profile.profile_type === "ENTRANTE_CUSTOM"
+  ) {
+    if (!profile.scale_id) {
+      return {
+        sharePercent: 0,
+        source: `PROFILE_${profile.profile_type}_NO_SCALE`,
+      };
+    }
+    const scale = scalesMap.get(profile.scale_id);
+    const volume = monthlyVolumesMap.get(promoterId) ?? 0;
+    const tier = findScaleTier(scale, volume);
+    if (tier) {
+      const volumeK = Math.floor(volume / 1000);
+      return {
+        sharePercent: Number(tier.share_percent),
+        source: `PROFILE_${profile.profile_type}_VOL_${volumeK}K`,
+      };
+    }
+    return {
+      sharePercent: 0,
+      source: `PROFILE_${profile.profile_type}_BELOW_MIN`,
+    };
+  }
+
+  // Nivel 4: ACORDO_VARIAVEL sem override -> DEFAULT.
+  if (profile.profile_type === "ACORDO_VARIAVEL") {
+    return { sharePercent: DEFAULT_SHARE, source: "PROFILE_VARIAVEL_FALLBACK" };
+  }
+
+  // Nivel 5: DEFAULT (catch-all, inclui as 4 chaves master).
+  return { sharePercent: DEFAULT_SHARE, source: "PROFILE_DEFAULT" };
+}
+
+/**
+ * Busca o volume mensal total (sum de net_value) de um promotor
+ * em (year, month). Usado por recalculateSingleProposal quando nao
+ * temos o batch carregado.
+ */
+export async function getPromoterMonthlyVolume(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  promoterId: string,
+  year: number,
+  month: number
+): Promise<number> {
+  const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+  const endDate =
+    month === 12
+      ? `${year + 1}-01-01`
+      : `${year}-${String(month + 1).padStart(2, "0")}-01`;
+
+  const { data, error } = await supabase
+    .from("daily_production_records")
+    .select("net_value")
+    .eq("assigned_promoter_id", promoterId)
+    .gte("movement_date", startDate)
+    .lt("movement_date", endDate);
+
+  if (error || !data) return 0;
+  let total = 0;
+  for (const row of data) {
+    total += Number((row as { net_value?: number | null }).net_value ?? 0);
+  }
+  return total;
+}
+
+/**
+ * Lookup async de um tier especifico (1 escala + 1 valor). Wrapper
+ * de findScaleTier que faz a query do banco antes. Util para
+ * recalculateSingleProposal sem ter que carregar tudo em batch.
+ */
+export async function lookupScaleTier(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  scaleId: string,
+  value: number
+): Promise<number | null> {
+  const { data } = await supabase
+    .from("share_scale_tier")
+    .select("share_percent, volume_min, volume_max")
+    .eq("scale_id", scaleId)
+    .lte("volume_min", value)
+    .order("volume_min", { ascending: false })
+    .limit(1);
+  if (!data || data.length === 0) return null;
+  const tier = data[0] as {
+    share_percent: number;
+    volume_min: number;
+    volume_max: number | null;
+  };
+  if (tier.volume_max !== null && value > Number(tier.volume_max)) {
+    return null;
+  }
+  return Number(tier.share_percent);
+}
+
+/**
+ * Carrega em BATCH (3 queries) todos os dados necessarios para
+ * resolver share_percent de um conjunto de promotores num (year,
+ * month). Retorna 3 maps prontos para consumo por
+ * resolvePromoterShareSync.
+ */
+export async function fetchPromoterShareData(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  promoterIds: string[],
+  year: number,
+  month: number
+): Promise<{
+  profilesMap: Map<string, SharePromoterProfile>;
+  scalesMap: Map<string, ShareScaleWithTiers>;
+  monthlyVolumesMap: Map<string, number>;
+}> {
+  const profilesMap = new Map<string, SharePromoterProfile>();
+  const scalesMap = new Map<string, ShareScaleWithTiers>();
+  const monthlyVolumesMap = new Map<string, number>();
+
+  if (promoterIds.length === 0) {
+    return { profilesMap, scalesMap, monthlyVolumesMap };
+  }
+
+  // 1. Profiles dos promoters relevantes.
+  const { data: profiles } = await supabase
+    .from("promoter_share_profile")
+    .select("promoter_id, profile_type, fixed_percent, scale_id")
+    .in("promoter_id", promoterIds);
+
+  const profileRows = (profiles ?? []) as SharePromoterProfile[];
+  const scaleIdsNeeded = new Set<string>();
+  for (const p of profileRows) {
+    profilesMap.set(p.promoter_id, p);
+    if (p.scale_id) scaleIdsNeeded.add(p.scale_id);
+  }
+
+  // 2. Escalas + tiers (apenas as referenciadas por algum perfil).
+  if (scaleIdsNeeded.size > 0) {
+    const scaleIds = Array.from(scaleIdsNeeded);
+    const [scalesRes, tiersRes] = await Promise.all([
+      supabase
+        .from("share_scale")
+        .select("id, scale_code, scale_kind")
+        .in("id", scaleIds),
+      supabase
+        .from("share_scale_tier")
+        .select("scale_id, volume_min, volume_max, share_percent")
+        .in("scale_id", scaleIds)
+        .order("volume_min", { ascending: true }),
+    ]);
+
+    const scalesById = new Map<
+      string,
+      { id: string; scale_code: string; scale_kind: "CREDIT" | "INSURANCE" }
+    >();
+    for (const s of scalesRes.data ?? []) {
+      scalesById.set(
+        (s as { id: string }).id,
+        s as { id: string; scale_code: string; scale_kind: "CREDIT" | "INSURANCE" }
+      );
+    }
+
+    const tiersByScale = new Map<string, ShareScaleTier[]>();
+    for (const t of tiersRes.data ?? []) {
+      const row = t as {
+        scale_id: string;
+        volume_min: number;
+        volume_max: number | null;
+        share_percent: number;
+      };
+      if (!tiersByScale.has(row.scale_id)) tiersByScale.set(row.scale_id, []);
+      tiersByScale.get(row.scale_id)!.push({
+        volume_min: Number(row.volume_min),
+        volume_max: row.volume_max == null ? null : Number(row.volume_max),
+        share_percent: Number(row.share_percent),
+      });
+    }
+
+    for (const [id, scale] of scalesById) {
+      scalesMap.set(id, {
+        id: scale.id,
+        scale_code: scale.scale_code,
+        scale_kind: scale.scale_kind,
+        tiers: tiersByScale.get(id) ?? [],
+      });
+    }
+  }
+
+  // 3. Volume mensal por promotor (1 aggregation query).
+  const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+  const endDate =
+    month === 12
+      ? `${year + 1}-01-01`
+      : `${year}-${String(month + 1).padStart(2, "0")}-01`;
+
+  const { data: volumeRows } = await supabase
+    .from("daily_production_records")
+    .select("assigned_promoter_id, net_value")
+    .in("assigned_promoter_id", promoterIds)
+    .gte("movement_date", startDate)
+    .lt("movement_date", endDate);
+
+  for (const row of volumeRows ?? []) {
+    const r = row as {
+      assigned_promoter_id: string | null;
+      net_value: number | null;
+    };
+    if (!r.assigned_promoter_id) continue;
+    const prev = monthlyVolumesMap.get(r.assigned_promoter_id) ?? 0;
+    monthlyVolumesMap.set(r.assigned_promoter_id, prev + Number(r.net_value ?? 0));
+  }
+
+  return { profilesMap, scalesMap, monthlyVolumesMap };
+}
+
+/**
+ * Calcula COMISSAO PROMOTOR (BRL) a partir de net_value, a_vista_percent
+ * (Promotiva pura, 0..100) e sharePercent (0..1). Aplica teto 5,80% sobre
+ * a_vista_percent ANTES de multiplicar (limite operacional RR: Promotiva
+ * paga ate 6%, RR limita visao do promotor a 5,80%, spread fica empresa).
+ *
+ * Formula: net_value × min(a_vista, 5.8) / 100 × sharePercent
+ *
+ * Retorna 0 se algum input for invalido.
+ */
+export function computeComissaoPromotor(
+  netValue: number | null | undefined,
+  aVistaPercent: number | null | undefined,
+  sharePercent: number | null | undefined
+): number {
+  const nv = Number(netValue ?? 0);
+  const av = Number(aVistaPercent ?? 0);
+  const sp = Number(sharePercent ?? 0);
+  if (!Number.isFinite(nv) || !Number.isFinite(av) || !Number.isFinite(sp)) {
+    return 0;
+  }
+  const aVistaClamped = Math.min(Math.max(av, 0), 5.8);
+  const comissaoPF = (nv * aVistaClamped) / 100;
+  return comissaoPF * sp;
+}
+
+/**
+ * Dia 4.5 Etapa B — Recalculo localizado de uma proposta.
+ *
+ * Apos mutacao em proposal_commissions (POST upsert / DELETE / bulk),
+ * recalcula promoter_commission_amount + promoter_commission_percent
+ * em daily_production_records usando a cascata nova de share_percent.
+ *
+ * Atualiza:
+ *   promoter_commission_amount  = computeComissaoPromotor(...)
+ *   promoter_commission_percent = aVistaClamped × sharePercent
+ *                                 (% efetivo final, escala 0..100)
+ *   commission_rule_source       = `DIA45_${source}`
+ *
+ * Fail-safe: erros sao retornados (nao throw), permitindo o caller
+ * decidir se aborta ou apenas loga (idem padrao audit_logs).
+ *
+ * TODO Disc.29: quando endpoint de reatribuicao (PATCH
+ * daily_production_records.assigned_promoter_id) for criado, chamar
+ * esta funcao automaticamente apos cada UPDATE de assigned_promoter_id,
+ * para que a cascata pegue o profile do novo promotor (ex: master ->
+ * Luciana -> 66,66%).
+ */
+export async function recalculateSingleProposal(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  recordId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const { data: record, error: fetchErr } = await supabase
+      .from("daily_production_records")
+      .select(
+        "id, assigned_promoter_id, net_value, raw_payload, movement_date, company_id"
+      )
+      .eq("id", recordId)
+      .maybeSingle();
+
+    if (fetchErr || !record) {
+      return { ok: false, error: fetchErr?.message ?? "record nao encontrado" };
+    }
+
+    const promoterId = (record as { assigned_promoter_id: string | null })
+      .assigned_promoter_id;
+    if (!promoterId) {
+      return { ok: false, error: "record sem assigned_promoter_id" };
+    }
+
+    const movementDate = String(
+      (record as { movement_date: string | null }).movement_date ?? ""
+    );
+    const m = movementDate.match(/^(\d{4})-(\d{2})-/);
+    if (!m) {
+      return { ok: false, error: "movement_date invalido" };
+    }
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+
+    // Override atual em proposal_commissions (se houver).
+    const { data: manual } = await supabase
+      .from("promoter_proposal_commissions")
+      .select("share_percent_override, active")
+      .eq("daily_production_record_id", recordId)
+      .maybeSingle();
+
+    const overrideValue =
+      manual?.active !== false ? manual?.share_percent_override ?? null : null;
+
+    // Pre-carrega dados de cascata para 1 promoter no mes.
+    const { profilesMap, scalesMap, monthlyVolumesMap } =
+      await fetchPromoterShareData(supabase, [promoterId], year, month);
+
+    const resolution = resolvePromoterShareSync({
+      record: {
+        assigned_promoter_id: promoterId,
+        share_percent_override: overrideValue,
+      },
+      profilesMap,
+      scalesMap,
+      monthlyVolumesMap,
+    });
+
+    const aVista = getAVistaPercent(
+      record as { raw_payload: Record<string, unknown> | null }
+    );
+    const aVistaClamped = Math.min(Math.max(Number(aVista ?? 0), 0), 5.8);
+    const netValue = Number(
+      (record as { net_value: number | null }).net_value ?? 0
+    );
+    const comissaoPromotor = computeComissaoPromotor(
+      netValue,
+      aVista,
+      resolution.sharePercent
+    );
+    const effectiveFinalPercent = aVistaClamped * resolution.sharePercent;
+
+    const { error: updErr } = await supabase
+      .from("daily_production_records")
+      .update({
+        promoter_commission_amount: comissaoPromotor,
+        promoter_commission_percent: effectiveFinalPercent,
+        commission_rule_source: `DIA45_${resolution.source}`,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", recordId);
+
+    if (updErr) {
+      return { ok: false, error: updErr.message };
+    }
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "erro inesperado",
+    };
+  }
 }
