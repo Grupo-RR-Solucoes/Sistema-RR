@@ -246,14 +246,21 @@ const A_VISTA_ALIASES = [
 ];
 
 export function getAVistaPercent(record: ProposalRecord): number | null {
-  if (!record?.raw_payload) return null;
+  // 1) Fluxo legado/Promotiva direto: tenta raw_payload via 12 aliases.
+  //    Mantido como fonte PRIMARIA por back-compat com importacoes
+  //    antigas que vinham com a chave dentro do JSON original.
+  if (record?.raw_payload) {
+    const raw = readRawPayloadValue(record.raw_payload, A_VISTA_ALIASES);
 
-  const raw = readRawPayloadValue(record.raw_payload, A_VISTA_ALIASES);
-
-  if (raw === null || raw === undefined || raw === "") {
-    // Fallback dev: lista as chaves do payload (1a vez por sessao
-    // bastaria; aqui logamos sempre que falhar — barato e ajuda).
-    if (
+    if (raw !== null && raw !== undefined && raw !== "") {
+      const num = Number(raw);
+      if (Number.isFinite(num)) {
+        // Heuristica de escala: decimais entram em 0..1, percentuais ja em 0..100.
+        return num <= 1 ? num * 100 : num;
+      }
+    } else if (
+      // Fallback dev: lista as chaves do payload (1a vez por sessao
+      // bastaria; aqui logamos sempre que falhar — barato e ajuda).
       typeof record.raw_payload === "object" &&
       record.raw_payload !== null &&
       typeof process !== "undefined" &&
@@ -268,13 +275,21 @@ export function getAVistaPercent(record: ProposalRecord): number | null {
         );
       }
     }
-    return null;
   }
 
-  const num = Number(raw);
-  if (!Number.isFinite(num)) return null;
-  // Heuristica de escala: decimais entram em 0..1, percentuais ja em 0..100.
-  return num <= 1 ? num * 100 : num;
+  // 2) FIX-1.D: fluxo importador real — coluna estruturada
+  //    company_received_percent. Sem isso, recalculateSingleProposal e
+  //    o GET /api/commissions/proposals retornavam null aqui, levando
+  //    computeComissaoPromotor a 0 e a coluna COMISSAO PROMOTOR em
+  //    /comissoes/editar exibir R$ 0,00 em todas as linhas.
+  if (record?.company_received_percent != null) {
+    const num = Number(record.company_received_percent);
+    if (Number.isFinite(num)) {
+      return num <= 1 ? num * 100 : num;
+    }
+  }
+
+  return null;
 }
 
 /**
