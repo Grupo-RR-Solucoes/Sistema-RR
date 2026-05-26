@@ -998,10 +998,18 @@ export async function POST(req: Request) {
 
         // NULL_COMPANY_PERCENT: mantem amount=NULL para sinalizar dado
         // faltando, em vez de gravar 0 (que somaria como producao real).
+        //
+        // FIX-1.C: divisao explicita por 100 em vez de calculatePercentValue.
+        // Aquele helper usa toPercentRate (heuristica `Math.abs > 1 ? /100
+        // : as-is`) que falha para % final < 1 (ex: Lilian CLT 16,66% *
+        // 2,44% a_vista = 0,4065%). A heuristica nao consegue distinguir
+        // 0,4065% (percent) de 0.4065 (rate ja em 0..1), e tratava o pct
+        // como rate, gerando amount ~100x maior. 141/500 propostas de
+        // abr/2026 quebraram exatamente nessa armadilha.
         const promoterCommissionAmount: number | null =
           commissionPercent === null
             ? null
-            : calculatePercentValue(productionBase, commissionPercent);
+            : (productionBase * commissionPercent) / 100;
 
         const insuranceCommissionAmount = calculatePercentValue(
           insuranceBase,
@@ -1023,10 +1031,17 @@ export async function POST(req: Request) {
           }
         }
 
+        // FIX-1.C: source agora reflete somente a cascata de producao.
+        // insuranceRuleSource era concatenado mesmo quando == "MONTHLY_DEFAULT"
+        // (default sem regra), poluindo o source com sufixo '+MONTHLY_DEFAULT'.
+        // Insurance tem seus campos proprios (insurance_commission_percent/
+        // amount); so adicionamos sufixo quando a regra de seguro for
+        // explicita (MANUAL_PROPOSAL / PRODUCT_RULE / PROMOTER_AGREEMENT).
         const commissionRuleSource =
-          productionRuleSource === insuranceRuleSource
-            ? productionRuleSource
-            : `${productionRuleSource}+${insuranceRuleSource}`;
+          insuranceRuleSource !== "MONTHLY_DEFAULT" &&
+          insuranceRuleSource !== productionRuleSource
+            ? `${productionRuleSource}+${insuranceRuleSource}`
+            : productionRuleSource;
 
         productionCommissionValue += promoterCommissionAmount ?? 0;
         insuranceCommissionValue += insuranceCommissionAmount;
