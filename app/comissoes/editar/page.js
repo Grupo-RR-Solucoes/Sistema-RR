@@ -626,19 +626,14 @@ export default function EditarComissoesPage() {
 
         <div
           className={`rr-table-wrap${filteredRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
-          style={{
-            ...styles.tableWrap,
-            // FIX-1.D.6 (scroll): sempre permite scroll vertical com
-            // teto consistente. Antes so aplicava maxHeight para >15
-            // rows e sem overflowY explicito; combinado com
-            // tableCard.overflow:hidden (parent), poucas rows ficavam
-            // cortadas em ~3 linhas visiveis sem barra de scroll.
-            maxHeight: "calc(100vh - 460px)",
-            overflowY: "auto",
-          }}
+          style={styles.tableWrap}
         >
           <table style={styles.table}>
-            <thead>
+            {/* FIX-1.D.9: thead sticky no topo do viewport (gruda quando
+                a pagina rola). styles.th / styles.thCheckbox precisam de
+                background opaco para que linhas do tbody nao apareçam
+                por tras. */}
+            <thead style={styles.theadSticky}>
               <tr>
                 <th style={styles.thCheckbox}>
                   <input
@@ -945,7 +940,8 @@ export default function EditarComissoesPage() {
                           {(() => {
                             const badge = badgeForShareSource(
                               row.share_percent_source,
-                              row.share_percent_override
+                              row.share_percent_override,
+                              row.company_received_percent
                             );
                             return badge ? (
                               <span style={badge.style} title={badge.title}>
@@ -1082,7 +1078,7 @@ function formatPercentSuffix(value) {
 // fonte do valor (override manual, perfil, default). Retorna null
 // quando o estado e "default sem destaque" — UX mais limpa para o
 // caso comum.
-function badgeForShareSource(source, override) {
+function badgeForShareSource(source, override, companyReceivedPercent) {
   const baseStyle = {
     display: "inline-block",
     padding: "2px 8px",
@@ -1094,6 +1090,30 @@ function badgeForShareSource(source, override) {
     marginLeft: "6px",
     whiteSpace: "nowrap",
   };
+
+  // FIX-1.E.3: proposta com Status=Producao mas sem regra TRP vigente
+  // (taxa/prazo fora das faixas Promotiva). Promotor vendeu mas
+  // Promotiva nao comissiona. Candidata a auditoria recuperatoria.
+  // Tem precedencia sobre badges de perfil/override porque sinaliza
+  // que o calculo de share nao se aplica (nao ha base PF).
+  if (
+    companyReceivedPercent === null ||
+    companyReceivedPercent === undefined ||
+    Number(companyReceivedPercent) === 0
+  ) {
+    return {
+      label: "SEM REGRA TRP",
+      title:
+        "Promotiva nao comissionou esta proposta (taxa/prazo fora das " +
+        "faixas TRP vigente). Candidata a auditoria mensal.",
+      style: {
+        ...baseStyle,
+        background: "#FEE2E2",
+        color: "#991B1B",
+        border: "1px solid rgba(153,27,27,0.30)",
+      },
+    };
+  }
 
   // Override por proposta (manual) tem precedencia visual.
   if (
@@ -1386,16 +1406,24 @@ const styles = {
     borderSpacing: 0,
     minWidth: "2350px",
   },
+  // FIX-1.D.9: thead sticky no topo do viewport durante scroll da pagina.
+  // Combinado com background opaco nos <th>, fica visivel acima do tbody.
+  theadSticky: {
+    position: "sticky",
+    top: 0,
+    zIndex: 10,
+  },
   th: {
     fontSize: "12px",
     textTransform: "uppercase",
     letterSpacing: "0.12em",
     color: "var(--rr-blue)",
     textAlign: "left",
-    padding: "0 12px 14px 0",
+    padding: "12px 12px 14px 0",
     borderBottom: "1px solid var(--rr-line)",
     whiteSpace: "nowrap",
     fontWeight: 800,
+    background: "#fff",
   },
   thContent: {
     display: "inline-flex",
@@ -1414,10 +1442,11 @@ const styles = {
     letterSpacing: "0.12em",
     color: "var(--rr-blue)",
     textAlign: "center",
-    padding: "0 8px 14px 0",
+    padding: "12px 8px 14px 0",
     borderBottom: "1px solid var(--rr-line)",
     width: "40px",
     minWidth: "40px",
+    background: "#fff",
   },
   tdCheckbox: {
     borderBottom: "1px solid rgba(13,77,227,0.08)",
