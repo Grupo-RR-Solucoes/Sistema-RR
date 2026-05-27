@@ -498,6 +498,53 @@ function buildEntriesForRow(
 // ate cancelamento manual via /api/import/closing/cancel).
 const IN_FLIGHT_WINDOW_MINUTES = 30;
 
+// FIX-1.E.6.PRE.E — bulk insert de monthly_closing_entries em chunks pra
+// evitar 'fetch failed' do undici quando o payload PostgREST passa do
+// limite de transacao/timeout. AL_1 abr/2026 (~6k rows) falhava sempre;
+// outros CNPJs (530-2770 rows) funcionavam num insert so.
+const ENTRIES_INSERT_CHUNK_SIZE = 500;
+
+// FIX-1.E.6.PRE.E.B — retry com backoff exponencial em chamadas Supabase
+// que sofrem erro transiente. Apenas erros de rede (fetch failed,
+// ETIMEDOUT, ECONNRESET) sao retentados; erros de validacao (constraint,
+// RLS, sintaxe) propagam imediatamente.
+async function supabaseRetry<T>(
+  fn: () => Promise<{ data: T | null; error: any }>,
+  maxRetries = 3
+): Promise<{ data: T | null; error: any }> {
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await fn();
+      if (!result.error) return result;
+      lastError = result.error;
+      if (!isTransientError(result.error) || attempt === maxRetries) {
+        return result;
+      }
+    } catch (err: any) {
+      lastError = err;
+      if (!isTransientError(err) || attempt === maxRetries) {
+        throw err;
+      }
+    }
+    const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+    console.log(`[import] retry ${attempt}/${maxRetries} apos ${delayMs}ms (erro: ${lastError?.message || lastError})`);
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return { data: null, error: lastError };
+}
+
+function isTransientError(err: any): boolean {
+  const message = String(err?.message || err || "");
+  return (
+    message.includes("fetch failed") ||
+    message.includes("ETIMEDOUT") ||
+    message.includes("ECONNRESET") ||
+    message.includes("ECONNREFUSED") ||
+    message.includes("EAI_AGAIN")
+  );
+}
+
 export class DuplicateImportInFlightError extends Error {
   readonly status = 409;
   readonly importId: string;
@@ -762,24 +809,54 @@ async function runImportPipeline(ctx: ImportContext) {
     Object.assign(closingTotals, resumoTotals);
   }
 
-  const { error: deleteEntriesError } = await supabaseAdmin
-    .from("monthly_closing_entries")
-    .delete()
-    .eq("company_id", company.id)
-    .eq("year", targetYear)
-    .eq("month", targetMonth);
+  const { error: deleteEntriesError } = await supabaseRetry(async () =>
+    supabaseAdmin
+      .from("monthly_closing_entries")
+      .delete()
+      .eq("company_id", company.id)
+      .eq("year", targetYear)
+      .eq("month", targetMonth)
+  );
 
   if (deleteEntriesError) {
     throw new Error(deleteEntriesError.message);
   }
 
+  // PRE.E.A — bulk insert em chunks. Cada chunk vai com retry de rede.
+  // PRE.E.C — atualiza error_message com progresso a cada chunk; Diego
+  // pode acompanhar via SELECT em monthly_closing_imports.
   if (rowsToInsert.length > 0) {
-    const { error: entriesError } = await supabaseAdmin
-      .from("monthly_closing_entries")
-      .insert(rowsToInsert);
+    let totalInserted = 0;
+    for (let i = 0; i < rowsToInsert.length; i += ENTRIES_INSERT_CHUNK_SIZE) {
+      const slice = rowsToInsert.slice(i, i + ENTRIES_INSERT_CHUNK_SIZE);
 
-    if (entriesError) {
-      throw new Error(entriesError.message);
+      const { error: chunkError } = await supabaseRetry(async () =>
+        supabaseAdmin.from("monthly_closing_entries").insert(slice)
+      );
+
+      if (chunkError) {
+        throw new Error(
+          `Falha ao inserir chunk ${i}-${i + slice.length} de ${rowsToInsert.length}: ${chunkError.message}`
+        );
+      }
+
+      totalInserted += slice.length;
+      console.log(
+        `[import ${importId}] chunk OK: ${totalInserted}/${rowsToInsert.length}`
+      );
+
+      // Progresso visivel ao usuario via tabela. Best-effort: erro aqui nao
+      // interrompe o import (so perde observabilidade).
+      try {
+        await supabaseAdmin
+          .from("monthly_closing_imports")
+          .update({
+            error_message: `PROGRESSO: ${totalInserted}/${rowsToInsert.length} entries inseridas`,
+          })
+          .eq("id", importId);
+      } catch {
+        // silencioso
+      }
     }
   }
 
@@ -799,38 +876,43 @@ async function runImportPipeline(ctx: ImportContext) {
     )
   );
 
-  const { error: closingError } = await supabaseAdmin
-    .from("fechamento_mensal_empresa")
-    .upsert(
-      {
-        empresa_cnpj: company.cnpj,
-        ano: targetYear,
-        mes: targetMonth,
-        valor_avista: closingTotals.valor_avista,
-        valor_diferido: closingTotals.valor_diferido,
-        valor_seguro: closingTotals.valor_seguro,
-        valor_estorno: closingTotals.valor_estorno,
-        valor_renovacao: closingTotals.valor_renovacao,
-        valor_liquido: valorLiquido,
-        operacoes: operationKeys.size,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        onConflict: "empresa_cnpj,ano,mes",
-      }
-    );
+  const { error: closingError } = await supabaseRetry(async () =>
+    supabaseAdmin
+      .from("fechamento_mensal_empresa")
+      .upsert(
+        {
+          empresa_cnpj: company.cnpj,
+          ano: targetYear,
+          mes: targetMonth,
+          valor_avista: closingTotals.valor_avista,
+          valor_diferido: closingTotals.valor_diferido,
+          valor_seguro: closingTotals.valor_seguro,
+          valor_estorno: closingTotals.valor_estorno,
+          valor_renovacao: closingTotals.valor_renovacao,
+          valor_liquido: valorLiquido,
+          operacoes: operationKeys.size,
+          updated_at: new Date().toISOString(),
+        },
+        {
+          onConflict: "empresa_cnpj,ano,mes",
+        }
+      )
+  );
 
   if (closingError) {
     throw new Error(closingError.message);
   }
 
-  const { error: finishError } = await supabaseAdmin
-    .from("monthly_closing_imports")
-    .update({
-      status: "COMPLETED",
-      finished_at: new Date().toISOString(),
-    })
-    .eq("id", importId);
+  const { error: finishError } = await supabaseRetry(async () =>
+    supabaseAdmin
+      .from("monthly_closing_imports")
+      .update({
+        status: "COMPLETED",
+        finished_at: new Date().toISOString(),
+        error_message: null,
+      })
+      .eq("id", importId)
+  );
 
   if (finishError) {
     throw new Error(finishError.message);
