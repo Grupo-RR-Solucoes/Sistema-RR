@@ -67,15 +67,6 @@ function parseSrccRestricted(value: unknown) {
   return false;
 }
 
-function firstPositiveNumber(values: unknown[]) {
-  for (const value of values) {
-    const parsed = parseNumber(value);
-    if (parsed > 0) return parsed;
-  }
-
-  return 0;
-}
-
 function parseDate(value: unknown) {
   if (!value) return null;
 
@@ -376,17 +367,22 @@ export async function POST(req: Request) {
           ])
         );
 
+        // FIX-1.E.6.B.2 — fonte canonica do valor de seguro passa a ser
+        // "Valor Liquido Seguro" (TRP35 §188 calcula sobre esse). Cascata
+        // antiga ("Valor Seguro Credito" > "Valor Liquido Seguro" > "Valor
+        // Seguro") deixou de fazer sentido apos Promotiva encerrar regime
+        // ESTOQUE em mar/2026.
         const insuranceValue = parseNumber(
-          getField(lookup, ["Valor Seguro", "Valor Seguro Crédito", "Seguro"])
+          getField(lookup, ["Valor Líquido Seguro", "Valor Liquido Seguro"])
         );
-        const effectiveInsuranceValue =
-          firstPositiveNumber([
-            getField(lookup, ["Valor Seguro Crédito", "Valor Seguro Credito"]),
-            getField(lookup, ["Valor Líquido Seguro", "Valor Liquido Seguro"]),
-            getField(lookup, ["Valor Seguro", "Seguro"]),
-          ]) || insuranceValue;
+        // Alias "Modalidade Seguro" mantido por nao quebrar nada quando a
+        // coluna nao existe; spec original lista so "Tipo Seguro".
         const insuranceType = getField(lookup, ["Tipo Seguro", "Modalidade Seguro"]);
-        const insuranceNumber = getField(lookup, ["Número Seguro", "Numero Seguro"]);
+        const insuranceSlipEligible = (() => {
+          const raw = getField(lookup, ["Apta Seguro Slip", "Apta Seguro SLIP"]);
+          if (raw === null || raw === undefined || raw === "") return null;
+          return normalizeText(raw) === "SIM";
+        })();
         const term = parseNumber(getField(lookup, ["Prazo", "Parcelas", "Prazo Total", "Termo"]));
         const interestRate = parseRate(
           getField(lookup, [
@@ -395,14 +391,6 @@ export async function POST(req: Request) {
             "Taxa Juros",
             "Taxa de Juros",
             "Taxa Contratada",
-          ])
-        );
-        const insuranceCommissionAmount = parseNumber(
-          getField(lookup, [
-            "Comissao Seguro",
-            "Comissão Seguro",
-            "Valor Comissao Seguro",
-            "Valor Comissão Seguro",
           ])
         );
 
@@ -454,18 +442,25 @@ export async function POST(req: Request) {
               "Valor Financiado Líquido",
             ])
           ),
-          insurance_value: effectiveInsuranceValue,
+          insurance_value: insuranceValue,
           insurance_net_value: parseNumber(
             getField(lookup, ["Valor Líquido Seguro", "Valor Liquido Seguro"])
           ),
           insurance_type: insuranceType,
-          has_insurance:
-            effectiveInsuranceValue > 0 || Boolean(insuranceNumber) || Boolean(insuranceType),
+          insurance_slip_eligible: insuranceSlipEligible,
+          // FIX-1.E.6.B.2: AND (em vez do OR antigo) + ignora "Numero
+          // Seguro" — proposta so conta com seguro se tem valor real E
+          // tipo declarado.
+          has_insurance: insuranceValue > 0 && Boolean(insuranceType),
           interest_rate: interestRate,
           term_months: term || null,
           installments: term || null,
           company_received_percent: companyReceivedPercent,
-          insurance_commission_amount: insuranceCommissionAmount,
+          // FIX-1.E.6.B.2: comissao do seguro nao vem mais do XLSX. Fica
+          // NULL aqui e e preenchida em /api/calculate/monthly via lookup
+          // em insurance_slip_rules (TRP35 §188).
+          insurance_commission_percent: null,
+          insurance_commission_amount: null,
           status: getField(lookup, ["Status"]),
           proposal_date: parseDate(getField(lookup, ["Data Proposta"])),
           movement_date: parseDate(getField(lookup, ["Data Movimento"])),
