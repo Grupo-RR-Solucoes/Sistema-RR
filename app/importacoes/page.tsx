@@ -72,6 +72,7 @@ export default function ImportacoesPage() {
   const [promoterRemunerationFile, setPromoterRemunerationFile] = useState<File | null>(null);
   const [promoterRemunerationSubmitting, setPromoterRemunerationSubmitting] =
     useState(false);
+  const [cancellingImportId, setCancellingImportId] = useState<string | null>(null);
   const [form, setForm] = useState({
     year: String(new Date().getFullYear()),
     month: String(new Date().getMonth() + 1),
@@ -228,6 +229,45 @@ export default function ImportacoesPage() {
       setError(err.message || "Erro ao importar base cadastral.");
     } finally {
       setSetupSubmitting(false);
+    }
+  }
+
+  async function handleCancelImport(row: MonthlyClosingImport) {
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Cancelar import travado de ${row.company_name} (${String(row.month).padStart(2, "0")}/${row.year})?\n\n` +
+          `Arquivo: ${row.file_name}\n` +
+          `Status: ${row.status || "PROCESSING"}\n\n` +
+          `Isso marca o registro como CANCELLED e remove entries parciais. Use depois de constatar travamento.`
+      );
+      if (!confirmed) return;
+    }
+
+    try {
+      setCancellingImportId(row.id);
+      setError("");
+      setNotice("");
+
+      const response = await fetch("/api/import/closing/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ importId: row.id }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Falha ao cancelar import.");
+      }
+
+      setNotice(
+        `Import ${row.id.slice(0, 8)} cancelado. Voce pode refazer o upload sem conflito.`
+      );
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || "Falha ao cancelar import.");
+    } finally {
+      setCancellingImportId(null);
     }
   }
 
@@ -687,17 +727,55 @@ export default function ImportacoesPage() {
                 actionHref="/fechamento"
               />
             ) : (
-              data.monthlyClosingImports.map((row) => (
-                <div key={row.id} style={styles.listItem}>
-                  <div>
-                    <div style={styles.itemTitle}>{row.company_name}</div>
-                    <div style={styles.itemMeta}>
-                      {String(row.month).padStart(2, "0")}/{row.year} | {row.file_name}
+              data.monthlyClosingImports.map((row) => {
+                const isStuck = isProcessingStuck(row);
+                return (
+                  <div
+                    key={row.id}
+                    style={{
+                      ...styles.listItem,
+                      ...(isStuck ? styles.listItemWarning : {}),
+                    }}
+                  >
+                    <div>
+                      <div style={styles.itemTitle}>{row.company_name}</div>
+                      <div style={styles.itemMeta}>
+                        {String(row.month).padStart(2, "0")}/{row.year} | {row.file_name}
+                        {row.created_at ? ` | ${formatDateTime(row.created_at)}` : ""}
+                      </div>
+                      {isStuck ? (
+                        <div style={styles.stuckHint}>
+                          Travado em PROCESSING ha mais de 5 minutos. Provavel falha
+                          de upload (timeout/exception). Cancele para liberar a
+                          competencia para novo upload.
+                        </div>
+                      ) : null}
+                    </div>
+                    <div style={styles.listItemActions}>
+                      <span
+                        style={{
+                          ...styles.badge,
+                          ...(isStuck ? styles.badgeWarning : {}),
+                        }}
+                      >
+                        {row.status || "PENDING"}
+                      </span>
+                      {isStuck ? (
+                        <button
+                          type="button"
+                          onClick={() => handleCancelImport(row)}
+                          disabled={cancellingImportId === row.id}
+                          style={styles.cancelButton}
+                        >
+                          {cancellingImportId === row.id
+                            ? "Cancelando..."
+                            : "Cancelar import"}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
-                  <span style={styles.badge}>{row.status || "PENDING"}</span>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </article>
@@ -736,6 +814,14 @@ function formatCurrency(value?: number) {
     style: "currency",
     currency: "BRL",
   }).format(Number(value || 0));
+}
+
+function isProcessingStuck(row: MonthlyClosingImport) {
+  if (row.status !== "PROCESSING") return false;
+  if (!row.created_at) return false;
+  const created = new Date(row.created_at).getTime();
+  if (Number.isNaN(created)) return false;
+  return Date.now() - created > 5 * 60 * 1000;
 }
 
 function formatDateTime(value?: string | null) {
@@ -1094,6 +1180,42 @@ const styles: Record<string, CSSProperties> = {
     letterSpacing: "0.08em",
     background: "rgba(13,77,227,0.1)",
     color: "var(--rr-blue-deep)",
+  },
+  badgeWarning: {
+    background: "rgba(217,119,6,0.15)",
+    color: "#92400e",
+  },
+  listItemWarning: {
+    background:
+      "linear-gradient(135deg, rgba(254,243,199,0.85) 0%, rgba(255,247,237,0.96) 100%)",
+    border: "1px solid rgba(217,119,6,0.35)",
+  },
+  listItemActions: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    alignItems: "flex-end",
+  },
+  stuckHint: {
+    marginTop: "6px",
+    fontSize: "12px",
+    lineHeight: 1.45,
+    color: "#92400e",
+    background: "rgba(255,247,237,0.6)",
+    borderRadius: "10px",
+    padding: "8px 10px",
+    border: "1px dashed rgba(217,119,6,0.4)",
+    maxWidth: "440px",
+  },
+  cancelButton: {
+    border: "1px solid rgba(217,119,6,0.45)",
+    background: "rgba(255,255,255,0.96)",
+    color: "#92400e",
+    borderRadius: "12px",
+    padding: "8px 12px",
+    fontSize: "12px",
+    fontWeight: 800,
+    cursor: "pointer",
   },
   emptyState: {
     margin: "14px 18px 0",

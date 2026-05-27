@@ -492,12 +492,34 @@ function buildEntriesForRow(
   return [];
 }
 
+// FIX-1.E.6.PRE.D — janela em que um PROCESSING anterior bloqueia novo
+// upload para a mesma (company, year, month). Acima disso, considera
+// presumido travado e libera (mas o registro antigo continua na tabela
+// ate cancelamento manual via /api/import/closing/cancel).
+const IN_FLIGHT_WINDOW_MINUTES = 30;
+
+export class DuplicateImportInFlightError extends Error {
+  readonly status = 409;
+  readonly importId: string;
+  readonly startedAt: string;
+  constructor(importId: string, startedAt: string) {
+    super(
+      `Ja existe um import em andamento para essa competencia (id ${importId} iniciado em ${startedAt}). ` +
+        `Aguarde finalizar ou cancele antes de tentar novamente.`
+    );
+    this.name = "DuplicateImportInFlightError";
+    this.importId = importId;
+    this.startedAt = startedAt;
+  }
+}
+
 export async function importMonthlyClosingWorkbook(input: {
   fileBase64: string;
   fileName: string;
   year: number;
   month: number;
   companyId?: string | null;
+  createdBy?: string | null;
 }) {
   const supabaseAdmin = getSupabaseAdmin();
   const companies = await supabaseAdmin
@@ -524,6 +546,30 @@ export async function importMonthlyClosingWorkbook(input: {
   const targetYear = input.year;
   const targetMonth = input.month;
 
+  // PRE.D.C — bloqueia novo upload se ja existe PROCESSING recente para a
+  // mesma competencia. Evita os 4 zumbis simultaneos que vimos em abr/2026.
+  const inFlightCutoff = new Date(
+    Date.now() - IN_FLIGHT_WINDOW_MINUTES * 60_000
+  ).toISOString();
+  const { data: inFlight, error: inFlightError } = await supabaseAdmin
+    .from("monthly_closing_imports")
+    .select("id, created_at")
+    .eq("company_id", company.id)
+    .eq("year", targetYear)
+    .eq("month", targetMonth)
+    .eq("status", "PROCESSING")
+    .gte("created_at", inFlightCutoff)
+    .limit(1)
+    .maybeSingle();
+
+  if (inFlightError) {
+    throw new Error(inFlightError.message);
+  }
+
+  if (inFlight) {
+    throw new DuplicateImportInFlightError(inFlight.id, inFlight.created_at);
+  }
+
   const { data: importLog, error: importLogError } = await supabaseAdmin
     .from("monthly_closing_imports")
     .insert({
@@ -540,6 +586,83 @@ export async function importMonthlyClosingWorkbook(input: {
   if (importLogError || !importLog) {
     throw new Error(importLogError?.message || "Falha ao registrar a importacao.");
   }
+
+  // PRE.D.B — wrap entre INSERT inicial e UPDATE COMPLETED final.
+  // Qualquer throw aqui dentro vira status='FAILED' + error_message + audit.
+  try {
+    return await runImportPipeline({
+      supabaseAdmin,
+      input,
+      company,
+      targetYear,
+      targetMonth,
+      importId: importLog.id,
+    });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Erro desconhecido durante o import.";
+    const stack = err instanceof Error && err.stack ? err.stack : "";
+    const errorPayload = `${message}\n${stack.slice(0, 2000)}`.trim();
+
+    // Best-effort: marca FAILED + grava audit. Erros aqui sao engolidos pra
+    // nao mascarar o erro original que vai pro client.
+    try {
+      await supabaseAdmin
+        .from("monthly_closing_imports")
+        .update({
+          status: "FAILED",
+          error_message: errorPayload,
+          error_at: new Date().toISOString(),
+          finished_at: new Date().toISOString(),
+        })
+        .eq("id", importLog.id);
+    } catch {
+      // silencioso
+    }
+
+    try {
+      await supabaseAdmin.from("audit_logs").insert({
+        entity_name: "monthly_closing_imports",
+        entity_id: importLog.id,
+        action: "IMPORT_FAILED",
+        description: `Import de fechamento ${targetMonth}/${targetYear} (${company.name}) falhou.`,
+        payload: {
+          error: message,
+          stack: stack.slice(0, 1000),
+          fileName: input.fileName,
+          year: targetYear,
+          month: targetMonth,
+          companyId: company.id,
+          companyCnpj: company.cnpj,
+        },
+        created_by: input.createdBy || "sistema",
+      });
+    } catch {
+      // silencioso
+    }
+
+    throw err;
+  }
+}
+
+type ImportContext = {
+  supabaseAdmin: ReturnType<typeof getSupabaseAdmin>;
+  input: {
+    fileBase64: string;
+    fileName: string;
+    year: number;
+    month: number;
+    companyId?: string | null;
+    createdBy?: string | null;
+  };
+  company: CompanyRow;
+  targetYear: number;
+  targetMonth: number;
+  importId: string;
+};
+
+async function runImportPipeline(ctx: ImportContext) {
+  const { supabaseAdmin, input, company, targetYear, targetMonth, importId } = ctx;
 
   const workbook = XLSX.read(Buffer.from(input.fileBase64, "base64"), { type: "buffer" });
   const entries: Entry[] = [];
@@ -611,7 +734,7 @@ export async function importMonthlyClosingWorkbook(input: {
     }
 
     return {
-      monthly_closing_import_id: importLog.id,
+      monthly_closing_import_id: importId,
       company_id: company.id,
       company_cnpj: company.cnpj,
       year: targetYear,
@@ -707,7 +830,7 @@ export async function importMonthlyClosingWorkbook(input: {
       status: "COMPLETED",
       finished_at: new Date().toISOString(),
     })
-    .eq("id", importLog.id);
+    .eq("id", importId);
 
   if (finishError) {
     throw new Error(finishError.message);
@@ -715,7 +838,7 @@ export async function importMonthlyClosingWorkbook(input: {
 
   return {
     success: true,
-    importId: importLog.id,
+    importId,
     company: {
       id: company.id,
       name: company.name,

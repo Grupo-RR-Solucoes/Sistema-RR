@@ -1,14 +1,17 @@
 import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
-import { importMonthlyClosingWorkbook } from "@/lib/monthlyClosingImport";
+import {
+  DuplicateImportInFlightError,
+  importMonthlyClosingWorkbook,
+} from "@/lib/monthlyClosingImport";
 
 export async function POST(req: Request) {
   try {
     // D34 - Escola A: service_role com guard de socio. Bulk write em
     // fechamento_mensal_empresa + monthly_closing_entries (D5 bloqueia
     // promotor; D2 bloqueia funcionario).
-    await withSocioAdmin();
+    const { user } = await withSocioAdmin();
 
     const body = await req.json();
     const year = Number(body.year);
@@ -27,10 +30,21 @@ export async function POST(req: Request) {
       year,
       month,
       companyId: body.companyId ? String(body.companyId) : undefined,
+      createdBy: user.session.appUser.email,
     });
 
     return NextResponse.json(payload);
   } catch (error) {
+    if (error instanceof DuplicateImportInFlightError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          importId: error.importId,
+          startedAt: error.startedAt,
+        },
+        { status: 409 }
+      );
+    }
     return apiGuardErrorResponse(error);
   }
 }
