@@ -8,6 +8,9 @@ import { calcularOperacao, getProductionBandByValue } from "@/lib/motor";
 import {
   calculateInsuranceCommissionFromRules,
   fetchInsuranceSlipRules,
+  fetchInsuranceSlipTiers,
+  lookupInsuranceShareFromPenetration,
+  type InsuranceShareTier,
   type InsuranceSlipRule,
 } from "@/lib/insuranceCalculator";
 import { getProductionWindow } from "@/lib/productionPeriod";
@@ -231,6 +234,33 @@ function isValidRecord(record: any) {
   if (isCancelledStatus(record.status)) return false;
   if (isPendingStatus(record.status)) return false;
   if (record.is_srcc_restricted) return false;
+  return true;
+}
+
+// FIX-1.E.6.E — recorte exclusivo da PENETRACAO mensal (Modelo B).
+// Aplicado SO em cima do calculo de insurance_penetration_percent;
+// production_value, proposal_count, insured_proposal_count e
+// insured_production_value continuam usando o recorte legacy.
+//
+// Filtros confirmados Diego:
+//   - raw_payload 'Tipo de Liberacao' == '1'
+//   - exclui j_key comecando com 'JJJ' (chave JJJ552710 nao entra
+//     na base de penetracao da Etapa E)
+function isEligibleForInsurancePenetration(record: any) {
+  const tipoLiberacao = readRawPayloadValue(record, [
+    "Tipo de Liberacao",
+    "Tipo de Liberação",
+    "Tipo Liberacao",
+    "Tipo Liberação",
+    "TipoLiberacao",
+    "TIPO DE LIBERACAO",
+  ]);
+  const tipoLiberacaoTxt = String(tipoLiberacao ?? "").trim();
+  if (tipoLiberacaoTxt !== "1") return false;
+
+  const jKey = String(record.j_key ?? "").trim().toUpperCase();
+  if (jKey.startsWith("JJJ")) return false;
+
   return true;
 }
 
@@ -582,6 +612,7 @@ export async function POST(req: Request) {
           convenio_type,
           convenio_segment,
           interest_rate,
+          j_key,
           raw_payload
         `)
         .gte("movement_date", start)
@@ -678,6 +709,20 @@ export async function POST(req: Request) {
       supabase
     );
 
+    // FIX-1.E.6.E — pre-carrega tiers da scale SEGURO_SLIP_MAIO_2026
+    // (7 tiers fixos). Aplicada 1x por promotor no upsert mensal.
+    const insuranceShareTiers: InsuranceShareTier[] = await fetchInsuranceSlipTiers(
+      supabase
+    );
+
+    // FIX-1.E.6.E — Gate de vigencia (Modelo B). Scale SEGURO_SLIP aplica
+    // a partir de maio/2026. Abril/2026 e transicao: calcula e retorna no
+    // payload da resposta (dry-run), mas NAO grava em
+    // promoter_monthly_results.insurance_commission_value — preserva valor
+    // atual (Promotiva total). Recalculo retroativo de abril fica para
+    // Etapa D.
+    const insuranceShareScaleActive = year > 2026 || (year === 2026 && month >= 5);
+
     const proposalRules = await fetchAllPaged<any>(() => {
       let query = supabase
         .from("promoter_proposal_commissions")
@@ -755,6 +800,19 @@ export async function POST(req: Request) {
     const recordUpdates: any[] = [];
     let unmatchedImportedRules = 0;
 
+    // FIX-1.E.6.E — coleta dry-run de Etapa E (abril/2026). Vazio quando
+    // a scale ja esta ativa (maio/2026+).
+    const insuranceShareDryRun: Array<{
+      promoter_id: string;
+      promoter_name: string;
+      insurance_penetration_percent_legacy: number;
+      insurance_penetration_percent: number;
+      insurance_share_applied: number;
+      promotiva_total: number;
+      projected_promoter_value: number;
+      current_persisted_value: number;
+    }> = [];
+
     const elapsedBusinessDays = countElapsedBusinessDays(year, month);
     const totalBusinessDays = countBusinessDaysInMonth(year, month);
 
@@ -791,7 +849,36 @@ export async function POST(req: Request) {
         0
       );
 
+      // FIX-1.E.6.E — subset exclusivo da PENETRACAO mensal (Modelo B):
+      // recorta validRecords por Tipo de Liberacao=1 AND j_key NOT LIKE
+      // 'JJJ%' antes de calcular numerador/denominador. Demais metricas
+      // (production_value, insured_proposal_count, insured_production_value)
+      // continuam usando o recorte legacy.
+      const penetrationRecords = validRecords.filter(
+        isEligibleForInsurancePenetration
+      );
+      const penetrationDenominator = penetrationRecords.reduce(
+        (sum: number, record: any) => sum + toNumber(record.gross_value),
+        0
+      );
+      const penetrationNumerator = penetrationRecords
+        .filter(
+          (record: any) => toNumber(record.insurance_value) > 0 || record.has_insurance
+        )
+        .reduce(
+          (sum: number, record: any) => sum + toNumber(record.gross_value),
+          0
+        );
+
       const insurancePenetrationPercent = calculateInsurancePenetration(
+        penetrationDenominator,
+        penetrationNumerator
+      );
+
+      // Penetracao "antes do filtro" (recorte legacy). Mantida em paralelo
+      // para o dry-run de abril/2026 — permite comparar 36,20% (legacy) x
+      // 37,11% (Etapa E).
+      const insurancePenetrationPercentLegacy = calculateInsurancePenetration(
         grossProductionValue,
         insuredGrossValue
       );
@@ -1095,9 +1182,42 @@ export async function POST(req: Request) {
         });
       }
 
+      // FIX-1.E.6.E — Etapa E (Modelo B): aplica share da scale
+      // SEGURO_SLIP_MAIO_2026 sobre a soma Promotiva total do promotor.
+      //   insurance_commission_value (promotor) =
+      //     SUM(insurance_commission_amount Promotiva) × share_da_scale
+      // share_da_scale = lookup pela penetracao mensal (decimal 0..1).
+      //
+      // Vigencia: maio/2026+. Abril/2026 calcula projecao para dry-run
+      // mas grava o valor atual (Promotiva total) — preservacao explicita
+      // ate Etapa D rodar o recalculo retroativo.
+      const insurancePenetrationDecimal = insurancePenetrationPercent / 100;
+      const insuranceShareApplied = lookupInsuranceShareFromPenetration(
+        insuranceShareTiers,
+        insurancePenetrationDecimal
+      );
+      const insuranceCommissionValuePromotorProjected =
+        insuranceCommissionValue * insuranceShareApplied;
+      const insuranceCommissionValuePersisted = insuranceShareScaleActive
+        ? insuranceCommissionValuePromotorProjected
+        : insuranceCommissionValue;
+
+      if (!insuranceShareScaleActive) {
+        insuranceShareDryRun.push({
+          promoter_id: promoter.id,
+          promoter_name: promoter.name,
+          insurance_penetration_percent_legacy: insurancePenetrationPercentLegacy,
+          insurance_penetration_percent: insurancePenetrationPercent,
+          insurance_share_applied: insuranceShareApplied,
+          promotiva_total: insuranceCommissionValue,
+          projected_promoter_value: insuranceCommissionValuePromotorProjected,
+          current_persisted_value: insuranceCommissionValue,
+        });
+      }
+
       const finalCommissionValue =
         productionCommissionValue +
-        insuranceCommissionValue +
+        insuranceCommissionValuePersisted +
         agreementAdjustmentValue;
 
       promoterUpserts.push({
@@ -1115,7 +1235,7 @@ export async function POST(req: Request) {
         target_2_value: target2Value,
         projected_production_value: projectedProductionValue,
         production_commission_value: productionCommissionValue,
-        insurance_commission_value: insuranceCommissionValue,
+        insurance_commission_value: insuranceCommissionValuePersisted,
         agreement_adjustment_value: agreementAdjustmentValue,
         final_commission_value: finalCommissionValue,
         target_status: targetStatus,
@@ -1160,6 +1280,8 @@ export async function POST(req: Request) {
       remuneration_base_mode: hasPromoterRemunerationBase
         ? "MONTH_RULES_OR_AGREEMENTS"
         : "DEFAULT_SHARE_ONLY",
+      insurance_share_scale_active: insuranceShareScaleActive,
+      insurance_share_dry_run: insuranceShareDryRun,
       message:
         "Cálculo mensal concluído com regra por produto e percentual recebido.",
     });

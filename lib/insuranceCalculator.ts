@@ -161,3 +161,88 @@ export function calculateInsuranceCommissionFromRules(args: {
     modality,
   };
 }
+
+// ===========================================================================
+// FIX-1.E.6.E — Etapa E: scale SEGURO_SLIP_MAIO_2026 (Modelo B).
+//
+// Comissao SEGURO PROMOTOR =
+//   SUM(insurance_commission_amount Promotiva total) ×
+//   share_da_scale(penetracao mensal do promotor)
+//
+// volume_min/max da scale sao DECIMAIS (0..1). Penetracao precisa /100
+// antes do lookup. insurance_commission_amount per-record NAO muda
+// (continua sendo Promotiva total, sem share).
+// ===========================================================================
+
+const INSURANCE_SHARE_SCALE_CODE = "SEGURO_SLIP_MAIO_2026";
+
+export type InsuranceShareTier = {
+  volume_min: number;   // penetracao decimal 0..1 inclusive
+  volume_max: number | null; // NULL = sem teto
+  share_percent: number;
+};
+
+/**
+ * Carrega tiers da scale SEGURO_SLIP_MAIO_2026 1x. Cardinality fixa
+ * (7 tiers no seed). Em caso de erro / scale inexistente retorna [].
+ *
+ * Lookup por scale_code (canonical no seed); scale_id varia entre
+ * ambientes.
+ */
+export async function fetchInsuranceSlipTiers(
+  supabase: SupabaseClient
+): Promise<InsuranceShareTier[]> {
+  const { data: scaleRow, error: scaleErr } = await supabase
+    .from("share_scale")
+    .select("id")
+    .eq("scale_code", INSURANCE_SHARE_SCALE_CODE)
+    .maybeSingle();
+  if (scaleErr || !scaleRow) return [];
+
+  const scaleId = (scaleRow as { id: string }).id;
+  const { data: tierRows, error: tierErr } = await supabase
+    .from("share_scale_tier")
+    .select("volume_min, volume_max, share_percent")
+    .eq("scale_id", scaleId)
+    .order("volume_min", { ascending: true });
+  if (tierErr || !tierRows) return [];
+
+  return (tierRows as any[]).map((r) => ({
+    volume_min: Number(r.volume_min),
+    volume_max: r.volume_max == null ? null : Number(r.volume_max),
+    share_percent: Number(r.share_percent),
+  }));
+}
+
+/**
+ * Procura o share_percent aplicavel a uma penetracao mensal (decimal
+ * 0..1). Inclusivo nas duas pontas (volume_min <= p <= volume_max),
+ * consistente com pickCommissionRow em /api/calculate/monthly.
+ *
+ * Convencoes:
+ *   - penetracao 0 cai na 1a faixa (volume_min=0) → 0.0030 no seed atual.
+ *   - sem match → 0 + console.warn (sinaliza buraco na scale).
+ *   - tiers vazios → 0 (sem warn, scale ausente ja eh sinalizada upstream).
+ */
+export function lookupInsuranceShareFromPenetration(
+  tiers: InsuranceShareTier[],
+  penetracaoDecimal: number
+): number {
+  if (tiers.length === 0) return 0;
+
+  const p = Number.isFinite(penetracaoDecimal) ? penetracaoDecimal : 0;
+
+  const match = tiers.find((t) => {
+    if (p < t.volume_min) return false;
+    if (t.volume_max !== null && p > t.volume_max) return false;
+    return true;
+  });
+
+  if (!match) {
+    console.warn(
+      `[insuranceShare] sem tier para penetracao=${p} em ${INSURANCE_SHARE_SCALE_CODE}; retornando 0`
+    );
+    return 0;
+  }
+  return match.share_percent;
+}
