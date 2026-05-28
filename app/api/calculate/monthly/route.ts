@@ -5,6 +5,11 @@ import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { findImportedProductionRule } from "@/lib/promoterRemuneration";
 import { calcularOperacao, getProductionBandByValue } from "@/lib/motor";
+import {
+  calculateInsuranceCommissionFromRules,
+  fetchInsuranceSlipRules,
+  type InsuranceSlipRule,
+} from "@/lib/insuranceCalculator";
 import { getProductionWindow } from "@/lib/productionPeriod";
 import {
   fetchPromoterShareData,
@@ -563,10 +568,12 @@ export async function POST(req: Request) {
           net_value,
           insurance_value,
           insurance_type,
+          insurance_slip_eligible,
           has_insurance,
           status,
           proposal_date,
           movement_date,
+          contract_date,
           cancellation_date,
           is_srcc_restricted,
           term_months,
@@ -662,6 +669,13 @@ export async function POST(req: Request) {
       supabase,
       year,
       month
+    );
+
+    // FIX-1.E.6.C — pre-carrega regras TRP35 §188 SLIP / ESTOQUE_D0
+    // (cardinality ~5, seguro carregar tudo). Evita 1 round-trip por
+    // proposta no loop quente.
+    const insuranceSlipRules: InsuranceSlipRule[] = await fetchInsuranceSlipRules(
+      supabase
     );
 
     const proposalRules = await fetchAllPaged<any>(() => {
@@ -951,6 +965,21 @@ export async function POST(req: Request) {
           }
         }
 
+        // FIX-1.E.6.C — TRP35 §188 SLIP / ESTOQUE_D0. CAMADA 2 da cascata
+        // (decisao D1 Etapa A): abaixo de MANUAL_PROPOSAL, acima de
+        // PRODUCT_RULE / PROMOTER_AGREEMENT / MONTHLY_DEFAULT.
+        // Base = gross_value (decisao Diego, modelo hibrido): amount
+        // armazenado e a comissao TOTAL da Promotiva por essa proposta
+        // (sem share do promotor — share entra na Etapa E via scale
+        // SEGURO_SLIP_MAIO_2026 por penetracao mensal).
+        const trp35Result = calculateInsuranceCommissionFromRules({
+          rules: insuranceSlipRules,
+          baseValue: toNumber(record.gross_value),
+          insuranceType: record.insurance_type,
+          termMonths: toNumber(record.term_months || record.installments),
+          contractDate: record.contract_date || record.movement_date,
+        });
+
         if (
           manualRule &&
           manualRule.insurance_commission_percent !== null
@@ -959,6 +988,9 @@ export async function POST(req: Request) {
             manualRule.insurance_commission_percent
           );
           insuranceRuleSource = "MANUAL_PROPOSAL";
+        } else if (trp35Result) {
+          insuranceCommissionPercent = trp35Result.percent;
+          insuranceRuleSource = `TRP35_${trp35Result.modality}`;
         } else if (
           productRule &&
           productRule.insurance_commission_percent !== null
@@ -1011,10 +1043,14 @@ export async function POST(req: Request) {
             ? null
             : (productionBase * commissionPercent) / 100;
 
-        const insuranceCommissionAmount = calculatePercentValue(
-          insuranceBase,
-          insuranceCommissionPercent
-        );
+        // FIX-1.E.6.C — quando TRP35 vence, usa amount direto do helper
+        // (= gross × commission_percent). Bases legacy (PRODUCT_RULE /
+        // PROMOTER_AGREEMENT / MONTHLY_DEFAULT) continuam multiplicando
+        // sobre 'insuranceBase' (= gross × TRP35_rate hardcoded), modelo
+        // antigo, ate ser migrado.
+        const insuranceCommissionAmount = trp35Result
+          ? trp35Result.amount
+          : calculatePercentValue(insuranceBase, insuranceCommissionPercent);
 
         for (const agreement of specialAgreements) {
           if (agreement.agreement_type === "SPECIAL") {
