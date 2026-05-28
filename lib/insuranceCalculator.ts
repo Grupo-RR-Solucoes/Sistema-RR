@@ -216,11 +216,16 @@ export async function fetchInsuranceSlipTiers(
 
 /**
  * Procura o share_percent aplicavel a uma penetracao mensal (decimal
- * 0..1). Inclusivo nas duas pontas (volume_min <= p <= volume_max),
- * consistente com pickCommissionRow em /api/calculate/monthly.
+ * 0..1). Borda inferior INCLUSIVA (p >= volume_min), borda superior
+ * EXCLUSIVA (p < volume_max). Ultima faixa (volume_max = NULL) e
+ * aberta a direita.
+ *
+ * FIX-1.E.6.E.2: exclusividade na borda superior. Evita que penetracao
+ * exatamente igual a um limite (0.10, 0.20, 0.30) case em duas faixas
+ * adjacentes — 30,00% precisa cair em "30%+", nao em "20-30%".
  *
  * Convencoes:
- *   - penetracao 0 cai na 1a faixa (volume_min=0) → 0.0030 no seed atual.
+ *   - penetracao 0 cai na 1a faixa (volume_min=0).
  *   - sem match → 0 + console.warn (sinaliza buraco na scale).
  *   - tiers vazios → 0 (sem warn, scale ausente ja eh sinalizada upstream).
  */
@@ -234,7 +239,7 @@ export function lookupInsuranceShareFromPenetration(
 
   const match = tiers.find((t) => {
     if (p < t.volume_min) return false;
-    if (t.volume_max !== null && p > t.volume_max) return false;
+    if (t.volume_max !== null && p >= t.volume_max) return false;
     return true;
   });
 
