@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { calcularOperacao } from "@/lib/motor";
+import { getPrazoTrp } from "@/lib/prazoTrp";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import {
   getAgencyCode as getAgencyCodeShared,
@@ -278,7 +279,10 @@ function deriveCompanyReceivedRate(record: ProductionRow, companyProductionValue
     valor_bruto: toNumber(record.gross_value),
     valor_seguro: toNumber(record.insurance_value),
     taxa_juros: toNumber(record.interest_rate),
-    prazo: toNumber(record.term_months || record.installments),
+    // FIX-PRAZO-TRP: regra Promotiva (J/K) — 3100→Prazo, resto→Parcelas.
+    prazo:
+      getPrazoTrp(record) ??
+      toNumber(record.term_months || record.installments),
     tem_seguro:
       toNumber(record.insurance_value) > 0 || Boolean(record.has_insurance),
     product_code:

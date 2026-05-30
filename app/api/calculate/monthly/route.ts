@@ -13,6 +13,7 @@ import {
   type InsuranceShareTier,
   type InsuranceSlipRule,
 } from "@/lib/insuranceCalculator";
+import { getPrazoTrp } from "@/lib/prazoTrp";
 import { getProductionWindow } from "@/lib/productionPeriod";
 import {
   fetchPromoterShareData,
@@ -130,7 +131,12 @@ function deriveCompanyReceivedPercentFromMotor(record: any, companyProductionVal
     valor_bruto: toNumber(record.gross_value),
     valor_seguro: toNumber(record.insurance_value),
     taxa_juros: toNumber(record.interest_rate),
-    prazo: toNumber(record.term_months || record.installments),
+    // FIX-PRAZO-TRP: lê Prazo (13º) ou Parcelas (demais) do raw_payload
+    // conforme regra empírica validada em 40 meses (Tarefas J/K).
+    // Fallback legacy preserva comportamento se helper retornar null.
+    prazo:
+      getPrazoTrp(record) ??
+      toNumber(record.term_months || record.installments),
     tem_seguro:
       toNumber(record.insurance_value) > 0 || Boolean(record.has_insurance),
     product_code:
@@ -459,7 +465,8 @@ function calculateCompanyExpectedValues(records: any[]) {
       valor_bruto: gross,
       valor_seguro: toNumber(record.insurance_value),
       taxa_juros: toNumber(record.interest_rate),
-      prazo: toNumber(record.term_months),
+      // FIX-PRAZO-TRP: regra Promotiva (J/K) — 3100→Prazo, resto→Parcelas.
+      prazo: getPrazoTrp(record) ?? toNumber(record.term_months),
       tem_seguro:
         toNumber(record.insurance_value) > 0 || Boolean(record.has_insurance),
       product_code: record.product_code,
