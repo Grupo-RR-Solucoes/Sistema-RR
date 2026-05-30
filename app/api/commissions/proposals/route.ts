@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { apiGuardErrorResponse, withSocioOrFuncionarioAnon } from "@/lib/auth/guards";
 import { canManageCommissionRule } from "@/lib/auth/permissions";
 import {
+  fetchInsuranceSlipTiers,
+  lookupInsuranceShareFromPenetration,
+  type InsuranceShareTier,
+} from "@/lib/insuranceCalculator";
+import {
   computeComissaoPromotor,
   computePromoterInsuranceAmount,
   fetchPromoterShareData,
@@ -15,6 +20,38 @@ import {
   resolvePromoterShareSync,
 } from "@/lib/proposalDetailing";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+
+// FIX-1.E.6.F — formata uma faixa da scale SEGURO_SLIP em rotulo
+// legivel para a UI. Bordas inferiores inclusivas, superiores
+// exclusivas (consistente com lookupInsuranceShareFromPenetration).
+//   [0.00, 0.10) → 0.10 → "0-10% → 10%"
+//   [0.10, 0.20) → 0.25 → "10-20% → 25%"
+//   [0.20, 0.30) → 0.35 → "20-30% → 35%"
+//   [0.30, NULL) → 0.50 → "30%+ → 50%"
+function formatInsuranceShareBandLabel(tier: InsuranceShareTier | null): string {
+  if (!tier) return "—";
+  const minPct = Math.round(tier.volume_min * 100);
+  const sharePct = Math.round(tier.share_percent * 100);
+  if (tier.volume_max === null) {
+    return `${minPct}%+ → ${sharePct}%`;
+  }
+  const maxPct = Math.round(tier.volume_max * 100);
+  return `${minPct}-${maxPct}% → ${sharePct}%`;
+}
+
+function findInsuranceShareTier(
+  tiers: InsuranceShareTier[],
+  penetracaoDecimal: number
+): InsuranceShareTier | null {
+  if (!Number.isFinite(penetracaoDecimal)) return null;
+  return (
+    tiers.find((t) => {
+      if (penetracaoDecimal < t.volume_min) return false;
+      if (t.volume_max !== null && penetracaoDecimal >= t.volume_max) return false;
+      return true;
+    }) || null
+  );
+}
 
 // audit_logs RLS bloqueia INSERT via PostgREST. Mesmo padrao usado em
 // /api/financeiro/[id] e /api/admin/usuarios/[id]: service_role para
@@ -215,34 +252,63 @@ export async function GET(req: Request) {
     // company) vinda de promoter_monthly_results, NAO eh por proposta.
     // Fetch agregado em batch para todos os promotores que aparecem nas
     // rows do mes, mapeado para `${promoter_id}|${company_id}`.
+    //
+    // FIX-1.E.6.F — alem da penetracao, agora trazemos
+    // insurance_commission_value (gravado em promoter_monthly_results)
+    // para o card "Comissao seguro promotor" na UI. Em abril/2026 esse
+    // valor ainda eh Promotiva total (gate insuranceShareScaleActive=false
+    // em /api/calculate/monthly); em maio+ vira o repasse Modelo B real.
     const penetrationMap = new Map<string, number | null>();
+    const persistedInsuranceMap = new Map<string, number | null>();
     if (promoterIds.length > 0) {
       const { data: penetrationRows, error: penetrationError } = await supabase
         .from("promoter_monthly_results")
-        .select("promoter_id, company_id, insurance_penetration_percent")
+        .select(
+          "promoter_id, company_id, insurance_penetration_percent, insurance_commission_value"
+        )
         .eq("year", year)
         .eq("month", month)
         .in("promoter_id", promoterIds);
 
       if (penetrationError) throw penetrationError;
       for (const row of penetrationRows ?? []) {
-        penetrationMap.set(
-          `${row.promoter_id}|${row.company_id}`,
-          row.insurance_penetration_percent ?? null
-        );
+        const key = `${row.promoter_id}|${row.company_id}`;
+        penetrationMap.set(key, row.insurance_penetration_percent ?? null);
+        persistedInsuranceMap.set(key, row.insurance_commission_value ?? null);
       }
     }
 
-    const proposalIds = records.map((r) => r.id);
+    // FIX-1.E.6.F — pre-carrega tiers da scale SEGURO_SLIP_MAIO_2026
+    // (cardinality 4 apos E.2). 1 round-trip, reusado para todos os
+    // promotores do mes.
+    const insuranceShareTiers: InsuranceShareTier[] = await fetchInsuranceSlipTiers(
+      supabase
+    );
 
+    // FIX-1.E.6.F — gate de vigencia espelha o de /api/calculate/monthly:
+    // scale SEGURO_SLIP aplica a partir de maio/2026. UI usa essa flag
+    // para decidir se mostra badge "Projetado" no card de seguro promotor.
+    const insuranceShareScaleActive =
+      year > 2026 || (year === 2026 && month >= 5);
+
+    // FIX-1.E.6.F.4 — manualRules filtrado por promoter_id (39 ids) em
+    // vez de daily_production_record_id (519 ids). Em abr/2026 sem
+    // filtro de promoter, 519 UUIDs no .in() faziam a URL ao PostgREST
+    // estourar 16KB de headers (UND_ERR_HEADERS_OVERFLOW, undici).
+    // promoter_proposal_commissions nao tem coluna de mes/empresa, mas o
+    // .find() client-side em records.map ja matcha por daily_production_
+    // record_id === record.id e descarta naturalmente regras de outros
+    // meses (records ja esta recortado pelo movement_date do mes).
+    // .eq("active", true) reduz transferencia (find ja checa active).
     let manualRules: ManualRuleRow[] = [];
-    if (proposalIds.length > 0) {
+    if (promoterIds.length > 0) {
       const { data, error } = await supabase
         .from("promoter_proposal_commissions")
         .select(
           "id, daily_production_record_id, promoter_id, commission_percent, insurance_commission_percent, share_percent_override, notes, active"
         )
-        .in("daily_production_record_id", proposalIds);
+        .in("promoter_id", promoterIds)
+        .eq("active", true);
 
       if (error) throw error;
       manualRules = (data || []) as ManualRuleRow[];
@@ -330,7 +396,69 @@ export async function GET(req: Request) {
       };
     });
 
-    return NextResponse.json({ rows });
+    // FIX-1.E.6.F.3 — promoterInsuranceSummaries soh eh montado quando
+    // promoterId foi informado no request. A UI (/comissoes/editar) soh
+    // renderiza os 2 cards de seguro Modelo B quando ha promotor
+    // selecionado; sem promoterId os cards ficam escondidos. Computar o
+    // mes inteiro era custo morto + caminho onde a regressao do GET sem
+    // promoterId aparecia. Quando "Todos", retornamos array vazio.
+    const promoterInsuranceSummaries: Array<{
+      promoter_id: string;
+      company_id: string;
+      insurance_penetration_percent: number | null;
+      insurance_share_applied: number;
+      insurance_share_band_label: string;
+      insurance_promotiva_total: number;
+      insurance_projected_promoter_value: number;
+      insurance_commission_value: number | null;
+      insurance_share_scale_active: boolean;
+    }> = [];
+
+    if (promoterId) {
+      const summariesByKey = new Map<
+        string,
+        { promoter_id: string; company_id: string; promotiva_total: number }
+      >();
+      for (const r of records) {
+        if (!r.assigned_promoter_id || !r.company_id) continue;
+        const key = `${r.assigned_promoter_id}|${r.company_id}`;
+        const prev =
+          summariesByKey.get(key) ||
+          {
+            promoter_id: r.assigned_promoter_id,
+            company_id: r.company_id,
+            promotiva_total: 0,
+          };
+        prev.promotiva_total += Number(r.insurance_commission_amount ?? 0);
+        summariesByKey.set(key, prev);
+      }
+      for (const s of summariesByKey.values()) {
+        const key = `${s.promoter_id}|${s.company_id}`;
+        const penetrationPct = penetrationMap.get(key) ?? null;
+        const penetracaoDecimal =
+          penetrationPct == null ? 0 : penetrationPct / 100;
+        const tier = findInsuranceShareTier(
+          insuranceShareTiers,
+          penetracaoDecimal
+        );
+        const shareApplied = tier ? tier.share_percent : 0;
+        const bandLabel = formatInsuranceShareBandLabel(tier);
+        const projected = s.promotiva_total * shareApplied;
+        promoterInsuranceSummaries.push({
+          promoter_id: s.promoter_id,
+          company_id: s.company_id,
+          insurance_penetration_percent: penetrationPct,
+          insurance_share_applied: shareApplied,
+          insurance_share_band_label: bandLabel,
+          insurance_promotiva_total: s.promotiva_total,
+          insurance_projected_promoter_value: projected,
+          insurance_commission_value: persistedInsuranceMap.get(key) ?? null,
+          insurance_share_scale_active: insuranceShareScaleActive,
+        });
+      }
+    }
+
+    return NextResponse.json({ rows, promoterInsuranceSummaries });
   } catch (error) {
     return apiGuardErrorResponse(error);
   }

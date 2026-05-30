@@ -71,6 +71,12 @@ export default function EditarComissoesPage() {
   const [companies, setCompanies] = useState([]);
   const [promoters, setPromoters] = useState([]);
   const [rows, setRows] = useState([]);
+  // FIX-1.E.6.F — agregados de seguro Modelo B por (promoter, company),
+  // vindos do GET. Renderizados como 2 cards extras no summaryGrid quando
+  // promoterId esta selecionado.
+  const [promoterInsuranceSummaries, setPromoterInsuranceSummaries] = useState(
+    []
+  );
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [loadingPromoters, setLoadingPromoters] = useState(false);
   const [loadingRows, setLoadingRows] = useState(false);
@@ -204,6 +210,7 @@ export default function EditarComissoesPage() {
         throw new Error(data?.error || "Erro ao carregar propostas.");
       }
 
+      setPromoterInsuranceSummaries(data?.promoterInsuranceSummaries || []);
       setRows(
         (data?.rows || []).map((row) => {
           // Dia 4.5 Etapa B: input "% Promotor" agora edita
@@ -471,10 +478,9 @@ export default function EditarComissoesPage() {
       (acc, row) => {
         acc.gross += Number(row.commission_base_value || row.net_value || 0);
         acc.promoterAmount += Number(row.promoter_commission_amount || 0);
-        acc.insuranceAmount += Number(row.insurance_commission_amount || 0);
         return acc;
       },
-      { gross: 0, promoterAmount: 0, insuranceAmount: 0 }
+      { gross: 0, promoterAmount: 0 }
     );
   }, [rows]);
 
@@ -591,11 +597,68 @@ export default function EditarComissoesPage() {
           value={formatCurrency(totals.promoterAmount)}
           accent="linear-gradient(135deg, rgba(214,161,63,0.18) 0%, rgba(255,255,255,0.98) 100%)"
         />
-        <SummaryItem
-          label="Comissao seguro"
-          value={formatCurrency(totals.insuranceAmount)}
-          accent="linear-gradient(135deg, rgba(13,77,227,0.1) 0%, rgba(214,161,63,0.12) 100%)"
-        />
+
+        {/* FIX-1.E.6.F.2 — card "Comissao seguro" removido. Mostrava
+            soma de Promotiva total (info de empresa, nao do promotor)
+            e ficava redundante ao lado de "Comissao seguro promotor"
+            (Modelo B). Coluna da tabela continua exibindo o per-row
+            via row.promoter_insurance_amount. */}
+
+        {/* FIX-1.E.6.F — cards de seguro Modelo B. So aparecem quando
+            um promotor especifico esta filtrado, porque os agregados
+            mensais sao por (promoter, company). Em "Todos" nao faz
+            sentido somar penetracoes de promotores diferentes. */}
+        {(() => {
+          if (!promoterId) return null;
+          const summary = promoterInsuranceSummaries.find(
+            (s) =>
+              s.promoter_id === promoterId &&
+              (!companyId || s.company_id === companyId)
+          );
+          if (!summary) return null;
+
+          const penetracaoTxt = formatPercentSuffix(
+            summary.insurance_penetration_percent
+          );
+          const bandTxt = summary.insurance_share_band_label || "—";
+
+          // Valor principal Modelo B: maio/2026+ usa o que foi gravado;
+          // abril/2026 usa a projecao calculada (gate=false → banco ainda
+          // tem Promotiva total, projecao mostra o repasse real esperado).
+          const projetado = summary.insurance_projected_promoter_value;
+          const persistido = summary.insurance_commission_value;
+          const ativo = summary.insurance_share_scale_active;
+          const mainValue = ativo ? persistido ?? 0 : projetado ?? 0;
+
+          return (
+            <>
+              <InsuranceSummaryCard
+                label="% Penetracao"
+                value={penetracaoTxt}
+                subtext={`Faixa: ${bandTxt}`}
+                accent="linear-gradient(135deg, rgba(34,197,94,0.18) 0%, rgba(255,255,255,0.98) 100%)"
+              />
+              <InsuranceSummaryCard
+                label="Comissao seguro promotor"
+                value={formatCurrency(mainValue)}
+                subtext={
+                  !ativo
+                    ? `Gravado atual: ${formatCurrency(persistido ?? 0)}`
+                    : null
+                }
+                badge={
+                  !ativo
+                    ? {
+                        label: "Projetado — abril nao recalculado",
+                        style: insuranceBadgeProjectedStyle,
+                      }
+                    : null
+                }
+                accent="linear-gradient(135deg, rgba(13,77,227,0.16) 0%, rgba(214,161,63,0.14) 100%)"
+              />
+            </>
+          );
+        })()}
       </section>
 
       <section style={styles.tableCard}>
@@ -1052,6 +1115,41 @@ function SummaryItem({ label, value, accent }) {
   );
 }
 
+// FIX-1.E.6.F — variante "rich" do SummaryItem: aceita subtexto
+// (legenda da faixa OU "Gravado atual: R$ X") e badge opcional
+// (rotulo "Projetado" em abril/2026). Read-only.
+function InsuranceSummaryCard({ label, value, subtext, badge, accent }) {
+  return (
+    <article style={{ ...styles.summaryItem, background: accent }}>
+      <span style={styles.summaryLabel}>{label}</span>
+      <strong style={styles.summaryValue}>{value}</strong>
+      {subtext ? (
+        <div style={styles.insuranceCardSubtext}>{subtext}</div>
+      ) : null}
+      {badge ? (
+        <span style={badge.style} title={badge.label}>
+          {badge.label}
+        </span>
+      ) : null}
+    </article>
+  );
+}
+
+const insuranceBadgeProjectedStyle = {
+  display: "inline-block",
+  marginTop: "8px",
+  padding: "3px 10px",
+  borderRadius: "999px",
+  fontSize: "10px",
+  fontWeight: 700,
+  letterSpacing: "0.04em",
+  textTransform: "uppercase",
+  background: "#FEF3C7",
+  color: "#92400E",
+  border: "1px solid rgba(146,64,14,0.30)",
+  whiteSpace: "nowrap",
+};
+
 function formatCurrency(value) {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -1372,6 +1470,14 @@ const styles = {
     fontSize: "24px",
     color: "var(--rr-ink)",
     fontFamily: "var(--font-heading)",
+  },
+  // FIX-1.E.6.F — subtexto pequeno abaixo do summaryValue nos cards
+  // de seguro Modelo B (faixa aplicada / valor gravado em abril).
+  insuranceCardSubtext: {
+    marginTop: "6px",
+    fontSize: "12px",
+    color: "var(--rr-ink-soft, #475569)",
+    lineHeight: 1.3,
   },
   tableCard: {
     background: "rgba(255,255,255,0.92)",
