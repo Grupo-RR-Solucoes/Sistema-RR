@@ -275,9 +275,14 @@ function calculateInsurancePenetration(productionValue: number, insuredValue: nu
   return (insuredValue / productionValue) * 100;
 }
 
+// @deprecated FIX-3.SEGURO — cascata legacy de seguro (gross × taxa
+// hardcoded por prazo) substituída por insurance_slip_rules + getPrazoTrp.
+// Manteve-se aqui só para evitar quebra de imports caso surjam consumidores
+// não mapeados. Após confirmar que ninguém mais chama, remover. Prazo já
+// passa por getPrazoTrp para coerência com a regra Promotiva (J/K).
 function getInsuranceCompanyRate(record: any) {
   const insuranceType = normalizeText(record.insurance_type);
-  const prazo = Number(record.term_months || 0);
+  const prazo = getPrazoTrp(record) ?? Number(record.term_months || 0);
 
   if (insuranceType.includes("ESTOQUE")) return 0.15;
   if (prazo >= 85) return 0.55;
@@ -286,6 +291,9 @@ function getInsuranceCompanyRate(record: any) {
   return 0.15;
 }
 
+// @deprecated FIX-3.SEGURO — função órfã após remoção do fallback legacy
+// de seguro na cascata (route.ts:1077-1120 antigo). Mantida só para evitar
+// quebra de imports não mapeados; remover quando tiver certeza.
 function calculateCompanyInsuranceCommission(record: any) {
   const gross = toNumber(record.gross_value);
 
@@ -1066,61 +1074,48 @@ export async function POST(req: Request) {
         // armazenado e a comissao TOTAL da Promotiva por essa proposta
         // (sem share do promotor — share entra na Etapa E via scale
         // SEGURO_SLIP_MAIO_2026 por penetracao mensal).
+        // FIX-3.SEGURO — assinatura nova: passa grossValue + premioValue
+        // (a regra escolhe a base via base_field); termPromotiva usa
+        // getPrazoTrp = Parcelas (J/K). insurance_type continua sendo
+        // SLIP|ESTOQUE_D0 lido do raw_payload pelo importer.
         const trp35Result = calculateInsuranceCommissionFromRules({
           rules: insuranceSlipRules,
-          baseValue: toNumber(record.gross_value),
+          grossValue: toNumber(record.gross_value),
+          premioValue: toNumber(record.insurance_value),
           insuranceType: record.insurance_type,
-          termMonths: toNumber(record.term_months || record.installments),
+          termPromotiva:
+            getPrazoTrp(record) ??
+            toNumber(record.term_months || record.installments),
           contractDate: record.contract_date || record.movement_date,
         });
 
-        if (
-          manualRule &&
-          manualRule.insurance_commission_percent !== null
-        ) {
-          insuranceCommissionPercent = toPercentUnits(
-            manualRule.insurance_commission_percent
-          );
-          insuranceRuleSource = "MANUAL_PROPOSAL";
-        } else if (trp35Result) {
+        // FIX-3.SEGURO — cascata de seguro simplificada (decisão Diego):
+        // SEM override manual (MANUAL_PROPOSAL/PRODUCT_RULE/PROMOTER_
+        // AGREEMENT/MONTHLY_DEFAULT removidos para seguro). Só TRP §188
+        // via insurance_slip_rules. Sem regra TRP + tem seguro → marca
+        // SEM_REGRA_TRP (UI destaca em vermelho). Isso elimina o bug
+        // "÷ 2" da Tarefa P (fallback MONTHLY_DEFAULT aplicava 50%).
+        // Repasse promotor (% da Promotiva ao promotor) entra em outra
+        // etapa via scale SEGURO_SLIP_MAIO_2026 (Etapa E).
+        const hasInsurance =
+          toNumber(record.insurance_value) > 0 || Boolean(record.has_insurance);
+
+        let insuranceCommissionAmount: number;
+        if (trp35Result) {
+          insuranceCommissionAmount = trp35Result.amount;
           insuranceCommissionPercent = trp35Result.percent;
           insuranceRuleSource = `TRP35_${trp35Result.modality}`;
-        } else if (
-          productRule &&
-          productRule.insurance_commission_percent !== null
-        ) {
-          insuranceCommissionPercent = toPercentUnits(
-            productRule.insurance_commission_percent
-          );
-          insuranceRuleSource = "PRODUCT_RULE";
-        } else if (insuranceAgreement) {
-          insuranceCommissionPercent = toPercentUnits(
-            insuranceAgreement.commission_value
-          );
-          insuranceRuleSource = "PROMOTER_AGREEMENT";
+        } else if (hasInsurance) {
+          insuranceCommissionAmount = 0;
+          insuranceCommissionPercent = 0;
+          insuranceRuleSource = "SEM_REGRA_TRP";
         } else {
-          const insuranceMetricValue =
-            insuranceRows.length > 0 &&
-            insuranceRows[0].metric_type === "VALUE"
-              ? insuredGrossValue
-              : insuranceRows.length > 0 &&
-                insuranceRows[0].metric_type === "COUNT"
-              ? insuredProposalCount
-              : insurancePenetrationPercent;
-
-          const insuranceRow = pickCommissionRow(
-            insuranceRows,
-            insuranceMetricValue
-          );
-
-          insuranceCommissionPercent = insuranceRow
-            ? toPercentUnits(insuranceRow.commission_value)
-            : 0;
-          insuranceRuleSource = "MONTHLY_DEFAULT";
+          insuranceCommissionAmount = 0;
+          insuranceCommissionPercent = 0;
+          insuranceRuleSource = "NO_INSURANCE";
         }
 
         const productionBase = toNumber(record.net_value);
-        const insuranceBase = calculateCompanyInsuranceCommission(record);
 
         // NULL_COMPANY_PERCENT: mantem amount=NULL para sinalizar dado
         // faltando, em vez de gravar 0 (que somaria como producao real).
@@ -1137,15 +1132,6 @@ export async function POST(req: Request) {
             ? null
             : (productionBase * commissionPercent) / 100;
 
-        // FIX-1.E.6.C — quando TRP35 vence, usa amount direto do helper
-        // (= gross × commission_percent). Bases legacy (PRODUCT_RULE /
-        // PROMOTER_AGREEMENT / MONTHLY_DEFAULT) continuam multiplicando
-        // sobre 'insuranceBase' (= gross × TRP35_rate hardcoded), modelo
-        // antigo, ate ser migrado.
-        const insuranceCommissionAmount = trp35Result
-          ? trp35Result.amount
-          : calculatePercentValue(insuranceBase, insuranceCommissionPercent);
-
         for (const agreement of specialAgreements) {
           if (agreement.agreement_type === "SPECIAL") {
             agreementAdjustmentValue += calculatePercentValue(
@@ -1161,14 +1147,14 @@ export async function POST(req: Request) {
           }
         }
 
-        // FIX-1.C: source agora reflete somente a cascata de producao.
-        // insuranceRuleSource era concatenado mesmo quando == "MONTHLY_DEFAULT"
-        // (default sem regra), poluindo o source com sufixo '+MONTHLY_DEFAULT'.
-        // Insurance tem seus campos proprios (insurance_commission_percent/
-        // amount); so adicionamos sufixo quando a regra de seguro for
-        // explicita (MANUAL_PROPOSAL / PRODUCT_RULE / PROMOTER_AGREEMENT).
+        // FIX-3.SEGURO — sufixo de seguro no source só para casos
+        // informativos: TRP35_* (regra aplicada) ou SEM_REGRA_TRP
+        // (alerta). NO_INSURANCE é o caso normal (sem seguro) — não
+        // polui o source. MONTHLY_DEFAULT mantido por defensividade
+        // (não existe mais após FIX-3, mas evita regressão silenciosa).
         const commissionRuleSource =
           insuranceRuleSource !== "MONTHLY_DEFAULT" &&
+          insuranceRuleSource !== "NO_INSURANCE" &&
           insuranceRuleSource !== productionRuleSource
             ? `${productionRuleSource}+${insuranceRuleSource}`
             : productionRuleSource;

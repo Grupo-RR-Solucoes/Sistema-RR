@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  calculateInsuranceCommissionFromRules,
+  fetchInsuranceSlipRules,
+} from "@/lib/insuranceCalculator";
 import { calcularOperacao } from "@/lib/motor";
 import { getPrazoTrp } from "@/lib/prazoTrp";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
@@ -100,6 +104,7 @@ type ProductionRow = {
   net_value?: number | null;
   gross_value?: number | null;
   insurance_value?: number | null;
+  insurance_type?: string | null;
   has_insurance?: boolean | null;
   interest_rate?: number | null;
   term_months?: number | null;
@@ -341,25 +346,9 @@ function getPromoterViewCompanyRate(record: ProductionRow, companyProductionValu
   );
 }
 
-function getInsuranceCompanyRate(record: ProductionRow) {
-  const insuranceType = normalizeText(
-    readRawPayloadValue(record.raw_payload, ["Tipo Seguro"]) || ""
-  );
-  const term = toNumber(record.term_months || record.installments);
-
-  if (insuranceType.includes("ESTOQUE")) return 0.15;
-  if (term >= 85) return 0.55;
-  if (term >= 61) return 0.4;
-  if (term >= 37) return 0.25;
-  return 0.15;
-}
-
-function calculateCompanyInsuranceCommission(record: ProductionRow) {
-  const gross = toNumber(record.gross_value);
-  if (!gross) return 0;
-  if (!toNumber(record.insurance_value) && !record.has_insurance) return 0;
-  return gross * (getInsuranceCompanyRate(record) / 100);
-}
+// FIX-3.SEGURO — getInsuranceCompanyRate e calculateCompanyInsuranceCommission
+// removidos. Migrados para insurance_slip_rules + calculateInsuranceCommissionFromRules
+// (fonte única com route.ts; ver linha company_insurance_commission_amount).
 
 // 4.4-fix-1.B.1: helpers extraidos para lib/proposalDetailing.ts.
 // Wrappers locais mantidos com o mesmo nome para preservar
@@ -443,7 +432,7 @@ export async function buildPromoterAnalytics(
   const companyId = filters?.companyId || "";
   const promoterId = filters?.promoterId || "";
 
-  const [companies, promoters, jKeys, targets, monthlyResults, discounts, agreements, records] =
+  const [companies, promoters, jKeys, targets, monthlyResults, discounts, agreements, records, insuranceSlipRules] =
     await Promise.all([
       fetchAllRows<CompanyRow>(() =>
         supabase
@@ -494,7 +483,7 @@ export async function buildPromoterAnalytics(
         let query = supabase
           .from("daily_production_records")
           .select(
-            "id, company_id, j_key, assigned_promoter_id, original_promoter_id, proposal_number, contract_number, product_description, status, movement_date, contract_date, proposal_date, net_value, gross_value, insurance_value, has_insurance, interest_rate, term_months, installments, company_received_percent, is_srcc_restricted, promoter_commission_percent, promoter_commission_amount, insurance_commission_percent, insurance_commission_amount, commission_rule_source, raw_payload"
+            "id, company_id, j_key, assigned_promoter_id, original_promoter_id, proposal_number, contract_number, product_description, status, movement_date, contract_date, proposal_date, net_value, gross_value, insurance_value, insurance_type, has_insurance, interest_rate, term_months, installments, company_received_percent, is_srcc_restricted, promoter_commission_percent, promoter_commission_amount, insurance_commission_percent, insurance_commission_amount, commission_rule_source, raw_payload"
           )
           .order("movement_date", { ascending: false });
 
@@ -504,6 +493,9 @@ export async function buildPromoterAnalytics(
 
         return query;
       }),
+      // FIX-3.SEGURO — carrega TRP §188 / ESTOQUE 1x para passar ao
+      // calculateInsuranceCommissionFromRules no loop de records.
+      fetchInsuranceSlipRules(supabase),
     ]);
 
   const periodsMap = new Map<string, { key: string; label: string; year: number; month: number }>();
@@ -746,7 +738,22 @@ export async function buildPromoterAnalytics(
             net_value: toNumber(record.net_value),
             gross_value: toNumber(record.gross_value),
             insurance_value: toNumber(record.insurance_value),
-            company_insurance_commission_amount: calculateCompanyInsuranceCommission(record),
+            // FIX-3.SEGURO — fonte única com route.ts: usa TRP §188 +
+            // base_field (gross|premio) + Parcelas via getPrazoTrp.
+            // Mesma chamada produz o mesmo amount que o motor principal
+            // grava em daily_production_records.insurance_commission_amount,
+            // garantindo coerência nas duas colunas adjacentes em /promotores.
+            company_insurance_commission_amount:
+              calculateInsuranceCommissionFromRules({
+                rules: insuranceSlipRules,
+                grossValue: toNumber(record.gross_value),
+                premioValue: toNumber(record.insurance_value),
+                insuranceType: record.insurance_type,
+                termPromotiva:
+                  getPrazoTrp(record) ??
+                  toNumber(record.term_months || record.installments),
+                contractDate: record.contract_date || record.movement_date,
+              })?.amount ?? 0,
             insurance_penetration_percent:
               toNumber(selectedPromoterSummary?.insurance_penetration_percent) / 100,
             promoter_commission_percent: toNumber(record.promoter_commission_percent),

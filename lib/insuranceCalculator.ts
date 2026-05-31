@@ -1,18 +1,29 @@
-// FIX-1.E.6.C — Calculo de comissao Promotiva sobre seguro segundo
-// TRP35 §188 SLIP (vigente desde abr/2026) e ESTOQUE_D0 (legado, ate
-// mar/2026). Fonte unica: tabela insurance_slip_rules.
+// FIX-3.SEGURO — Calculo de comissao Promotiva sobre seguro.
+// Fonte unica: tabela insurance_slip_rules (4 regras vigentes apos
+// migration 20260530000000):
 //
-// Modelo (decisao Diego, Etapa C):
-//   amount = baseValue × rule.commission_percent
-//   (sem aplicar share do promotor — share entra na Etapa E via scale
-//    SEGURO_SLIP_MAIO_2026 por penetracao mensal)
+//   ESTOQUE_D0 pré-mar/2026: premio × 2,5% (mensal — motor registra TOTAL)
+//   ESTOQUE_D0 mar/2026+:    gross × 0,15%   (parcela única)
+//   SLIP pré-mar/2026:       premio × 2,5%   (parcela única)
+//   SLIP mar/2026+:          gross × pct_faixa(Parcelas)  [TRP §188]
 //
-// Decisao D1 da Etapa A — TRP35 vira CAMADA 2 da cascata em
-// /api/calculate/monthly (entre MANUAL_PROPOSAL e PRODUCT_RULE).
+// Validacao empirica: Tarefas M/O/P/Q em 40 meses de fechamentos
+// (19.522 CASH entries). Para Thaynara abr/2026 produz R$ 1.002,86
+// exato (bate planilha Diego).
 //
-// Decisao Diego sobre base: 'gross_value' por proposta (compat com
-// modelo atual via getInsuranceCompanyRate; insurance_value continua
-// existindo na tabela para reporting mas nao e a base do calculo).
+// PRAZO usado no lookup: PARCELAS do raw_payload (Tarefa M, 23/0).
+// Caller passa termPromotiva = getPrazoTrp(record) (= Parcelas para
+// nao-3100/3101). Para seguro, NUNCA e Antecipacao 13.
+//
+// BASE de calculo (campo base_field):
+//   'premio' = insurance_value (premio do seguro)
+//   'gross'  = gross_value (valor financiado bruto)
+//
+// Decisao Diego (Fase 3):
+//   - Sem regra TRP match → retorna null. Caller marca proposta em
+//     VERMELHO/aviso, NAO zera, NAO chuta fallback legacy.
+//   - SEM override manual de seguro — so TRP + tabela de remuneracao
+//     (penetracao na Etapa E via scale SEGURO_SLIP_MAIO_2026).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -21,16 +32,18 @@ export type InsuranceSlipRule = {
   modality: string;
   term_min: number;
   term_max: number | null;
-  commission_percent: number;  // decimal: 0.00150 = 0,15%
-  valid_from: string;          // ISO yyyy-mm-dd
+  commission_percent: number;       // decimal: 0.00150 = 0,15%
+  base_field: "gross" | "premio";   // qual valor da proposta multiplica
+  valid_from: string;               // ISO yyyy-mm-dd
   valid_until: string | null;
 };
 
 export type InsuranceCommissionResult = {
-  percent: number;       // em unidades % (ex: 0.15 = "0,15%")
-  amount: number;        // baseValue × percent/100
+  percent: number;                  // em unidades % (ex: 0.15 = "0,15%")
+  amount: number;                   // base × percent/100
   ruleId: string;
-  modality: string;      // 'SLIP' | 'ESTOQUE_D0' (normalizado)
+  modality: string;                 // 'SLIP' | 'ESTOQUE_D0' (normalizado)
+  baseField: "gross" | "premio";    // qual base foi multiplicada
 };
 
 // trim + replace ' ' -> '_' + upper. Decisao Diego.
@@ -54,40 +67,43 @@ function toIsoDate(value: Date | string | null | undefined): string | null {
 }
 
 /**
- * Procura a regra TRP35 §188 / ESTOQUE aplicavel a uma proposta e retorna
- * a comissao Promotiva projetada sobre essa proposta.
+ * Procura a regra insurance_slip_rules aplicavel a uma proposta e retorna
+ * a comissao Promotiva projetada (sobre gross OU premio, conforme
+ * rule.base_field).
  *
  * Retorna null quando:
- *   - baseValue <= 0 (sem base de calculo)
  *   - insuranceType vazio
  *   - nenhuma regra cobre a combinacao (modality, term, data)
+ *   - a base requerida pela rule (gross ou premio) e <= 0
  *
- * No caso de retornar null, o caller deve cair para a proxima camada da
- * cascata (PRODUCT_RULE -> PROMOTER_AGREEMENT -> MONTHLY_DEFAULT).
+ * No caso de null, caller marca a proposta em VERMELHO/aviso — NAO chuta
+ * fallback legacy (decisao Diego, Fase 3).
  *
- * Async: faz um round-trip Supabase por chamada. Para uso em loop quente
- * (ex: cascata em /api/calculate/monthly), preferir 'fetchInsuranceSlipRules'
+ * Async: faz um round-trip Supabase por chamada. Para loop quente
+ * (cascata em /api/calculate/monthly), preferir 'fetchInsuranceSlipRules'
  * 1x no inicio + 'calculateInsuranceCommissionFromRules' sync no loop.
  */
 export async function calculateInsuranceCommission(args: {
   supabase: SupabaseClient;
-  baseValue: number;
+  grossValue: number;
+  premioValue: number;
   insuranceType: string | null | undefined;
-  termMonths: number | null | undefined;
+  termPromotiva: number | null | undefined;
   contractDate: Date | string | null | undefined;
 }): Promise<InsuranceCommissionResult | null> {
   const rules = await fetchInsuranceSlipRules(args.supabase);
   return calculateInsuranceCommissionFromRules({
     rules,
-    baseValue: args.baseValue,
+    grossValue: args.grossValue,
+    premioValue: args.premioValue,
     insuranceType: args.insuranceType,
-    termMonths: args.termMonths,
+    termPromotiva: args.termPromotiva,
     contractDate: args.contractDate,
   });
 }
 
 /**
- * Carrega TODAS as regras insurance_slip_rules. Cardinality baixa (~5-10
+ * Carrega TODAS as regras insurance_slip_rules. Cardinality baixa (~7
  * em producao), seguro carregar tudo em memoria.
  */
 export async function fetchInsuranceSlipRules(
@@ -95,7 +111,9 @@ export async function fetchInsuranceSlipRules(
 ): Promise<InsuranceSlipRule[]> {
   const { data, error } = await supabase
     .from("insurance_slip_rules")
-    .select("id, modality, term_min, term_max, commission_percent, valid_from, valid_until");
+    .select(
+      "id, modality, term_min, term_max, commission_percent, base_field, valid_from, valid_until"
+    );
   if (error) return [];
   return (data || []).map((r: any) => ({
     id: String(r.id),
@@ -103,6 +121,7 @@ export async function fetchInsuranceSlipRules(
     term_min: Number(r.term_min),
     term_max: r.term_max === null ? null : Number(r.term_max),
     commission_percent: Number(r.commission_percent),
+    base_field: r.base_field === "premio" ? "premio" : "gross",
     valid_from: String(r.valid_from),
     valid_until: r.valid_until ? String(r.valid_until) : null,
   }));
@@ -114,20 +133,19 @@ export async function fetchInsuranceSlipRules(
  */
 export function calculateInsuranceCommissionFromRules(args: {
   rules: InsuranceSlipRule[];
-  baseValue: number;
+  grossValue: number;
+  premioValue: number;
   insuranceType: string | null | undefined;
-  termMonths: number | null | undefined;
+  termPromotiva: number | null | undefined;
   contractDate: Date | string | null | undefined;
 }): InsuranceCommissionResult | null {
-  const { rules, baseValue, insuranceType, termMonths, contractDate } = args;
+  const { rules, grossValue, premioValue, insuranceType, termPromotiva, contractDate } = args;
 
-  if (!baseValue || baseValue <= 0) return null;
   if (!insuranceType) return null;
-
   const modality = normalizeModality(insuranceType);
   if (!modality) return null;
 
-  const term = Number(termMonths || 0);
+  const term = Number(termPromotiva || 0);
   const refDateIso = toIsoDate(contractDate) || new Date().toISOString().slice(0, 10);
 
   const candidates = rules.filter((r) => {
@@ -150,15 +168,21 @@ export function calculateInsuranceCommissionFromRules(args: {
   });
 
   const rule = candidates[0];
-  const rate = rule.commission_percent; // ex: 0.00150
-  const percent = rate * 100;            // 0.15 em unidades %
-  const amount = baseValue * rate;       // baseValue × 0.00150
+  const baseField = rule.base_field;
+  const base =
+    baseField === "premio" ? Number(premioValue || 0) : Number(grossValue || 0);
+  if (!base || base <= 0) return null;
+
+  const rate = rule.commission_percent;
+  const percent = rate * 100;
+  const amount = base * rate;
 
   return {
     percent,
     amount,
     ruleId: rule.id,
     modality,
+    baseField,
   };
 }
 
