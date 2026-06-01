@@ -286,10 +286,12 @@ export async function GET(req: Request) {
     );
 
     // FIX-1.E.6.F — gate de vigencia espelha o de /api/calculate/monthly:
-    // scale SEGURO_SLIP aplica a partir de maio/2026. UI usa essa flag
-    // para decidir se mostra badge "Projetado" no card de seguro promotor.
+    // UI usa essa flag para decidir se mostra badge "Projetado" no card de
+    // seguro promotor.
+    // FIX-6 (Diego): repasse de 50% vale desde MARCO/2026. Gate antecipado
+    // de month>=5 para month>=3 (espelha o de calculate/monthly:739).
     const insuranceShareScaleActive =
-      year > 2026 || (year === 2026 && month >= 5);
+      year > 2026 || (year === 2026 && month >= 3);
 
     // FIX-1.E.6.F.4 — manualRules filtrado por promoter_id (39 ids) em
     // vez de daily_production_record_id (519 ids). Em abr/2026 sem

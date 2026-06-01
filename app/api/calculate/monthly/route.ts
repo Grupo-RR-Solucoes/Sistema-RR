@@ -731,12 +731,13 @@ export async function POST(req: Request) {
     );
 
     // FIX-1.E.6.E — Gate de vigencia (Modelo B). Scale SEGURO_SLIP aplica
-    // a partir de maio/2026. Abril/2026 e transicao: calcula e retorna no
-    // payload da resposta (dry-run), mas NAO grava em
-    // promoter_monthly_results.insurance_commission_value — preserva valor
-    // atual (Promotiva total). Recalculo retroativo de abril fica para
-    // Etapa D.
-    const insuranceShareScaleActive = year > 2026 || (year === 2026 && month >= 5);
+    // o repasse Modelo B (total Promotiva × share por penetracao); quando
+    // inativo, grava o total Promotiva (100%) em
+    // promoter_monthly_results.insurance_commission_value.
+    // FIX-6 (Diego): repasse de 50% vale desde MARCO/2026, nao maio. Gate
+    // antecipado de month>=5 para month>=3. Requer recalculo retroativo de
+    // mar+abr/2026 para alinhar o gravado ao que ja foi pago.
+    const insuranceShareScaleActive = year > 2026 || (year === 2026 && month >= 3);
 
     const proposalRules = await fetchAllPaged<any>(() => {
       let query = supabase
