@@ -1,0 +1,37 @@
+{
+  "when": "precheck",
+  "daily": [
+    {
+      "id": "f421676d-6558-49f7-9391-99a2ec97e6e9",
+      "proposal_number": "208996235",
+      "product_description": "CRÉDITO SALÁRIO",
+      "net_value": 2000,
+      "company_received_percent": 4.34,
+      "promoter_commission_percent": 3.255,
+      "promoter_commission_amount": 65.1,
+      "commission_rule_source": "IMPORTED_MONTHLY_TABLE+DIA45_PROFILE_ACORDO_FIXO",
+      "assigned_promoter_id": "357d85d6-84e9-46d0-a5c1-31cdb893d355"
+    },
+    {
+      "id": "ab7e5247-1ee4-4d44-9fa6-e5033337a224",
+      "proposal_number": "210464220",
+      "product_description": "CRÉDITO SALÁRIO",
+      "net_value": 12381.99,
+      "company_received_percent": 4.34,
+      "promoter_commission_percent": 3.255,
+      "promoter_commission_amount": 403.03,
+      "commission_rule_source": "IMPORTED_MONTHLY_TABLE+DIA45_PROFILE_ACORDO_FIXO+TRP35_SLIP",
+      "assigned_promoter_id": "357d85d6-84e9-46d0-a5c1-31cdb893d355"
+    }
+  ],
+  "pmr": {
+    "promoter_id": "357d85d6-84e9-46d0-a5c1-31cdb893d355",
+    "year": 2026,
+    "month": 4,
+    "production_commission_value": 15265.53,
+    "insurance_commission_value": 501.43,
+    "agreement_adjustment_value": 0,
+    "final_commission_value": 15766.97,
+    "discount_value": 0
+  }
+}
