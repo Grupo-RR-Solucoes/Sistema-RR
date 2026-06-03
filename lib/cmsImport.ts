@@ -159,6 +159,7 @@ export type CmsParsedEntry = {
   promoterInsurance: number;
   insurancePremium: number;
   penetration: number | null;
+  metaAtingida: boolean; // banner "META ATINGIDA" da aba (informativo)
   rawPayload: Record<string, unknown>;
 };
 
@@ -186,6 +187,7 @@ type HeaderMap = {
   idxPenetracao: number;
   idxComissaoPromotor: number;
   idxComissaoSeguroLast: number; // ultima col COMISSAO SEGURO = repasse seguro
+  metaAtingida: boolean; // banner "META ATINGIDA" acima do cabecalho
   header: string[];
 };
 
@@ -193,6 +195,14 @@ function findHeaderMap(matrix: unknown[][]): HeaderMap | null {
   for (let r = 0; r < Math.min(matrix.length, 12); r++) {
     const cells = (matrix[r] || []).map(normalizeText);
     if (cells.includes("CONTRATO") && cells.includes("CHAVE J")) {
+      // banner "META ATINGIDA": qualquer celula acima do cabecalho com esse
+      // texto sinaliza que o promotor bateu a meta (informativo).
+      let metaAtingida = false;
+      for (let p = 0; p < r; p++) {
+        for (const c of (matrix[p] || []).map(normalizeText)) {
+          if (c === "META ATINGIDA") metaAtingida = true;
+        }
+      }
       // ultima ocorrencia de COMISSAO SEGURO (a 1a e a do seguro EMPRESA, a
       // ultima coluna e o repasse do PROMOTOR). Cobre "COMISSAO SEGURO" e
       // "COMISSAO SEGURO2".
@@ -214,6 +224,7 @@ function findHeaderMap(matrix: unknown[][]): HeaderMap | null {
         idxPenetracao: cells.indexOf("% PENETRACAO"),
         idxComissaoPromotor: cells.indexOf("COMISSAO PROMOTOR"),
         idxComissaoSeguroLast: idxSeguroLast,
+        metaAtingida,
         header: cells,
       };
     }
@@ -295,6 +306,7 @@ export function parseCmsWorkbook(input: {
           hmap.idxPenetracao >= 0
             ? parseNumber(cell(row, hmap.idxPenetracao))
             : null,
+        metaAtingida: hmap.metaAtingida,
         rawPayload,
       });
     }
@@ -316,13 +328,14 @@ export function parseCmsWorkbook(input: {
 // ---------------------------------------------------------------------------
 
 export type CompanyRow = { id: string; name: string; cnpj: string };
-export type JKeyRow = { j_key: string; promoter_id: string | null };
+export type JKeyRow = { j_key: string; promoter_id: string | null; key_type: string | null };
 export type PromoterRow = { id: string; name: string };
 
 export type CmsResolutionMaps = {
   companies: CompanyRow[];
   jKeyToPromoter: Map<string, string>; // CHAVE J (upper) -> promoter_id
   promoterByName: Map<string, string>; // nome normalizado -> promoter_id (so 1:1)
+  masterJKeys: Set<string>; // CHAVE J (upper) com key_type=MASTER
 };
 
 // aliases de variacao de acento/grafia citados na SPEC (sheet -> canonical).
@@ -343,7 +356,7 @@ export async function loadCmsResolutionMaps(
 ): Promise<CmsResolutionMaps> {
   const [companiesRes, jKeysRes, promotersRes] = await Promise.all([
     supabaseAdmin.from("companies").select("id, name, cnpj").order("name"),
-    supabaseAdmin.from("j_keys").select("j_key, promoter_id"),
+    supabaseAdmin.from("j_keys").select("j_key, promoter_id, key_type"),
     supabaseAdmin.from("promoters").select("id, name"),
   ]);
 
@@ -352,10 +365,12 @@ export async function loadCmsResolutionMaps(
   if (promotersRes.error) throw new Error(promotersRes.error.message);
 
   const jKeyToPromoter = new Map<string, string>();
+  const masterJKeys = new Set<string>();
   for (const k of (jKeysRes.data || []) as JKeyRow[]) {
-    if (k.j_key && k.promoter_id) {
-      jKeyToPromoter.set(k.j_key.trim().toUpperCase(), k.promoter_id);
-    }
+    if (!k.j_key) continue;
+    const key = k.j_key.trim().toUpperCase();
+    if (k.promoter_id) jKeyToPromoter.set(key, k.promoter_id);
+    if (normalizeText(k.key_type) === "MASTER") masterJKeys.add(key);
   }
 
   // nome normalizado -> promoter_id, mas so quando o nome e UNICO (evita match
@@ -377,6 +392,7 @@ export async function loadCmsResolutionMaps(
     companies: (companiesRes.data || []) as CompanyRow[],
     jKeyToPromoter,
     promoterByName,
+    masterJKeys,
   };
 }
 
@@ -415,6 +431,7 @@ export type CmsResolvedEntry = CmsParsedEntry & {
   companyId: string | null;
   promoterId: string | null;
   promoterSource: "J_KEY" | "SHEET_NAME" | null;
+  isMaster: boolean; // CHAVE J e key_type=MASTER em j_keys
 };
 
 export type CmsUnmappedRow = {
@@ -483,6 +500,7 @@ export function resolveCmsEntries(
       companyId: company?.id ?? null,
       promoterId,
       promoterSource,
+      isMaster: e.jKey ? maps.masterJKeys.has(e.jKey.toUpperCase()) : false,
     });
   }
 
@@ -656,6 +674,8 @@ async function runCmsImportPipeline(ctx: {
       promoter_insurance: e.promoterInsurance,
       insurance_premium: e.insurancePremium,
       penetration: e.penetration,
+      meta_atingida: e.metaAtingida,
+      is_master: e.isMaster,
       source_sheet: e.sheetName,
       raw_payload: e.rawPayload,
     };

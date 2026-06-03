@@ -50,6 +50,8 @@ create table if not exists cms_promoter_entries (
   promoter_insurance numeric(18,6) not null default 0, -- COMISSAO SEGURO (ultima col) — GROUND TRUTH seguro
   insurance_premium numeric(18,2) not null default 0,  -- VALOR SEGURO (premio, ref.)
   penetration numeric(12,6),                     -- % PENETRACAO (ref.)
+  meta_atingida boolean not null default false,  -- banner "META ATINGIDA" da aba (informativo, exibicao; nao afeta valor)
+  is_master boolean not null default false,      -- CHAVE J e key_type=MASTER em j_keys (marca as 4 chaves master)
   source_sheet text,
   raw_payload jsonb,
   created_at timestamptz not null default now()
