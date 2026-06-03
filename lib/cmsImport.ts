@@ -112,12 +112,13 @@ const TOKEN_TO_COMPANY_NAME: Record<CompanyToken, string> = {
 };
 
 export function extractCompanyToken(fileName: string): CompanyToken | null {
-  // normaliza e cola "AL 1" -> "AL1" (ABRIL usa "AL 1", MARCO usa "AL1").
+  // normaliza e cola "AL 1" -> "AL1". O nome do cms varia por mes:
+  //   ABRIL "AL 1" | MARCO "AL1" | JANEIRO nome completo "ALAGOAS 1" / "PERNAMBUCO".
   const compact = normalizeText(fileName).replace(/AL\s+(\d)/g, "AL$1");
-  if (/(^|[^A-Z0-9])AL1([^A-Z0-9]|$)/.test(compact)) return "AL1";
-  if (/(^|[^A-Z0-9])AL2([^A-Z0-9]|$)/.test(compact)) return "AL2";
-  if (/(^|[^A-Z0-9])AL3([^A-Z0-9]|$)/.test(compact)) return "AL3";
-  if (/(^|[^A-Z0-9])PE([^A-Z0-9]|$)/.test(compact)) return "PE";
+  if (/(^|[^A-Z0-9])AL1([^A-Z0-9]|$)/.test(compact) || /ALAGOAS\s*1/.test(compact)) return "AL1";
+  if (/(^|[^A-Z0-9])AL2([^A-Z0-9]|$)/.test(compact) || /ALAGOAS\s*2/.test(compact)) return "AL2";
+  if (/(^|[^A-Z0-9])AL3([^A-Z0-9]|$)/.test(compact) || /ALAGOAS\s*3/.test(compact)) return "AL3";
+  if (/(^|[^A-Z0-9])PE([^A-Z0-9]|$)/.test(compact) || /PERNAMBUCO/.test(compact)) return "PE";
   return null;
 }
 
