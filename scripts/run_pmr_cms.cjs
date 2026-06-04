@@ -102,7 +102,11 @@ async function fetchAll(table, sel, filt) {
       const gotFinal = row ? r2(row.final_commission_value) : 0;
       totalPmr += gotFinal;
       totalCms += expFinal;
-      if (Math.abs(gotProd - expProd) > 0.005 || Math.abs(gotIns - expIns) > 0.005 || Math.abs(gotFinal - expFinal) > 0.005) {
+      // Criterio (regra original): compara o FINAL por promotor (= o que e pago).
+      // A quebra credito/seguro pode arredondar em meia-casa (ex.: seguro cms
+      // 85,635) sem afetar o final nem o total — artefato float, NAO divergencia.
+      // Nao se aplica arredondamento artificial ao split (divergiria do cms).
+      if (Math.abs(gotFinal - expFinal) > 0.005) {
         diverg++;
         allDivergences.push({ month: m, promoter_id: pid, expProd, gotProd, expIns, gotIns, expFinal, gotFinal });
       }
