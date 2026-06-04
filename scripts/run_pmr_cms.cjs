@@ -24,7 +24,7 @@ const sb = createClient(
 const YEAR = 2026;
 // meses via argv (ex.: "node run_pmr_cms.cjs 2"); default = jan + mar.
 const MONTHS = process.argv.slice(2).length ? process.argv.slice(2).map(Number) : [1, 3];
-const MES = { 1: "JAN", 2: "FEV", 3: "MAR" };
+const MES = { 1: "JAN", 2: "FEV", 3: "MAR", 4: "ABR", 5: "MAI", 6: "JUN", 7: "JUL", 8: "AGO", 9: "SET", 10: "OUT", 11: "NOV", 12: "DEZ" };
 // valores de aceite conhecidos (informados pelo Diego) p/ Thaynara final.
 const THAYNARA_ESPERADO = { 2: "12.283,69", 3: "16.051,57" };
 const fmt = (x) => Number(x).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });

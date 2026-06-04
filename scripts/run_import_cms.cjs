@@ -40,11 +40,12 @@ const sb = createClient(
   { auth: { persistSession: false } }
 );
 const fmt = (x) => Number(x).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const MES = { 1: "JAN", 2: "FEV", 3: "MAR" };
+const MES = { 1: "JAN", 2: "FEV", 3: "MAR", 4: "ABR", 5: "MAI", 6: "JUN", 7: "JUL", 8: "AGO", 9: "SET", 10: "OUT", 11: "NOV", 12: "DEZ" };
 
 (async () => {
   const unmappedByFile = [];
-  console.log("===================== PASSO 2 — IMPORT cms (jan + mar/2026) =====================\n");
+  const importedMonths = new Set();
+  console.log("===================== PASSO 2 — IMPORT cms =====================\n");
 
   for (const name of FILES) {
     const full = path.join(DOWNLOADS, name);
@@ -60,6 +61,7 @@ const MES = { 1: "JAN", 2: "FEV", 3: "MAR" };
         `entries=${r.processedEntries} mapeadas=${r.mappedEntries} nao-map=${r.unmappedEntries} ` +
         `excl=${r.excludedRows} importId=${r.importId}`
       );
+      importedMonths.add(r.prodMonth);
       if (r.unmapped && r.unmapped.length) {
         unmappedByFile.push({ file: name, unmapped: r.unmapped });
       }
@@ -77,7 +79,7 @@ const MES = { 1: "JAN", 2: "FEV", 3: "MAR" };
   const { data: imports } = await sb
     .from("cms_imports")
     .select("id, company_id, prod_year, prod_month, status, file_name")
-    .in("prod_month", [1, 2, 3])
+    .in("prod_month", importedMonths.size ? [...importedMonths] : [1, 2, 3])
     .eq("prod_year", 2026)
     .order("prod_month");
 
