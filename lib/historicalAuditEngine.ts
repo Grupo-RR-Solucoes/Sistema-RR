@@ -110,6 +110,18 @@ function isSrccRestricted(metadata: Record<string, unknown> | null | undefined):
   return false;
 }
 
+// CORRECAO-2: normaliza CNPJ p/ casar formatos diferentes no filtro known-set.
+// O import antigo gravou "TEMP-mci-coban"; o novo grava o CNPJ MASCARADO
+// ("48.357.275/0001-03"); KNOWN_COMPANIES traz digitos puros ("48357275000103").
+// TEMP- e preservado (upper); o resto vira so digitos. Sem isto o engine
+// excluia 100% das linhas do fluxo novo (PRT de maio dava 0).
+function normalizeCnpjKey(value: unknown): string {
+  const s = String(value ?? "").trim();
+  if (/^TEMP-/i.test(s)) return s.toUpperCase();
+  const digits = s.replace(/\D/g, "");
+  return digits || s.toUpperCase();
+}
+
 function getYearMonthCode(year: number, month: number): number {
   return year * 100 + month;
 }
@@ -305,8 +317,8 @@ export async function auditCashEntriesForMonth(
   const supabaseAdmin = getSupabaseAdmin();
   const knownCnpjSet = new Set<string>();
   for (const company of Object.values(KNOWN_COMPANIES_BY_CNPJ)) {
-    knownCnpjSet.add(company.empresaCnpj);
-    knownCnpjSet.add(`TEMP-${company.mci}-${company.coban}`);
+    knownCnpjSet.add(normalizeCnpjKey(company.empresaCnpj));
+    knownCnpjSet.add(normalizeCnpjKey(`TEMP-${company.mci}-${company.coban}`));
   }
 
   // Não filtramos company_cnpj na query — a base só carrega os 4 CNPJs do
@@ -346,7 +358,7 @@ export async function auditCashEntriesForMonth(
   const rawRows = await loadCashWithRetry();
 
   const rows = rawRows.filter((row) =>
-    knownCnpjSet.has(String(row.company_cnpj || "").trim())
+    knownCnpjSet.has(normalizeCnpjKey(row.company_cnpj))
   );
 
   let productionValue = 0;
@@ -943,8 +955,8 @@ function emptyStatusMap(): Record<ContractPrtStatus, number> {
 function knownCnpjFilterSet(): Set<string> {
   const set = new Set<string>();
   for (const company of Object.values(KNOWN_COMPANIES_BY_CNPJ)) {
-    set.add(company.empresaCnpj);
-    set.add(`TEMP-${company.mci}-${company.coban}`);
+    set.add(normalizeCnpjKey(company.empresaCnpj));
+    set.add(normalizeCnpjKey(`TEMP-${company.mci}-${company.coban}`));
   }
   return set;
 }
@@ -1013,7 +1025,7 @@ export async function auditPrtForMonth(
       .order("id", { ascending: true })
   );
   const prtRowsAll = prtRowsAllRaw.filter((r) =>
-    knownSet.has(String(r.company_cnpj || "").trim())
+    knownSet.has(normalizeCnpjKey(r.company_cnpj))
   );
 
   // Conjunto de operation_numbers que aparecem em PRT no mês ref (driver do escopo)
@@ -1037,7 +1049,7 @@ export async function auditPrtForMonth(
       .order("id", { ascending: true })
   );
   const cashRowsAll = cashRowsAllRaw.filter((r) =>
-    knownSet.has(String(r.company_cnpj || "").trim())
+    knownSet.has(normalizeCnpjKey(r.company_cnpj))
   );
 
   // Mapa cnpj::contract_number -> CASH (versão mais antiga vence)
@@ -1079,7 +1091,7 @@ export async function auditPrtForMonth(
   let totalDebitsParsed = 0;
   for (const r of debitRowsAllRaw) {
     const cnpj = String(r.company_cnpj || "").trim();
-    if (!knownSet.has(cnpj)) continue;
+    if (!knownSet.has(normalizeCnpjKey(cnpj))) continue;
     const desc = getMetadataText(r.metadata, [
       "DESCRICAO",
       "DESCRIÇÃO",
@@ -1153,7 +1165,7 @@ export async function auditPrtForMonth(
   for (const r of debitRowsAllRaw) {
     if (r.year !== year || r.month !== month) continue;
     const cnpj = String(r.company_cnpj || "").trim();
-    if (!knownSet.has(cnpj)) continue;
+    if (!knownSet.has(normalizeCnpjKey(cnpj))) continue;
     const desc = getMetadataText(r.metadata, [
       "DESCRICAO",
       "DESCRIÇÃO",

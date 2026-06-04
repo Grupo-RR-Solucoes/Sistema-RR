@@ -333,10 +333,15 @@ function normalizeConvenioCode(value: unknown) {
 function isPrivateConvenio(op: Operation) {
   const typeText = normalizeText(op.convenio_type);
   const segmentText = normalizeText(op.convenio_segment);
+  // CORRECAO-1: detecta privado tambem pela DESCRICAO ("CONSIGNADO PRIVADO"). No
+  // fechamento BB os campos convenio_type/segment nao vem, entao sem isto o
+  // privado caia em PUBLICO_GERAL (9,37%) em vez da tabela PRIVADO (TRP 1.7).
+  const descriptionText = normalizeText(op.product_description);
   return (
     typeText.includes("PRIVADO") ||
     segmentText === "2" ||
-    segmentText.includes("PRIVADO")
+    segmentText.includes("PRIVADO") ||
+    descriptionText.includes("PRIVADO")
   );
 }
 

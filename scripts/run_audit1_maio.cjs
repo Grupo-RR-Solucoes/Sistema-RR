@@ -91,6 +91,14 @@ async function fa(filt) { let f = 0, o = []; for (;;) { let q = sb.from("monthly
   console.log(`  → ENTRA (sem débito casado) = SUSPEITO+LEGÍTIMO+NUNCA_PAGO+AUSENTE = ${fmt(prtRec)}`);
   console.log(`  → JUSTIFICADO por débito casado (OK_DEBITADO), à parte = ${s.byStatus.OK_DEBITADO} contratos (rec ${fmt(s.recuperavelByStatus.OK_DEBITADO)})`);
 
+  // exemplos do que ENTRA (TRP mandava e não veio, sem débito casado)
+  const entraRows = prt.results.filter(r => entra.includes(r.status)).sort((a, b) => b.recuperavelEstimado - a.recuperavelEstimado);
+  console.log(`\n  EXEMPLOS — PRT que ENTRA (top ${Math.min(10, entraRows.length)} por recuperável):`);
+  console.log("  operação | cnpj | status | parc pagas/total | listado-não-pago | recuperável | débito?");
+  for (const r of entraRows.slice(0, 10)) {
+    console.log(`   ${r.operationNumber} | ${(CNPJ2EMP[r.companyCnpj] || r.companyCnpj)} | ${r.status} | ${r.parcelasPagas}/${r.parcelasTotal} | ${fmt(r.totalListadoNaoPago)} | ${fmt(r.recuperavelEstimado)} | ${r.debitInfo ? JSON.stringify(r.debitInfo) : "não"}`);
+  }
+
   // ---- Consolidado ----
   console.log("\n\n### CONSOLIDADO MAIO/2026 (recuperável = só underpayment)");
   console.log(`  Frente 1 à vista (underpayment, teto 6%) = ${fmt(under6)}`);
