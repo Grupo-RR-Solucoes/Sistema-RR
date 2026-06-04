@@ -52,6 +52,7 @@ type PromotorPayload = {
   selectedPeriod: PeriodOption;
   summaryRows: PromoterSummaryRow[];
   proposalRows: ProposalRow[];
+  proposalSource?: "daily" | "cms"; // FRENTE 2: 'cms' = mes fechado (ground truth, somente leitura)
 };
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
@@ -269,10 +270,28 @@ export default function PromotorView() {
           <div style={styles.loading}>Carregando seu relatório...</div>
         ) : proposals.length === 0 ? (
           <div style={styles.empty}>
-            Nenhuma proposta encontrada nesta competência.
+            {data?.proposalSource === "cms"
+              ? "Sem produção no cms deste mês (mês fechado)."
+              : "Nenhuma proposta encontrada nesta competência."}
           </div>
         ) : (
           <div style={styles.tableWrap}>
+            {data?.proposalSource === "cms" ? (
+              <div
+                style={{
+                  padding: "6px 10px",
+                  marginBottom: 8,
+                  fontSize: 12,
+                  color: "#1d4ed8",
+                  background: "#eff6ff",
+                  border: "1px solid #bfdbfe",
+                  borderRadius: 6,
+                }}
+              >
+                Mês fechado — detalhe do cms (ground truth, somente leitura). Linhas
+                da chave coletiva têm contrato/data/chave J ocultos.
+              </div>
+            ) : null}
             <table style={styles.table}>
               <thead>
                 <tr>

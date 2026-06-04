@@ -8,6 +8,78 @@ import {
 import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { detectClosedMonth } from "@/lib/cmsMonthly";
+
+// FRENTE 2 — no mes FECHADO o detalhe do promotor reflete o cms (ground truth),
+// nao o diario/previsao. Monta as linhas de proposta a partir de
+// cms_promoter_entries, ordenadas por aba + contrato. A ocultacao da chave
+// coletiva 552710 (contrato/data/chave J) ja e feita no PromotorView. A tela e
+// somente leitura no fechado (PromotorView nao tem edicao).
+function rawValue(rp: Record<string, unknown> | null, keys: string[]): unknown {
+  if (!rp) return null;
+  for (const k of keys) if (rp[k] !== undefined && rp[k] !== "") return rp[k];
+  return null;
+}
+function rawNum(rp: Record<string, unknown> | null, keys: string[]): number {
+  return toNumber(rawValue(rp, keys));
+}
+async function buildCmsProposalRows(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  promoterId: string,
+  year: number,
+  month: number
+) {
+  const { data, error } = await supabase
+    .from("cms_promoter_entries")
+    .select(
+      "id, source_sheet, contract_number, j_key, net_value, gross_value, promoter_credit, promoter_insurance, insurance_premium, company_commission, avista_percent, penetration, product_description, raw_payload, promoter_id"
+    )
+    .eq("promoter_id", promoterId)
+    .eq("prod_year", year)
+    .eq("prod_month", month);
+  if (error) throw new Error(error.message);
+
+  const sorted = (data || []).slice().sort((a, b) => {
+    const sa = String(a.source_sheet || ""), sb = String(b.source_sheet || "");
+    if (sa !== sb) return sa < sb ? -1 : 1;
+    return String(a.contract_number || "").localeCompare(String(b.contract_number || ""));
+  });
+
+  return sorted.map((e) => {
+    const rp = (e.raw_payload as Record<string, unknown> | null) || {};
+    return {
+      id: e.id,
+      contract_number: e.contract_number || "-",
+      proposal_number: e.contract_number || "-",
+      agency_code: String(rawValue(rp, ["AGENCIA"]) ?? "") || "-",
+      j_key: e.j_key || "",
+      promoter_name: "",
+      product_description: e.product_description || "-",
+      status: "FECHADO",
+      movement_date: null as string | null,
+      contract_date: (rawValue(rp, ["DATA CONTRATACAO", "DATA CONTRATAÇÃO"]) as string | null) ?? null,
+      interest_rate: rawNum(rp, ["TX JUROS"]),
+      installment_count: rawNum(rp, ["PARCELA", "PARCELAS"]),
+      company_received_percent: toNumber(e.avista_percent),
+      company_commission_amount: toNumber(e.company_commission),
+      srcc_restriction: String(rawValue(rp, ["RESTRICAO SRCC", "RESTRIÇÃO SRCC"]) ?? "") || "-",
+      net_value: toNumber(e.net_value),
+      gross_value: toNumber(e.gross_value),
+      insurance_value: toNumber(e.insurance_premium),
+      company_insurance_commission_amount: 0,
+      insurance_penetration_percent: toNumber(e.penetration),
+      promoter_commission_percent: 0,
+      promoter_commission_amount: toNumber(e.promoter_credit),
+      insurance_commission_percent: 0,
+      insurance_commission_amount: toNumber(e.promoter_insurance),
+      commission_rule_source: "cms",
+      assigned_promoter_id: e.promoter_id as string | null,
+      assigned_promoter_name: "",
+      original_promoter_id: e.promoter_id as string | null,
+      original_promoter_name: "",
+    };
+  });
+}
 
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
@@ -99,14 +171,38 @@ export async function GET(req: Request) {
     // buildPromoterAnalytics agora recebe o cliente do guard (Etapa 3.7).
     // Promotor passa supabase autenticado anon -> RLS filtra para o
     // proprio promoter_id; socio/funcionario veem dados completos.
+    const yearN = Number(searchParams.get("year") || 0) || undefined;
+    const monthN = Number(searchParams.get("month") || 0) || undefined;
+
     const payload = await buildPromoterAnalytics(supabase, {
-      year: Number(searchParams.get("year") || 0) || undefined,
-      month: Number(searchParams.get("month") || 0) || undefined,
+      year: yearN,
+      month: monthN,
       companyId: searchParams.get("companyId") || undefined,
       promoterId: effectivePromoterId,
     });
 
-    return NextResponse.json(payload);
+    // FRENTE 2 — mes FECHADO: detalhe vem do cms (ground truth), nao do diario.
+    let proposalSource: "daily" | "cms" = "daily";
+    if (yearN && monthN && effectivePromoterId) {
+      let closed = false;
+      try {
+        closed = await detectClosedMonth(supabase, yearN, monthN);
+      } catch {
+        closed = false; // tabela ausente / erro -> trata como aberto
+      }
+      if (closed) {
+        proposalSource = "cms";
+        const cmsRows = await buildCmsProposalRows(
+          supabase,
+          effectivePromoterId,
+          yearN,
+          monthN
+        );
+        return NextResponse.json({ ...payload, proposalRows: cmsRows, proposalSource });
+      }
+    }
+
+    return NextResponse.json({ ...payload, proposalSource });
   } catch (error) {
     return apiGuardErrorResponse(error);
   }
