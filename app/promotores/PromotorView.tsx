@@ -87,6 +87,15 @@ function formatInterestRate(value: number | null | undefined) {
   return `${display.toFixed(2).replace(".", ",")}%`;
 }
 
+// CHAVE COLETIVA 552710 (JJ/JJJ): o VALOR conta normalmente, mas a identificacao
+// (contrato, data, chave J) e ocultada SO nesta tela de detalhamento do promotor.
+function isColetivaJKey(jKey: string | null | undefined) {
+  return /^J+552710$/.test(
+    String(jKey ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase()
+  );
+}
+const COLETIVA_MASK = "—";
+
 // Cores precisam ser explicitas no <td> sticky-left porque sticky cria
 // stacking context proprio que ignora o background do <tr>. Sem isso o
 // texto das outras colunas vaza por baixo da coluna CONTRATO durante
@@ -285,6 +294,7 @@ export default function PromotorView() {
                 {proposals.map((row, rowIdx) => {
                   const isZebra = rowIdx % 2 === 1;
                   const rowBg = isZebra ? ROW_ALT_BG : ROW_BG;
+                  const coletiva = isColetivaJKey(row.j_key);
                   return (
                   <tr
                     key={row.id}
@@ -297,7 +307,9 @@ export default function PromotorView() {
                         background: rowBg,
                       }}
                     >
-                      {row.contract_number || row.proposal_number || "-"}
+                      {coletiva
+                        ? COLETIVA_MASK
+                        : row.contract_number || row.proposal_number || "-"}
                     </td>
                     <td style={{ ...styles.td, textAlign: "right" }}>
                       {formatCurrency(row.gross_value)}
@@ -309,10 +321,12 @@ export default function PromotorView() {
                       {row.installment_count || 0}
                     </td>
                     <td style={styles.td}>{row.agency_code || "-"}</td>
-                    <td style={styles.td}>{row.j_key || "-"}</td>
+                    <td style={styles.td}>{coletiva ? COLETIVA_MASK : row.j_key || "-"}</td>
                     <td style={styles.td}>{row.promoter_name || "-"}</td>
                     <td style={styles.td}>
-                      {formatDate(row.contract_date || row.movement_date)}
+                      {coletiva
+                        ? COLETIVA_MASK
+                        : formatDate(row.contract_date || row.movement_date)}
                     </td>
                     <td style={{ ...styles.td, textAlign: "right" }}>
                       {formatInterestRate(row.interest_rate)}

@@ -143,8 +143,20 @@ export function extractCompetencia(
 // Parsing puro do workbook (sem DB)
 // ---------------------------------------------------------------------------
 
-// j_keys que nunca devem entrar no cms (chave de exclusao por seguranca).
-export const EXCLUDED_JKEYS = new Set(["JJJ552710"]);
+// j_keys que nunca devem entrar no cms (exclusao por seguranca). VAZIO desde
+// 04/06: a 552710 (antes excluida) deixou de ser excluida — ver isColetivaJKey.
+export const EXCLUDED_JKEYS = new Set<string>([]);
+
+// CHAVE COLETIVA 552710 (Diego 04/06): grafias JJ552710 (duplo-J) e JJJ552710
+// (triplo-J) sao a MESMA chave coletiva. Nao e mais excluida: o credito ENTRA
+// no PMR da promotora DONA DA ABA onde a linha aparece, e conta nos totais. So
+// a identificacao (contrato/data/chave J) e ocultada na tela de detalhe do
+// promotor — marcacao derivada da propria chave (sem coluna nova).
+export function isColetivaJKey(jKey: unknown): boolean {
+  return /^J+552710$/.test(
+    String(jKey ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase()
+  );
+}
 
 export type CmsParsedEntry = {
   sheetName: string;
@@ -161,6 +173,7 @@ export type CmsParsedEntry = {
   insurancePremium: number;
   penetration: number | null;
   metaAtingida: boolean; // banner "META ATINGIDA" da aba (informativo)
+  isColetiva: boolean; // chave 552710 — atribuida a dona da aba, identificacao oculta na tela de detalhe
   rawPayload: Record<string, unknown>;
 };
 
@@ -170,7 +183,7 @@ export type CmsParseResult = {
   prodMonth: number | null;
   entries: CmsParsedEntry[];
   skippedSheets: string[]; // GERAL e abas sem cabecalho
-  excludedRows: number; // linhas JJJ552710 puladas
+  excludedRows: number; // linhas em EXCLUDED_JKEYS puladas (hoje vazio)
   totalRows: number; // linhas de contrato lidas (antes da exclusao)
 };
 
@@ -308,6 +321,7 @@ export function parseCmsWorkbook(input: {
             ? parseNumber(cell(row, hmap.idxPenetracao))
             : null,
         metaAtingida: hmap.metaAtingida,
+        isColetiva: isColetivaJKey(jKey),
         rawPayload,
       });
     }
@@ -431,7 +445,7 @@ function resolvePromoterBySheetName(
 export type CmsResolvedEntry = CmsParsedEntry & {
   companyId: string | null;
   promoterId: string | null;
-  promoterSource: "J_KEY" | "SHEET_NAME" | null;
+  promoterSource: "J_KEY" | "SHEET_NAME" | "COLETIVA_SHEET" | null;
   isMaster: boolean; // CHAVE J e key_type=MASTER em j_keys
 };
 
@@ -455,15 +469,14 @@ export function resolveCmsEntries(
   const company = resolveCompanyByToken(parsed.token, maps.companies);
   const entries: CmsResolvedEntry[] = [];
   const unmapped: CmsUnmappedRow[] = [];
-
-  // cache de fallback por aba (calcula 1x por aba).
-  const sheetFallback = new Map<string, string | null>();
+  const sheetFallback = new Map<string, string | null>(); // cache por aba
 
   for (const e of parsed.entries) {
     let promoterId: string | null = null;
     let promoterSource: CmsResolvedEntry["promoterSource"] = null;
 
-    if (e.jKey) {
+    // CHAVE J direta (nao vale p/ coletiva 552710, que nao tem dono proprio).
+    if (e.jKey && !e.isColetiva) {
       const byKey = maps.jKeyToPromoter.get(e.jKey.toUpperCase());
       if (byKey) {
         promoterId = byKey;
@@ -471,6 +484,9 @@ export function resolveCmsEntries(
       }
     }
 
+    // DONA DA ABA por nome (tambem resolve a coletiva 552710: vai p/ a promotora
+    // dona da aba onde aparece). NAO chuta master/dominante — se a dona nao for
+    // promotora cadastrada (ex.: novata de maio), fica nao-mapeada p/ decisao.
     if (!promoterId) {
       if (!sheetFallback.has(e.sheetName)) {
         sheetFallback.set(
@@ -481,7 +497,7 @@ export function resolveCmsEntries(
       const byName = sheetFallback.get(e.sheetName) || null;
       if (byName) {
         promoterId = byName;
-        promoterSource = "SHEET_NAME";
+        promoterSource = e.isColetiva ? "COLETIVA_SHEET" : "SHEET_NAME";
       }
     }
 
@@ -490,7 +506,9 @@ export function resolveCmsEntries(
         sheet: e.sheetName,
         jKey: e.jKey,
         contract: e.contractNumber,
-        reason: e.jKey
+        reason: e.isColetiva
+          ? `CHAVE COLETIVA ${e.jKey} — dona da aba "${e.sheetName}" sem promotora cadastrada`
+          : e.jKey
           ? `CHAVE J ${e.jKey} sem promotor e nome da aba sem match 1:1`
           : "linha sem CHAVE J e nome da aba sem match 1:1",
       });
