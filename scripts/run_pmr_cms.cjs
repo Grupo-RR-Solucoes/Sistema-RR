@@ -22,8 +22,11 @@ const sb = createClient(
   { auth: { persistSession: false } }
 );
 const YEAR = 2026;
-const MONTHS = [1, 3]; // jan, mar (fev ausente)
+// meses via argv (ex.: "node run_pmr_cms.cjs 2"); default = jan + mar.
+const MONTHS = process.argv.slice(2).length ? process.argv.slice(2).map(Number) : [1, 3];
 const MES = { 1: "JAN", 2: "FEV", 3: "MAR" };
+// valores de aceite conhecidos (informados pelo Diego) p/ Thaynara final.
+const THAYNARA_ESPERADO = { 2: "12.283,69", 3: "16.051,57" };
 const fmt = (x) => Number(x).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const r2 = (x) => Math.round((Number(x) + Number.EPSILON) * 100) / 100;
 
@@ -45,9 +48,10 @@ async function fetchAll(table, sel, filt) {
   // ---------- BACKUP ----------
   const backup = [];
   for (const m of MONTHS) backup.push(...await fetchAll("promoter_monthly_results", "*", { year: YEAR, month: m }));
-  const backupPath = path.join(__dirname, "..", "scratch", "pmr_backup_jan_mar_2026.json");
+  const backupName = `pmr_backup_${MONTHS.join("-")}_2026.json`;
+  const backupPath = path.join(__dirname, "..", "scratch", backupName);
   fs.writeFileSync(backupPath, JSON.stringify(backup, null, 2));
-  console.log(`BACKUP: ${backup.length} linhas de PMR (jan+mar) salvas em scratch/pmr_backup_jan_mar_2026.json\n`);
+  console.log(`BACKUP: ${backup.length} linhas de PMR (meses ${MONTHS.join(",")}) salvas em scratch/${backupName}\n`);
 
   // ---------- GRAVA PMR (cms) ----------
   console.log("===================== PASSO 3 — GRAVAR PMR (source=cms) =====================");
@@ -67,7 +71,7 @@ async function fetchAll(table, sel, filt) {
   console.log("-".repeat(70));
 
   const allDivergences = [];
-  let marTotal = null, marThaynara = null;
+  const perMonth = {}; // month -> { total, thaynara }
   const thaynaraId = (await sb.from("j_keys").select("promoter_id").eq("j_key", "JJ177329").single()).data?.promoter_id;
 
   for (const m of MONTHS) {
@@ -102,10 +106,10 @@ async function fetchAll(table, sel, filt) {
         diverg++;
         allDivergences.push({ month: m, promoter_id: pid, expProd, gotProd, expIns, gotIns, expFinal, gotFinal });
       }
-      if (m === 3 && pid === thaynaraId) marThaynara = gotFinal;
+      if (pid === thaynaraId) perMonth[m] = { ...(perMonth[m] || {}), thaynara: gotFinal };
     }
     totalPmr = r2(totalPmr); totalCms = r2(totalCms);
-    if (m === 3) marTotal = totalPmr;
+    perMonth[m] = { ...(perMonth[m] || {}), total: totalPmr };
     console.log(`${MES[m]} | ${String(promoterIds.size).padStart(10)} | ${fmt(totalPmr).padStart(12)} | ${fmt(totalCms).padStart(12)} | ${String(diverg).padStart(6)}`);
   }
 
@@ -124,8 +128,13 @@ async function fetchAll(table, sel, filt) {
 
   // ---------- TESTES ----------
   console.log("\n===================== TESTES =====================");
-  console.log(`  março THAYNARA final = ${fmt(marThaynara)}   (esperado 16.051,57)  ${fmt(marThaynara) === "16.051,57" ? "✅" : "❌"}`);
-  console.log(`  março total PMR      = ${fmt(marTotal)}  (esperado 128.649,26) ${fmt(marTotal) === "128.649,26" ? "✅" : "❌"}`);
+  for (const m of MONTHS) {
+    const pm = perMonth[m] || {};
+    const th = pm.thaynara != null ? fmt(pm.thaynara) : "(sem aba)";
+    const esp = THAYNARA_ESPERADO[m];
+    const ok = esp ? (th === esp ? "✅" : "❌") : "";
+    console.log(`  ${MES[m]} THAYNARA final = ${th}${esp ? `   (esperado ${esp}) ${ok}` : ""}   | total PMR ${MES[m]} = ${fmt(pm.total || 0)}`);
+  }
 
   if (allDivergences.length > 0) { console.log("\n*** PARANDO: ha divergencia sistema != cms ***"); process.exit(2); }
   console.log("\nPASSO 3 concluido.");

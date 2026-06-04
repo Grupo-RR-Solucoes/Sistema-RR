@@ -19,7 +19,8 @@ const { createClient } = require("@supabase/supabase-js");
 const { importCmsWorkbook } = require("../lib/cmsImport.ts");
 
 const DOWNLOADS = "C:/Users/diego/Downloads";
-const FILES = [
+// Arquivos via argv (basenames em Downloads); default = jan + mar/2026.
+const DEFAULT_FILES = [
   // JANEIRO/2026 (nomes completos)
   "PRODUÇÃO GERAL RR ALAGOAS 1 JANEIRO 2026.xlsx",
   "PRODUÇÃO GERAL RR ALAGOAS 2 JANEIRO 2026.xlsx",
@@ -31,6 +32,7 @@ const FILES = [
   "PRODUÇÃO GERAL RR AL3 MARÇO 2026.xlsx",
   "PRODUÇÃO GERAL RR PE MARÇO 2026.xlsx",
 ];
+const FILES = process.argv.slice(2).length ? process.argv.slice(2) : DEFAULT_FILES;
 
 const sb = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
