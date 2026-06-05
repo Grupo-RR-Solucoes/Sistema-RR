@@ -90,6 +90,7 @@ export default function RelatoriosPage() {
   const [companyId, setCompanyId] = useState("");
   const [promoterId, setPromoterId] = useState("");
   const [promoterScope, setPromoterScope] = useState<PromoterReportScope>("geral");
+  const [batchMode, setBatchMode] = useState<"zip" | "abas">("zip");
   const [activeSection, setActiveSection] = useState<"montagem" | "previa" | "downloads">(
     "montagem"
   );
@@ -220,6 +221,22 @@ export default function RelatoriosPage() {
       params.set("scope", scopeOverride);
     }
     return `/api/relatorios/export?${params.toString()}`;
+  }
+
+  // ETAPA 7 — export em lote: reusa competencia e empresa da Montagem.
+  function getBatchHref() {
+    const effectiveKey = selectedKey || data.selectedPeriod?.key || "";
+    const params = new URLSearchParams();
+    if (effectiveKey) {
+      const [year, month] = effectiveKey.split("-");
+      params.set("ano", year);
+      params.set("mes", month);
+    }
+    if (companyId) {
+      params.set("companyId", companyId);
+    }
+    params.set("modo", batchMode);
+    return `/api/relatorios/export-lote?${params.toString()}`;
   }
 
   const periodValue = selectedKey || data.selectedPeriod?.key || "";
@@ -574,6 +591,39 @@ export default function RelatoriosPage() {
                       Escolha um promotor na montagem para liberar a exportacao individual.
                     </div>
                   ) : null}
+                </div>
+
+                <div style={styles.downloadGroup}>
+                  <div style={styles.downloadGroupLabel}>Exportar em lote</div>
+                  <div style={styles.exportActions}>
+                    <select
+                      value={batchMode}
+                      onChange={(event) =>
+                        setBatchMode(event.target.value as "zip" | "abas")
+                      }
+                      style={styles.input}
+                    >
+                      <option value="zip">ZIP — 1 arquivo por promotor</option>
+                      <option value="abas">Arquivo unico — 1 aba por promotor</option>
+                    </select>
+                    <a
+                      href={getBatchHref()}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={styles.primaryButton}
+                    >
+                      Baixar lote
+                    </a>
+                  </div>
+                  <div style={styles.downloadHint}>
+                    Inclui TODOS os promotores ativos da competencia
+                    {companyId
+                      ? " da empresa selecionada"
+                      : " (todas as empresas)"}{" "}
+                    — quem nao produziu sai com relatorio zerado. ZIP: relatorio
+                    individual completo (7 abas) por promotor. Arquivo unico: 1 aba
+                    fiel (modelo LUCIANA) por promotor.
+                  </div>
                 </div>
               </div>
             ) : (

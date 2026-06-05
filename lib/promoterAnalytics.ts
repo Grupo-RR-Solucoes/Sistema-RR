@@ -418,19 +418,20 @@ function resolveTargetStatus(
   return "ABAIXO";
 }
 
-export async function buildPromoterAnalytics(
+// ETAPA 7 — base fetch-once: as 9 queries + summaryRows de TODOS os promotores
+// (independente de promotor selecionado). O lote chama isto 1x e fatia N vezes
+// com selectPromoterView, em vez de refazer 9 queries por promotor.
+export async function loadPromoterAnalyticsBase(
   supabase: SupabaseClient,
   filters?: {
     year?: number;
     month?: number;
     companyId?: string;
-    promoterId?: string;
   }
-): Promise<PromoterAnalyticsPayload> {
+) {
   const yearParam = filters?.year;
   const monthParam = filters?.month;
   const companyId = filters?.companyId || "";
-  const promoterId = filters?.promoterId || "";
 
   const [companies, promoters, jKeys, targets, monthlyResults, discounts, agreements, records, insuranceSlipRules] =
     await Promise.all([
@@ -655,16 +656,59 @@ export async function buildPromoterAnalytics(
     .filter((row) => (companyId ? row.company_id === companyId : true))
     .sort((a, b) => b.payable_commission_value - a.payable_commission_value);
 
+  const recordsById = new Map(recordsForPeriod.map((record) => [record.id, record]));
+
+  return {
+    periods,
+    latestPeriod,
+    companyId,
+    companies,
+    promoters,
+    promoterById,
+    filteredSummaryRows,
+    recordsForPeriod,
+    recordsById,
+    groupProductionValue,
+    agreements,
+    discounts,
+    insuranceSlipRules,
+  };
+}
+
+// ETAPA 7 — fatia a base pra UM promotor. Reproduz EXATAMENTE o recorte que o
+// buildPromoterAnalytics original fazia (proposalRows/discountRows/agreementRows/
+// summary), pra que cada relatorio do lote seja bit-a-bit igual ao individual.
+export function selectPromoterView(
+  base: Awaited<ReturnType<typeof loadPromoterAnalyticsBase>>,
+  promoterId?: string
+): PromoterAnalyticsPayload {
+  const {
+    periods,
+    latestPeriod,
+    companyId,
+    companies,
+    promoters,
+    promoterById,
+    filteredSummaryRows,
+    recordsForPeriod,
+    recordsById,
+    groupProductionValue,
+    agreements,
+    discounts,
+    insuranceSlipRules,
+  } = base;
+
+  const requestedPromoterId = promoterId || "";
   const selectedPromoterId =
-    promoterId && filteredSummaryRows.some((row) => row.promoter_id === promoterId)
-      ? promoterId
+    requestedPromoterId &&
+    filteredSummaryRows.some((row) => row.promoter_id === requestedPromoterId)
+      ? requestedPromoterId
       : "";
   const selectedPromoterSummary =
     filteredSummaryRows.find((row) => row.promoter_id === selectedPromoterId) || null;
   const visibleSummaryRows = selectedPromoterId
     ? filteredSummaryRows.filter((row) => row.promoter_id === selectedPromoterId)
     : filteredSummaryRows;
-  const recordsById = new Map(recordsForPeriod.map((record) => [record.id, record]));
 
   const agreementRows = agreements
     .filter(
@@ -819,5 +863,20 @@ export async function buildPromoterAnalytics(
     })),
     companies,
   };
+}
+
+// Mantem assinatura/comportamento originais: base fetch-once + recorte de 1 promotor.
+// Comportamento bit-a-bit identico ao codigo anterior (usado pelo export individual).
+export async function buildPromoterAnalytics(
+  supabase: SupabaseClient,
+  filters?: {
+    year?: number;
+    month?: number;
+    companyId?: string;
+    promoterId?: string;
+  }
+): Promise<PromoterAnalyticsPayload> {
+  const base = await loadPromoterAnalyticsBase(supabase, filters);
+  return selectPromoterView(base, filters?.promoterId);
 }
 

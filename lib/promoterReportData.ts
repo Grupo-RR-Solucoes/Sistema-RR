@@ -76,15 +76,24 @@ export async function buildCmsProposalRows(
 ): Promise<CmsProposalRow[]> {
   const { data, error } = await supabase
     .from("cms_promoter_entries")
-    .select(
-      "id, source_sheet, contract_number, j_key, net_value, gross_value, promoter_credit, promoter_insurance, insurance_premium, company_commission, avista_percent, penetration, product_description, raw_payload, promoter_id"
-    )
+    .select(CMS_ENTRY_COLUMNS)
     .eq("promoter_id", promoterId)
     .eq("prod_year", year)
     .eq("prod_month", month);
   if (error) throw new Error(error.message);
 
-  const sorted = (data || []).slice().sort((a: any, b: any) => {
+  return mapCmsEntries(data || []);
+}
+
+// Colunas lidas de cms_promoter_entries — fonte unica entre o individual e o lote.
+const CMS_ENTRY_COLUMNS =
+  "id, source_sheet, contract_number, j_key, net_value, gross_value, promoter_credit, promoter_insurance, insurance_premium, company_commission, avista_percent, penetration, product_description, raw_payload, promoter_id";
+
+// Ordena (aba + contrato) e mapeia as entries cms para CmsProposalRow. Extraido
+// pra ser reusado IDENTICO pelo individual (buildCmsProposalRows) e pelo lote
+// (buildCmsProposalRowsBatch), garantindo o mesmo numero nas duas saidas.
+function mapCmsEntries(entries: any[]): CmsProposalRow[] {
+  const sorted = entries.slice().sort((a: any, b: any) => {
     const sa = String(a.source_sheet || ""),
       sb = String(b.source_sheet || "");
     if (sa !== sb) return sa < sb ? -1 : 1;
@@ -126,4 +135,40 @@ export async function buildCmsProposalRows(
       original_promoter_name: "",
     };
   });
+}
+
+// ETAPA 7 (lote) — busca as entries cms de VARIOS promotores numa unica query
+// (.in) e agrupa por promoter_id. Evita N round-trips no export em lote do mes
+// fechado. Cada grupo passa pelo MESMO mapCmsEntries do individual.
+export async function buildCmsProposalRowsBatch(
+  supabase: SupabaseClient,
+  promoterIds: string[],
+  year: number,
+  month: number
+): Promise<Map<string, CmsProposalRow[]>> {
+  const result = new Map<string, CmsProposalRow[]>();
+  const ids = Array.from(new Set(promoterIds.filter(Boolean)));
+  if (ids.length === 0) return result;
+
+  const { data, error } = await supabase
+    .from("cms_promoter_entries")
+    .select(CMS_ENTRY_COLUMNS)
+    .in("promoter_id", ids)
+    .eq("prod_year", year)
+    .eq("prod_month", month);
+  if (error) throw new Error(error.message);
+
+  const byPromoter = new Map<string, any[]>();
+  for (const entry of data || []) {
+    const pid = String((entry as any).promoter_id ?? "");
+    if (!pid) continue;
+    const bucket = byPromoter.get(pid);
+    if (bucket) bucket.push(entry);
+    else byPromoter.set(pid, [entry]);
+  }
+
+  for (const pid of ids) {
+    result.set(pid, mapCmsEntries(byPromoter.get(pid) || []));
+  }
+  return result;
 }

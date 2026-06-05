@@ -1,12 +1,18 @@
 import * as XLSX from "xlsx";
+import JSZip from "jszip";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { buildClosingAnalytics } from "@/lib/closingAnalytics";
 import { buildFinancialAnalytics } from "@/lib/financialAnalytics";
-import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
+import {
+  buildPromoterAnalytics,
+  loadPromoterAnalyticsBase,
+  selectPromoterView,
+} from "@/lib/promoterAnalytics";
 import { detectClosedMonth } from "@/lib/cmsMonthly";
 import {
   buildCmsProposalRows,
+  buildCmsProposalRowsBatch,
   isColetivaJKey,
   COLETIVA_MASK,
 } from "@/lib/promoterReportData";
@@ -593,7 +599,11 @@ function appendFaithfulPromoterSheet(
   data: Awaited<ReturnType<typeof buildPromoterAnalytics>>,
   selectedPromoter:
     | { promoter_name?: string; target_value?: number; production_value?: number }
-    | null
+    | null,
+  // ETAPA 7 (lote, modo abas) — nome da aba ja resolvido pelo chamador (nome
+  // reconhecivel + dedup de colisao). No individual fica undefined -> comportamento
+  // original (nome do promotor cortado em 31).
+  sheetNameOverride?: string
 ) {
   const proposals: any[] = (data.proposalRows as any[]) || [];
   const promoterName = selectedPromoter?.promoter_name || "";
@@ -637,7 +647,8 @@ function appendFaithfulPromoterSheet(
   const t3 = blank(); t3[16] = "TOTAL GERAL"; t3[17] = totProm + totSeg;
 
   const ws = XLSX.utils.aoa_to_sheet([metaRow, FAITHFUL_HEADERS, ...dataRows, t1, t2, t3]);
-  const sheetName = (promoterName || "Relatorio").slice(0, 31) || "Relatorio";
+  const sheetName =
+    sheetNameOverride || (promoterName || "Relatorio").slice(0, 31) || "Relatorio";
   XLSX.utils.book_append_sheet(workbook, ws, sheetName);
 }
 
@@ -1460,5 +1471,196 @@ export async function buildReportExport(
       data.selectedPeriod.label,
       promoterScope === "geral" ? "geral" : selectedPromoter?.promoter_name || "individual"
     ),
+  };
+}
+
+// ============================================================
+// ETAPA 7 — EXPORT EM LOTE de relatorios de promotor.
+// Orquestra o buildPromoterWorkbook/appendFaithfulPromoterSheet EXISTENTES sobre
+// N promotores, reusando a base fetch-once (loadPromoterAnalyticsBase) + o mesmo
+// switch cms/motor por competencia + o mesmo mascaramento 552710. Cada relatorio
+// no lote e identico ao export individual do mesmo promotor.
+// ============================================================
+
+export type PromoterBatchMode = "zip" | "abas";
+
+// Conectivos de nome (preposicoes/artigos) — nao servem como "sobrenome".
+const NAME_CONNECTORS = new Set([
+  "DE", "DA", "DO", "DAS", "DOS", "E", "DI", "DU", "DEL", "DELLA",
+  "VON", "VAN", "LA", "LAS", "LOS", "Y",
+]);
+
+// Nome reconhecivel: primeiro nome + primeiro sobrenome REAL, pulando conectivos
+// (ex.: "LUCIANA MATIAS DA SILVA" -> "LUCIANA MATIAS"; "EDIVANIA DE SOUZA" ->
+// "EDIVANIA SOUZA"). Nunca corta no meio da palavra.
+function promoterShortName(fullName?: string | null): string {
+  const parts = String(fullName || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) return "PROMOTOR";
+  const first = parts[0];
+  let surname = "";
+  for (let i = 1; i < parts.length; i++) {
+    if (!NAME_CONNECTORS.has(parts[i].toUpperCase())) {
+      surname = parts[i];
+      break;
+    }
+  }
+  if (!surname && parts.length > 1) surname = parts[1];
+  return (surname ? `${first} ${surname}` : first).toUpperCase();
+}
+
+// Excel proibe : \ / ? * [ ] em nome de aba.
+function sanitizeSheetName(name: string): string {
+  return name
+    .replace(/[:\\\/?*\[\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Aba unica: <=31 chars + desambiguacao de colisao/homonimo (sufixo " 2", " 3"...).
+function uniqueSheetName(rawName: string, used: Set<string>): string {
+  const clean = sanitizeSheetName(rawName) || "Promotor";
+  const base = clean.slice(0, 31);
+  if (!used.has(base)) {
+    used.add(base);
+    return base;
+  }
+  for (let i = 2; i < 1000; i++) {
+    const suffix = ` ${i}`;
+    const candidate = clean.slice(0, 31 - suffix.length) + suffix;
+    if (!used.has(candidate)) {
+      used.add(candidate);
+      return candidate;
+    }
+  }
+  used.add(base);
+  return base;
+}
+
+// Nome de arquivo unico no zip (sufixo -2, -3... em colisao).
+function uniqueFileName(rawBase: string, used: Set<string>): string {
+  const base = rawBase || "relatorio-promotor";
+  if (!used.has(base)) {
+    used.add(base);
+    return base;
+  }
+  for (let i = 2; i < 10000; i++) {
+    const candidate = `${base}-${i}`;
+    if (!used.has(candidate)) {
+      used.add(candidate);
+      return candidate;
+    }
+  }
+  used.add(base);
+  return base;
+}
+
+export async function buildPromoterBatchExport(
+  supabase: SupabaseClient,
+  input: ReportFilters & { mode?: string | null }
+): Promise<ExportBundle> {
+  const mode: PromoterBatchMode = input.mode === "abas" ? "abas" : "zip";
+
+  // Fetch-once: 1 base com TODAS as 9 queries; fatiamos N vezes em memoria.
+  const base = await loadPromoterAnalyticsBase(supabase, {
+    year: input.year,
+    month: input.month,
+    companyId: input.companyId,
+  });
+
+  const period = base.latestPeriod;
+  const periodLabel = period.label;
+
+  // ABRANGENCIA: TODOS os ATIVOS da competencia (companyId ja aplicado na base).
+  // ZERADOS incluidos — quem nao produziu sai com relatorio vazio/zerado.
+  // Ordem = filteredSummaryRows (maior comissao a pagar primeiro, igual a tela).
+  const promotersInScope = base.filteredSummaryRows.filter((row) => row.active);
+
+  // Mes FECHADO -> proposalRows do cms (ground truth), igual ao individual.
+  // 1 query .in agrupada em vez de N round-trips.
+  let closed = false;
+  try {
+    closed = await detectClosedMonth(supabase, period.year, period.month);
+  } catch {
+    closed = false;
+  }
+  const cmsByPromoter =
+    closed && promotersInScope.length > 0
+      ? await buildCmsProposalRowsBatch(
+          supabase,
+          promotersInScope.map((row) => row.promoter_id),
+          period.year,
+          period.month
+        )
+      : new Map<string, Awaited<ReturnType<typeof buildCmsProposalRows>>>();
+
+  // Recorte de 1 promotor + (se fechado) troca das proposalRows pelo cms.
+  // Espelha EXATAMENTE o caminho do export individual em buildReportExport.
+  const promoterDataFor = (promoterId: string) => {
+    const data = selectPromoterView(base, promoterId);
+    if (closed) {
+      return {
+        ...data,
+        proposalRows: (cmsByPromoter.get(promoterId) ||
+          []) as typeof data.proposalRows,
+      };
+    }
+    return data;
+  };
+
+  if (mode === "abas") {
+    // 1 xlsx UNICO: 1 aba fiel (modelo LUCIANA) por promotor.
+    const workbook = createWorkbook();
+    const usedSheetNames = new Set<string>();
+    for (const summaryRow of promotersInScope) {
+      const data = promoterDataFor(summaryRow.promoter_id);
+      const selected =
+        data.summaryRows.find((row) => row.promoter_id === summaryRow.promoter_id) ||
+        null;
+      const sheetName = uniqueSheetName(
+        promoterShortName(summaryRow.promoter_name),
+        usedSheetNames
+      );
+      appendFaithfulPromoterSheet(workbook, data, selected, sheetName);
+    }
+    if (promotersInScope.length === 0) {
+      const ws = XLSX.utils.aoa_to_sheet([
+        ["Nenhum promotor ativo nesta competencia."],
+      ]);
+      XLSX.utils.book_append_sheet(workbook, ws, "Sem promotores");
+    }
+
+    return {
+      buffer: workbookToBuffer(workbook),
+      contentType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      fileName: buildFileName("promotores", "xlsx", periodLabel, "lote-abas"),
+    };
+  }
+
+  // modo ZIP: 1 xlsx (individual completo, 7 abas) por promotor.
+  const zip = new JSZip();
+  const usedFileNames = new Set<string>();
+  for (const summaryRow of promotersInScope) {
+    const data = promoterDataFor(summaryRow.promoter_id);
+    const buffer = buildPromoterWorkbook(data, "individual");
+    const fileName = uniqueFileName(
+      `relatorio-promotor-${slugify(promoterShortName(summaryRow.promoter_name))}`,
+      usedFileNames
+    );
+    zip.file(`${fileName}.xlsx`, buffer);
+  }
+
+  const zipBuffer = (await zip.generateAsync({
+    type: "nodebuffer",
+    compression: "DEFLATE",
+  })) as Buffer;
+
+  return {
+    buffer: zipBuffer,
+    contentType: "application/zip",
+    fileName: `relatorios-promotores-lote-${slugify(periodLabel)}.zip`,
   };
 }
