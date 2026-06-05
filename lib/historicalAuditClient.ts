@@ -124,7 +124,9 @@ export function getCompanyShortName(cnpj: string): string {
 }
 
 export function isVolumeOuSafira(year: number, month: number): boolean {
-  return (year === 2025 && month >= 7) || (year === 2026 && month <= 3);
+  // Regimes de VOLUME auditáveis pelo motor: jul/2025+ (VOLUME_6), jan-mar/2026
+  // (VOLUME_3 Rubi/Safira/Diamante) e abr/2026+ (VOLUME_5_FAIXAS, FAIXA 1-5).
+  return (year === 2025 && month >= 7) || year === 2026;
 }
 
 export function isMetaRegime(year: number, month: number): boolean {

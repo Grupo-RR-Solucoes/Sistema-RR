@@ -223,6 +223,13 @@ export const MAPA_MES_REGRA: Record<
   // Confirmado em stress_test_workspace_local/confirmacao_documental.md P1:
   // matriz completa varia por Faixa, NÃO é hard-code de teto.
   "2026-04": { regra: TRP35_2026_04 as RegraMes, jsonRegra: "TRP35_2026-04.json", regraInferida: false },
+
+  // === 2026-05 — VOLUME 5 faixas (TRP36 = TRP Nº 2026/194) ===
+  // TRP_DIFF_2026.md / TRP_REFERENCIA_2026-05.md: tabelas de credito IDENTICAS a
+  // abr/2026 (TRP 2026/187), celula a celula — so muda o numero da TRP (194 vs
+  // 187) e a OPP é a mesma (PR2026/023). Reusa a MESMA matriz validada (sem copia
+  // que possa divergir). regraInferida=false: nao é inferencia, é igualdade documentada.
+  "2026-05": { regra: TRP35_2026_04 as RegraMes, jsonRegra: "TRP35_2026-04.json (TRP 2026/194 ≡ 2026/187)", regraInferida: false },
 };
 
 /**

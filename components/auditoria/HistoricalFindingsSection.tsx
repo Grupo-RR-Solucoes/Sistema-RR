@@ -64,10 +64,9 @@ function UnsupportedMonthBox() {
         Auditoria automática indisponível para esta competência
       </h3>
       <p style={styles.unsupportedText}>
-        O regime de comissionamento Promotiva mudou em abr/2026 (FAIXA 5). O
-        motor de auditoria histórica está em atualização para suportar este
-        novo regime. Disponível em breve. Para meses entre dez/2022 e mar/2026,
-        a auditoria automática funciona normalmente.
+        A auditoria automática cobre <strong>dez/2022 → mai/2026</strong>
+        (regimes META, VOLUME e FAIXA 1-5). Competências fora desse intervalo
+        (anteriores a dez/2022 ou a partir de 2027) ainda não têm a TRP modelada.
       </p>
     </div>
   );
