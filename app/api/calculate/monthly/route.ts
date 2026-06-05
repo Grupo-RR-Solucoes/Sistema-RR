@@ -59,6 +59,24 @@ function normalizeText(value: unknown): string {
     .toUpperCase();
 }
 
+// FRENTE C — repasse escalonado por meta (competencia 2026-05+).
+// INSS da Aldalene fica FORA da escala: repasse fixo 65,86% (share sobre
+// o % A VISTA, igual aos demais shares da cascata).
+//
+// BACKLOG (antes do fechamento de jun/2026): parametrizar este valor em
+// tabela/coluna (ex.: promoter_goal_repasse.pct_inss_fixo ou tabela propria)
+// em vez de constante. So tem efeito em meses ABERTOS (jun+); maio espelha o
+// cms. Ver docs/frente-c-backlog.md.
+const ALDALENE_INSS_FIXED_SHARE = 0.6586;
+
+// Detecta proposta INSS (mesmo criterio do motor.ts:379):
+// convenio_code = '1640' OU descricao do produto contem 'INSS'.
+function isInssRecord(record: any): boolean {
+  const code = String(record?.convenio_code ?? "").trim();
+  if (code === "1640") return true;
+  return normalizeText(record?.product_description).includes("INSS");
+}
+
 function readRawPayloadValue(record: any, aliases: string[]) {
   const payload = record?.raw_payload;
   if (!payload || typeof payload !== "object") return null;
@@ -796,6 +814,37 @@ export async function POST(req: Request) {
         month
       );
 
+    // FRENTE C — escala de repasse por meta da competencia (1o dia do mes).
+    // So aplica a propostas faixa 5,80% empresa; os limiares de producao
+    // (bonus1/bonus2) sao meta_1/meta_2 de monthly_targets (fonte unica).
+    //
+    // GATING POR cms: meses FECHADOS por cms (ex.: maio/2026, que ja tinha a
+    // escala embutida nos repasses) retornam ACIMA (monthIsClosed -> espelha
+    // o cms) e nunca chegam aqui. Logo a escala so calcula de fato em meses
+    // ABERTOS (jun/2026+). A linha de maio fica gravada so p/ historico/tela.
+    const competencia = `${year}-${String(month).padStart(2, "0")}-01`;
+    // Tolerante: se a migration de promoter_goal_repasse ainda nao foi
+    // aplicada, o recalculo segue normalmente sem a escala (mapa vazio).
+    let goalRepasseRows: any[] = [];
+    try {
+      goalRepasseRows = await fetchAllPaged<any>(() => {
+        let query = supabase
+          .from("promoter_goal_repasse")
+          .select("promoter_id, pct_base, pct_meta1, pct_meta2")
+          .eq("competencia", competencia);
+        if (promoterId) query = query.eq("promoter_id", promoterId);
+        return query;
+      });
+    } catch (e) {
+      console.warn(
+        "[FRENTE C] promoter_goal_repasse indisponivel; recalculo sem escala.",
+        (e as any)?.message ?? e
+      );
+    }
+    const goalRepasseMap = new Map<string, any>(
+      goalRepasseRows.map((r: any) => [r.promoter_id, r])
+    );
+
     const hasPromoterRemunerationBase =
       !!importedPromoterRemuneration ||
       commissionTables.length > 0 ||
@@ -932,6 +981,13 @@ export async function POST(req: Request) {
       const targetValue = target ? toNumber(target.meta) : 0;
       const target1Value = target ? toNumber(target.meta_1) : 0;
       const target2Value = target ? toNumber(target.meta_2) : 0;
+
+      // FRENTE C — escala de repasse deste promotor na competencia (ou null)
+      // e flag da Aldalene (carve-out do INSS fixo).
+      const goalRepasse = goalRepasseMap.get(promoter.id) || null;
+      const isAldalenePromoter = normalizeText(promoter.name).includes(
+        "ALDALENE"
+      );
 
       const projectedProductionValue =
         elapsedBusinessDays > 0
@@ -1071,22 +1127,55 @@ export async function POST(req: Request) {
           // (regra RR: Promotiva paga ate 6%, visao promotor limitada
           // a 5,80%, spread fica empresa).
           if (effectiveCompanyReceivedPercent > 0) {
-            const resolution = resolvePromoterShareSync({
-              record: {
-                assigned_promoter_id: record.assigned_promoter_id,
-                share_percent_override:
-                  manualRule?.share_percent_override ?? null,
-              },
-              profilesMap,
-              scalesMap,
-              monthlyVolumesMap,
-            });
             const aVistaClamped = Math.min(
               effectiveCompanyReceivedPercent,
               5.8
             );
-            commissionPercent = aVistaClamped * resolution.sharePercent;
-            productionRuleSource = `${aVistaSource}+DIA45_${resolution.source}`;
+            // FRENTE C — faixa 5,80% empresa (visao promotor) = % A VISTA
+            // atingiu o teto 5,80. So nessa faixa a escala por meta entra.
+            const isFaixa580 = aVistaClamped >= 5.8 - 0.001;
+
+            if (isAldalenePromoter && isInssRecord(record)) {
+              // Carve-out: INSS da Aldalene fica FORA da escala — repasse fixo.
+              commissionPercent = aVistaClamped * ALDALENE_INSS_FIXED_SHARE;
+              productionRuleSource = `${aVistaSource}+FRENTE_C_INSS_ALDALENE_FIXO`;
+            } else if (isFaixa580 && goalRepasse) {
+              // Escala por meta: producao_mes (productionValue) vs bonus1/bonus2
+              // (= meta_1/meta_2 de monthly_targets, ja em target1/2Value).
+              let escalaShare = Number(goalRepasse.pct_base);
+              let faixaMeta = "BASE";
+              if (
+                target2Value > 0 &&
+                productionValue >= target2Value &&
+                goalRepasse.pct_meta2 != null
+              ) {
+                escalaShare = Number(goalRepasse.pct_meta2);
+                faixaMeta = "META2";
+              } else if (
+                target1Value > 0 &&
+                productionValue >= target1Value &&
+                goalRepasse.pct_meta1 != null
+              ) {
+                escalaShare = Number(goalRepasse.pct_meta1);
+                faixaMeta = "META1";
+              }
+              commissionPercent = aVistaClamped * escalaShare;
+              productionRuleSource = `${aVistaSource}+FRENTE_C_ESCALA_${faixaMeta}`;
+            } else {
+              // Mantem o acordo atual (cascata viva Etapa B) — NAO mexer.
+              const resolution = resolvePromoterShareSync({
+                record: {
+                  assigned_promoter_id: record.assigned_promoter_id,
+                  share_percent_override:
+                    manualRule?.share_percent_override ?? null,
+                },
+                profilesMap,
+                scalesMap,
+                monthlyVolumesMap,
+              });
+              commissionPercent = aVistaClamped * resolution.sharePercent;
+              productionRuleSource = `${aVistaSource}+DIA45_${resolution.source}`;
+            }
           } else {
             // Sem % A VISTA valido em nenhuma fonte (raw_payload / stored
             // / importedRule / motor) — manter NULL. 30 propostas em
