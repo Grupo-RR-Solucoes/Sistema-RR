@@ -2,7 +2,10 @@
 .next/
 .env*.local
 runtime/outputs/
+# backup_*/ ja cobre backup_etapa7, backup_correcao_A, backup_fix*, etc.
 backup_*/
+# scratch/ = sandbox de diagnostico/validacao (nao versionar)
+scratch/
 runtime/*.log
 runtime/*.stderr.log
 runtime/*.stdout.log
