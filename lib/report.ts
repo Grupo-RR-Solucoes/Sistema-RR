@@ -318,12 +318,16 @@ function addPdfLines(
   doc.moveDown(0.8);
 }
 
-async function pdfToBuffer(render: (doc: any) => void) {
+async function pdfToBuffer(
+  render: (doc: any) => void,
+  options?: { layout?: "portrait" | "landscape" }
+) {
   const PDFDocument = require("pdfkit/js/pdfkit.standalone.js");
 
   return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({
       size: "A4",
+      layout: options?.layout || "portrait",
       margin: 40,
       bufferPages: true,
     });
@@ -975,6 +979,311 @@ async function buildAuditPdf(data: AuditView) {
   });
 }
 
+// ETAPA 7 — PDF individual em PAISAGEM (modelo fiel LUCIANA, colunas essenciais
+// pra leitura rapida no celular/WhatsApp). 11 colunas escolhidas por Diego; o
+// xlsx mantem as 18 completas. Soma das larguras = 762pt (A4 landscape util).
+type PdfFaithfulColumn = {
+  key: string;
+  header: string;
+  width: number;
+  align: "left" | "right";
+  emphasis?: boolean;
+};
+
+const PDF_FAITHFUL_COLUMNS: PdfFaithfulColumn[] = [
+  { key: "contract", header: "CONTRATO", width: 70, align: "left" },
+  { key: "net", header: "VL. LÍQUIDO", width: 70, align: "right" },
+  { key: "parcela", header: "PARC.", width: 38, align: "right" },
+  { key: "jkey", header: "CHAVE J", width: 70, align: "left" },
+  { key: "data", header: "DATA", width: 58, align: "left" },
+  { key: "produto", header: "DESCRIÇÃO DO PRODUTO", width: 130, align: "left" },
+  { key: "comPf", header: "COM. PF", width: 64, align: "right" },
+  { key: "vlSeguro", header: "VL. SEGURO", width: 58, align: "right" },
+  { key: "comSeguro", header: "COM. SEGURO", width: 62, align: "right" },
+  { key: "comProm", header: "COM. PROMOTOR", width: 72, align: "right", emphasis: true },
+  { key: "comSegProm", header: "COM. SEG. PROM.", width: 70, align: "right", emphasis: true },
+];
+
+const PDF_TABLE_WIDTH = PDF_FAITHFUL_COLUMNS.reduce((s, c) => s + c.width, 0); // 762
+
+function num2BR(value: unknown) {
+  return new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(toNumber(value));
+}
+
+// Header das colunas — REPETE em cada pagina (anti-quebra). Retorna o novo y.
+function drawPromoterTableHeader(doc: any, y: number, left: number) {
+  const h = 20;
+  doc.save();
+  doc.rect(left, y, PDF_TABLE_WIDTH, h).fill("#0d4de3");
+  doc.restore();
+
+  let x = left;
+  doc.font("Helvetica-Bold").fontSize(7).fillColor("#ffffff");
+  for (const col of PDF_FAITHFUL_COLUMNS) {
+    doc.text(col.header, x + 3, y + 4, {
+      width: col.width - 6,
+      align: col.align,
+      lineBreak: true,
+    });
+    x += col.width;
+  }
+  return y + h;
+}
+
+function drawPromoterTableRow(
+  doc: any,
+  row: Record<string, string>,
+  y: number,
+  left: number,
+  index: number
+) {
+  const h = 13;
+  if (index % 2 === 1) {
+    doc.save();
+    doc.rect(left, y, PDF_TABLE_WIDTH, h).fill("#f3f4f6");
+    doc.restore();
+  }
+
+  let x = left;
+  for (const col of PDF_FAITHFUL_COLUMNS) {
+    doc.font(col.emphasis ? "Helvetica-Bold" : "Helvetica").fontSize(8);
+    const maxW = col.width - 6;
+    // Pre-trunca por largura medida + reticencia. Evita o caminho bugado do
+    // pdfkit (ellipsis+lineBreak:false quebra texto largo em linhas sobrepostas
+    // e embaralha os glifos). Aqui o texto ja entra cabendo numa linha so.
+    let val = String(row[col.key] ?? "");
+    if (doc.widthOfString(val) > maxW) {
+      while (val.length > 1 && doc.widthOfString(val + "…") > maxW) {
+        val = val.slice(0, -1);
+      }
+      val = `${val}…`;
+    }
+    doc
+      .fillColor(col.emphasis ? "#0b1633" : "#111827")
+      .text(val, x + 3, y + 3, { width: maxW, align: col.align, lineBreak: false });
+    x += col.width;
+  }
+
+  doc.save();
+  doc
+    .lineWidth(0.3)
+    .strokeColor("#e5e7eb")
+    .moveTo(left, y + h)
+    .lineTo(left + PDF_TABLE_WIDTH, y + h)
+    .stroke();
+  doc.restore();
+  return y + h;
+}
+
+// Rodape: lista de DESCONTOS do promotor (esquerda) + caixa de totais (direita)
+// terminando no LÍQUIDO A RECEBER = comissao bruta - descontos do promotor. O
+// promotor ve o que recebe DE FATO, nao o bruto. Descontos com destino Empresa
+// sao listados mas NAO reduzem o liquido do promotor (igual ao calculo do sistema:
+// payable = final - descontos com apply_to_company !== true).
+function drawPromoterFooter(
+  doc: any,
+  y: number,
+  left: number,
+  d: {
+    totLiquido: number;
+    totProm: number;
+    totSeg: number;
+    descPromotor: number;
+    discounts: any[];
+  }
+) {
+  const bruto = d.totProm + d.totSeg;
+  const liquido = bruto - d.descPromotor;
+
+  // Caixa de totais (direita).
+  const boxW = 300;
+  const lines: Array<[string, string, boolean]> = [
+    ["TOTAL LÍQUIDO (produção)", num2BR(d.totLiquido), false],
+    ["COMISSÃO PROMOTOR", num2BR(d.totProm), false],
+    ["COMISSÃO SEGURO", num2BR(d.totSeg), false],
+    ["COMISSÃO BRUTA", num2BR(bruto), false],
+    ["(-) DESCONTOS", num2BR(d.descPromotor), false],
+    ["LÍQUIDO A RECEBER", num2BR(liquido), true],
+  ];
+  const boxH = lines.length * 12 + 18;
+  const bx = left + PDF_TABLE_WIDTH - boxW;
+
+  doc.save();
+  doc.roundedRect(bx, y, boxW, boxH, 4).lineWidth(0.6).strokeColor("#0d4de3").stroke();
+  doc.restore();
+
+  const pad = 12;
+  const labelX = bx + pad;
+  const valW = boxW - 2 * pad;
+  let ty = y + 9;
+  for (const [label, val, emph] of lines) {
+    if (emph) {
+      doc.save();
+      doc.rect(bx + 1, ty - 3, boxW - 2, 16).fill("#eef2ff");
+      doc.restore();
+    }
+    doc
+      .font(emph ? "Helvetica-Bold" : "Helvetica")
+      .fontSize(emph ? 11 : 9)
+      .fillColor(emph ? "#0b1633" : "#374151");
+    doc.text(label, labelX, ty, { width: valW * 0.62, align: "left", lineBreak: false });
+    doc.text(val, labelX, ty, { width: valW, align: "right", lineBreak: false });
+    ty += emph ? 15 : 12;
+  }
+
+  // Lista de descontos (esquerda).
+  const lx = left;
+  const listW = PDF_TABLE_WIDTH - boxW - 18;
+  let ly = y;
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .fillColor("#0b1633")
+    .text("DESCONTOS DO PROMOTOR", lx, ly);
+  ly += 15;
+  if (!d.discounts || d.discounts.length === 0) {
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor("#6b7280")
+      .text("Sem descontos lancados nesta competencia.", lx, ly, { width: listW });
+  } else {
+    doc.font("Helvetica").fontSize(9).fillColor("#374151");
+    for (const row of d.discounts) {
+      const destino = row.apply_to_company ? "Empresa" : "Promotor";
+      const linha = `${row.discount_type || "OUTROS"}  |  ${row.proposal_number || "-"}  |  Parc ${row.installment_number}/${row.installments}  |  ${num2BR(row.amount)}  (${destino})`;
+      doc.text(linha, lx, ly, { width: listW, lineBreak: false });
+      ly += 12;
+    }
+  }
+}
+
+function buildPromoterIndividualPdf(
+  data: Awaited<ReturnType<typeof buildPromoterAnalytics>>,
+  selectedPromoter: { promoter_name?: string; company_name?: string; target_value?: number; production_value?: number; target_status?: string } | null
+) {
+  const proposals: any[] = (data.proposalRows as any[]) || [];
+  const promoterName = selectedPromoter?.promoter_name || "Promotor";
+  const target = Number(selectedPromoter?.target_value || 0);
+  const achieved = Number(selectedPromoter?.production_value || 0);
+  const metaLabel =
+    target > 0 ? (achieved >= target ? "META ATINGIDA" : "META NÃO ATINGIDA") : "";
+
+  // Mascaramento 552710 igual a aba fiel (PromotorView): oculta contrato, chave
+  // J e data da chave coletiva. Os VALORES contam normalmente.
+  const rows = proposals.map((row) => {
+    const coletiva = isColetivaJKey(row.j_key);
+    return {
+      contract: coletiva
+        ? COLETIVA_MASK
+        : row.contract_number || row.proposal_number || "",
+      net: num2BR(row.net_value),
+      parcela: String(toNumber(row.installment_count) || ""),
+      jkey: coletiva ? COLETIVA_MASK : row.j_key || "",
+      data: coletiva ? COLETIVA_MASK : formatDateBR(row.contract_date || row.movement_date),
+      produto: row.product_description || "",
+      comPf: num2BR(row.company_commission_amount),
+      vlSeguro: num2BR(row.insurance_value),
+      comSeguro: num2BR(row.company_insurance_commission_amount),
+      comProm: num2BR(row.promoter_commission_amount),
+      comSegProm: num2BR(row.insurance_commission_amount),
+    };
+  });
+
+  const totLiquido = proposals.reduce((s, r) => s + toNumber(r.net_value), 0);
+  const totProm = proposals.reduce((s, r) => s + toNumber(r.promoter_commission_amount), 0);
+  const totSeg = proposals.reduce((s, r) => s + toNumber(r.insurance_commission_amount), 0);
+
+  return pdfToBuffer(
+    (doc) => {
+      const left = doc.page.margins.left;
+      const topMargin = doc.page.margins.top;
+      const bottom = doc.page.height - doc.page.margins.bottom;
+      const ROW_H = 13;
+
+      // Cabecalho do relatorio (so na 1a pagina).
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(16)
+        .fillColor("#0b1633")
+        .text(`Relatorio do Promotor — ${promoterName}`, left, topMargin, {
+          width: PDF_TABLE_WIDTH,
+        });
+      doc
+        .font("Helvetica")
+        .fontSize(10)
+        .fillColor("#4b5563")
+        .text(
+          `Grupo RR  |  Competencia ${data.selectedPeriod.label}${
+            selectedPromoter?.company_name ? `  |  ${selectedPromoter.company_name}` : ""
+          }`,
+          { width: PDF_TABLE_WIDTH }
+        );
+      doc.moveDown(0.4);
+
+      if (metaLabel) {
+        const atingida = metaLabel === "META ATINGIDA";
+        const bw = 170;
+        const bh = 18;
+        const by = doc.y;
+        doc.save();
+        doc.roundedRect(left, by, bw, bh, 4).fill(atingida ? "#16a34a" : "#9ca3af");
+        doc.restore();
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(9)
+          .fillColor("#ffffff")
+          .text(metaLabel, left, by + 5, { width: bw, align: "center" });
+        doc.y = by + bh + 8;
+      } else {
+        doc.moveDown(0.4);
+      }
+
+      // Tabela.
+      let y = drawPromoterTableHeader(doc, doc.y, left);
+      for (let i = 0; i < rows.length; i++) {
+        if (y + ROW_H > bottom) {
+          doc.addPage(); // herda landscape
+          y = drawPromoterTableHeader(doc, topMargin, left);
+        }
+        y = drawPromoterTableRow(doc, rows[i], y, left, i);
+      }
+      if (rows.length === 0) {
+        doc
+          .font("Helvetica")
+          .fontSize(9)
+          .fillColor("#6b7280")
+          .text("Sem propostas nesta competencia.", left + 3, y + 4, {
+            width: PDF_TABLE_WIDTH,
+          });
+        y += 20;
+      }
+
+      // Rodape: descontos + liquido a receber. Garante espaco; senao, nova pagina.
+      const discounts = (data.discountRows as any[]) || [];
+      const descPromotor = discounts
+        .filter((row) => row.apply_to_company !== true)
+        .reduce((s, row) => s + toNumber(row.amount), 0);
+      const footerH = Math.max(100, 40 + discounts.length * 12);
+      if (y + footerH > bottom) {
+        doc.addPage();
+        y = topMargin;
+      }
+      drawPromoterFooter(doc, y + 8, left, {
+        totLiquido,
+        totProm,
+        totSeg,
+        descPromotor,
+        discounts,
+      });
+    },
+    { layout: "landscape" }
+  );
+}
+
 async function buildPromoterPdf(
   data: Awaited<ReturnType<typeof buildPromoterAnalytics>>,
   scope: PromoterReportScope
@@ -982,113 +1291,48 @@ async function buildPromoterPdf(
   const selectedPromoter =
     data.summaryRows.find((row) => row.promoter_id === data.selectedPromoterId) || null;
 
+  // ETAPA 7 — individual = paisagem com a tabela fiel. Geral fica inalterado.
+  if (scope === "individual") {
+    return buildPromoterIndividualPdf(data, selectedPromoter);
+  }
+
   return pdfToBuffer((doc) => {
     addPdfHeader(
       doc,
-      scope === "geral"
-        ? `Relatorio Geral de Promotores - ${data.selectedPeriod.label}`
-        : `Relatorio Individual de ${selectedPromoter?.promoter_name || "Promotor"} - ${data.selectedPeriod.label}`,
-      scope === "geral"
-        ? "Grupo RR | consolidado mensal da equipe comercial"
-        : "Grupo RR | detalhamento individual para compartilhamento com o promotor"
+      `Relatorio Geral de Promotores - ${data.selectedPeriod.label}`,
+      "Grupo RR | consolidado mensal da equipe comercial"
     );
 
-    if (scope === "geral") {
-      addPdfMetrics(doc, "Resumo comercial da equipe", [
-        {
-          label: "Comissao a pagar",
-          value: formatCurrency(data.summary.payableCommission),
-        },
-        {
-          label: "Comissao bruta",
-          value: formatCurrency(data.summary.finalCommission),
-        },
-        {
-          label: "Producao do filtro",
-          value: formatCurrency(data.summary.production),
-        },
-        {
-          label: "Penetracao media",
-          value: formatPercent(data.summary.averageInsurancePenetration),
-          detail: `${formatNumber(data.summary.promoters)} promotores no consolidado.`,
-        },
-      ]);
+    addPdfMetrics(doc, "Resumo comercial da equipe", [
+      {
+        label: "Comissao a pagar",
+        value: formatCurrency(data.summary.payableCommission),
+      },
+      {
+        label: "Comissao bruta",
+        value: formatCurrency(data.summary.finalCommission),
+      },
+      {
+        label: "Producao do filtro",
+        value: formatCurrency(data.summary.production),
+      },
+      {
+        label: "Penetracao media",
+        value: formatPercent(data.summary.averageInsurancePenetration),
+        detail: `${formatNumber(data.summary.promoters)} promotores no consolidado.`,
+      },
+    ]);
 
-      addPdfLines(
-        doc,
-        "Resumo dos promotores",
-        data.summaryRows.map(
-          (row) =>
-            `${row.promoter_name} | ${row.company_name} | Producao ${formatCurrency(
-              row.production_value
-            )} | A pagar ${formatCurrency(row.payable_commission_value)} | Meta ${row.target_status}`
-        )
-      );
-    } else {
-      addPdfMetrics(doc, "Resumo individual", [
-        {
-          label: "Promotor",
-          value: selectedPromoter?.promoter_name || "Nao selecionado",
-          detail: selectedPromoter?.company_name || "Sem empresa vinculada.",
-        },
-        {
-          label: "Producao",
-          value: formatCurrency(selectedPromoter?.production_value),
-        },
-        {
-          label: "Comissao a pagar",
-          value: formatCurrency(selectedPromoter?.payable_commission_value),
-        },
-        {
-          label: "Descontos",
-          value: formatCurrency(selectedPromoter?.discount_value),
-        },
-        {
-          label: "Penetracao de seguro",
-          value: formatPercent(selectedPromoter?.insurance_penetration_percent),
-          detail: `Meta atual: ${selectedPromoter?.target_status || "-"}`,
-        },
-      ]);
-
-      addPdfLines(
-        doc,
-        "Acordos comerciais",
-        data.agreementRows.map(
-          (row) =>
-            `${row.agreement_type} | ${row.commission_value.toFixed(2).replace(".", ",")}% | ${
-              row.notes || "Sem observacao"
-            }`
-        ),
-        "Sem acordo comercial manual nesta competencia."
-      );
-
-      addPdfLines(
-        doc,
-        "Descontos do promotor",
-        data.discountRows.map(
-          (row) =>
-            `${row.discount_type} | ${row.proposal_number} | Parcela ${row.installment_number}/${row.installments} | ${formatCurrency(
-              row.amount
-            )} | ${row.apply_to_company ? "Empresa" : "Promotor"}`
-        ),
-        "Sem descontos lancados nesta competencia."
-      );
-
-      addPdfLines(
-        doc,
-        "Detalhamento das propostas",
-        data.proposalRows.map(
-          (row) =>
-            `${row.contract_number} | ${row.product_description} | PF ${formatCurrency(
-              row.company_commission_amount
-            )} | Promotor ${formatCurrency(
-              row.promoter_commission_amount
-            )} | Seguro ${formatCurrency(row.insurance_commission_amount)} | ${
-              row.commission_rule_source || "-"
-            }`
-        )
-      );
-    }
+    addPdfLines(
+      doc,
+      "Resumo dos promotores",
+      data.summaryRows.map(
+        (row) =>
+          `${row.promoter_name} | ${row.company_name} | Producao ${formatCurrency(
+            row.production_value
+          )} | A pagar ${formatCurrency(row.payable_commission_value)} | Meta ${row.target_status}`
+      )
+    );
   });
 }
 
