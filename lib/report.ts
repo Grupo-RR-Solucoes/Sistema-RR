@@ -4,6 +4,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildClosingAnalytics } from "@/lib/closingAnalytics";
 import { buildFinancialAnalytics } from "@/lib/financialAnalytics";
 import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
+import { detectClosedMonth } from "@/lib/cmsMonthly";
+import {
+  buildCmsProposalRows,
+  isColetivaJKey,
+  COLETIVA_MASK,
+} from "@/lib/promoterReportData";
 
 export type ReportKind = "financeiro" | "fechamento" | "auditoria" | "promotores";
 export type ReportFormat = "pdf" | "xlsx";
@@ -564,6 +570,77 @@ function buildAuditWorkbook(data: AuditView) {
   return workbookToBuffer(workbook);
 }
 
+// ETAPA 7 — aba FIEL ao modelo LUCIANA MATIAS.xlsx (1 aba = a tela): banner
+// META + 18 colunas MAIUSCULAS na ordem da tela + 3 linhas de total. Valores
+// crus (numeros), data dd/mm/aaaa. Mascaramento da chave coletiva 552710 igual
+// ao PromotorView. Espelha exatamente data.proposalRows (cms se mes fechado).
+const FAITHFUL_HEADERS = [
+  "CONTRATO", "VALOR BRUTO", "VALOR LÍQUIDO", "PARCELA", "AGENCIA", "CHAVE J",
+  "PROMOTOR(A)", "DATA CONTRATAÇÃO", "TX JUROS", "DESCRIÇÃO DO PRODUTO",
+  "% A VISTA", "COMISSÃO PF", "RESTRIÇÃO SRCC", "VALOR SEGURO", "COMISSÃO SEGURO",
+  "% PENETRAÇÃO", "COMISSÃO PROMOTOR", "COMISSÃO SEGURO2",
+];
+
+function formatDateBR(value: string | null | undefined): string {
+  const v = String(value ?? "").trim();
+  if (!v) return "";
+  const iso = v.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return iso ? `${iso[3]}/${iso[2]}/${iso[1]}` : v;
+}
+
+function appendFaithfulPromoterSheet(
+  workbook: XLSX.WorkBook,
+  data: Awaited<ReturnType<typeof buildPromoterAnalytics>>,
+  selectedPromoter:
+    | { promoter_name?: string; target_value?: number; production_value?: number }
+    | null
+) {
+  const proposals: any[] = (data.proposalRows as any[]) || [];
+  const promoterName = selectedPromoter?.promoter_name || "";
+  const target = Number(selectedPromoter?.target_value || 0);
+  const achieved = Number(selectedPromoter?.production_value || 0);
+
+  const metaRow: any[] = [
+    target > 0 ? (achieved >= target ? "META ATINGIDA" : "META NÃO ATINGIDA") : "",
+  ];
+
+  const dataRows = proposals.map((row) => {
+    const coletiva = isColetivaJKey(row.j_key);
+    return [
+      coletiva ? COLETIVA_MASK : row.contract_number || row.proposal_number || "",
+      Number(row.gross_value ?? 0),
+      Number(row.net_value ?? 0),
+      Number(row.installment_count ?? 0),
+      row.agency_code || "",
+      coletiva ? COLETIVA_MASK : row.j_key || "",
+      row.promoter_name || promoterName,
+      coletiva ? COLETIVA_MASK : formatDateBR(row.contract_date || row.movement_date),
+      Number(row.interest_rate ?? 0),
+      row.product_description || "",
+      Number(row.company_received_percent ?? 0),
+      Number(row.company_commission_amount ?? 0),
+      row.srcc_restriction || "",
+      Number(row.insurance_value ?? 0),
+      Number(row.company_insurance_commission_amount ?? 0),
+      Number(row.insurance_penetration_percent ?? 0),
+      Number(row.promoter_commission_amount ?? 0),
+      Number(row.insurance_commission_amount ?? 0),
+    ];
+  });
+
+  const totLiquido = proposals.reduce((s, r) => s + Number(r.net_value ?? 0), 0);
+  const totProm = proposals.reduce((s, r) => s + Number(r.promoter_commission_amount ?? 0), 0);
+  const totSeg = proposals.reduce((s, r) => s + Number(r.insurance_commission_amount ?? 0), 0);
+  const blank = (): any[] => new Array(18).fill(null);
+  const t1 = blank(); t1[1] = "TOTAL"; t1[2] = totLiquido;
+  const t2 = blank(); t2[15] = "TOTAL"; t2[16] = totProm; t2[17] = totSeg;
+  const t3 = blank(); t3[16] = "TOTAL GERAL"; t3[17] = totProm + totSeg;
+
+  const ws = XLSX.utils.aoa_to_sheet([metaRow, FAITHFUL_HEADERS, ...dataRows, t1, t2, t3]);
+  const sheetName = (promoterName || "Relatorio").slice(0, 31) || "Relatorio";
+  XLSX.utils.book_append_sheet(workbook, ws, sheetName);
+}
+
 function buildPromoterWorkbook(
   data: Awaited<ReturnType<typeof buildPromoterAnalytics>>,
   scope: PromoterReportScope
@@ -571,6 +648,12 @@ function buildPromoterWorkbook(
   const workbook = createWorkbook();
   const selectedPromoter =
     data.summaryRows.find((row) => row.promoter_id === data.selectedPromoterId) || null;
+
+  // ETAPA 7 — PRIMEIRA aba = fiel ao modelo (so no individual). As abas
+  // Resumo/Promotores/Individual/Detalhamento/Descontos/Acordos vêm depois.
+  if (scope === "individual") {
+    appendFaithfulPromoterSheet(workbook, data, selectedPromoter);
+  }
 
   appendSheet(workbook, "Resumo", [
     {
@@ -1326,11 +1409,37 @@ export async function buildReportExport(
     };
   }
 
-  const data = await buildPromoterAnalytics(supabase, input);
+  let data = await buildPromoterAnalytics(supabase, input);
   const promoterScope = normalizePromoterReportScope(input.scope);
 
   if (promoterScope === "individual" && !data.selectedPromoterId) {
     throw new Error("Selecione um promotor antes de exportar o relatorio individual.");
+  }
+
+  // ETAPA 7 — mes FECHADO: o relatorio espelha o cms (ground truth pago), igual
+  // ao PromotorView. Troca SO as proposalRows (summary segue do motor, como na
+  // tela). Sem recalcular.
+  if (
+    promoterScope === "individual" &&
+    input.year &&
+    input.month &&
+    data.selectedPromoterId
+  ) {
+    let closed = false;
+    try {
+      closed = await detectClosedMonth(supabase, input.year, input.month);
+    } catch {
+      closed = false;
+    }
+    if (closed) {
+      const cmsRows = await buildCmsProposalRows(
+        supabase,
+        data.selectedPromoterId,
+        input.year,
+        input.month
+      );
+      data = { ...data, proposalRows: cmsRows as typeof data.proposalRows };
+    }
   }
 
   const selectedPromoter =

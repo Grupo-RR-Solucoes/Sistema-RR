@@ -1,4 +1,8 @@
-import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
+import {
+  apiGuardErrorResponse,
+  withSocioAnon,
+  withSocioOrFuncionarioAnon,
+} from "@/lib/auth/guards";
 import { buildReportExport } from "@/lib/report";
 
 export const runtime = "nodejs";
@@ -6,15 +10,19 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   try {
-    // D33 - socio-only. Mesma justificativa de D32: export consome
-    // buildClosingAnalytics + buildFinancialAnalytics + buildPromoterAnalytics
-    // que tocam tabelas restritas a socio por D2.
-    const { supabase } = await withSocioAnon();
-
     const { searchParams } = new URL(req.url);
+    const type = searchParams.get("type");
+
+    // ETAPA 7 — relatorio de PROMOTOR: socio + funcionario (espelha o
+    // PromotorView, que funcionario ja acessa). Demais tipos (financeiro/
+    // fechamento/auditoria) tocam tabelas restritas a socio por D2 -> socio-only.
+    const { supabase } =
+      type === "promotores"
+        ? await withSocioOrFuncionarioAnon()
+        : await withSocioAnon();
 
     const file = await buildReportExport(supabase, {
-      type: searchParams.get("type"),
+      type,
       format: searchParams.get("format"),
       scope: searchParams.get("scope") || undefined,
       year: Number(searchParams.get("year") || 0) || undefined,

@@ -796,6 +796,36 @@ function PromotoresFullPage() {
             >
               {recalculating ? "Recalculando..." : "Recalcular competencia"}
             </button>
+            {/* ETAPA 7 — export individual xlsx (socio/funcionario). Esta tela
+                e a visao socio/func; o promotor cai no early-return PromotorView
+                (sem este botao). Exporta o promotor + competencia selecionados,
+                mesma fonte da tela (cms se mes fechado). */}
+            {promoterId ? (
+              <a
+                href={`/api/relatorios/export?type=promotores&format=xlsx&scope=individual&promoterId=${encodeURIComponent(
+                  promoterId
+                )}&year=${(selectedKey || data.selectedPeriod.key || "").split("-")[0]}&month=${Number(
+                  (selectedKey || data.selectedPeriod.key || "").split("-")[1]
+                )}${companyId ? `&companyId=${encodeURIComponent(companyId)}` : ""}`}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  height: 40,
+                  padding: "0 16px",
+                  marginLeft: 8,
+                  borderRadius: 8,
+                  border: "1px solid var(--rr-line-strong)",
+                  background: "#fff",
+                  color: "var(--rr-navy)",
+                  fontWeight: 600,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                }}
+                title="Exporta o relatorio individual (xlsx) da competencia selecionada — mesma fonte da tela (cms se mes fechado)."
+              >
+                Exportar xlsx
+              </a>
+            ) : null}
           </div>
         </div>
         <div style={styles.filterFoot}>
