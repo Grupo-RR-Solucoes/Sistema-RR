@@ -25,6 +25,7 @@ export async function GET(req: Request) {
       type,
       format: searchParams.get("format"),
       scope: searchParams.get("scope") || undefined,
+      order: searchParams.get("order") || undefined,
       year: Number(searchParams.get("year") || 0) || undefined,
       month: Number(searchParams.get("month") || 0) || undefined,
       companyId: searchParams.get("companyId") || undefined,

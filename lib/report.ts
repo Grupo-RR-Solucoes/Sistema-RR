@@ -27,7 +27,11 @@ export type ReportFilters = {
   companyId?: string;
   promoterId?: string;
   scope?: string;
+  // ETAPA 7 (geral/equipe) — ordenacao do ranking: "percent" (default) | "receber" | "producao".
+  order?: string;
 };
+
+export type PromoterTeamOrder = "percent" | "receber" | "producao";
 
 export type ReportPreviewPayload = {
   reportType: ReportKind;
@@ -656,18 +660,220 @@ function appendFaithfulPromoterSheet(
   XLSX.utils.book_append_sheet(workbook, ws, sheetName);
 }
 
+// ============================================================
+// ETAPA 7 (geral/equipe) — resumo de ranking: 1 linha por promotor ATIVO,
+// agrupado por CNPJ com subtotais + total geral. Fonte = summaryRows (mes fechado
+// ja reconciliado com cms; bate com cada individual). % atingido = producao/meta.
+// ============================================================
+type TeamTotals = {
+  production_value: number;
+  production_commission_value: number;
+  insurance_commission_value: number;
+  payable_commission_value: number;
+  target_value: number;
+};
+type TeamRow = TeamTotals & {
+  promoter_name: string;
+  company_id: string;
+  company_name: string;
+  company_cnpj: string;
+};
+type TeamGroup = {
+  company_id: string;
+  company_name: string;
+  company_cnpj: string;
+  rows: TeamRow[];
+  subtotal: TeamTotals;
+};
+
+function emptyTeamTotals(): TeamTotals {
+  return {
+    production_value: 0,
+    production_commission_value: 0,
+    insurance_commission_value: 0,
+    payable_commission_value: 0,
+    target_value: 0,
+  };
+}
+
+function addTeamTotals(acc: TeamTotals, r: TeamTotals) {
+  acc.production_value += toNumber(r.production_value);
+  acc.production_commission_value += toNumber(r.production_commission_value);
+  acc.insurance_commission_value += toNumber(r.insurance_commission_value);
+  acc.payable_commission_value += toNumber(r.payable_commission_value);
+  acc.target_value += toNumber(r.target_value);
+}
+
+// % atingido = producao / meta * 100. Sem meta no mes -> "—" (nao divide por zero).
+function teamPercent(production: number, target: number): string {
+  return target > 0 ? `${Math.round((production / target) * 100)}%` : "—";
+}
+
+function normalizeTeamOrder(order?: string): PromoterTeamOrder {
+  if (order === "producao") return "producao";
+  if (order === "receber") return "receber";
+  return "percent";
+}
+
+// Valor de ordenacao por linha/subtotal conforme o criterio. No modo "percent",
+// quem NAO tem meta (target=0) recebe -Infinity -> vai pro FIM (do grupo / da lista
+// de grupos), sem dividir por zero.
+function teamSortValue(t: TeamTotals, order: PromoterTeamOrder): number {
+  if (order === "producao") return toNumber(t.production_value);
+  if (order === "receber") return toNumber(t.payable_commission_value);
+  return toNumber(t.target_value) > 0
+    ? toNumber(t.production_value) / toNumber(t.target_value)
+    : -Infinity;
+}
+
+function buildTeamGroups(
+  data: Awaited<ReturnType<typeof buildPromoterAnalytics>>,
+  order: PromoterTeamOrder
+): { groups: TeamGroup[]; total: TeamTotals } {
+  const active = data.summaryRows.filter((row) => row.active);
+
+  const map = new Map<string, TeamGroup>();
+  for (const row of active) {
+    const key = row.company_id || row.company_cnpj || "—";
+    let g = map.get(key);
+    if (!g) {
+      g = {
+        company_id: row.company_id || "",
+        company_name: row.company_name || "-",
+        company_cnpj: row.company_cnpj || "",
+        rows: [],
+        subtotal: emptyTeamTotals(),
+      };
+      map.set(key, g);
+    }
+    g.rows.push({
+      promoter_name: row.promoter_name,
+      company_id: row.company_id || "",
+      company_name: row.company_name || "-",
+      company_cnpj: row.company_cnpj || "",
+      production_value: toNumber(row.production_value),
+      production_commission_value: toNumber(row.production_commission_value),
+      insurance_commission_value: toNumber(row.insurance_commission_value),
+      payable_commission_value: toNumber(row.payable_commission_value),
+      target_value: toNumber(row.target_value),
+    });
+  }
+
+  const total = emptyTeamTotals();
+  const groups = Array.from(map.values());
+  for (const g of groups) {
+    // Ordena DENTRO do grupo (sem-meta no fim quando order=percent).
+    g.rows.sort((a, b) => teamSortValue(b, order) - teamSortValue(a, order));
+    for (const r of g.rows) addTeamTotals(g.subtotal, r);
+    addTeamTotals(total, g.subtotal);
+  }
+  // Ordena os grupos pelo mesmo criterio (subtotal).
+  groups.sort((a, b) => teamSortValue(b.subtotal, order) - teamSortValue(a.subtotal, order));
+
+  return { groups, total };
+}
+
+// Aba "Equipe" — 8 colunas + subtotais por CNPJ (modo todos) + total geral.
+function appendTeamSheet(
+  workbook: XLSX.WorkBook,
+  data: Awaited<ReturnType<typeof buildPromoterAnalytics>>,
+  order: PromoterTeamOrder
+) {
+  const { groups, total } = buildTeamGroups(data, order);
+  const multi = groups.length > 1;
+  const header = [
+    "Promotor",
+    "CNPJ",
+    "Producao",
+    "Comissao promotor",
+    "Comissao seguro",
+    "Total a receber",
+    "Meta",
+    "% atingido",
+  ];
+  const aoa: any[][] = [header];
+
+  for (const g of groups) {
+    for (const r of g.rows) {
+      aoa.push([
+        r.promoter_name,
+        r.company_cnpj,
+        r.production_value,
+        r.production_commission_value,
+        r.insurance_commission_value,
+        r.payable_commission_value,
+        r.target_value,
+        teamPercent(r.production_value, r.target_value),
+      ]);
+    }
+    if (multi) {
+      aoa.push([
+        `SUBTOTAL ${g.company_name}`,
+        g.company_cnpj,
+        g.subtotal.production_value,
+        g.subtotal.production_commission_value,
+        g.subtotal.insurance_commission_value,
+        g.subtotal.payable_commission_value,
+        g.subtotal.target_value,
+        teamPercent(g.subtotal.production_value, g.subtotal.target_value),
+      ]);
+      aoa.push([]);
+    }
+  }
+  aoa.push([
+    "TOTAL GERAL",
+    "",
+    total.production_value,
+    total.production_commission_value,
+    total.insurance_commission_value,
+    total.payable_commission_value,
+    total.target_value,
+    teamPercent(total.production_value, total.target_value),
+  ]);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Moeda BRL nas colunas de valor (Producao, Comissao promotor, Comissao seguro,
+  // Total a receber, Meta) — MANTEM o numero real na celula (somavel/ordenavel),
+  // so aplica formato de exibicao. % atingido (col 7) fica texto.
+  const MONEY_FMT = 'R$ #,##0.00';
+  const MONEY_COLS = [2, 3, 4, 5, 6];
+  const range = XLSX.utils.decode_range(ws["!ref"] as string);
+  for (let R = 1; R <= range.e.r; R++) {
+    for (const C of MONEY_COLS) {
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      if (cell && cell.t === "n") cell.z = MONEY_FMT;
+    }
+  }
+  ws["!cols"] = [
+    { wch: 30 }, // Promotor
+    { wch: 20 }, // CNPJ
+    { wch: 16 }, // Producao
+    { wch: 16 }, // Comissao promotor
+    { wch: 14 }, // Comissao seguro
+    { wch: 16 }, // Total a receber
+    { wch: 16 }, // Meta
+    { wch: 11 }, // % atingido
+  ];
+
+  XLSX.utils.book_append_sheet(workbook, ws, "Equipe");
+}
+
 function buildPromoterWorkbook(
   data: Awaited<ReturnType<typeof buildPromoterAnalytics>>,
-  scope: PromoterReportScope
+  scope: PromoterReportScope,
+  order: PromoterTeamOrder = "percent"
 ) {
   const workbook = createWorkbook();
   const selectedPromoter =
     data.summaryRows.find((row) => row.promoter_id === data.selectedPromoterId) || null;
 
-  // ETAPA 7 — PRIMEIRA aba = fiel ao modelo (so no individual). As abas
+  // ETAPA 7 — PRIMEIRA aba: fiel ao modelo (individual) OU Equipe (geral). As abas
   // Resumo/Promotores/Individual/Detalhamento/Descontos/Acordos vêm depois.
   if (scope === "individual") {
     appendFaithfulPromoterSheet(workbook, data, selectedPromoter);
+  } else {
+    appendTeamSheet(workbook, data, order);
   }
 
   appendSheet(workbook, "Resumo", [
@@ -1284,56 +1490,191 @@ function buildPromoterIndividualPdf(
   );
 }
 
+// ETAPA 7 — PDF GERAL/EQUIPE em paisagem: tabela de ranking (8 colunas), agrupada
+// por CNPJ com subtotais + total geral. Header das colunas repete em cada pagina.
+const PDF_GERAL_COLUMNS: PdfFaithfulColumn[] = [
+  { key: "promotor", header: "PROMOTOR", width: 198, align: "left" },
+  { key: "cnpj", header: "CNPJ", width: 116, align: "left" },
+  { key: "producao", header: "PRODUÇÃO", width: 82, align: "right" },
+  { key: "comProm", header: "COM. PROMOTOR", width: 80, align: "right" },
+  { key: "comSeg", header: "COM. SEGURO", width: 72, align: "right" },
+  { key: "receber", header: "TOTAL A RECEBER", width: 92, align: "right", emphasis: true },
+  { key: "meta", header: "META", width: 82, align: "right" },
+  { key: "pct", header: "%", width: 40, align: "right" },
+];
+const PDF_GERAL_WIDTH = PDF_GERAL_COLUMNS.reduce((s, c) => s + c.width, 0); // 762
+const GERAL_ROW_H = 14;
+
+function drawGeralColumnsHeader(doc: any, y: number, left: number) {
+  const h = 20;
+  doc.save();
+  doc.rect(left, y, PDF_GERAL_WIDTH, h).fill("#0d4de3");
+  doc.restore();
+  let x = left;
+  doc.font("Helvetica-Bold").fontSize(7).fillColor("#ffffff");
+  for (const col of PDF_GERAL_COLUMNS) {
+    doc.text(col.header, x + 3, y + 5, { width: col.width - 6, align: col.align, lineBreak: true });
+    x += col.width;
+  }
+  return y + h;
+}
+
+function drawGeralRow(
+  doc: any,
+  cells: string[],
+  y: number,
+  left: number,
+  style: { bg?: string | null; bold?: boolean; topBorder?: boolean; color?: string }
+) {
+  const h = GERAL_ROW_H;
+  if (style.bg) {
+    doc.save();
+    doc.rect(left, y, PDF_GERAL_WIDTH, h).fill(style.bg);
+    doc.restore();
+  }
+  let x = left;
+  for (let i = 0; i < PDF_GERAL_COLUMNS.length; i++) {
+    const col = PDF_GERAL_COLUMNS[i];
+    doc.font(style.bold || col.emphasis ? "Helvetica-Bold" : "Helvetica").fontSize(8);
+    const maxW = col.width - 6;
+    let val = String(cells[i] ?? "");
+    if (doc.widthOfString(val) > maxW) {
+      while (val.length > 1 && doc.widthOfString(val + "…") > maxW) val = val.slice(0, -1);
+      val = `${val}…`;
+    }
+    doc.fillColor(style.color || "#111827").text(val, x + 3, y + 3, {
+      width: maxW,
+      align: col.align,
+      lineBreak: false,
+    });
+    x += col.width;
+  }
+  doc.save();
+  if (style.topBorder) {
+    doc.lineWidth(0.6).strokeColor("#9ca3af").moveTo(left, y).lineTo(left + PDF_GERAL_WIDTH, y).stroke();
+  } else {
+    doc.lineWidth(0.3).strokeColor("#e5e7eb").moveTo(left, y + h).lineTo(left + PDF_GERAL_WIDTH, y + h).stroke();
+  }
+  doc.restore();
+  return y + h;
+}
+
+function drawGeralGroupHeader(doc: any, label: string, y: number, left: number) {
+  const h = 16;
+  doc.save();
+  doc.rect(left, y, PDF_GERAL_WIDTH, h).fill("#eef2ff");
+  doc.restore();
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(8.5)
+    .fillColor("#0b1633")
+    .text(label, left + 4, y + 4, { width: PDF_GERAL_WIDTH - 8, lineBreak: false });
+  return y + h;
+}
+
+function buildPromoterGeralPdf(
+  data: Awaited<ReturnType<typeof buildPromoterAnalytics>>,
+  order: PromoterTeamOrder
+) {
+  const { groups, total } = buildTeamGroups(data, order);
+  const multi = groups.length > 1;
+  const orderLabel =
+    order === "producao" ? "produção" : order === "receber" ? "total a receber" : "% atingido";
+  const nPromotores = groups.reduce((s, g) => s + g.rows.length, 0);
+
+  const cellsFor = (r: TeamTotals & { name: string; cnpj: string }) => [
+    r.name,
+    r.cnpj,
+    num2BR(r.production_value),
+    num2BR(r.production_commission_value),
+    num2BR(r.insurance_commission_value),
+    num2BR(r.payable_commission_value),
+    num2BR(r.target_value),
+    teamPercent(r.production_value, r.target_value),
+  ];
+
+  return pdfToBuffer(
+    (doc) => {
+      const left = doc.page.margins.left;
+      const topMargin = doc.page.margins.top;
+      const bottom = doc.page.height - doc.page.margins.bottom;
+
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(16)
+        .fillColor("#0b1633")
+        .text(`Relatorio Geral de Promotores — ${data.selectedPeriod.label}`, left, topMargin, {
+          width: PDF_GERAL_WIDTH,
+        });
+      doc
+        .font("Helvetica")
+        .fontSize(10)
+        .fillColor("#4b5563")
+        .text(
+          `Grupo RR  |  ${nPromotores} promotores ativos  |  ordenado por ${orderLabel}  |  total a receber ${num2BR(total.payable_commission_value)}`,
+          { width: PDF_GERAL_WIDTH }
+        );
+      doc.moveDown(0.5);
+
+      let y = drawGeralColumnsHeader(doc, doc.y, left);
+      const ensure = (need: number) => {
+        if (y + need > bottom) {
+          doc.addPage();
+          y = drawGeralColumnsHeader(doc, topMargin, left);
+        }
+      };
+
+      let idx = 0;
+      for (const g of groups) {
+        if (multi) {
+          ensure(16 + GERAL_ROW_H);
+          y = drawGeralGroupHeader(doc, `${g.company_name}  —  ${g.company_cnpj}`, y, left);
+        }
+        for (const r of g.rows) {
+          ensure(GERAL_ROW_H);
+          y = drawGeralRow(doc, cellsFor({ ...r, name: r.promoter_name, cnpj: r.company_cnpj }), y, left, {
+            bg: idx % 2 === 1 ? "#f3f4f6" : null,
+          });
+          idx++;
+        }
+        if (multi) {
+          ensure(GERAL_ROW_H);
+          y = drawGeralRow(
+            doc,
+            cellsFor({ ...g.subtotal, name: `Subtotal ${g.company_name}`, cnpj: g.company_cnpj }),
+            y,
+            left,
+            { bold: true, topBorder: true, color: "#0b1633" }
+          );
+          y += 4;
+        }
+      }
+
+      ensure(GERAL_ROW_H + 4);
+      y = drawGeralRow(doc, cellsFor({ ...total, name: "TOTAL GERAL", cnpj: "" }), y, left, {
+        bold: true,
+        topBorder: true,
+        bg: "#eef2ff",
+        color: "#0b1633",
+      });
+    },
+    { layout: "landscape" }
+  );
+}
+
 async function buildPromoterPdf(
   data: Awaited<ReturnType<typeof buildPromoterAnalytics>>,
-  scope: PromoterReportScope
+  scope: PromoterReportScope,
+  order: PromoterTeamOrder = "percent"
 ) {
   const selectedPromoter =
     data.summaryRows.find((row) => row.promoter_id === data.selectedPromoterId) || null;
 
-  // ETAPA 7 — individual = paisagem com a tabela fiel. Geral fica inalterado.
+  // ETAPA 7 — ambos em paisagem: individual = tabela fiel; geral = ranking da equipe.
   if (scope === "individual") {
     return buildPromoterIndividualPdf(data, selectedPromoter);
   }
-
-  return pdfToBuffer((doc) => {
-    addPdfHeader(
-      doc,
-      `Relatorio Geral de Promotores - ${data.selectedPeriod.label}`,
-      "Grupo RR | consolidado mensal da equipe comercial"
-    );
-
-    addPdfMetrics(doc, "Resumo comercial da equipe", [
-      {
-        label: "Comissao a pagar",
-        value: formatCurrency(data.summary.payableCommission),
-      },
-      {
-        label: "Comissao bruta",
-        value: formatCurrency(data.summary.finalCommission),
-      },
-      {
-        label: "Producao do filtro",
-        value: formatCurrency(data.summary.production),
-      },
-      {
-        label: "Penetracao media",
-        value: formatPercent(data.summary.averageInsurancePenetration),
-        detail: `${formatNumber(data.summary.promoters)} promotores no consolidado.`,
-      },
-    ]);
-
-    addPdfLines(
-      doc,
-      "Resumo dos promotores",
-      data.summaryRows.map(
-        (row) =>
-          `${row.promoter_name} | ${row.company_name} | Producao ${formatCurrency(
-            row.production_value
-          )} | A pagar ${formatCurrency(row.payable_commission_value)} | Meta ${row.target_status}`
-      )
-    );
-  });
+  return buildPromoterGeralPdf(data, order);
 }
 
 export async function buildReportPreview(
@@ -1666,6 +2007,7 @@ export async function buildReportExport(
 
   let data = await buildPromoterAnalytics(supabase, input);
   const promoterScope = normalizePromoterReportScope(input.scope);
+  const teamOrder = normalizeTeamOrder(input.order);
 
   if (promoterScope === "individual" && !data.selectedPromoterId) {
     throw new Error("Selecione um promotor antes de exportar o relatorio individual.");
@@ -1703,8 +2045,8 @@ export async function buildReportExport(
   return {
     buffer:
       reportFormat === "pdf"
-        ? await buildPromoterPdf(data, promoterScope)
-        : buildPromoterWorkbook(data, promoterScope),
+        ? await buildPromoterPdf(data, promoterScope, teamOrder)
+        : buildPromoterWorkbook(data, promoterScope, teamOrder),
     contentType:
       reportFormat === "pdf"
         ? "application/pdf"

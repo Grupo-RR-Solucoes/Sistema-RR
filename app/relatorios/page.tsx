@@ -91,6 +91,9 @@ export default function RelatoriosPage() {
   const [promoterId, setPromoterId] = useState("");
   const [promoterScope, setPromoterScope] = useState<PromoterReportScope>("geral");
   const [batchMode, setBatchMode] = useState<"zip" | "abas">("zip");
+  const [teamOrder, setTeamOrder] = useState<"percent" | "receber" | "producao">(
+    "percent"
+  );
   const [activeSection, setActiveSection] = useState<"montagem" | "previa" | "downloads">(
     "montagem"
   );
@@ -219,6 +222,10 @@ export default function RelatoriosPage() {
     params.set("format", format);
     if (reportType === "promotores" && scopeOverride) {
       params.set("scope", scopeOverride);
+    }
+    // ETAPA 7 — ordenacao do ranking no relatorio geral/equipe.
+    if (reportType === "promotores" && scopeOverride === "geral") {
+      params.set("order", teamOrder);
     }
     return `/api/relatorios/export?${params.toString()}`;
   }
@@ -536,8 +543,21 @@ export default function RelatoriosPage() {
             {reportType === "promotores" ? (
               <div style={styles.downloadGroups}>
                 <div style={styles.downloadGroup}>
-                  <div style={styles.downloadGroupLabel}>Relatorio geral</div>
+                  <div style={styles.downloadGroupLabel}>Relatorio geral (equipe)</div>
                   <div style={styles.exportActions}>
+                    <select
+                      value={teamOrder}
+                      onChange={(event) =>
+                        setTeamOrder(
+                          event.target.value as "percent" | "receber" | "producao"
+                        )
+                      }
+                      style={styles.input}
+                    >
+                      <option value="percent">Ordenar por: % atingido</option>
+                      <option value="receber">Ordenar por: Total a receber</option>
+                      <option value="producao">Ordenar por: Producao</option>
+                    </select>
                     <a
                       href={getExportHref("pdf", "geral")}
                       target="_blank"
@@ -554,6 +574,11 @@ export default function RelatoriosPage() {
                     >
                       Excel geral
                     </a>
+                  </div>
+                  <div style={styles.downloadHint}>
+                    1 linha por promotor ativo (Producao | Comissao promotor | Comissao
+                    seguro | Total a receber | Meta | % atingido). Empresa = Todas mostra
+                    subtotais por CNPJ. PDF em paisagem.
                   </div>
                 </div>
 
