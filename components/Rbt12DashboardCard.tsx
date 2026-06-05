@@ -24,7 +24,7 @@ type Payload = {
   referencia: { key: string };
   referenciaProducao: { key: string };
   empresas: Empresa[];
-  grupo: { rbt12: number; faixa: number | null; aliquota: number | null; acimaSimples: boolean };
+  grupo: { rbt12: number; limiteSimples: number; pctLimite: number; faltaLimite: number; sinal: "verde" | "amarelo" | "vermelho" };
 };
 
 const MONTHS_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
@@ -76,17 +76,23 @@ export default function Rbt12DashboardCard() {
             </Link>
           );
         })}
-        <div style={{ ...styles.mini, background: "#f7f9fc", borderLeft: "4px solid var(--rr-navy)" }}>
-          <div style={styles.miniName}>GRUPO</div>
-          <div style={styles.miniValue}>{brl(data.grupo.rbt12)}</div>
-          <div style={styles.miniMeta}>
-            <span style={{ ...styles.faixa, background: "var(--rr-navy)" }}>
-              {data.grupo.acimaSimples ? "ACIMA" : `Faixa ${data.grupo.faixa}`}
-            </span>
-            <span>{data.grupo.aliquota != null ? `${(data.grupo.aliquota * 100).toFixed(2)}%` : "—"}</span>
-          </div>
-          <div style={styles.miniFalta}>soma dos 4 CNPJs</div>
-        </div>
+        {(() => {
+          const g = data.grupo;
+          const cor = g.sinal === "vermelho" ? "#cc2b49" : g.sinal === "amarelo" ? "var(--rr-gold)" : "#178a5a";
+          return (
+            <div
+              style={{ ...styles.mini, background: "#f7f9fc", borderLeft: `4px solid ${cor}` }}
+              title="Limite de permanência no Simples (R$ 4,8 MM/ano da receita somada do grupo). Estourar exclui o grupo do regime — não é faixa nem base de cálculo do DAS."
+            >
+              <div style={styles.miniName}>GRUPO · limite Simples</div>
+              <div style={styles.miniValue}>{brl(g.rbt12)}</div>
+              <div style={styles.miniMeta}>
+                <span style={{ ...styles.faixa, background: cor }}>{(g.pctLimite * 100).toFixed(0)}% de R$ 4,8 MM</span>
+              </div>
+              <div style={styles.miniFalta}>falta {brl(g.faltaLimite)} p/ o teto</div>
+            </div>
+          );
+        })()}
       </div>
     </article>
   );

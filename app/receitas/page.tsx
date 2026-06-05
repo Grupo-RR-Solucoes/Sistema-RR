@@ -22,7 +22,7 @@ type Rbt12Payload = {
   competenciaTipo: string;
   janela: { de: string; ate: string; meses: number };
   empresas: Empresa[];
-  grupo: { rbt12: number; faixa: number | null; aliquota: number | null; acimaSimples: boolean };
+  grupo: { rbt12: number; limiteSimples: number; pctLimite: number; faltaLimite: number; sinal: "verde" | "amarelo" | "vermelho" };
 };
 type Lancamento = { id: string; company_id: string; ano: number; mes: number; categoria: string; valor: number; descricao: string | null };
 type CompanyOpt = { id: string; name: string; cnpj: string; group_code: string | null };
@@ -206,14 +206,24 @@ export default function ReceitasPage() {
             </div>
           );
         })}
-        {rbt12 ? (
-          <div style={{ ...styles.card, borderTop: "4px solid var(--rr-navy)", background: "#f7f9fc" }}>
-            <div style={styles.cardName}>GRUPO (4 CNPJs)</div>
-            <div style={styles.cardCnpj}>soma da receita</div>
-            <div style={styles.rbtValue}>{brl(rbt12.grupo.rbt12)}</div>
-            <div style={styles.cardMeta}>{rbt12.grupo.acimaSimples ? "Acima do Simples" : `Faixa ${rbt12.grupo.faixa} · alíquota ${rbt12.grupo.aliquota != null ? (rbt12.grupo.aliquota * 100).toFixed(2) + "%" : "—"}`}</div>
-          </div>
-        ) : null}
+        {rbt12 ? (() => {
+          const g = rbt12.grupo;
+          const cor = g.sinal === "vermelho" ? "#cc2b49" : g.sinal === "amarelo" ? "var(--rr-gold)" : "#178a5a";
+          return (
+            <div style={{ ...styles.card, borderTop: `4px solid ${cor}`, background: "#f7f9fc" }}>
+              <div style={styles.cardName}>GRUPO — limite do Simples</div>
+              <div style={styles.cardCnpj}>receita somada dos 4 CNPJs</div>
+              <div style={styles.rbtValue}>{brl(g.rbt12)}</div>
+              <div style={styles.cardMeta}>
+                <strong style={{ color: cor }}>{(g.pctLimite * 100).toFixed(1)}%</strong> do limite de {brl(g.limiteSimples)}
+              </div>
+              <div style={styles.cardRow}><span>Falta p/ o teto</span><span style={{ fontWeight: 700 }}>{brl(g.faltaLimite)}</span></div>
+              <div style={{ ...styles.parcial, background: g.sinal === "verde" ? "#e6f4ec" : "var(--rr-gold-soft)", color: g.sinal === "vermelho" ? "#cc2b49" : "var(--rr-gold-deep)" }}>
+                Monitoramento do <strong>limite de permanência</strong> no Simples (R$ 4,8 MM/ano somados do grupo). Estourar exclui o grupo do regime. <strong>Não é faixa nem base de DAS</strong> — cada CNPJ é tributado pela faixa dele (acima).
+              </div>
+            </div>
+          );
+        })() : null}
       </div>
 
       {/* ---- Lançamentos manuais ---- */}

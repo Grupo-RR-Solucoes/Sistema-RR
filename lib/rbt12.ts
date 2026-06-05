@@ -36,6 +36,12 @@ export const ANEXO_III_FAIXAS: Faixa[] = [
 
 const TETO_SIMPLES = 4800000;
 
+// Limite GLOBAL de permanencia no Simples Nacional (receita bruta anual).
+// O Simples e apurado POR CNPJ (cada um na faixa dele); NAO existe "faixa do
+// grupo". Este limite serve so p/ monitorar se a receita SOMADA do grupo
+// economico se aproxima do teto que exclui do regime — nao e base de DAS.
+export const LIMITE_SIMPLES_GRUPO = 4800000;
+
 export type FaixaResolvida =
   | { faixa: number; de: number; ate: number; aliquota: number; acimaSimples: false }
   | { faixa: null; de: number; ate: null; aliquota: null; acimaSimples: true };
@@ -134,11 +140,14 @@ export type Rbt12Empresa = {
   totalManual: number;
 };
 
+// Grupo: NAO tem faixa tributaria. Monitora a proximidade do LIMITE de
+// permanencia no Simples (R$ 4,8 MM/ano da receita somada do grupo).
 export type Rbt12Grupo = {
   rbt12: number;
-  faixa: number | null;
-  aliquota: number | null;
-  acimaSimples: boolean;
+  limiteSimples: number; // 4_800_000
+  pctLimite: number; // rbt12 / limiteSimples
+  faltaLimite: number; // max(0, limite - rbt12)
+  sinal: "verde" | "amarelo" | "vermelho";
 };
 
 export type Rbt12Resultado = {
@@ -340,14 +349,20 @@ export async function calcularRbt12(
     };
   });
 
-  // Grupo economico: soma a receita dos CNPJs (RBT12 do grupo = soma dos RBT12).
+  // Grupo economico: o Simples e apurado POR CNPJ (cada um na faixa dele);
+  // NAO ha "faixa do grupo". Aqui so monitoramos a proximidade do LIMITE
+  // GLOBAL de permanencia (R$ 4,8 MM/ano da receita somada do grupo).
+  // Estourar exclui o grupo do regime; nao e base de calculo do DAS.
   const grupoRbt = empresas.reduce((s, e) => s + e.rbt12, 0);
-  const fg = faixaDoRbt12(grupoRbt);
+  const pctLimite = LIMITE_SIMPLES_GRUPO > 0 ? grupoRbt / LIMITE_SIMPLES_GRUPO : 0;
+  const grupoSinal: "verde" | "amarelo" | "vermelho" =
+    pctLimite >= 1 ? "vermelho" : pctLimite >= 0.9 ? "amarelo" : "verde";
   const grupo: Rbt12Grupo = {
     rbt12: grupoRbt,
-    faixa: fg.faixa,
-    aliquota: fg.aliquota,
-    acimaSimples: fg.acimaSimples,
+    limiteSimples: LIMITE_SIMPLES_GRUPO,
+    pctLimite,
+    faltaLimite: Math.max(0, LIMITE_SIMPLES_GRUPO - grupoRbt),
+    sinal: grupoSinal,
   };
 
   const prod = shiftMonth(ano, mes, -1); // producao correspondente a ref fiscal
