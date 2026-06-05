@@ -281,6 +281,56 @@ function readResumoTotals(workbook: XLSX.WorkBook): ClosingTotals | null {
   };
 }
 
+// ETAPA 6 — abas COMPLEMENTARES (dentro do arquivo "Todos") que os 5 baldes
+// do importador NAO capturam. A nota "Todos" = valor_liquido + soma da COMISSAO
+// destas abas. Coluna de VALOR = header EXATAMENTE "COMISSAO" (descarta
+// "% COMISSAO" e "VALOR DO PRODUTO/BEM"). NAO inclui A Vista/PRT/Seguro/Credito/
+// Debito (essas o importador ja trata por entries -> nao duplicar).
+//
+// Portabilidade INSS fica de FORA (seria SUBTRACAO e nao ha amostra != 0) —
+// cobrir via lancamento manual (negativo) se aparecer. Notas que vem como
+// ARQUIVO proprio (Consorcio/Credito/BBCAP separados) tambem sao lancamento
+// manual (competencia fiscal = data de pagamento do portal), NAO entram aqui.
+const EXTRA_RESUMO_SHEETS = [
+  "CONTA CORRENTE",
+  "BBCAP",
+  "BB CONSORCIO",
+  "BB DENTAL",
+  "LOB VEM",
+];
+
+function sumComissaoColumn(rows: unknown[][]): number {
+  const headerRow = rows.find(
+    (row) => Array.isArray(row) && row.some((cell) => normalizeText(cell) === "COMISSAO")
+  );
+  if (!headerRow) return 0;
+  const colIndex = headerRow.findIndex((cell) => normalizeText(cell) === "COMISSAO");
+  if (colIndex < 0) return 0;
+  let total = 0;
+  for (const row of rows) {
+    if (row === headerRow || !Array.isArray(row)) continue;
+    const v = parseNumber(row[colIndex]);
+    if (Number.isFinite(v)) total += v;
+  }
+  return total;
+}
+
+// Soma das abas extras (validadas). Todas entram como POSITIVAS — as que
+// seriam negativas (Portabilidade INSS) estao fora por falta de amostra.
+export function readExtraResumoComissao(workbook: XLSX.WorkBook): number {
+  let total = 0;
+  for (const target of EXTRA_RESUMO_SHEETS) {
+    const sheetName = workbook.SheetNames.find((n) => normalizeText(n) === target);
+    if (!sheetName) continue;
+    const rows = sheetToRows<unknown[]>(workbook.Sheets[sheetName], {
+      header: 1,
+      defval: "",
+    });
+    total += sumComissaoColumn(rows);
+  }
+  return total;
+}
+
 function inferCompanyFromFileName(fileName: string, companies: CompanyRow[]) {
   const digits = String(fileName || "").replace(/\D/g, "");
 
@@ -867,6 +917,13 @@ async function runImportPipeline(ctx: ImportContext) {
     closingTotals.valor_estorno -
     closingTotals.valor_renovacao;
 
+  // ETAPA 6 — nota "Todos" = valor_liquido + abas COMPLEMENTARES in-file
+  // (Conta Corrente/BBCAP/Consorcio/Dental/LOB Vem). Validado contra a regua
+  // do portal (AL1: abril 70.156,06; maio 60.915,54). Notas que vem como
+  // arquivo proprio (Consorcio/Credito separados) entram por lancamento manual.
+  const extraComissao = readExtraResumoComissao(workbook);
+  const valorNotaFiscal = valorLiquido + extraComissao;
+
   const operationKeys = new Set(
     rowsToInsert.map(
       (row, index) =>
@@ -890,6 +947,7 @@ async function runImportPipeline(ctx: ImportContext) {
           valor_estorno: closingTotals.valor_estorno,
           valor_renovacao: closingTotals.valor_renovacao,
           valor_liquido: valorLiquido,
+          valor_nota_fiscal: valorNotaFiscal,
           operacoes: operationKeys.size,
           updated_at: new Date().toISOString(),
         },

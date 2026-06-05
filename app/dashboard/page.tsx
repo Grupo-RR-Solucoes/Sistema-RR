@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
 import EmptyStatePanel from "../../components/EmptyStatePanel";
 import FeedbackBanner from "../../components/FeedbackBanner";
+import Rbt12DashboardCard from "../../components/Rbt12DashboardCard";
 
 type CompanyRow = {
   empresa_cnpj?: string;
@@ -235,6 +236,8 @@ export default function DashboardPage() {
           detail="Promotores ativos cadastrados e considerados no painel."
         />
       </div>
+
+      <Rbt12DashboardCard />
 
       <div style={styles.contentGrid}>
         <article style={styles.tableCard}>
