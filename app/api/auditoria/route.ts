@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import { buildClosingAnalytics } from "@/lib/closingAnalytics";
+import { buildPrtCiclo } from "@/lib/prtCiclo";
 
 export async function GET(req: Request) {
   try {
@@ -15,7 +16,13 @@ export async function GET(req: Request) {
 
     const payload = await buildClosingAnalytics(supabase, { year, month });
 
+    // Ciclo PRT (card automatico, read-only, separado da auditoria curada): so
+    // faz sentido quando ha periodo selecionado com fechamento.
+    const sel = payload.selectedPeriod;
+    const prtCiclo = sel ? await buildPrtCiclo(supabase, sel.year, sel.month) : null;
+
     return NextResponse.json({
+      prtCiclo,
       periods: payload.periods,
       selectedPeriod: payload.selectedPeriod,
       summary: payload.summary,

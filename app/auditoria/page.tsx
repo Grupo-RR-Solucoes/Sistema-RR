@@ -19,11 +19,21 @@ type Summary = {
   fullForecastCoveragePercent: number;
 };
 
+type PrtCiclo = {
+  year: number;
+  month: number;
+  entradas: number;
+  previsto: number;
+  recebido: number;
+  naoPago: number;
+};
+
 type AuditPayload = {
   periods: PeriodOption[];
   selectedPeriod: PeriodOption | null;
   summary: Summary;
   alerts: string[];
+  prtCiclo: PrtCiclo | null;
 };
 
 const emptyPayload: AuditPayload = {
@@ -38,6 +48,7 @@ const emptyPayload: AuditPayload = {
     fullForecastCoveragePercent: 0,
   },
   alerts: [],
+  prtCiclo: null,
 };
 
 export default function AuditoriaPage() {
@@ -157,6 +168,44 @@ export default function AuditoriaPage() {
           detail="Quanto da producao tem base suficiente para previsao."
         />
       </div>
+
+      {data.prtCiclo ? (
+        <article style={styles.prtCard}>
+          <div style={styles.prtHead}>
+            <div>
+              <div style={styles.prtKicker}>Ciclo PRT — previsto vs recebido</div>
+              <h3 style={styles.prtTitle}>
+                PRT do ciclo de {data.selectedPeriod?.label ?? "—"}
+              </h3>
+            </div>
+            <span style={styles.prtBadge}>estimativa automática do fechamento</span>
+          </div>
+          <div style={styles.prtGrid}>
+            <SummaryCard
+              label="PRT previsto (listado)"
+              value={formatCurrency(data.prtCiclo.previsto)}
+              detail={`${data.prtCiclo.entradas} parcelas listadas no ciclo.`}
+            />
+            <SummaryCard
+              label="PRT recebido (cod_est=1)"
+              value={formatCurrency(data.prtCiclo.recebido)}
+              detail="Parcelas que de fato vieram (bate o diferido do fechamento)."
+            />
+            <SummaryCard
+              label="PRT não pago no ciclo"
+              value={formatCurrency(data.prtCiclo.naoPago)}
+              detail="Listado e não pago neste ciclo (cod_est 2/99). Não cumulativo."
+            />
+          </div>
+          <p style={styles.prtNote}>
+            Métrica <strong>automática</strong> do fechamento (apenas cod_est + comissão
+            listada, sem curadoria de produto). <strong>Não é a auditoria oficial curada</strong>{" "}
+            — essa fica nas seções abaixo (auditoria histórica). O à vista automático foi
+            desativado por não ser confiável sem curadoria; volta quando a planilha
+            curada por mês for carregada.
+          </p>
+        </article>
+      ) : null}
 
       {(() => {
         const effectiveKey = periodValue;
@@ -288,6 +337,50 @@ const styles: Record<string, CSSProperties> = {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
     gap: "10px",
+  },
+  prtCard: {
+    borderRadius: "20px",
+    border: "1px solid var(--rr-line)",
+    boxShadow: "var(--rr-shadow-soft)",
+    background: "rgba(255,255,255,0.96)",
+    padding: "18px",
+    display: "grid",
+    gap: "12px",
+  },
+  prtHead: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    flexWrap: "wrap",
+  },
+  prtKicker: {
+    fontSize: "11px",
+    textTransform: "uppercase",
+    letterSpacing: "0.14em",
+    color: "var(--rr-blue)",
+    fontWeight: 800,
+  },
+  prtTitle: { margin: "4px 0 0", fontSize: "18px", color: "var(--rr-ink)" },
+  prtBadge: {
+    fontSize: "11px",
+    fontWeight: 800,
+    color: "#92400e",
+    background: "#fef3c7",
+    border: "1px solid #f59e0b55",
+    borderRadius: "999px",
+    padding: "4px 10px",
+  },
+  prtGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+    gap: "10px",
+  },
+  prtNote: {
+    margin: 0,
+    fontSize: "12px",
+    lineHeight: 1.6,
+    color: "var(--rr-muted)",
   },
   summaryCard: {
     borderRadius: "18px",
