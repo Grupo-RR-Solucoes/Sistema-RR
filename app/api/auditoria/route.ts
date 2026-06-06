@@ -1,45 +1,26 @@
 import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
-import { buildClosingAnalytics } from "@/lib/closingAnalytics";
-import { buildPrtCiclo } from "@/lib/prtCiclo";
+import { buildAuditoria } from "@/lib/auditoria";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   try {
-    // D13 - socio-only. Auditoria de fechamento mensal expoe gaps por
-    // empresa que sao sensiveis (decisao executiva).
+    // D13 — socio-only. Recuperável NOVO (curado v9 vs cobranças emitidas, trava
+    // anti-dupla) + já-cobrado (âncora) + Ciclo PRT do mês.
     const { supabase } = await withSocioAnon();
 
     const { searchParams } = new URL(req.url);
-    const year = Number(searchParams.get("year") || 0) || undefined;
-    const month = Number(searchParams.get("month") || 0) || undefined;
+    const year = Number(searchParams.get("year")) || undefined;
+    const month = Number(searchParams.get("month")) || undefined;
 
-    const payload = await buildClosingAnalytics(supabase, { year, month });
+    const nowD = new Date();
+    const now = { year: nowD.getUTCFullYear(), month: nowD.getUTCMonth() + 1 };
 
-    // Ciclo PRT (card automatico, read-only, separado da auditoria curada): so
-    // faz sentido quando ha periodo selecionado com fechamento.
-    const sel = payload.selectedPeriod;
-    const prtCiclo = sel ? await buildPrtCiclo(supabase, sel.year, sel.month) : null;
-
-    return NextResponse.json({
-      prtCiclo,
-      periods: payload.periods,
-      selectedPeriod: payload.selectedPeriod,
-      summary: payload.summary,
-      highlights: payload.highlights,
-      alerts: payload.alerts,
-      rows: payload.companyRows
-        .map((row) => ({
-          ...row,
-          severity:
-            Math.abs(row.deltaTotal) >= 10000
-              ? "critico"
-              : Math.abs(row.deltaTotal) >= 3000
-                ? "atencao"
-                : "ok",
-        }))
-        .sort((a, b) => Math.abs(b.deltaTotal) - Math.abs(a.deltaTotal)),
-    });
+    const payload = await buildAuditoria(supabase, now, year, month);
+    return NextResponse.json(payload);
   } catch (error) {
     return apiGuardErrorResponse(error);
   }
