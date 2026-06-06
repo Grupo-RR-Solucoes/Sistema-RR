@@ -24,6 +24,10 @@ type Payload = {
   periodoLabel: string;
   producaoGrupoMes: number;
   producaoParcial: boolean;
+  comissaoBrutaEmpresa: number;
+  comissaoBrutaEmpresaLabel: string;
+  comissaoBrutaEmpresaNaoAtribuida: number;
+  comissaoBrutaEmpresaNaoAtribuidaCount: number;
   previsaoReceita: number;
   limiteSimples: { pct: number; rbt12: number; teto: number; sinal: string };
   producaoMensal: MesPonto[];
@@ -72,6 +76,19 @@ export default function DashboardPage() {
 
 function Header({ data }: { data: Payload | null }) {
   const prod = data ? brl0(data.producaoGrupoMes) : "—";
+  const brutaEmpresa = data ? brl0(data.comissaoBrutaEmpresa) : "—";
+  // sublabel do bruto: mês/estado + (se houver) a parcela ainda não atribuída,
+  // que some sozinha conforme o funcionário atribui as operações na Migração.
+  const brutaSub = (() => {
+    if (!data) return "";
+    const n = data.comissaoBrutaEmpresaNaoAtribuidaCount;
+    if (n > 0) {
+      return `${data.comissaoBrutaEmpresaLabel} · ${brl0(
+        data.comissaoBrutaEmpresaNaoAtribuida
+      )} em ${n} não atribuída${n > 1 ? "s" : ""}`;
+    }
+    return data.comissaoBrutaEmpresaLabel || "o que a empresa recebe";
+  })();
   const prev = data ? brl0(data.previsaoReceita) : "—";
   const lim = data ? pct1(data.limiteSimples.pct) : "—";
   const limSub = data ? `${mm2(data.limiteSimples.rbt12)} / ${mm2(data.limiteSimples.teto)}` : "";
@@ -89,6 +106,11 @@ function Header({ data }: { data: Payload | null }) {
           <p className="label">Produção do grupo · mês</p>
           <div className="value num">{prod}</div>
           <div className="sub">mês corrente · parcial</div>
+        </div>
+        <div className="stat">
+          <p className="label">Comissão bruta (empresa)</p>
+          <div className="value num">{brutaEmpresa}</div>
+          <div className="sub gold">{brutaSub}</div>
         </div>
         <div className="stat">
           <p className="label">Previsão de receita</p>
@@ -300,14 +322,15 @@ const CSS = `
 .rrdash .header h1{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
 .rrdash .badge{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:500;color:#C9D2E8;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);padding:7px 13px;border-radius:999px;white-space:nowrap;}
 .rrdash .badge .dot{width:6px;height:6px;border-radius:50%;background:var(--green-soft);}
-.rrdash .stats{margin-top:28px;display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}
+.rrdash .stats{margin-top:28px;display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}
 .rrdash .stat{padding:0 26px;position:relative;}
 .rrdash .stat:first-child{padding-left:0;}
 .rrdash .stat + .stat::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:1px;background:rgba(255,255,255,.10);}
 .rrdash .stat .label{font-size:12px;font-weight:500;letter-spacing:.01em;color:#9DA9C6;margin:0 0 10px;}
-.rrdash .stat .value{font-size:38px;font-weight:600;letter-spacing:-.02em;line-height:1;color:#fff;}
+.rrdash .stat .value{font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1;color:#fff;}
 .rrdash .stat .sub{font-size:12.5px;margin-top:9px;color:#8C98B6;}
 .rrdash .stat .sub.amber{color:#E7BE6A;}
+.rrdash .stat .sub.gold{color:var(--gold);}
 .rrdash .stat .sub.green{color:var(--green-soft);}
 .rrdash .alert{display:flex;align-items:center;gap:14px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r-md);padding:14px 18px;}
 .rrdash .alert .ic{flex:none;width:26px;height:26px;border-radius:7px;background:#F2DCA6;color:#8A6310;display:grid;place-items:center;font-weight:700;font-size:15px;}
@@ -343,6 +366,11 @@ const CSS = `
 .rrdash .sc .sc-name{font-size:14.5px;font-weight:600;}
 .rrdash .sc .sc-desc{font-size:12px;color:var(--ink-3);margin-top:-6px;}
 .rrdash .sc-ic svg{display:block;}
+@media (max-width:920px){
+  .rrdash .stats{grid-template-columns:repeat(2,1fr);row-gap:22px;}
+  .rrdash .stat:nth-child(1)::before,.rrdash .stat:nth-child(3)::before{display:none;}
+  .rrdash .stat:nth-child(3),.rrdash .stat:nth-child(4){padding-left:0;}
+}
 @media (max-width:720px){
   .rrdash .header{padding:22px 20px 24px;}
   .rrdash .header h1{font-size:23px;}

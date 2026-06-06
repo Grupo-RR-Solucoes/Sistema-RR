@@ -131,6 +131,9 @@ export type PromoterAnalyticsPayload = {
     payableCommission: number;
     discounts: number;
     averageInsurancePenetration: number;
+    companyGrossCommission: number;
+    unassignedCompanyGrossCommission: number;
+    unassignedCount: number;
   };
   summaryRows: Array<{
     promoter_id: string;
@@ -566,6 +569,30 @@ export async function loadPromoterAnalyticsBase(
     groupProductionValue += netValue;
   }
 
+  // Comissão BRUTA da EMPRESA do grupo no período (company_commission) = ganho
+  // da EMPRESA, NÃO o repasse do promotor. net × taxa da empresa, exatamente a
+  // mesma getPromoterViewCompanyRate das proposalRows (teto 5,80% + derive TRP
+  // p/ registros sem % à vista armazenado). Respeita o filtro de empresa; a
+  // derivação da taxa usa a produção CONSOLIDADA do grupo (igual às propostas).
+  // unassigned* = parcela do bruto sobre operações AINDA SEM promotor atribuído.
+  // Faz parte do bruto (a empresa fatura), mas é o que ainda falta distribuir;
+  // encolhe conforme o funcionário atribui na Migração. Exposto p/ o sublabel.
+  let companyGrossCommission = 0;
+  let unassignedCompanyGrossCommission = 0;
+  let unassignedCount = 0;
+  for (const record of recordsForPeriod) {
+    if (companyId && record.company_id !== companyId) continue;
+    if (!isEligibleProductionRecord(record)) continue;
+    const commission =
+      toNumber(record.net_value) *
+      getPromoterViewCompanyRate(record, groupProductionValue);
+    companyGrossCommission += commission;
+    if (!record.assigned_promoter_id) {
+      unassignedCompanyGrossCommission += commission;
+      unassignedCount += 1;
+    }
+  }
+
   const summaryRows = promoters.map((promoter) => {
     const promoterRecords = recordsForPeriod.filter(
       (record) => record.assigned_promoter_id === promoter.id
@@ -669,6 +696,9 @@ export async function loadPromoterAnalyticsBase(
     recordsForPeriod,
     recordsById,
     groupProductionValue,
+    companyGrossCommission,
+    unassignedCompanyGrossCommission,
+    unassignedCount,
     agreements,
     discounts,
     insuranceSlipRules,
@@ -693,6 +723,9 @@ export function selectPromoterView(
     recordsForPeriod,
     recordsById,
     groupProductionValue,
+    companyGrossCommission,
+    unassignedCompanyGrossCommission,
+    unassignedCount,
     agreements,
     discounts,
     insuranceSlipRules,
@@ -848,6 +881,9 @@ export function selectPromoterView(
       discounts: summary.discounts,
       averageInsurancePenetration:
         summary.promoters > 0 ? summary.insurancePenetration / summary.promoters : 0,
+      companyGrossCommission,
+      unassignedCompanyGrossCommission,
+      unassignedCount,
     },
     summaryRows: visibleSummaryRows,
     proposalRows,

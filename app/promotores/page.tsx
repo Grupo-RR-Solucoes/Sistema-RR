@@ -1,9 +1,8 @@
 "use client";
 
-import type { CSSProperties, FormEvent, ReactNode } from "react";
+import type { FormEvent } from "react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import FeedbackBanner from "../../components/FeedbackBanner";
 import { useUser } from "../../lib/auth/useUser";
 import PromotorView from "./PromotorView";
 
@@ -273,11 +272,32 @@ function PromotoresFullPage() {
     load();
   }, [selectedKey, companyId, promoterId, reloadKey]);
 
+  // DEFAULT de competência = último mês FECHADO. Heurística de data: o mês
+  // corrente do calendário está aberto (em produção), então escolhemos o
+  // período mais recente ANTERIOR a ele (ex.: hoje jun → default mai). Sem
+  // seleção manual ainda; só roda no load inicial. Fallback: selectedPeriod.
   useEffect(() => {
-    if (!selectedKey && data.selectedPeriod.key) {
-      setSelectedKey(data.selectedPeriod.key);
+    if (selectedKey || data.periods.length === 0) {
+      return;
     }
-  }, [data.selectedPeriod.key, selectedKey]);
+    const now = new Date();
+    const cy = now.getFullYear();
+    const cm = now.getMonth() + 1;
+    const closed = data.periods.filter(
+      (p) => p.year < cy || (p.year === cy && p.month < cm)
+    );
+    const pick = closed.reduce<PeriodOption | null>((best, p) => {
+      if (!best) return p;
+      if (p.year > best.year || (p.year === best.year && p.month > best.month)) {
+        return p;
+      }
+      return best;
+    }, null);
+    const target = pick?.key || data.selectedPeriod.key;
+    if (target) {
+      setSelectedKey(target);
+    }
+  }, [data.periods, data.selectedPeriod.key, selectedKey]);
 
   useEffect(() => {
     if (!promoterId && data.selectedPromoterId) {
@@ -660,612 +680,490 @@ function PromotoresFullPage() {
     [data.discountRows]
   );
 
+  const competenceLabel =
+    data.periods.find((period) => period.key === (selectedKey || data.selectedPeriod.key))
+      ?.label ||
+    data.selectedPeriod.label ||
+    "Sem competência";
+  const competenceShort = (() => {
+    const m = competenceLabel.match(/(\w+)\/(\d{4})/);
+    return m ? `${m[1]}/${m[2]}` : competenceLabel;
+  })();
+  const tabs: Array<{ key: typeof activeSection; label: string }> = [
+    { key: "resumo", label: "Resumo" },
+    { key: "descontos", label: "Descontos" },
+    { key: "detalhamento", label: "Detalhamento" },
+    { key: "migracao", label: "Migração" },
+  ];
+
   return (
-    <section style={styles.page}>
-      <div style={styles.hero}>
-        <article style={styles.heroMain}>
-          <div style={styles.kicker}>Gestao comercial</div>
-          <h2 style={styles.title}>Promotores, metas e comissoes</h2>
-          <p style={styles.description}>
-            Esta visao junta resumo mensal, meta individual, recalculo da
-            competencia e migracao manual de propostas para tratar Chave J master,
-            novatos e ajustes de carteira sem sair do sistema.
-          </p>
-          <div style={styles.heroSignals}>
-            <div style={styles.heroSignal}>
-              <span style={styles.heroSignalLabel}>Base padrao</span>
-              <strong style={styles.heroSignalValue}>58,33%</strong>
-            </div>
-            <div style={styles.heroSignal}>
-              <span style={styles.heroSignalLabel}>Teto do promotor</span>
-              <strong style={styles.heroSignalValue}>5,80%</strong>
-            </div>
-            <div style={styles.heroSignal}>
-              <span style={styles.heroSignalLabel}>Descontos</span>
-              <strong style={styles.heroSignalValue}>Controle editavel</strong>
-            </div>
-          </div>
-        </article>
+    <div className="rrprom">
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <main className="wrap">
+        <nav className="crumb">
+          <Link href="/dashboard">Visão geral</Link>
+          <span className="sep">/</span>
+          <span>Promotores</span>
+        </nav>
 
-        <article style={styles.heroAside}>
-          <div style={styles.heroAsideLabel}>Atalhos especialistas</div>
-          <p style={styles.heroAsideDescription}>
-            Ajustes finos por promotor, produto ou proposta sem sair do fluxo comercial.
-          </p>
-          <div style={styles.quickLinks}>
-            <Link href={`/comissoes/editar${specialistQuery}`} style={styles.quickLink}>
-              <span style={styles.quickLinkTitle}>Excecao por proposta</span>
-              <span style={styles.quickLinkDescription}>
-                Trate acordos pontuais, divergencias e situacoes individuais.
-              </span>
-            </Link>
-            <Link href={`/comissoes/produto${specialistQuery}`} style={styles.quickLink}>
-              <span style={styles.quickLinkTitle}>Regra por produto</span>
-              <span style={styles.quickLinkDescription}>
-                Defina repasses dedicados por promotor e linha comercial.
-              </span>
-            </Link>
+        {/* HEADER + KPIs */}
+        <header className="header">
+          <div className="header-top">
+            <div>
+              <p className="brand">GRUPO RR CRED</p>
+              <h1>Promotores, metas e comissões</h1>
+            </div>
+            <div className="comp">
+              <select
+                aria-label="Competência"
+                value={selectedKey}
+                onChange={(event) => setSelectedKey(event.target.value)}
+              >
+                {data.periods.map((period) => (
+                  <option key={period.key} value={period.key}>
+                    {period.label}
+                  </option>
+                ))}
+              </select>
+              <span className="chev">▾</span>
+            </div>
           </div>
-        </article>
-      </div>
+          <div className="kpis">
+            <div className="kpi">
+              <p className="label">Promotores</p>
+              <div className="value num">{data.summary.promoters}</div>
+              <div className="sub">ativos na competência</div>
+            </div>
+            <div className="kpi">
+              <p className="label">Produção</p>
+              <div className="value num">{formatCurrency(data.summary.production)}</div>
+              <div className="sub">crédito + seguro</div>
+            </div>
+            <div className="kpi">
+              <p className="label">Comissão bruta</p>
+              <div className="value num">{formatCurrency(data.summary.finalCommission)}</div>
+              <div className="sub">antes de descontos</div>
+            </div>
+            <div className="kpi">
+              <p className="label">Comissão a pagar</p>
+              <div className="value num">{formatCurrency(data.summary.payableCommission)}</div>
+              <div className="sub gold">líquido a repassar</div>
+            </div>
+            <div className="kpi">
+              <p className="label">Penetração média</p>
+              <div className="value num">
+                {formatPercent(data.summary.averageInsurancePenetration)}
+              </div>
+              <div className="sub">seguro / crédito</div>
+            </div>
+          </div>
+        </header>
 
-      {error ? (
-        <FeedbackBanner
-          variant="error"
-          eyebrow="Comercial interrompido"
-          title="Nao foi possivel concluir a operacao dos promotores."
-          description={error}
-        />
-      ) : null}
-      {notice ? (
-        <FeedbackBanner
-          variant="success"
-          eyebrow="Comercial atualizado"
-          title="A base de promotores foi atualizada com sucesso."
-          description={notice}
-        />
-      ) : null}
+        {error ? <div className="banner err">{error}</div> : null}
+        {notice ? <div className="banner ok">{notice}</div> : null}
 
-      <section style={styles.filterCard}>
-        <div style={styles.filterHeader}>
-          <div>
-            <div style={styles.filterKicker}>Painel operacional</div>
-            <h3 style={styles.filterTitle}>Filtros e processamento da competencia</h3>
-          </div>
-          <div style={styles.sectionChip}>
-            {data.periods.find((period) => period.key === (selectedKey || data.selectedPeriod.key))
-              ?.label ||
-              data.selectedPeriod.label ||
-              "Sem competencia"}
-          </div>
-        </div>
-        <div style={styles.filterGrid}>
-          <FormRow label="Competencia">
+        {/* FILTER BAR */}
+        <div className="filters">
+          <div className="fsel">
             <select
+              aria-label="Competência"
               value={selectedKey}
               onChange={(event) => setSelectedKey(event.target.value)}
-              style={styles.input}
             >
               {data.periods.map((period) => (
                 <option key={period.key} value={period.key}>
-                  {period.label}
+                  Competência: {period.label}
                 </option>
               ))}
             </select>
-          </FormRow>
-
-          <FormRow label="Empresa">
+            <span className="chev">▾</span>
+          </div>
+          <div className="fsel">
             <select
+              aria-label="Empresa"
               value={companyId}
               onChange={(event) => {
                 setCompanyId(event.target.value);
                 setPromoterId("");
               }}
-              style={styles.input}
             >
-              <option value="">Todas</option>
+              <option value="">Empresa: todas</option>
               {data.companies.map((company) => (
                 <option key={company.id} value={company.id}>
                   {company.name}
                 </option>
               ))}
             </select>
-          </FormRow>
-
-          <FormRow label="Promotor detalhado">
+            <span className="chev">▾</span>
+          </div>
+          <div className="fsel">
             <select
+              aria-label="Promotor"
               value={promoterId}
               onChange={(event) => setPromoterId(event.target.value)}
-              style={styles.input}
             >
-              <option value="">Selecione</option>
+              <option value="">Promotor: todos</option>
               {data.promoterOptions.map((promoter) => (
                 <option key={promoter.id} value={promoter.id}>
                   {promoter.name}
                 </option>
               ))}
             </select>
-          </FormRow>
-
-          <div style={styles.filterActionWrap}>
-            <button
-              type="button"
-              onClick={recalculateMonth}
-              style={styles.primaryButton}
-              disabled={recalculating}
-            >
-              {recalculating ? "Recalculando..." : "Recalcular competencia"}
-            </button>
-            {/* ETAPA 7 — export individual xlsx (socio/funcionario). Esta tela
-                e a visao socio/func; o promotor cai no early-return PromotorView
-                (sem este botao). Exporta o promotor + competencia selecionados,
-                mesma fonte da tela (cms se mes fechado). */}
-            {promoterId ? (
-              <a
-                href={`/api/relatorios/export?type=promotores&format=xlsx&scope=individual&promoterId=${encodeURIComponent(
-                  promoterId
-                )}&year=${(selectedKey || data.selectedPeriod.key || "").split("-")[0]}&month=${Number(
-                  (selectedKey || data.selectedPeriod.key || "").split("-")[1]
-                )}${companyId ? `&companyId=${encodeURIComponent(companyId)}` : ""}`}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  height: 40,
-                  padding: "0 16px",
-                  marginLeft: 8,
-                  borderRadius: 8,
-                  border: "1px solid var(--rr-line-strong)",
-                  background: "#fff",
-                  color: "var(--rr-navy)",
-                  fontWeight: 600,
-                  textDecoration: "none",
-                  whiteSpace: "nowrap",
-                }}
-                title="Exporta o relatorio individual (xlsx) da competencia selecionada — mesma fonte da tela (cms se mes fechado)."
-              >
-                Exportar xlsx
-              </a>
-            ) : null}
+            <span className="chev">▾</span>
           </div>
-        </div>
-        <div style={styles.filterFoot}>
-          <div style={styles.filterHint}>
-            Se houver promotor selecionado, o recalculo atua so nele. Sem selecao,
-            o sistema recalcula a competencia inteira.
-          </div>
-          <div style={styles.sectionChip}>
-            {data.summary.promoters} promotores | {data.proposalRows.length} propostas visiveis
-          </div>
-        </div>
-      </section>
-
-      <div style={styles.summaryGrid}>
-        <SummaryCard
-          label="Promotores"
-          value={String(data.summary.promoters)}
-          detail="Promotores com movimento ou cadastro no filtro atual."
-        />
-        <SummaryCard
-          label="Producao"
-          value={formatCurrency(data.summary.production)}
-          detail="Soma da producao valida usando valor financiado liquido."
-        />
-        <SummaryCard
-          label="Comissao bruta"
-          value={formatCurrency(data.summary.finalCommission)}
-          detail="Antes dos descontos e estornos do promotor."
-        />
-        <SummaryCard
-          label="Comissao a pagar"
-          value={formatCurrency(data.summary.payableCommission)}
-          detail={`Descontos atuais em ${formatCurrency(data.summary.discounts)}.`}
-        />
-        <SummaryCard
-          label="Penetracao media"
-          value={formatPercent(data.summary.averageInsurancePenetration)}
-          detail="Media da penetracao de seguro entre os promotores filtrados."
-        />
-      </div>
-
-      <div style={styles.subsectionNav}>
-        <button
-          type="button"
-          onClick={() => setActiveSection("resumo")}
-          style={{
-            ...styles.subsectionButton,
-            ...(activeSection === "resumo" ? styles.subsectionButtonActive : {}),
-          }}
-        >
-          Resumo e acordos
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveSection("descontos")}
-          style={{
-            ...styles.subsectionButton,
-            ...(activeSection === "descontos" ? styles.subsectionButtonActive : {}),
-          }}
-        >
-          Descontos
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveSection("detalhamento")}
-          style={{
-            ...styles.subsectionButton,
-            ...(activeSection === "detalhamento" ? styles.subsectionButtonActive : {}),
-          }}
-        >
-          Detalhamento
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveSection("migracao")}
-          style={{
-            ...styles.subsectionButton,
-            ...(activeSection === "migracao" ? styles.subsectionButtonActive : {}),
-          }}
-        >
-          Migracao
-        </button>
-      </div>
-
-      {activeSection === "resumo" ? (
-      <div style={styles.contentGrid}>
-        <article style={styles.tableCard}>
-          <div style={styles.sectionHeader}>
-            <div>
-              <div style={styles.sectionKicker}>Resumo mensal</div>
-              <h3 style={styles.sectionTitle}>Painel dos promotores</h3>
-            </div>
-            <div style={styles.sectionChip}>{data.summaryRows.length} linhas</div>
-          </div>
-
-          {loading ? (
-            <div style={styles.emptyState}>Carregando promotores...</div>
-          ) : data.summaryRows.length === 0 ? (
-            <div style={styles.emptyState}>Nenhum promotor encontrado para esta competencia.</div>
-          ) : (
-            <div
-              className={`rr-table-wrap${data.summaryRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
-              style={styles.tableWrap}
-            >
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Promotor</th>
-                    <th style={styles.th}>Empresa</th>
-                    <th style={styles.th}>Producao</th>
-                    <th style={styles.th}>Penetracao</th>
-                    <th style={styles.th}>Meta</th>
-                    <th style={styles.th}>Status</th>
-                    <th style={styles.th}>Bruta</th>
-                    <th style={styles.th}>Desconto</th>
-                    <th style={styles.th}>A pagar</th>
-                    <th style={styles.th}>Origem</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.summaryRows.map((row) => (
-                    <tr
-                      key={row.promoter_id}
-                      onClick={() => setPromoterId(row.promoter_id)}
-                      style={
-                        promoterId === row.promoter_id ? styles.tableRowSelected : undefined
-                      }
-                    >
-                      <td style={styles.td}>
-                        <div style={styles.itemTitle}>{row.promoter_name}</div>
-                        <div style={styles.itemMeta}>
-                          {row.j_keys_count} Chaves J | {row.proposal_count} propostas
-                        </div>
-                      </td>
-                      <td style={styles.td}>{row.company_name}</td>
-                      <td style={styles.td}>{formatCurrency(row.production_value)}</td>
-                      <td style={styles.td}>{formatPercent(row.insurance_penetration_percent)}</td>
-                      <td style={styles.td}>
-                        {formatCurrency(row.target_value)} / {formatCurrency(row.target_1_value)} /{" "}
-                        {formatCurrency(row.target_2_value)}
-                      </td>
-                      <td style={styles.td}>
-                        <span style={styles.badge}>{row.target_status}</span>
-                      </td>
-                      <td style={styles.td}>{formatCurrency(row.final_commission_value)}</td>
-                      <td style={styles.td}>{formatCurrency(row.discount_value)}</td>
-                      <td style={styles.tdStrong}>{formatCurrency(row.payable_commission_value)}</td>
-                      <td style={styles.td}>{row.result_source}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </article>
-
-        <aside style={styles.sideRail}>
-          <article style={styles.sideCard}>
-            <div style={styles.sectionHeaderCompact}>
-              <div>
-                <div style={styles.sectionKicker}>Meta mensal</div>
-                <h3 style={styles.sectionTitle}>Editar incentivo</h3>
-              </div>
-            </div>
-            <form onSubmit={handleTargetSubmit} style={styles.formGrid}>
-              <FormRow label="Promotor">
-                <select
-                  value={targetForm.promoterId}
-                  onChange={(event) =>
-                    setTargetForm((current) => ({
-                      ...current,
-                      promoterId: event.target.value,
-                    }))
-                  }
-                  style={styles.input}
-                >
-                  <option value="">Selecione</option>
-                  {data.promoterOptions.map((promoter) => (
-                    <option key={promoter.id} value={promoter.id}>
-                      {promoter.name}
-                    </option>
-                  ))}
-                </select>
-              </FormRow>
-              <FormRow label="Meta">
-                <input
-                  value={targetForm.meta}
-                  onChange={(event) =>
-                    setTargetForm((current) => ({ ...current, meta: event.target.value }))
-                  }
-                  style={styles.input}
-                />
-              </FormRow>
-              <FormRow label="Meta 1">
-                <input
-                  value={targetForm.meta1}
-                  onChange={(event) =>
-                    setTargetForm((current) => ({ ...current, meta1: event.target.value }))
-                  }
-                  style={styles.input}
-                />
-              </FormRow>
-              <FormRow label="Meta 2">
-                <input
-                  value={targetForm.meta2}
-                  onChange={(event) =>
-                    setTargetForm((current) => ({ ...current, meta2: event.target.value }))
-                  }
-                  style={styles.input}
-                />
-              </FormRow>
-              <button type="submit" style={styles.primaryButton} disabled={savingTarget}>
-                {savingTarget ? "Salvando..." : "Salvar meta"}
-              </button>
-            </form>
-
-            {selectedPromoterSummary ? (
-              <div style={styles.infoBox}>
-                <div style={styles.itemTitle}>{selectedPromoterSummary.promoter_name}</div>
-                <div style={styles.itemMeta}>
-                  {selectedPromoterSummary.company_name} | {selectedPromoterSummary.status}
-                </div>
-                <div style={styles.infoLine}>
-                  Comissao a pagar: {formatCurrency(selectedPromoterSummary.payable_commission_value)}
-                </div>
-              </div>
-            ) : null}
-          </article>
-
-          <article style={styles.sideCard}>
-            <div style={styles.sectionHeaderCompact}>
-              <div>
-                <div style={styles.sectionKicker}>Acordo comercial</div>
-                <h3 style={styles.sectionTitle}>Repasse do promotor</h3>
-                <p style={styles.sectionDescription}>
-                  O acordo geral segue o percentual sobre a comissao da empresa, mas a visao do
-                  promotor respeita teto de 5,80% no credito.
-                </p>
-              </div>
-            </div>
-            <form onSubmit={handleAgreementSubmit} style={styles.formGrid}>
-              <FormRow label="Promotor">
-                <select
-                  value={agreementForm.promoterId}
-                  onChange={(event) =>
-                    setAgreementForm((current) => ({
-                      ...current,
-                      promoterId: event.target.value,
-                    }))
-                  }
-                  style={styles.input}
-                >
-                  <option value="">Selecione</option>
-                  {data.promoterOptions.map((promoter) => (
-                    <option key={promoter.id} value={promoter.id}>
-                      {promoter.name}
-                    </option>
-                  ))}
-                </select>
-              </FormRow>
-              <FormRow label="Credito (% da comissao da empresa)">
-                <input
-                  value={agreementForm.productionShare}
-                  onChange={(event) =>
-                    setAgreementForm((current) => ({
-                      ...current,
-                      productionShare: event.target.value,
-                    }))
-                  }
-                  style={styles.input}
-                  placeholder="Ex: 58,33 ou 66,66"
-                />
-              </FormRow>
-              <FormRow label="Seguro (% da comissao do seguro)">
-                <input
-                  value={agreementForm.insuranceShare}
-                  onChange={(event) =>
-                    setAgreementForm((current) => ({
-                      ...current,
-                      insuranceShare: event.target.value,
-                    }))
-                  }
-                  style={styles.input}
-                  placeholder="Ex: 35 ou 40"
-                />
-              </FormRow>
-              <FormRow label="Observacao">
-                <input
-                  value={agreementForm.notes}
-                  onChange={(event) =>
-                    setAgreementForm((current) => ({
-                      ...current,
-                      notes: event.target.value,
-                    }))
-                  }
-                  style={styles.input}
-                  placeholder="Ex: acordo comercial abril"
-                />
-              </FormRow>
-              <button type="submit" style={styles.primaryButton} disabled={savingAgreement}>
-                {savingAgreement ? "Salvando..." : "Salvar acordo"}
-              </button>
-            </form>
-
-            <div style={styles.infoBox}>
-              <div style={styles.itemTitle}>Regras salvas nesta competencia</div>
-              {data.agreementRows.length === 0 ? (
-                <div style={styles.itemMeta}>
-                  Sem acordo manual. O sistema usa a tabela mensal importada.
-                </div>
-              ) : (
-                data.agreementRows.map((row) => (
-                  <div key={row.id} style={styles.infoLine}>
-                    {row.agreement_type === "PRODUCTION" ? "Credito" : "Seguro"}:{" "}
-                    {row.commission_value.toFixed(2).replace(".", ",")}%{" "}
-                    {row.notes ? `| ${row.notes}` : ""}
-                  </div>
-                ))
-              )}
-            </div>
-          </article>
-        </aside>
-      </div>
-      ) : null}
-
-      {activeSection === "detalhamento" ? (
-      <div style={styles.summaryGrid}>
-        <SummaryCard
-          label="Comissao PF base"
-          value={formatCurrency(proposalTotals.companyCommission)}
-          detail="Base de credito exibida na visao do promotor, ja limitada ao teto de 5,80%."
-        />
-        <SummaryCard
-          label="Comissao seguro base"
-          value={formatCurrency(proposalTotals.companyInsurance)}
-          detail="Base de seguro usada para o repasse individual do promotor."
-        />
-        <SummaryCard
-          label="Descontos do promotor"
-          value={formatCurrency(promoterDiscountTotal)}
-          detail="Liquidações, cancelamentos, adiantamentos e outros debitos."
-        />
-        <SummaryCard
-          label="Liquido final"
-          value={formatCurrency(selectedPromoterSummary?.payable_commission_value)}
-          detail="Comissao do promotor ja abatida dos descontos atuais."
-        />
-      </div>
-      ) : null}
-
-      {activeSection === "descontos" ? (
-      <article style={styles.tableCard}>
-        <div style={styles.sectionHeader}>
-          <div>
-            <div style={styles.sectionKicker}>Descontos e estornos</div>
-            <h3 style={styles.sectionTitle}>Lancamentos editaveis do promotor</h3>
-          </div>
-          <div style={styles.sectionChip}>{data.discountRows.length} lancamentos</div>
-        </div>
-
-        <div style={styles.contentGrid}>
-          <div
-            className={`rr-table-wrap${data.discountRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
-            style={styles.tableWrap}
+          <button
+            type="button"
+            className="fbtn primary"
+            onClick={recalculateMonth}
+            disabled={recalculating}
+            title="Recalcula a competência (todo o mês, ou só o promotor selecionado)."
           >
-            {data.discountRows.length === 0 ? (
-              <div style={styles.emptyState}>
-                Nenhum desconto lancado para esta competencia.
-              </div>
-            ) : (
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Tipo</th>
-                    <th style={styles.th}>Proposta</th>
-                    <th style={styles.th}>Parcela</th>
-                    <th style={styles.th}>Valor</th>
-                    <th style={styles.th}>Destino</th>
-                    <th style={styles.th}>Observacao</th>
-                    <th style={styles.th}>Acoes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.discountRows.map((row) => (
-                    <tr key={row.id}>
-                      <td style={styles.td}>{row.discount_type}</td>
-                      <td style={styles.td}>{row.proposal_number || "-"}</td>
-                      <td style={styles.td}>
-                        {row.installment_number}/{row.installments}
-                      </td>
-                      <td style={styles.td}>{formatCurrency(row.amount)}</td>
-                      <td style={styles.td}>
-                        {row.apply_to_company ? "Empresa" : "Promotor"}
-                      </td>
-                      <td style={styles.td}>{row.notes || "-"}</td>
-                      <td style={styles.td}>
-                        <div style={styles.actionRow}>
-                          <button
-                            type="button"
-                            onClick={() => editDiscount(row)}
-                            style={styles.secondaryButton}
-                          >
-                            Editar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteDiscount(row.id)}
-                            style={styles.ghostButton}
-                            disabled={deletingDiscountId === row.id}
-                          >
-                            {deletingDiscountId === row.id ? "Removendo..." : "Excluir"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+            <span className="ic">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                <path d="M21 3v6h-6" />
+              </svg>
+            </span>
+            {recalculating ? "Recalculando…" : "Recalcular competência"}
+          </button>
+          {promoterId ? (
+            <a
+              className="fbtn"
+              href={`/api/relatorios/export?type=promotores&format=xlsx&scope=individual&promoterId=${encodeURIComponent(
+                promoterId
+              )}&year=${(selectedKey || data.selectedPeriod.key || "").split("-")[0]}&month=${Number(
+                (selectedKey || data.selectedPeriod.key || "").split("-")[1]
+              )}${companyId ? `&companyId=${encodeURIComponent(companyId)}` : ""}`}
+              title="Exporta o relatório individual (xlsx) da competência selecionada — mesma fonte da tela (cms se mês fechado)."
+            >
+              <span className="ic">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3v12" />
+                  <path d="M7 10l5 5 5-5" />
+                  <path d="M5 21h14" />
+                </svg>
+              </span>
+              Exportar xlsx
+            </a>
+          ) : null}
+          <span className="chip">
+            <b>{data.summary.promoters}</b> promotores · <b>{data.proposalRows.length}</b> propostas
+          </span>
+        </div>
 
-          <aside style={styles.sideRail}>
-            <article style={styles.sideCard}>
-              <div style={styles.sectionHeaderCompact}>
-                <div>
-                  <div style={styles.sectionKicker}>Novo desconto</div>
-                  <h3 style={styles.sectionTitle}>Aplicar no promotor</h3>
+        {/* TABS */}
+        <div className="tabs" role="tablist">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              className={`tab${activeSection === tab.key ? " active" : ""}`}
+              onClick={() => setActiveSection(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* PANEL: RESUMO */}
+        {activeSection === "resumo" ? (
+          <section className="panel active">
+            <div className="resumo-grid">
+              <div className="card">
+                <div className="card-head">
+                  <div>
+                    <h2>Promotores · {competenceShort}</h2>
+                    <p className="csub">Clique numa linha para editar meta e repasse</p>
+                  </div>
                 </div>
+                {loading ? (
+                  <div className="state">Carregando promotores…</div>
+                ) : data.summaryRows.length === 0 ? (
+                  <div className="state">Nenhum promotor encontrado para esta competência.</div>
+                ) : (
+                  <div className="scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th className="l sticky">Promotor</th>
+                          <th className="l">Empresa</th>
+                          <th>Produção</th>
+                          <th>Penetração</th>
+                          <th>Meta</th>
+                          <th className="l">Status</th>
+                          <th>Comissão bruta</th>
+                          <th>Desconto</th>
+                          <th>A pagar</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.summaryRows.map((row) => {
+                          const hasMeta = row.target_value > 0;
+                          const achieved = hasMeta && row.production_value >= row.target_value;
+                          return (
+                            <tr
+                              key={row.promoter_id}
+                              className={`clk${promoterId === row.promoter_id ? " sel" : ""}`}
+                              onClick={() => setPromoterId(row.promoter_id)}
+                            >
+                              <td className="l sticky prom" data-l="Promotor">
+                                {row.promoter_name}
+                                <small>
+                                  {row.j_keys_count} Chaves J · {row.proposal_count} propostas
+                                </small>
+                              </td>
+                              <td className="l muted" data-l="Empresa">
+                                {row.company_name}
+                              </td>
+                              <td className="num" data-l="Produção">
+                                {formatCurrency(row.production_value)}
+                              </td>
+                              <td className="num" data-l="Penetração">
+                                {formatPercent(row.insurance_penetration_percent)}
+                              </td>
+                              <td className="num muted" data-l="Meta">
+                                {hasMeta ? formatCurrency(row.target_value) : "—"}
+                              </td>
+                              <td className="l" data-l="Status">
+                                {hasMeta ? (
+                                  <span className={`badge2 ${achieved ? "ok" : "low"}`}>
+                                    <span className="d" />
+                                    {achieved ? "atingiu" : "abaixo"}
+                                  </span>
+                                ) : (
+                                  <span className="muted">—</span>
+                                )}
+                              </td>
+                              <td className="num" data-l="Comissão bruta">
+                                {formatCurrency(row.final_commission_value)}
+                              </td>
+                              <td className={`num${row.discount_value > 0 ? " neg" : ""}`} data-l="Desconto">
+                                {row.discount_value > 0
+                                  ? `−${formatCurrency(row.discount_value)}`
+                                  : formatCurrency(0)}
+                              </td>
+                              <td className="num pay" data-l="A pagar">
+                                {formatCurrency(row.payable_commission_value)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
-              <form onSubmit={handleDiscountSubmit} style={styles.formGrid}>
-                <FormRow label="Promotor">
+
+              <aside className="edit">
+                {!selectedPromoterSummary ? (
+                  <div>
+                    <h3>Edição do promotor</h3>
+                    <p className="who">Nenhum promotor selecionado</p>
+                    <p className="empty" style={{ marginTop: 14 }}>
+                      Selecione uma linha na tabela para ajustar a <b>meta mensal</b> e o{" "}
+                      <b>acordo de repasse</b>.
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <h3>{selectedPromoterSummary.promoter_name}</h3>
+                    <p className="who">
+                      {selectedPromoterSummary.company_name} · {selectedPromoterSummary.status}
+                    </p>
+
+                    <form className="mini" onSubmit={handleTargetSubmit}>
+                      <h4>Meta mensal</h4>
+                      <div className="field">
+                        <label>Meta de produção (R$)</label>
+                        <div className="inwrap">
+                          <span className="pre">R$</span>
+                          <input
+                            className="num"
+                            value={targetForm.meta}
+                            onChange={(event) =>
+                              setTargetForm((current) => ({ ...current, meta: event.target.value }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="pair">
+                        <div className="field">
+                          <label>Meta 1 (R$)</label>
+                          <input
+                            className="num nopre"
+                            value={targetForm.meta1}
+                            onChange={(event) =>
+                              setTargetForm((current) => ({ ...current, meta1: event.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Meta 2 (R$)</label>
+                          <input
+                            className="num nopre"
+                            value={targetForm.meta2}
+                            onChange={(event) =>
+                              setTargetForm((current) => ({ ...current, meta2: event.target.value }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <button className="save" type="submit" disabled={savingTarget}>
+                        {savingTarget ? "Salvando…" : "Salvar meta"}
+                      </button>
+                    </form>
+
+                    <form className="mini" onSubmit={handleAgreementSubmit}>
+                      <h4>Acordo de repasse</h4>
+                      <div className="pair">
+                        <div className="field">
+                          <label>Crédito %</label>
+                          <input
+                            className="num nopre"
+                            value={agreementForm.productionShare}
+                            onChange={(event) =>
+                              setAgreementForm((current) => ({
+                                ...current,
+                                productionShare: event.target.value,
+                              }))
+                            }
+                            placeholder="58,33"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Seguro %</label>
+                          <input
+                            className="num nopre"
+                            value={agreementForm.insuranceShare}
+                            onChange={(event) =>
+                              setAgreementForm((current) => ({
+                                ...current,
+                                insuranceShare: event.target.value,
+                              }))
+                            }
+                            placeholder="35"
+                          />
+                        </div>
+                      </div>
+                      <div className="field">
+                        <label>Observação</label>
+                        <input
+                          className="nopre"
+                          value={agreementForm.notes}
+                          onChange={(event) =>
+                            setAgreementForm((current) => ({ ...current, notes: event.target.value }))
+                          }
+                          placeholder="Ex: acordo comercial abril"
+                        />
+                      </div>
+                      <button className="save" type="submit" disabled={savingAgreement}>
+                        {savingAgreement ? "Salvando…" : "Salvar acordo"}
+                      </button>
+                      {data.agreementRows.length > 0 ? (
+                        <p className="agnote">
+                          {data.agreementRows
+                            .map(
+                              (a) =>
+                                `${a.agreement_type === "PRODUCTION" ? "Crédito" : "Seguro"}: ${a.commission_value
+                                  .toFixed(2)
+                                  .replace(".", ",")}%`
+                            )
+                            .join(" · ")}
+                        </p>
+                      ) : (
+                        <p className="agnote">Sem acordo manual — usa a tabela mensal importada.</p>
+                      )}
+                    </form>
+                  </div>
+                )}
+              </aside>
+            </div>
+          </section>
+        ) : null}
+
+        {/* PANEL: DESCONTOS */}
+        {activeSection === "descontos" ? (
+          <section className="panel active">
+            <div className="card">
+              <div className="card-head">
+                <div>
+                  <h2>Descontos lançados</h2>
+                  <p className="csub">Abatimentos sobre a comissão a pagar</p>
+                </div>
+                <span className="chip soft">{data.discountRows.length} lançamentos</span>
+              </div>
+              <div className="scroll">
+                {data.discountRows.length === 0 ? (
+                  <div className="state">Nenhum desconto lançado para esta competência.</div>
+                ) : (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th className="l sticky">Tipo</th>
+                        <th className="l">Proposta</th>
+                        <th>Parcela</th>
+                        <th>Valor</th>
+                        <th className="l">Destino</th>
+                        <th className="l">Obs.</th>
+                        <th className="l">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.discountRows.map((row) => (
+                        <tr key={row.id}>
+                          <td className="l sticky" data-l="Tipo">
+                            {row.discount_type}
+                          </td>
+                          <td className="l" data-l="Proposta">
+                            {row.proposal_number || "-"}
+                          </td>
+                          <td data-l="Parcela">
+                            {row.installment_number} / {row.installments}
+                          </td>
+                          <td className="num neg" data-l="Valor">
+                            −{formatCurrency(row.amount)}
+                          </td>
+                          <td className="l" data-l="Destino">
+                            {row.apply_to_company ? "Empresa" : "Promotor"}
+                          </td>
+                          <td className="l muted" data-l="Obs.">
+                            {row.notes || "-"}
+                          </td>
+                          <td className="l" data-l="Ações">
+                            <div className="actions">
+                              <button type="button" className="linkbtn" onClick={() => editDiscount(row)}>
+                                Editar
+                              </button>
+                              <button
+                                type="button"
+                                className="iconbtn"
+                                title="Remover"
+                                onClick={() => deleteDiscount(row.id)}
+                                disabled={deletingDiscountId === row.id}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                  <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* NOVO DESCONTO — formulário completo preservado */}
+              <form className="ndform" onSubmit={handleDiscountSubmit}>
+                <div className="field">
+                  <label>Promotor</label>
                   <select
                     value={discountForm.promoterId}
                     onChange={(event) =>
-                      setDiscountForm((current) => ({
-                        ...current,
-                        promoterId: event.target.value,
-                      }))
+                      setDiscountForm((current) => ({ ...current, promoterId: event.target.value }))
                     }
-                    style={styles.input}
                   >
                     <option value="">Selecione</option>
                     {data.promoterOptions.map((promoter) => (
@@ -1274,26 +1172,24 @@ function PromotoresFullPage() {
                       </option>
                     ))}
                   </select>
-                </FormRow>
-                <FormRow label="Tipo de desconto">
+                </div>
+                <div className="field">
+                  <label>Tipo</label>
                   <select
                     value={discountForm.discountType}
                     onChange={(event) =>
-                      setDiscountForm((current) => ({
-                        ...current,
-                        discountType: event.target.value,
-                      }))
+                      setDiscountForm((current) => ({ ...current, discountType: event.target.value }))
                     }
-                    style={styles.input}
                   >
-                    <option value="LIQUIDACAO_ANTECIPADA">Liquidacao antecipada</option>
+                    <option value="LIQUIDACAO_ANTECIPADA">Liquidação antecipada</option>
                     <option value="CANCELAMENTO_SEGURO">Cancelamento de seguro</option>
-                    <option value="ESTORNO_CREDITO">Estorno de credito</option>
+                    <option value="ESTORNO_CREDITO">Estorno de crédito</option>
                     <option value="ADIANTAMENTO">Adiantamento</option>
-                    <option value="OUTROS">Outros debitos</option>
+                    <option value="OUTROS">Outros débitos</option>
                   </select>
-                </FormRow>
-                <FormRow label="Proposta vinculada">
+                </div>
+                <div className="field">
+                  <label>Proposta vinculada</label>
                   <select
                     value={discountForm.dailyProductionRecordId}
                     onChange={(event) =>
@@ -1302,359 +1198,350 @@ function PromotoresFullPage() {
                         dailyProductionRecordId: event.target.value,
                       }))
                     }
-                    style={styles.input}
                   >
-                    <option value="">Sem vinculo</option>
+                    <option value="">Sem vínculo</option>
                     {data.proposalRows.map((row) => (
                       <option key={row.id} value={row.id}>
-                        {row.proposal_number} | {row.product_description}
+                        {row.proposal_number} · {row.product_description}
                       </option>
                     ))}
                   </select>
-                </FormRow>
-                <FormRow label="Valor descontado da empresa">
+                </div>
+                <div className="field">
+                  <label>Valor da empresa (R$)</label>
                   <input
                     value={discountForm.companyAmount}
                     onChange={(event) =>
-                      setDiscountForm((current) => ({
-                        ...current,
-                        companyAmount: event.target.value,
-                      }))
+                      setDiscountForm((current) => ({ ...current, companyAmount: event.target.value }))
                     }
-                    style={styles.input}
-                    placeholder="Base para aplicar 70%"
+                    placeholder="Base p/ 70%"
                   />
-                </FormRow>
-                <FormRow label="Valor descontado do promotor">
+                </div>
+                <div className="field">
+                  <label>Valor do promotor (R$)</label>
                   <input
                     value={discountForm.amount}
                     onChange={(event) =>
+                      setDiscountForm((current) => ({ ...current, amount: event.target.value }))
+                    }
+                    placeholder="Se vazio, calcula 70%"
+                  />
+                </div>
+                <div className="field">
+                  <label>Parcelas</label>
+                  <input
+                    value={discountForm.installments}
+                    onChange={(event) =>
+                      setDiscountForm((current) => ({ ...current, installments: event.target.value }))
+                    }
+                  />
+                </div>
+                <div className="field">
+                  <label>Parcela atual</label>
+                  <input
+                    value={discountForm.installmentNumber}
+                    onChange={(event) =>
                       setDiscountForm((current) => ({
                         ...current,
-                        amount: event.target.value,
+                        installmentNumber: event.target.value,
                       }))
                     }
-                    style={styles.input}
-                    placeholder="Se vazio, o sistema calcula quando for 70%"
                   />
-                </FormRow>
-                <div style={styles.twoColumnGrid}>
-                  <FormRow label="Parcelas">
-                    <input
-                      value={discountForm.installments}
-                      onChange={(event) =>
-                        setDiscountForm((current) => ({
-                          ...current,
-                          installments: event.target.value,
-                        }))
-                      }
-                      style={styles.input}
-                    />
-                  </FormRow>
-                  <FormRow label="Parcela atual">
-                    <input
-                      value={discountForm.installmentNumber}
-                      onChange={(event) =>
-                        setDiscountForm((current) => ({
-                          ...current,
-                          installmentNumber: event.target.value,
-                        }))
-                      }
-                      style={styles.input}
-                    />
-                  </FormRow>
                 </div>
-                <label style={styles.checkboxRow}>
+                <div className="field">
+                  <label>Observação</label>
+                  <input
+                    value={discountForm.notes}
+                    onChange={(event) =>
+                      setDiscountForm((current) => ({ ...current, notes: event.target.value }))
+                    }
+                    placeholder="Ex: parcelado em 3x"
+                  />
+                </div>
+                <label className="chkrow">
                   <input
                     type="checkbox"
                     checked={discountForm.applyToCompany}
                     onChange={(event) =>
-                      setDiscountForm((current) => ({
-                        ...current,
-                        applyToCompany: event.target.checked,
-                      }))
+                      setDiscountForm((current) => ({ ...current, applyToCompany: event.target.checked }))
                     }
                   />
-                  <span>Desconto fica na empresa e nao no promotor</span>
+                  <span>Fica na empresa, não no promotor</span>
                 </label>
-                <FormRow label="Observacao">
-                  <input
-                    value={discountForm.notes}
-                    onChange={(event) =>
-                      setDiscountForm((current) => ({
-                        ...current,
-                        notes: event.target.value,
-                      }))
-                    }
-                    style={styles.input}
-                    placeholder="Ex: parcelado em 3x"
-                  />
-                </FormRow>
-                <button type="submit" style={styles.primaryButton} disabled={savingDiscount}>
-                  {savingDiscount ? "Salvando..." : discountForm.id ? "Atualizar desconto" : "Salvar desconto"}
+                <button className="tinybtn" type="submit" disabled={savingDiscount}>
+                  {savingDiscount ? "Salvando…" : discountForm.id ? "Atualizar" : "Adicionar"}
                 </button>
               </form>
-            </article>
-          </aside>
-        </div>
-      </article>
-      ) : null}
-
-      {activeSection === "detalhamento" ? (
-      <article style={styles.tableCard}>
-        <div style={styles.sectionHeader}>
-          <div>
-            <div style={styles.sectionKicker}>Detalhamento individual</div>
-            <h3 style={styles.sectionTitle}>Visao operacional do promotor</h3>
-            <p style={styles.sectionDescription}>
-              Nesta visao entram somente propostas com status Producao. % a vista e
-              Comissao PF ja saem limitados ao teto de 5,80% do promotor, enquanto
-              cancelamentos, estornos e antecipacoes ficam no bloco de descontos.
-            </p>
-          </div>
-          <div style={styles.sectionHeaderActions}>
-            <Link
-              href={`/comissoes/editar${specialistQuery}`}
-              style={styles.sectionAction}
-              aria-label="Editar comissões deste promotor por proposta"
-            >
-              Editar comissões →
-            </Link>
-            <div style={styles.sectionChip}>
-              {data.proposalRows.length} propostas
             </div>
-          </div>
-        </div>
+          </section>
+        ) : null}
 
-        {loading ? (
-          <div style={styles.emptyState}>Carregando detalhamento...</div>
-        ) : !promoterId ? (
-          <div style={styles.emptyState}>Selecione um promotor para detalhar as operacoes.</div>
-        ) : data.proposalRows.length === 0 ? (
-          <div style={styles.emptyState}>
-            Nenhuma proposta com status Producao encontrada para este promotor.
-          </div>
-        ) : (
-          <div
-            className={`rr-table-wrap${data.proposalRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
-            style={styles.tableWrap}
-          >
-            <table style={styles.tableDetalhamento}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>Contrato</th>
-                  <th style={styles.th}>Valor bruto</th>
-                  <th style={styles.th}>Valor liquido</th>
-                  <th style={styles.th}>Parcela</th>
-                  <th style={styles.th}>Agencia</th>
-                  <th style={styles.th}>Chave J</th>
-                  <th style={styles.th}>Promotor(a)</th>
-                  <th style={styles.th}>Data contratacao</th>
-                  <th style={styles.th}>Tx juros</th>
-                  <th style={styles.th}>Descricao do produto</th>
-                  <th style={styles.th}>% a vista</th>
-                  <th style={styles.th}>Comissao PF</th>
-                  <th style={styles.th}>Restricao SRCC</th>
-                  <th style={styles.th}>Valor seguro</th>
-                  <th style={styles.th}>Comissao seguro base</th>
-                  <th style={styles.th}>% penetracao</th>
-                  <th style={styles.th}>% repasse promotor</th>
-                  <th style={styles.th}>Comissao promotor</th>
-                  <th style={styles.th}>Comissao seguro promotor</th>
-                  <th style={styles.th}>Regra</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.proposalRows.map((row) => (
-                  <tr key={row.id}>
-                    <td style={styles.td}>{row.contract_number}</td>
-                    <td style={styles.td}>{formatCurrency(row.gross_value)}</td>
-                    <td style={styles.td}>{formatCurrency(row.net_value)}</td>
-                    <td style={styles.td}>{row.installment_count || "-"}</td>
-                    <td style={styles.td}>{row.agency_code}</td>
-                    <td style={styles.td}>{row.j_key || "-"}</td>
-                    <td style={styles.td}>{row.promoter_name || "-"}</td>
-                    <td style={styles.td}>{formatDate(row.contract_date)}</td>
-                    <td style={styles.td}>{row.interest_rate ? row.interest_rate.toFixed(2).replace(".", ",") : "-"}</td>
-                    <td style={styles.td}>{row.product_description}</td>
-                      <td style={styles.td}>
-                        {formatPercent(row.company_received_percent * 100, 2)}
-                      </td>
-                    <td style={styles.td}>{formatCurrency(row.company_commission_amount)}</td>
-                    <td style={styles.td}>{row.srcc_restriction}</td>
-                    <td style={styles.td}>{formatCurrency(row.insurance_value)}</td>
-                    <td style={styles.td}>{formatCurrency(row.company_insurance_commission_amount)}</td>
-                    <td style={styles.td}>
-                      {formatPercent(row.insurance_penetration_percent * 100, 2)}
-                    </td>
-                    <td style={styles.tdStrong}>
-                      {formatPercent(clampPromoterPercent(row.promoter_commission_percent), 2)}
-                    </td>
-                    <td style={styles.tdStrong}>{formatCurrency(row.promoter_commission_amount)}</td>
-                    <td style={styles.tdStrong}>{formatCurrency(row.insurance_commission_amount)}</td>
-                    <td style={styles.td}>{row.commission_rule_source || "-"}</td>
-                  </tr>
-                ))}
-                <tr>
-                  <td style={styles.tdStrong}>TOTAL</td>
-                  <td style={styles.td}></td>
-                  <td style={styles.tdStrong}>{formatCurrency(proposalTotals.net)}</td>
-                  <td style={styles.td}></td>
-                  <td style={styles.td}></td>
-                  <td style={styles.td}></td>
-                  <td style={styles.td}></td>
-                  <td style={styles.td}></td>
-                  <td style={styles.td}></td>
-                  <td style={styles.td}></td>
-                  <td style={styles.td}></td>
-                  <td style={styles.tdStrong}>{formatCurrency(proposalTotals.companyCommission)}</td>
-                  <td style={styles.td}></td>
-                  <td style={styles.td}></td>
-                  <td style={styles.tdStrong}>{formatCurrency(proposalTotals.companyInsurance)}</td>
-                  <td style={styles.td}></td>
-                  <td style={styles.td}></td>
-                  <td style={styles.tdStrong}>{formatCurrency(proposalTotals.promoterCommission)}</td>
-                  <td style={styles.tdStrong}>{formatCurrency(proposalTotals.promoterInsurance)}</td>
-                  <td style={styles.td}></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
-      </article>
-      ) : null}
+        {/* PANEL: DETALHAMENTO */}
+        {activeSection === "detalhamento" ? (
+          <section className="panel active">
+            <div className="dk">
+              <div className="dkc">
+                <p className="k">Comissão PF (promotor)</p>
+                <div className="v num">{formatCurrency(proposalTotals.promoterCommission)}</div>
+              </div>
+              <div className="dkc">
+                <p className="k">Comissão seguro (promotor)</p>
+                <div className="v num">{formatCurrency(proposalTotals.promoterInsurance)}</div>
+              </div>
+              <div className="dkc">
+                <p className="k">Descontos</p>
+                <div className={`v num${promoterDiscountTotal > 0 ? " neg" : ""}`}>
+                  {promoterDiscountTotal > 0
+                    ? `−${formatCurrency(promoterDiscountTotal)}`
+                    : formatCurrency(0)}
+                </div>
+              </div>
+              <div className="dkc hl">
+                <p className="k">Líquido</p>
+                <div className="v num">
+                  {formatCurrency(selectedPromoterSummary?.payable_commission_value)}
+                </div>
+              </div>
+            </div>
 
-      {activeSection === "migracao" ? (
-      <article style={styles.tableCard}>
-        <div style={styles.sectionHeader}>
-          <div>
-            <div style={styles.sectionKicker}>Migracao manual</div>
-            <h3 style={styles.sectionTitle}>Ajuste de propostas entre promotores</h3>
-          </div>
-          <div style={styles.sectionChip}>Somente producao</div>
-        </div>
+            <div className="card">
+              <div className="card-head">
+                <div>
+                  <h2>Detalhamento de propostas</h2>
+                  <p className="csub">
+                    Contrato → comissão · {competenceShort}. Só propostas em Produção; % à vista e
+                    Comissão PF já saem limitados ao teto de 5,80%.
+                  </p>
+                </div>
+                <div className="head-actions">
+                  <Link className="linkbtn" href={`/comissoes/editar${specialistQuery}`}>
+                    Editar comissões →
+                  </Link>
+                  <span className="chip soft">{data.proposalRows.length} propostas</span>
+                </div>
+              </div>
+              {loading ? (
+                <div className="state">Carregando detalhamento…</div>
+              ) : !promoterId ? (
+                <div className="state">Selecione um promotor para detalhar as operações.</div>
+              ) : data.proposalRows.length === 0 ? (
+                <div className="state">
+                  Nenhuma proposta com status Produção encontrada para este promotor.
+                </div>
+              ) : (
+                <div className="scroll">
+                  <table className="wide">
+                    <thead>
+                      <tr>
+                        <th className="l sticky">Contrato</th>
+                        <th>Valor bruto</th>
+                        <th>Valor líquido</th>
+                        <th>Parcela</th>
+                        <th className="l">Agência</th>
+                        <th className="l">Chave J</th>
+                        <th className="l">Promotor(a)</th>
+                        <th className="l">Data contratação</th>
+                        <th>Tx juros</th>
+                        <th className="l">Descrição do produto</th>
+                        <th>% à vista</th>
+                        <th>Comissão PF</th>
+                        <th className="l">Restrição SRCC</th>
+                        <th>Valor seguro</th>
+                        <th>Comissão seguro base</th>
+                        <th>% penetração</th>
+                        <th>% repasse promotor</th>
+                        <th>Comissão promotor</th>
+                        <th>Comissão seguro promotor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.proposalRows.map((row) => (
+                        <tr key={row.id}>
+                          <td className="l sticky ctr" data-l="Contrato">
+                            {row.contract_number}
+                          </td>
+                          <td className="num" data-l="Valor bruto">
+                            {formatCurrency(row.gross_value)}
+                          </td>
+                          <td className="num" data-l="Valor líquido">
+                            {formatCurrency(row.net_value)}
+                          </td>
+                          <td className="num" data-l="Parcela">
+                            {row.installment_count || "-"}
+                          </td>
+                          <td className="l" data-l="Agência">
+                            {row.agency_code}
+                          </td>
+                          <td className="l" data-l="Chave J">
+                            {row.j_key || "-"}
+                          </td>
+                          <td className="l" data-l="Promotor(a)">
+                            {row.promoter_name || "-"}
+                          </td>
+                          <td className="l" data-l="Data contratação">
+                            {formatDate(row.contract_date)}
+                          </td>
+                          <td className="num" data-l="Tx juros">
+                            {row.interest_rate ? row.interest_rate.toFixed(2).replace(".", ",") : "-"}
+                          </td>
+                          <td className="l" data-l="Produto">
+                            {row.product_description}
+                          </td>
+                          <td className="num" data-l="% à vista">
+                            {formatPercent(row.company_received_percent * 100, 2)}
+                          </td>
+                          <td className="num" data-l="Comissão PF">
+                            {formatCurrency(row.company_commission_amount)}
+                          </td>
+                          <td className="l" data-l="Restrição SRCC">
+                            {row.srcc_restriction}
+                          </td>
+                          <td className="num" data-l="Valor seguro">
+                            {formatCurrency(row.insurance_value)}
+                          </td>
+                          <td className="num" data-l="Comissão seguro base">
+                            {formatCurrency(row.company_insurance_commission_amount)}
+                          </td>
+                          <td className="num" data-l="% penetração">
+                            {formatPercent(row.insurance_penetration_percent * 100, 2)}
+                          </td>
+                          <td className="num pay" data-l="% repasse promotor">
+                            {formatPercent(clampPromoterPercent(row.promoter_commission_percent), 2)}
+                          </td>
+                          <td className="num pay" data-l="Comissão promotor">
+                            {formatCurrency(row.promoter_commission_amount)}
+                          </td>
+                          <td className="num pay" data-l="Comissão seguro promotor">
+                            {formatCurrency(row.insurance_commission_amount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="total">
+                        <td className="l sticky" data-l="">
+                          TOTAL
+                        </td>
+                        <td />
+                        <td className="num">{formatCurrency(proposalTotals.net)}</td>
+                        <td colSpan={8} />
+                        <td className="num">{formatCurrency(proposalTotals.companyCommission)}</td>
+                        <td />
+                        <td />
+                        <td className="num">{formatCurrency(proposalTotals.companyInsurance)}</td>
+                        <td />
+                        <td />
+                        <td className="num">{formatCurrency(proposalTotals.promoterCommission)}</td>
+                        <td className="num">{formatCurrency(proposalTotals.promoterInsurance)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>
+        ) : null}
 
-        {loading ? (
-          <div style={styles.emptyState}>Carregando propostas...</div>
-        ) : !promoterId ? (
-          <div style={styles.emptyState}>Selecione um promotor para detalhar as propostas.</div>
-        ) : data.proposalRows.length === 0 ? (
-          <div style={styles.emptyState}>Nenhuma proposta encontrada para este promotor.</div>
-        ) : (
-          <div
-            className={`rr-table-wrap${data.proposalRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
-            style={styles.tableWrap}
-          >
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>Proposta</th>
-                  <th style={styles.th}>Produto</th>
-                  <th style={styles.th}>Regra</th>
-                  <th style={styles.th}>Promotor atual</th>
-                  <th style={styles.th}>Migrar para</th>
-                  <th style={styles.th}>Motivo</th>
-                  <th style={styles.th}>Acao</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.proposalRows.map((row) => (
-                  <tr key={row.id}>
-                    <td style={styles.td}>
-                      <div style={styles.itemTitle}>{row.proposal_number}</div>
-                      <div style={styles.itemMeta}>
-                        {formatDate(row.movement_date || row.contract_date)}
-                      </div>
-                    </td>
-                    <td style={styles.td}>{row.product_description}</td>
-                    <td style={styles.td}>{row.commission_rule_source || "-"}</td>
-                    <td style={styles.td}>{row.assigned_promoter_name || "-"}</td>
-                    <td style={styles.td}>
-                      <select
-                        value={proposalTargets[row.id] || ""}
-                        onChange={(event) =>
-                          setProposalTargets((current) => ({
-                            ...current,
-                            [row.id]: event.target.value,
-                          }))
-                        }
-                        style={styles.smallInput}
-                      >
-                        <option value="">Selecione</option>
-                        {data.promoterLookup
-                          .filter((promoter) => promoter.id !== row.assigned_promoter_id)
-                          .map((promoter) => (
-                            <option key={promoter.id} value={promoter.id}>
-                              {promoter.name}
-                            </option>
-                          ))}
-                      </select>
-                    </td>
-                    <td style={styles.td}>
-                      <input
-                        value={proposalReasons[row.id] || ""}
-                        onChange={(event) =>
-                          setProposalReasons((current) => ({
-                            ...current,
-                            [row.id]: event.target.value,
-                          }))
-                        }
-                        style={styles.reasonInput}
-                        placeholder="Ex: Chave master"
-                      />
-                    </td>
-                    <td style={styles.td}>
-                      <button
-                        type="button"
-                        onClick={() => moveProposal(row)}
-                        style={styles.secondaryButton}
-                        disabled={movingProposalId === row.id}
-                      >
-                        {movingProposalId === row.id ? "Migrando..." : "Migrar"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </article>
-      ) : null}
-    </section>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-}) {
-  return (
-    <article style={styles.summaryCard}>
-      <div style={styles.summaryLabel}>{label}</div>
-      <div style={styles.summaryValue}>{value}</div>
-      <div style={styles.summaryDetail}>{detail}</div>
-    </article>
-  );
-}
-
-function FormRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <label style={styles.formRow}>
-      <span style={styles.formLabel}>{label}</span>
-      {children}
-    </label>
+        {/* PANEL: MIGRAÇÃO */}
+        {activeSection === "migracao" ? (
+          <section className="panel active">
+            <div className="card">
+              <div className="card-head">
+                <div>
+                  <h2>Migração de propostas</h2>
+                  <p className="csub">Reatribuir proposta a outro promotor</p>
+                </div>
+                <span className="chip soft">Somente produção</span>
+              </div>
+              {loading ? (
+                <div className="state">Carregando propostas…</div>
+              ) : !promoterId ? (
+                <div className="state">Selecione um promotor para detalhar as propostas.</div>
+              ) : data.proposalRows.length === 0 ? (
+                <div className="state">Nenhuma proposta encontrada para este promotor.</div>
+              ) : (
+                <div className="scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th className="l sticky">Proposta</th>
+                        <th className="l">Produto</th>
+                        <th className="l">Promotor atual</th>
+                        <th className="l">Migrar para</th>
+                        <th className="l">Motivo</th>
+                        <th className="l">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.proposalRows.map((row) => (
+                        <tr key={row.id}>
+                          <td className="l sticky prom" data-l="Proposta">
+                            {row.proposal_number}
+                            <small>{formatDate(row.movement_date || row.contract_date)}</small>
+                          </td>
+                          <td className="l" data-l="Produto">
+                            {row.product_description}
+                          </td>
+                          <td className="l" data-l="Promotor atual">
+                            {row.assigned_promoter_name || "-"}
+                          </td>
+                          <td className="l" data-l="Migrar para">
+                            <span className="miginsel">
+                              <select
+                                value={proposalTargets[row.id] || ""}
+                                onChange={(event) =>
+                                  setProposalTargets((current) => ({
+                                    ...current,
+                                    [row.id]: event.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">Selecionar…</option>
+                                {data.promoterLookup
+                                  .filter((promoter) => promoter.id !== row.assigned_promoter_id)
+                                  .map((promoter) => (
+                                    <option key={promoter.id} value={promoter.id}>
+                                      {promoter.name}
+                                    </option>
+                                  ))}
+                              </select>
+                              <span className="chev">▾</span>
+                            </span>
+                          </td>
+                          <td className="l" data-l="Motivo">
+                            <input
+                              className="reason"
+                              value={proposalReasons[row.id] || ""}
+                              onChange={(event) =>
+                                setProposalReasons((current) => ({
+                                  ...current,
+                                  [row.id]: event.target.value,
+                                }))
+                              }
+                              placeholder="Ex: Chave master"
+                            />
+                          </td>
+                          <td className="l" data-l="Ação">
+                            <button
+                              type="button"
+                              className="tinybtn"
+                              onClick={() => moveProposal(row)}
+                              disabled={movingProposalId === row.id}
+                            >
+                              {movingProposalId === row.id ? "Migrando…" : "Migrar"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>
+        ) : null}
+      </main>
+    </div>
   );
 }
 
@@ -1691,526 +1578,196 @@ function formatDate(value?: string | null) {
   return new Intl.DateTimeFormat("pt-BR").format(date);
 }
 
-const styles: Record<string, CSSProperties> = {
-  page: {
-    display: "grid",
-    gap: "16px",
-  },
-  hero: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: "14px",
-  },
-  heroMain: {
-    background:
-      "linear-gradient(145deg, rgba(255,255,255,0.95) 0%, rgba(255,253,245,0.98) 100%)",
-    borderRadius: "22px",
-    padding: "22px",
-    border: "1px solid var(--rr-line)",
-    boxShadow: "var(--rr-shadow)",
-  },
-  kicker: {
-    fontSize: "12px",
-    textTransform: "uppercase",
-    letterSpacing: "0.18em",
-    color: "var(--rr-blue)",
-    fontWeight: 800,
-    marginBottom: "10px",
-  },
-  title: {
-    margin: 0,
-    fontSize: "clamp(2rem, 3vw, 3.2rem)",
-    color: "var(--rr-ink)",
-  },
-  description: {
-    margin: "14px 0 0",
-    fontSize: "14px",
-    lineHeight: 1.62,
-    color: "var(--rr-muted)",
-  },
-  heroSignals: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "8px",
-    marginTop: "14px",
-  },
-  heroSignal: {
-    display: "grid",
-    gap: "4px",
-    minWidth: "132px",
-    padding: "10px 12px",
-    borderRadius: "16px",
-    background: "rgba(13,77,227,0.04)",
-    border: "1px solid rgba(13,77,227,0.08)",
-  },
-  heroSignalLabel: {
-    fontSize: "10px",
-    textTransform: "uppercase",
-    letterSpacing: "0.14em",
-    color: "var(--rr-blue)",
-    fontWeight: 800,
-  },
-  heroSignalValue: {
-    fontSize: "14px",
-    color: "var(--rr-ink-soft)",
-    fontWeight: 800,
-    fontFamily: "var(--font-heading)",
-  },
-  heroAside: {
-    background:
-      "linear-gradient(180deg, rgba(13,77,227,0.96) 0%, rgba(7,37,125,0.98) 100%)",
-    borderRadius: "22px",
-    padding: "20px",
-    border: "1px solid rgba(255,255,255,0.12)",
-    boxShadow: "var(--rr-shadow)",
-  },
-  heroAsideLabel: {
-    fontSize: "11px",
-    textTransform: "uppercase",
-    letterSpacing: "0.16em",
-    color: "rgba(255,255,255,0.72)",
-    marginBottom: "10px",
-    fontWeight: 800,
-  },
-  heroAsideDescription: {
-    margin: "0 0 12px",
-    fontSize: "13px",
-    lineHeight: 1.55,
-    color: "rgba(255,255,255,0.78)",
-  },
-  quickLinks: {
-    display: "grid",
-    gap: "8px",
-  },
-  quickLink: {
-    display: "grid",
-    gap: "4px",
-    textDecoration: "none",
-    padding: "12px 14px",
-    borderRadius: "14px",
-    background: "rgba(255,255,255,0.08)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    color: "#ffffff",
-    fontWeight: 700,
-  },
-  quickLinkTitle: {
-    fontSize: "14px",
-    fontWeight: 800,
-  },
-  quickLinkDescription: {
-    fontSize: "12px",
-    lineHeight: 1.45,
-    color: "rgba(255,255,255,0.76)",
-    fontWeight: 500,
-  },
-  errorBox: {
-    background: "rgba(255,255,255,0.92)",
-    border: "1px solid rgba(239,68,68,0.24)",
-    color: "#991b1b",
-    borderRadius: "18px",
-    padding: "16px",
-  },
-  noticeBox: {
-    background: "rgba(255,255,255,0.92)",
-    border: "1px solid rgba(13,77,227,0.14)",
-    color: "var(--rr-blue-deep)",
-    borderRadius: "18px",
-    padding: "16px",
-  },
-  filterCard: {
-    background: "rgba(255,255,255,0.94)",
-    borderRadius: "20px",
-    border: "1px solid var(--rr-line)",
-    boxShadow: "var(--rr-shadow-soft)",
-    padding: "16px",
-  },
-  filterHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "12px",
-    flexWrap: "wrap",
-    marginBottom: "12px",
-  },
-  filterKicker: {
-    fontSize: "11px",
-    textTransform: "uppercase",
-    letterSpacing: "0.14em",
-    color: "var(--rr-blue)",
-    fontWeight: 800,
-    marginBottom: "6px",
-  },
-  filterTitle: {
-    margin: 0,
-    fontSize: "20px",
-    color: "var(--rr-ink)",
-  },
-  filterFoot: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "12px",
-    alignItems: "center",
-    flexWrap: "wrap",
-    marginTop: "12px",
-  },
-  filterHint: {
-    fontSize: "12px",
-    lineHeight: 1.5,
-    color: "var(--rr-muted)",
-    maxWidth: "760px",
-  },
-  filterGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
-    gap: "10px",
-    alignItems: "end",
-  },
-  filterActionWrap: {
-    display: "flex",
-    alignItems: "end",
-  },
-  summaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: "10px",
-  },
-  subsectionNav: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "8px",
-    marginTop: "-2px",
-  },
-  subsectionButton: {
-    border: "1px solid rgba(13,77,227,0.12)",
-    borderRadius: "999px",
-    background: "rgba(255,255,255,0.92)",
-    color: "var(--rr-blue-deep)",
-    padding: "10px 14px",
-    fontSize: "13px",
-    fontWeight: 800,
-    cursor: "pointer",
-    boxShadow: "var(--rr-shadow-soft)",
-  },
-  subsectionButtonActive: {
-    background:
-      "linear-gradient(135deg, rgba(13,77,227,0.98) 0%, rgba(7,37,125,0.98) 100%)",
-    color: "#ffffff",
-    border: "1px solid rgba(13,77,227,0.98)",
-  },
-  summaryCard: {
-    borderRadius: "18px",
-    padding: "16px",
-    border: "1px solid var(--rr-line)",
-    background:
-      "linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(255,249,176,0.42) 100%)",
-    boxShadow: "var(--rr-shadow-soft)",
-  },
-  summaryLabel: {
-    fontSize: "11px",
-    textTransform: "uppercase",
-    letterSpacing: "0.14em",
-    color: "var(--rr-blue)",
-    fontWeight: 800,
-    marginBottom: "8px",
-  },
-  summaryValue: {
-    fontSize: "24px",
-    fontWeight: 800,
-    color: "var(--rr-ink)",
-    fontFamily: "var(--font-heading)",
-    marginBottom: "8px",
-  },
-  summaryDetail: {
-    fontSize: "12px",
-    lineHeight: 1.5,
-    color: "var(--rr-muted)",
-  },
-  contentGrid: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1.45fr) minmax(300px, 0.9fr)",
-    gap: "14px",
-    alignItems: "start",
-  },
-  tableCard: {
-    background: "rgba(255,255,255,0.94)",
-    borderRadius: "22px",
-    border: "1px solid var(--rr-line)",
-    overflow: "hidden",
-    boxShadow: "var(--rr-shadow-soft)",
-  },
-  sideRail: {
-    display: "grid",
-    gap: "14px",
-    position: "sticky",
-    top: "84px",
-  },
-  sideCard: {
-    background: "rgba(255,255,255,0.94)",
-    borderRadius: "22px",
-    border: "1px solid var(--rr-line)",
-    overflow: "hidden",
-    boxShadow: "var(--rr-shadow-soft)",
-    paddingBottom: "18px",
-  },
-  sectionHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "12px",
-    flexWrap: "wrap",
-    padding: "18px 18px 0",
-  },
-  sectionChip: {
-    padding: "8px 12px",
-    borderRadius: "999px",
-    background: "rgba(13,77,227,0.08)",
-    border: "1px solid rgba(13,77,227,0.12)",
-    color: "var(--rr-blue-deep)",
-    fontSize: "12px",
-    fontWeight: 800,
-  },
-  sectionHeaderActions: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "10px",
-    flexWrap: "wrap",
-  },
-  sectionAction: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    padding: "8px 14px",
-    borderRadius: "10px",
-    background: "#0d4de3",
-    color: "#fff",
-    fontSize: "12px",
-    fontWeight: 700,
-    letterSpacing: "0.04em",
-    textDecoration: "none",
-    boxShadow: "0 2px 6px rgba(13,77,227,0.22)",
-  },
-  sectionHeaderCompact: {
-    padding: "18px 18px 0",
-  },
-  sectionKicker: {
-    fontSize: "12px",
-    textTransform: "uppercase",
-    letterSpacing: "0.14em",
-    color: "var(--rr-blue)",
-    marginBottom: "8px",
-    fontWeight: 800,
-  },
-  sectionTitle: {
-    margin: 0,
-    fontSize: "22px",
-    color: "var(--rr-ink)",
-  },
-  sectionDescription: {
-    margin: "8px 0 0",
-    fontSize: "13px",
-    lineHeight: 1.6,
-    color: "var(--rr-muted)",
-    maxWidth: "720px",
-  },
-  tableWrap: {
-    overflowX: "auto",
-    padding: "14px 18px 18px",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "separate",
-    borderSpacing: 0,
-  },
-  // Variante apenas da aba Detalhamento (20 colunas + descricoes longas).
-  // minWidth garante que a tabela exceda o wrap em qualquer viewport e o
-  // overflow-x: auto da .rr-table-wrap mostre a scrollbar. As outras 3
-  // tabelas da pagina (Resumo, Descontos, Migracao) seguem styles.table
-  // padrao porque tem menos colunas e cabem em viewport tipica.
-  tableDetalhamento: {
-    width: "100%",
-    borderCollapse: "separate",
-    borderSpacing: 0,
-    minWidth: "1800px",
-  },
-  th: {
-    textAlign: "left",
-    fontSize: "11px",
-    textTransform: "uppercase",
-    letterSpacing: "0.12em",
-    color: "var(--rr-blue)",
-    padding: "0 12px 12px 0",
-    borderBottom: "1px solid var(--rr-line)",
-    fontWeight: 800,
-    whiteSpace: "nowrap",
-    position: "sticky",
-    top: 0,
-    background: "rgba(255,255,255,0.98)",
-    zIndex: 1,
-  },
-  td: {
-    padding: "12px 12px 12px 0",
-    fontSize: "12.5px",
-    color: "var(--rr-muted)",
-    borderBottom: "1px solid rgba(13,77,227,0.08)",
-    whiteSpace: "nowrap",
-    verticalAlign: "top",
-  },
-  tdStrong: {
-    padding: "12px 12px 12px 0",
-    fontSize: "12.5px",
-    color: "var(--rr-ink)",
-    borderBottom: "1px solid rgba(13,77,227,0.08)",
-    whiteSpace: "nowrap",
-    verticalAlign: "top",
-    fontWeight: 800,
-  },
-  tableRowSelected: {
-    background: "rgba(13,77,227,0.05)",
-    cursor: "pointer",
-  },
-  formGrid: {
-    display: "grid",
-    gap: "10px",
-    padding: "14px 18px 0",
-  },
-  twoColumnGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: "10px",
-  },
-  formRow: {
-    display: "grid",
-    gap: "6px",
-  },
-  formLabel: {
-    fontSize: "12px",
-    color: "var(--rr-blue)",
-    fontWeight: 800,
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-  },
-  input: {
-    width: "100%",
-    borderRadius: "12px",
-    border: "1px solid rgba(13,77,227,0.14)",
-    padding: "10px 12px",
-    fontSize: "14px",
-    color: "var(--rr-ink)",
-    background: "rgba(255,255,255,0.96)",
-    outline: "none",
-  },
-  smallInput: {
-    width: "150px",
-    borderRadius: "10px",
-    border: "1px solid rgba(13,77,227,0.14)",
-    padding: "9px 10px",
-    fontSize: "13px",
-    color: "var(--rr-ink)",
-    background: "#fff",
-    outline: "none",
-  },
-  reasonInput: {
-    width: "180px",
-    borderRadius: "10px",
-    border: "1px solid rgba(13,77,227,0.14)",
-    padding: "9px 10px",
-    fontSize: "13px",
-    color: "var(--rr-ink)",
-    background: "#fff",
-    outline: "none",
-  },
-  primaryButton: {
-    border: 0,
-    borderRadius: "16px",
-    padding: "14px 16px",
-    fontSize: "14px",
-    fontWeight: 800,
-    cursor: "pointer",
-    color: "#ffffff",
-    background:
-      "linear-gradient(135deg, rgba(13,77,227,0.98) 0%, rgba(7,37,125,0.98) 100%)",
-    boxShadow: "0 14px 28px rgba(13,77,227,0.16)",
-  },
-  secondaryButton: {
-    border: 0,
-    borderRadius: "14px",
-    padding: "10px 14px",
-    fontSize: "13px",
-    fontWeight: 800,
-    cursor: "pointer",
-    color: "var(--rr-blue-deep)",
-    background:
-      "linear-gradient(135deg, rgba(255,240,0,0.95) 0%, rgba(214,161,63,0.92) 100%)",
-    boxShadow: "0 14px 24px rgba(214,161,63,0.14)",
-  },
-  ghostButton: {
-    borderRadius: "14px",
-    padding: "10px 14px",
-    fontSize: "13px",
-    fontWeight: 800,
-    cursor: "pointer",
-    color: "var(--rr-blue-deep)",
-    background: "rgba(13,77,227,0.08)",
-    border: "1px solid rgba(13,77,227,0.14)",
-  },
-  actionRow: {
-    display: "flex",
-    gap: "8px",
-    flexWrap: "wrap",
-  },
-  checkboxRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    fontSize: "13px",
-    color: "var(--rr-muted)",
-  },
-  infoBox: {
-    margin: "14px 18px 0",
-    padding: "14px",
-    borderRadius: "18px",
-    background:
-      "linear-gradient(135deg, rgba(255,240,0,0.12) 0%, rgba(255,255,255,0.96) 100%)",
-    border: "1px solid rgba(13,77,227,0.1)",
-  },
-  infoLine: {
-    fontSize: "13px",
-    color: "var(--rr-muted)",
-    marginTop: "10px",
-  },
-  itemTitle: {
-    fontSize: "14px",
-    fontWeight: 800,
-    color: "var(--rr-ink)",
-    marginBottom: "4px",
-  },
-  itemMeta: {
-    fontSize: "12px",
-    color: "var(--rr-muted)",
-    lineHeight: 1.5,
-  },
-  badge: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "6px 10px",
-    borderRadius: "999px",
-    fontSize: "11px",
-    fontWeight: 800,
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-    background: "rgba(13,77,227,0.1)",
-    color: "var(--rr-blue-deep)",
-  },
-  emptyState: {
-    margin: "14px 18px 18px",
-    padding: "16px",
-    color: "var(--rr-muted)",
-    fontSize: "14px",
-    lineHeight: 1.6,
-    borderRadius: "16px",
-    border: "1px dashed rgba(13,77,227,0.16)",
-    background:
-      "linear-gradient(135deg, rgba(13,77,227,0.04) 0%, rgba(255,255,255,0.96) 100%)",
-  },
-};
+const CSS = `
+.rrprom{
+  --navy:#0F1F4A; --navy-deep:#0B1838; --navy-bar:#1E3066;
+  --yellow:#FFF000; --gold:#D6A13F; --gold-deep:#B9842A;
+  --green:#3C9D6B; --green-soft:#5FB98A; --green-bg:#E9F5EE;
+  --red:#C0443C; --red-bg:#FBECEB;
+  --amber:#B07A12; --amber-bg:#FBF1DC; --amber-bd:#EAD7A6;
+  --page:#EDEFF3; --card:#FFFFFF; --bd:#E4E7EC; --bd-soft:#EEF0F4;
+  --ink:#16203A; --ink-2:#4B5468; --ink-3:#838B9C;
+  --r-lg:20px; --r-md:16px;
+  --shadow:0 1px 2px rgba(15,31,74,.04), 0 8px 24px rgba(15,31,74,.05);
+  background:var(--page);color:var(--ink);
+  font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased;line-height:1.45;
+}
+.rrprom *{box-sizing:border-box;}
+.rrprom .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+.rrprom .wrap{max-width:1180px;margin:0 auto;padding:34px 28px 56px;display:flex;flex-direction:column;gap:20px;}
+
+.rrprom .crumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-3);margin:-6px 2px -2px;}
+.rrprom .crumb a{color:var(--ink-2);text-decoration:none;font-weight:500;}
+.rrprom .crumb a:hover{color:var(--navy);}
+.rrprom .crumb .sep{color:#C2C8D2;}
+
+.rrprom .header{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 30px;color:#fff;position:relative;overflow:hidden;}
+.rrprom .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
+.rrprom .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
+.rrprom .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
+.rrprom .header h1{font-size:26px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
+.rrprom .comp{position:relative;}
+.rrprom .comp select{appearance:none;-webkit-appearance:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);color:#E4E9F4;padding:8px 36px 8px 14px;border-radius:999px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
+.rrprom .comp select:focus{outline:none;border-color:rgba(255,255,255,.35);}
+.rrprom .comp select option{color:#16203A;}
+.rrprom .comp .chev{position:absolute;right:14px;top:50%;transform:translateY(-50%);pointer-events:none;color:#9DA9C6;font-size:11px;}
+
+.rrprom .kpis{margin-top:26px;display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid rgba(255,255,255,.10);padding-top:22px;}
+.rrprom .kpi{padding:0 22px;position:relative;}
+.rrprom .kpi:first-child{padding-left:0;}
+.rrprom .kpi + .kpi::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:1px;background:rgba(255,255,255,.10);}
+.rrprom .kpi .label{font-size:11.5px;font-weight:500;color:#9DA9C6;margin:0 0 9px;}
+.rrprom .kpi .value{font-size:25px;font-weight:600;letter-spacing:-.02em;line-height:1.05;color:#fff;}
+.rrprom .kpi .sub{font-size:11.5px;margin-top:7px;color:#8C98B6;}
+.rrprom .kpi .sub.gold{color:var(--gold);}
+
+.rrprom .banner{border-radius:var(--r-md);padding:12px 16px;font-size:13px;}
+.rrprom .banner.err{background:var(--red-bg);border:1px solid #E9B7B2;color:#8E2F28;}
+.rrprom .banner.ok{background:var(--green-bg);border:1px solid #B6DEC8;color:#1F6B45;}
+
+.rrprom .filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);padding:13px 16px;box-shadow:var(--shadow);}
+.rrprom .fsel{position:relative;}
+.rrprom .fsel select{appearance:none;-webkit-appearance:none;background:#F6F7FA;border:1px solid var(--bd);color:var(--ink-2);padding:8px 30px 8px 12px;border-radius:9px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;max-width:230px;}
+.rrprom .fsel select:focus{outline:none;border-color:#BFC6D2;}
+.rrprom .fsel .chev{position:absolute;right:11px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--ink-3);font-size:10px;}
+.rrprom .fbtn{display:inline-flex;align-items:center;gap:7px;border-radius:9px;padding:9px 14px;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;border:1px solid var(--bd);background:#F6F7FA;color:var(--ink-2);transition:.15s;text-decoration:none;}
+.rrprom .fbtn:hover{border-color:#BFC6D2;}
+.rrprom .fbtn:disabled{opacity:.6;cursor:default;}
+.rrprom .fbtn.primary{background:var(--navy);border-color:var(--navy);color:#fff;}
+.rrprom .fbtn.primary:hover{background:#16285C;}
+.rrprom .fbtn.primary .ic{color:var(--yellow);}
+.rrprom .fbtn .ic{display:grid;place-items:center;}
+.rrprom .chip{margin-left:auto;font-size:12px;font-weight:500;color:var(--ink-3);background:#F1F3F7;border:1px solid var(--bd);padding:7px 12px;border-radius:999px;white-space:nowrap;}
+.rrprom .chip.soft{margin-left:0;}
+.rrprom .chip b{color:var(--ink-2);font-weight:600;}
+
+.rrprom .tabs{display:flex;gap:4px;border-bottom:1px solid var(--bd);padding:0 2px;overflow-x:auto;}
+.rrprom .tab{appearance:none;background:none;border:none;font-family:inherit;font-size:13.5px;font-weight:600;color:var(--ink-3);padding:12px 16px 14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap;transition:color .15s;}
+.rrprom .tab:hover{color:var(--ink-2);}
+.rrprom .tab.active{color:var(--navy);border-bottom-color:var(--navy);}
+
+.rrprom .panel{display:block;}
+
+.rrprom .card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);}
+.rrprom .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 24px 14px;}
+.rrprom .card-head h2{font-size:15.5px;font-weight:600;letter-spacing:-.01em;margin:0;color:var(--ink);}
+.rrprom .card-head .csub{font-size:12px;color:var(--ink-3);margin:4px 0 0;max-width:640px;}
+.rrprom .head-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.rrprom .state{padding:26px 24px;font-size:13.5px;color:var(--ink-3);}
+
+.rrprom .scroll{overflow-x:auto;}
+.rrprom table{border-collapse:collapse;width:100%;min-width:760px;font-size:13.5px;}
+.rrprom table.wide{min-width:1600px;}
+.rrprom thead th{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);text-align:right;padding:0 16px 11px;border-bottom:1px solid var(--bd);white-space:nowrap;background:var(--card);}
+.rrprom thead th.l{text-align:left;}
+.rrprom tbody td{padding:13px 16px;border-bottom:1px solid var(--bd-soft);text-align:right;white-space:nowrap;color:var(--ink);}
+.rrprom tbody td.l{text-align:left;}
+.rrprom tbody tr:last-child td{border-bottom:none;}
+.rrprom .sticky{position:sticky;left:0;z-index:2;background:var(--card);}
+.rrprom thead th.sticky{z-index:3;}
+.rrprom .sticky::after{content:"";position:absolute;top:0;right:0;width:14px;height:100%;transform:translateX(100%);background:linear-gradient(90deg,rgba(15,31,74,.06),rgba(15,31,74,0));pointer-events:none;}
+.rrprom .prom{font-weight:600;}
+.rrprom .prom small{display:block;font-weight:500;font-size:11.5px;color:var(--ink-3);margin-top:1px;}
+.rrprom .ctr{font-weight:600;}
+.rrprom tbody tr.clk{cursor:pointer;transition:background .12s;}
+.rrprom tbody tr.clk:hover td{background:#F8F9FC;}
+.rrprom tbody tr.clk:hover td.sticky{background:#F8F9FC;}
+.rrprom tbody tr.sel td{background:#F2F5FF;}
+.rrprom tbody tr.sel td.sticky{background:#F2F5FF;box-shadow:inset 3px 0 0 var(--navy);}
+.rrprom .badge2{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:999px;}
+.rrprom .badge2.ok{color:var(--green);background:var(--green-bg);}
+.rrprom .badge2.low{color:var(--amber);background:var(--amber-bg);border:1px solid var(--amber-bd);}
+.rrprom .badge2 .d{width:6px;height:6px;border-radius:50%;background:currentColor;}
+.rrprom .pay{font-weight:600;color:var(--ink);}
+.rrprom .neg{color:var(--red);}
+.rrprom .muted{color:var(--ink-2);}
+.rrprom tfoot td{padding:13px 16px;border-top:1.5px solid var(--bd);font-weight:600;text-align:right;white-space:nowrap;background:#FBFBFD;}
+.rrprom tfoot td.l{text-align:left;color:var(--ink-2);}
+.rrprom tfoot .sticky{background:#FBFBFD;}
+
+.rrprom .linkbtn{appearance:none;background:none;border:none;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--navy);cursor:pointer;text-decoration:none;padding:0;}
+.rrprom .linkbtn:hover{text-decoration:underline;}
+.rrprom .actions{display:inline-flex;align-items:center;gap:10px;justify-content:flex-end;}
+.rrprom .iconbtn{appearance:none;border:1px solid var(--bd);background:#F6F7FA;border-radius:8px;width:32px;height:32px;display:inline-grid;place-items:center;cursor:pointer;color:var(--ink-3);}
+.rrprom .iconbtn:hover{border-color:#BFC6D2;color:var(--red);}
+.rrprom .iconbtn:disabled{opacity:.5;cursor:default;}
+
+.rrprom .resumo-grid{display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start;}
+.rrprom .edit{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:22px 22px;position:sticky;top:20px;}
+.rrprom .edit h3{font-size:14.5px;font-weight:600;margin:0;color:var(--ink);}
+.rrprom .edit .who{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}
+.rrprom .edit .empty{font-size:13px;color:var(--ink-3);line-height:1.6;}
+.rrprom .mini{margin-top:18px;padding-top:18px;border-top:1px solid var(--bd-soft);}
+.rrprom .mini h4{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);margin:0 0 12px;}
+.rrprom .field{margin-bottom:12px;}
+.rrprom .field label{display:block;font-size:12px;font-weight:500;color:var(--ink-2);margin-bottom:5px;}
+.rrprom .field .inwrap{position:relative;}
+.rrprom .field .pre{position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:12.5px;color:var(--ink-3);}
+.rrprom .field input,.rrprom .field select{width:100%;border:1px solid var(--bd);border-radius:9px;padding:9px 12px;font-family:inherit;font-size:13.5px;color:var(--ink);background:#fff;}
+.rrprom .field input.num{padding-left:32px;}
+.rrprom .field input.nopre{padding-left:12px;}
+.rrprom .field input:focus,.rrprom .field select:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,31,74,.08);}
+.rrprom .pair{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.rrprom .save{width:100%;margin-top:6px;background:var(--navy);color:#fff;border:none;border-radius:10px;padding:11px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s;}
+.rrprom .save:hover{background:#16285C;}
+.rrprom .save:disabled{opacity:.6;cursor:default;}
+.rrprom .agnote{font-size:11.5px;color:var(--ink-3);margin:12px 0 0;}
+
+.rrprom .ndform{display:grid;grid-template-columns:repeat(4,1fr);gap:12px 14px;align-items:end;padding:18px 24px 22px;border-top:1px solid var(--bd-soft);}
+.rrprom .ndform .field{margin-bottom:0;}
+.rrprom .ndform .chkrow{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2);grid-column:1 / -1;}
+.rrprom .ndform .chkrow input{width:auto;}
+.rrprom .tinybtn{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:10px 16px;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;}
+.rrprom .tinybtn:hover{background:#16285C;}
+.rrprom .tinybtn:disabled{opacity:.6;cursor:default;}
+
+.rrprom .dk{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+.rrprom .dkc{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--shadow);padding:16px 18px;}
+.rrprom .dkc .k{font-size:11.5px;font-weight:500;color:var(--ink-3);margin:0 0 8px;}
+.rrprom .dkc .v{font-size:21px;font-weight:600;letter-spacing:-.01em;color:var(--ink);}
+.rrprom .dkc.hl .v{color:var(--gold-deep);}
+
+.rrprom .miginsel{position:relative;display:inline-block;}
+.rrprom .miginsel select{appearance:none;-webkit-appearance:none;background:#F6F7FA;border:1px solid var(--bd);color:var(--ink-2);padding:7px 26px 7px 10px;border-radius:8px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
+.rrprom .miginsel select:focus{outline:none;border-color:var(--navy);}
+.rrprom .miginsel .chev{position:absolute;right:9px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--ink-3);font-size:9px;}
+.rrprom input.reason{border:1px solid var(--bd);border-radius:8px;padding:7px 10px;font-family:inherit;font-size:12.5px;color:var(--ink);background:#fff;min-width:160px;}
+.rrprom input.reason:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,31,74,.08);}
+
+@media (max-width:980px){
+  .rrprom .resumo-grid{grid-template-columns:1fr;}
+  .rrprom .edit{position:static;}
+  .rrprom .kpis{grid-template-columns:repeat(3,1fr);row-gap:20px;}
+  .rrprom .kpi:nth-child(1)::before,.rrprom .kpi:nth-child(4)::before{display:none;}
+  .rrprom .kpi:nth-child(4),.rrprom .kpi:nth-child(5){padding-left:0;}
+  .rrprom .ndform{grid-template-columns:repeat(2,1fr);}
+  .rrprom .dk{grid-template-columns:1fr 1fr;}
+}
+@media (max-width:720px){
+  .rrprom .wrap{padding:18px 14px 40px;gap:16px;}
+  .rrprom .header{padding:22px 18px 22px;}
+  .rrprom .header h1{font-size:21px;}
+  .rrprom .kpis{grid-template-columns:1fr 1fr;padding-top:18px;margin-top:18px;}
+  .rrprom .kpi{padding:14px 0 0;}
+  .rrprom .kpi::before{display:none!important;}
+  .rrprom .kpi .value{font-size:21px;}
+  .rrprom .ndform{grid-template-columns:1fr;}
+
+  .rrprom table.wide{min-width:0;}
+  .rrprom table,.rrprom thead,.rrprom tbody,.rrprom tfoot,.rrprom tr,.rrprom th,.rrprom td{display:block;}
+  .rrprom table{min-width:0;}
+  .rrprom thead{display:none;}
+  .rrprom tbody tr{border:1px solid var(--bd);border-radius:12px;margin-bottom:12px;padding:6px 14px;}
+  .rrprom tbody tr.sel{border-color:var(--navy);}
+  .rrprom tbody td{display:flex;justify-content:space-between;align-items:center;gap:16px;text-align:right;padding:9px 0;border-bottom:1px solid var(--bd-soft);white-space:normal;}
+  .rrprom tbody td:last-child{border-bottom:none;}
+  .rrprom tbody td.sticky{position:static;box-shadow:none!important;}
+  .rrprom tbody td.sticky::after{display:none;}
+  .rrprom tbody td::before{content:attr(data-l);font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);text-align:left;}
+  .rrprom tbody td.l{text-align:right;}
+  .rrprom .prom small{display:inline;margin-left:6px;}
+  .rrprom tfoot td{display:flex;justify-content:space-between;background:none;border:none;border-top:1px solid var(--bd-soft);}
+  .rrprom tfoot td::before{content:attr(data-l);font-weight:600;color:var(--ink-2);}
+}
+`;

@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import { buildClosingAnalytics } from "@/lib/closingAnalytics";
+import { detectClosedMonth } from "@/lib/cmsMonthly";
 import { calcularRbt12 } from "@/lib/rbt12";
 import { buildProjecaoMetas, consolidarGrupo } from "@/lib/projecaoMetas";
+import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
 import { fetchAllRows } from "@/lib/queryHelpers";
 
 export const runtime = "nodejs";
@@ -50,14 +52,18 @@ export async function GET() {
     const year = now.getUTCFullYear();
     const month = now.getUTCMonth() + 1;
 
-    const [pmrRows, closingPayload, rbt12, projecaoRes] = await Promise.all([
-      fetchAllRows<PmrRow>(() =>
-        supabase.from("promoter_monthly_results").select("year, month, production_value")
-      ),
-      buildClosingAnalytics(supabase, { fastDashboardMode: true }),
-      calcularRbt12(supabase, { ano: year, mes: month }),
-      buildProjecaoMetas(supabase, { year, month }),
-    ]);
+    const [pmrRows, closingPayload, rbt12, projecaoRes, promoterAnalytics, monthClosed] =
+      await Promise.all([
+        fetchAllRows<PmrRow>(() =>
+          supabase.from("promoter_monthly_results").select("year, month, production_value")
+        ),
+        buildClosingAnalytics(supabase, { fastDashboardMode: true }),
+        calcularRbt12(supabase, { ano: year, mes: month }),
+        buildProjecaoMetas(supabase, { year, month }),
+        // motor: comissão bruta da EMPRESA do grupo no mês corrente (aberto).
+        buildPromoterAnalytics(supabase, { year, month }),
+        detectClosedMonth(supabase, year, month).catch(() => false),
+      ]);
 
     // ---- produção mensal do grupo (ano corrente), por promoter_monthly_results ----
     const byMonth = new Map<number, number>();
@@ -100,6 +106,44 @@ export async function GET() {
       sinal: rbt12.grupo.sinal,
     };
 
+    // ---- comissão bruta da EMPRESA · mês corrente (company_commission) ----
+    // É o GANHO DA EMPRESA (o que a empresa recebe), NÃO o repasse do promotor.
+    // Split cms/motor do resto do sistema: mês FECHADO = ground truth do cms (Σ
+    // cms_promoter_entries.company_commission); mês ABERTO = motor (buildPromoter-
+    // Analytics → summary.companyGrossCommission, mesma getPromoterViewCompanyRate
+    // das propostas, com teto 5,80% + derive TRP). O mês corrente é parcial.
+    let comissaoBrutaEmpresa = 0;
+    let comissaoBrutaEmpresaLabel = "";
+    // parcela ainda SEM promotor atribuído (faz parte do bruto; encolhe conforme
+    // o funcionário atribui na Migração). Só existe no mês aberto (motor); no
+    // fechado (cms) tudo já está atribuído por j_key.
+    let comissaoBrutaEmpresaNaoAtribuida = 0;
+    let comissaoBrutaEmpresaNaoAtribuidaCount = 0;
+    if (monthClosed) {
+      const entries = await fetchAllRows<{ company_commission: number | null }>(() =>
+        supabase
+          .from("cms_promoter_entries")
+          .select("company_commission")
+          .eq("prod_year", year)
+          .eq("prod_month", month)
+      );
+      comissaoBrutaEmpresa = roundMoney(
+        entries.reduce((sum, r) => sum + toNumber(r.company_commission), 0)
+      );
+      comissaoBrutaEmpresaLabel = `${MES[month - 1]}/${year} · fechado`;
+    } else {
+      comissaoBrutaEmpresa = roundMoney(
+        toNumber(promoterAnalytics.summary.companyGrossCommission)
+      );
+      comissaoBrutaEmpresaNaoAtribuida = roundMoney(
+        toNumber(promoterAnalytics.summary.unassignedCompanyGrossCommission)
+      );
+      comissaoBrutaEmpresaNaoAtribuidaCount = toNumber(
+        promoterAnalytics.summary.unassignedCount
+      );
+      comissaoBrutaEmpresaLabel = `${MES[month - 1]}/${year} · parcial`;
+    }
+
     // ---- alerta de projeção (só se houver risco: amarelo/vermelho) ----
     const cons = consolidarGrupo(projecaoRes);
     const projecao = {
@@ -115,6 +159,10 @@ export async function GET() {
       periodoLabel: `${MES[month - 1]}/${year}`,
       producaoGrupoMes,
       producaoParcial: true,
+      comissaoBrutaEmpresa,
+      comissaoBrutaEmpresaLabel,
+      comissaoBrutaEmpresaNaoAtribuida,
+      comissaoBrutaEmpresaNaoAtribuidaCount,
       previsaoReceita,
       limiteSimples,
       producaoMensal,
