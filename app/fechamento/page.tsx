@@ -54,7 +54,7 @@ export default function FechamentoPage() {
     <div className="rrfech">
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
-        <nav className="crumb"><Link href="/">Visão geral</Link><span className="sep">/</span><span>Fechamento</span></nav>
+        <nav className="crumb"><Link href="/dashboard">Visão geral</Link><span className="sep">/</span><span>Fechamento</span></nav>
 
         <header className="header">
           <div className="header-top">

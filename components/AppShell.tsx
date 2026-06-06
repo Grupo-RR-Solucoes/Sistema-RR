@@ -35,7 +35,6 @@ const navGroups: NavGroup[] = [
     id: "operacao",
     label: "Operação",
     items: [
-      { href: "/producao", label: "Produção", icon: "PD", visibleTo: ["socio"] },
       { href: "/importacoes", label: "Importações", icon: "IM", visibleTo: ["socio", "funcionario"] },
       { href: "/fechamento", label: "Fechamento", icon: "FC", visibleTo: ["socio"] },
     ],
