@@ -8,6 +8,7 @@ import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import { createPortal } from "react-dom";
 
 export type ColumnFilterValue = {
   value: string | number;
@@ -25,6 +26,7 @@ export interface ColumnFilterProps {
 }
 
 const SCROLL_MAX_HEIGHT = 240;
+const POPOVER_WIDTH = 260;
 
 function toKey(value: string | number): string {
   return String(value);
@@ -58,9 +60,33 @@ export default function ColumnFilter({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Set<string>>(new Set(selected));
   const [search, setSearch] = useState("");
+  // Posição FIXA calculada do botão — o popover é renderizado num portal no
+  // document.body para escapar do `overflow:auto` da tabela (que recortava o
+  // dropdown dentro do scroll horizontal). Reposiciona em scroll/resize.
+  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const reposition = () => {
+      const btn = buttonRef.current;
+      if (!btn) return;
+      const r = btn.getBoundingClientRect();
+      const top = r.bottom + 6;
+      const left = align === "left" ? r.left : Math.max(8, r.right - POPOVER_WIDTH);
+      setCoords({ top, left });
+    };
+    reposition();
+    // capture:true pega scroll de qualquer ancestral (a tabela scrollável inclusa)
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [open, align]);
 
   // Sincroniza draft com selected sempre que o popover abre.
   useEffect(() => {
@@ -198,16 +224,13 @@ export default function ColumnFilter({
         <FilterIcon active={hasActiveFilter} />
       </button>
 
-      {open ? (
+      {open && typeof document !== "undefined" ? createPortal(
         <div
           ref={popoverRef}
           role="dialog"
           aria-label={`Filtro ${columnLabel}`}
           onKeyDown={handlePopoverKeyDown}
-          style={{
-            ...styles.popover,
-            ...(align === "left" ? styles.alignLeft : styles.alignRight),
-          }}
+          style={{ ...styles.popover, top: coords.top, left: coords.left }}
         >
           <input
             ref={searchInputRef}
@@ -282,7 +305,8 @@ export default function ColumnFilter({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       ) : null}
     </span>
   );
@@ -342,10 +366,9 @@ const styles: Record<string, CSSProperties> = {
     color: "#0d4de3",
   },
   popover: {
-    position: "absolute",
-    top: "calc(100% + 6px)",
-    zIndex: 50,
-    width: 260,
+    position: "fixed",
+    zIndex: 1000,
+    width: POPOVER_WIDTH,
     background: "#fff",
     border: "1px solid var(--rr-line-strong, #d6dbe4)",
     borderRadius: 12,

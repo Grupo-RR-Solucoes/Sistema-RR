@@ -86,6 +86,13 @@ export default function EditarComissoesPage() {
   // Map<columnKey, Set<string>> — Set contem os valores SELECIONADOS
   // (passam pelo filtro). Ausencia da coluna no Map = sem filtro = tudo.
   const [columnFilters, setColumnFilters] = useState(new Map());
+  // Mês FECHADO por cms -> tela READ-ONLY (vê os valores finais da Promotiva,
+  // não edita). Definido pelo flag `closed` da /api/commissions/proposals.
+  const [readOnly, setReadOnly] = useState(false);
+  // `searched` = já houve uma busca para os filtros ATUAIS. Trocar
+  // competência/empresa/promotor limpa a tabela (evita mostrar dado de um mês
+  // sob outro selecionado). A busca continua manual (botão "Buscar propostas").
+  const [searched, setSearched] = useState(false);
   // Selecao bulk: Set<daily_production_record_id>. Persiste atraves de
   // mudancas de filtro (Set tem IDs, nao referencia rows visiveis).
   // Limpa ao trocar year/month/companyId/promoterId (via loadRows).
@@ -126,6 +133,18 @@ export default function EditarComissoesPage() {
   useEffect(() => {
     loadPromoters();
   }, [companyId]);
+
+  // Trocar competência/empresa/promotor -> LIMPA a tabela e o estado da busca
+  // anterior (sem auto-refetch; busca segue manual pelo botão). Evita exibir
+  // dado de um mês sob outro selecionado.
+  useEffect(() => {
+    setRows([]);
+    setReadOnly(false);
+    setSearched(false);
+    setSelectedIds(new Set());
+    setColumnFilters(new Map());
+    setPromoterInsuranceSummaries([]);
+  }, [year, month, companyId, promoterId]);
 
   async function loadCompanies() {
     try {
@@ -210,6 +229,7 @@ export default function EditarComissoesPage() {
         throw new Error(data?.error || "Erro ao carregar propostas.");
       }
 
+      setReadOnly(data?.closed === true);
       setPromoterInsuranceSummaries(data?.promoterInsuranceSummaries || []);
       setRows(
         (data?.rows || []).map((row) => {
@@ -237,6 +257,7 @@ export default function EditarComissoesPage() {
           };
         })
       );
+      setSearched(true);
     } catch (err) {
       setError(err.message || "Erro ao carregar propostas.");
     } finally {
@@ -667,6 +688,17 @@ export default function EditarComissoesPage() {
           <h3 style={styles.tableTitle}>Propostas com possibilidade de ajuste manual</h3>
         </div>
 
+        {readOnly ? (
+          <div style={styles.readOnlyBanner}>
+            <span style={styles.readOnlyIcon}>🔒</span>
+            <span>
+              <strong>Mês consolidado via cms.</strong> Estes são os valores finais
+              pagos pela Promotiva (ground truth) — exibidos em leitura apenas, não
+              editáveis. Para ajustar comissões, use um mês em aberto.
+            </span>
+          </div>
+        ) : null}
+
         {columnFilters.size > 0 ? (
           <div style={styles.filterBanner}>
             <span>
@@ -710,7 +742,7 @@ export default function EditarComissoesPage() {
                       else selectAllVisible();
                     }}
                     aria-label="Selecionar todos os visíveis"
-                    disabled={filteredRows.length === 0}
+                    disabled={readOnly || filteredRows.length === 0}
                   />
                 </th>
                 {/* Ordem espelha planilha LUCIANA_MATIAS.xlsx (4.4-fix-1.C). */}
@@ -890,9 +922,14 @@ export default function EditarComissoesPage() {
               {filteredRows.length === 0 ? (
                 <tr>
                   <td style={styles.emptyTd} colSpan={21}>
-                    {rows.length === 0
-                      ? "Nenhuma proposta encontrada."
-                      : "Nenhuma proposta corresponde aos filtros atuais."}
+                    {!searched
+                      ? `Clique em "Buscar propostas" para carregar ${
+                          promoters.find((p) => p.id === promoterId)?.name ||
+                          "os promotores selecionados"
+                        } em ${String(month).padStart(2, "0")}/${year}.`
+                      : rows.length === 0
+                        ? "Nenhuma proposta encontrada."
+                        : "Nenhuma proposta corresponde aos filtros atuais."}
                   </td>
                 </tr>
               ) : (
@@ -910,6 +947,7 @@ export default function EditarComissoesPage() {
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => toggleRow(row.id)}
+                          disabled={readOnly}
                           aria-label={`Selecionar proposta ${row.proposal_number || row.id}`}
                         />
                       </td>
@@ -985,6 +1023,9 @@ export default function EditarComissoesPage() {
                             0..1 no DB). Badge mostra a fonte do valor
                             (override / profile / default) quando nao ha
                             override pendente do usuario. */}
+                        {readOnly ? (
+                          <span style={styles.readOnlyDash}>—</span>
+                        ) : (
                         <div style={styles.shareInputCell}>
                           <input
                             type="number"
@@ -1013,6 +1054,7 @@ export default function EditarComissoesPage() {
                             ) : null;
                           })()}
                         </div>
+                        )}
                       </td>
                       <td style={styles.td}>
                         {/* FIX-1.D.6 (calculo): COMISSAO PROMOTOR =
@@ -1027,8 +1069,14 @@ export default function EditarComissoesPage() {
                               3) 0 (sem share — render "—")
                             NAO usa row.promoter_share_amount (que para
                             rows MANUAL_PROPOSAL_LEGACY pode vir
-                            dessincronizado com a cascata viva). */}
-                        {(() => {
+                            dessincronizado com a cascata viva).
+                            READ-ONLY (mês fechado): mostra a comissão do cms
+                            (promoter_credit, ground truth pago), não a cascata. */}
+                        {readOnly
+                          ? (Number(row.promoter_commission_amount || 0) > 0
+                              ? formatCurrency(row.promoter_commission_amount)
+                              : "—")
+                          : (() => {
                           const draft = row.share_percent_input;
                           const netValue = Number(row.net_value ?? 0);
                           const aVista = Number(row.a_vista_percent ?? 0);
@@ -1065,6 +1113,9 @@ export default function EditarComissoesPage() {
                           : formatCurrency(row.promoter_insurance_amount)}
                       </td>
                       <td style={styles.td}>
+                        {readOnly ? (
+                          <span style={styles.readOnlyDash}>—</span>
+                        ) : (
                         <div style={styles.actionButtons}>
                           <button
                             type="button"
@@ -1084,6 +1135,7 @@ export default function EditarComissoesPage() {
                             Limpar
                           </button>
                         </div>
+                        )}
                       </td>
                     </tr>
                   );
@@ -1094,14 +1146,16 @@ export default function EditarComissoesPage() {
         </div>
       </section>
 
-      <BulkActionBar
-        selectedItems={selectedItems}
-        onClearSelection={clearSelection}
-        onApplied={async () => {
-          clearSelection();
-          await loadRows();
-        }}
-      />
+      {!readOnly ? (
+        <BulkActionBar
+          selectedItems={selectedItems}
+          onClearSelection={clearSelection}
+          onApplied={async () => {
+            clearSelection();
+            await loadRows();
+          }}
+        />
+      ) : null}
     </section>
   );
 }
@@ -1502,6 +1556,26 @@ const styles = {
     fontSize: "24px",
     color: "var(--rr-ink)",
   },
+  readOnlyBanner: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    margin: "0 0 14px",
+    padding: "12px 16px",
+    borderRadius: 12,
+    background: "#FBF1DC",
+    border: "1px solid #EAD7A6",
+    color: "#5C4A1E",
+    fontSize: 13,
+    lineHeight: 1.5,
+  },
+  readOnlyIcon: {
+    fontSize: 16,
+    flex: "none",
+  },
+  readOnlyDash: {
+    color: "var(--rr-muted, #5A6B82)",
+  },
   tableWrap: {
     overflowX: "auto",
     padding: "18px 24px 24px",
@@ -1659,3 +1733,4 @@ const styles = {
     cursor: "pointer",
   },
 };
+
