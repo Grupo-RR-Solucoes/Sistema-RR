@@ -363,6 +363,68 @@ export function findScaleTier(
  * Retorna sempre {sharePercent: number, source: string}; source
  * descreve qual no da cascata definiu o valor (alimenta badge na UI).
  */
+// ============================================================
+// FRENTE C — escala de repasse: FONTE ÚNICA da verdade. Extraída verbatim do
+// motor (calculate/monthly:1138-1163) pra que a tela de edição
+// (resolvePromoterShareSync) e o motor apliquem EXATAMENTE a mesma regra. Antes
+// divergiam: o motor lia promoter_goal_repasse (ex.: 66,66%) e a tela caía no
+// DEFAULT 58,33% — o que fazia o Salvar REBAIXAR o acordo.
+// ============================================================
+
+// INSS da Aldalene: repasse fixo 65,86% (fora da escala por meta). So mes ABERTO.
+export const ALDALENE_INSS_FIXED_SHARE = 0.6586;
+
+// Detecta proposta INSS (mesmo criterio do motor): convenio_code '1640' OU
+// descricao do produto contem 'INSS'.
+export function isInssRecord(record: {
+  convenio_code?: string | null;
+  product_description?: string | null;
+}): boolean {
+  const code = String(record?.convenio_code ?? "").trim();
+  if (code === "1640") return true;
+  return normalizeText(record?.product_description).includes("INSS");
+}
+
+export type GoalRepasseRow = {
+  pct_base: number;
+  pct_meta1: number | null;
+  pct_meta2: number | null;
+} | null;
+
+export type FrenteCInput = {
+  goalRepasse: GoalRepasseRow;
+  productionValue: number; // produção VÁLIDA do mês (== validRecords do motor)
+  target1Value: number;
+  target2Value: number;
+  isAldaleneInss: boolean;
+  isFaixa580: boolean; // % à vista atingiu o teto 5,80
+};
+
+// Resolve o SHARE (0..1) da Frente C, ou null se nao se aplica (cai na cascata
+// de profile). Espelha calculate/monthly verbatim (Aldalene INSS fixo + escala
+// por meta base/meta1/meta2). NAO multiplica pelo % a vista — quem chama aplica.
+export function resolveFrenteCShare(
+  input: FrenteCInput
+): { share: number; faixaMeta: string; source: string } | null {
+  const { goalRepasse, productionValue, target1Value, target2Value, isAldaleneInss, isFaixa580 } = input;
+  if (isAldaleneInss) {
+    return { share: ALDALENE_INSS_FIXED_SHARE, faixaMeta: "INSS", source: "FRENTE_C_INSS_ALDALENE_FIXO" };
+  }
+  if (isFaixa580 && goalRepasse) {
+    let escalaShare = Number(goalRepasse.pct_base);
+    let faixaMeta = "BASE";
+    if (target2Value > 0 && productionValue >= target2Value && goalRepasse.pct_meta2 != null) {
+      escalaShare = Number(goalRepasse.pct_meta2);
+      faixaMeta = "META2";
+    } else if (target1Value > 0 && productionValue >= target1Value && goalRepasse.pct_meta1 != null) {
+      escalaShare = Number(goalRepasse.pct_meta1);
+      faixaMeta = "META1";
+    }
+    return { share: escalaShare, faixaMeta, source: `FRENTE_C_ESCALA_${faixaMeta}` };
+  }
+  return null;
+}
+
 export function resolvePromoterShareSync(args: {
   record: {
     assigned_promoter_id: string | null;
@@ -371,12 +433,23 @@ export function resolvePromoterShareSync(args: {
   profilesMap: Map<string, SharePromoterProfile>;
   scalesMap: Map<string, ShareScaleWithTiers>;
   monthlyVolumesMap: Map<string, number>;
+  // FRENTE C — quando fornecido, aplica a escala ANTES do override/profile
+  // (igual ao motor, onde a escala faixa-5,80% vence). O motor NAO passa isto
+  // (resolve a Frente C no proprio fluxo); a tela de edição passa.
+  frenteC?: FrenteCInput | null;
 }): ShareResolution {
   const { record, profilesMap, scalesMap, monthlyVolumesMap } = args;
   const promoterId = record.assigned_promoter_id;
 
   if (!promoterId) {
     return { sharePercent: DEFAULT_SHARE, source: "DEFAULT_FALLBACK" };
+  }
+
+  // Nivel 0 (FRENTE C): escala da fonte única. Vence ATÉ o override, igual ao
+  // motor (la a escala faixa-5,80% e aplicada antes de resolvePromoterShareSync).
+  if (args.frenteC) {
+    const fc = resolveFrenteCShare(args.frenteC);
+    if (fc) return { sharePercent: fc.share, source: fc.source };
   }
 
   // Nivel 1: override por proposta vence tudo.
@@ -522,13 +595,22 @@ export async function fetchPromoterShareData(
   profilesMap: Map<string, SharePromoterProfile>;
   scalesMap: Map<string, ShareScaleWithTiers>;
   monthlyVolumesMap: Map<string, number>;
+  // FRENTE C: escala (goal_repasse) + metas + produção VÁLIDA do mês.
+  goalRepasseMap: Map<string, GoalRepasseRow>;
+  targetsMap: Map<string, { meta1: number; meta2: number }>;
+  // produção VÁLIDA (PRODUÇÃO && !cancelado && !srcc) — == productionValue do
+  // motor. Separado de monthlyVolumesMap (TODOS os records, usado p/ ENTRANTE).
+  frenteCProductionMap: Map<string, number>;
 }> {
   const profilesMap = new Map<string, SharePromoterProfile>();
   const scalesMap = new Map<string, ShareScaleWithTiers>();
   const monthlyVolumesMap = new Map<string, number>();
+  const goalRepasseMap = new Map<string, GoalRepasseRow>();
+  const targetsMap = new Map<string, { meta1: number; meta2: number }>();
+  const frenteCProductionMap = new Map<string, number>();
 
   if (promoterIds.length === 0) {
-    return { profilesMap, scalesMap, monthlyVolumesMap };
+    return { profilesMap, scalesMap, monthlyVolumesMap, goalRepasseMap, targetsMap, frenteCProductionMap };
   }
 
   // 1. Profiles dos promoters relevantes.
@@ -605,7 +687,7 @@ export async function fetchPromoterShareData(
 
   const { data: volumeRows } = await supabase
     .from("daily_production_records")
-    .select("assigned_promoter_id, net_value")
+    .select("assigned_promoter_id, net_value, status, cancellation_date, is_srcc_restricted")
     .in("assigned_promoter_id", promoterIds)
     .gte("movement_date", startDate)
     .lt("movement_date", endDate);
@@ -614,13 +696,54 @@ export async function fetchPromoterShareData(
     const r = row as {
       assigned_promoter_id: string | null;
       net_value: number | null;
+      status: string | null;
+      cancellation_date: string | null;
+      is_srcc_restricted: boolean | null;
     };
     if (!r.assigned_promoter_id) continue;
-    const prev = monthlyVolumesMap.get(r.assigned_promoter_id) ?? 0;
-    monthlyVolumesMap.set(r.assigned_promoter_id, prev + Number(r.net_value ?? 0));
+    const net = Number(r.net_value ?? 0);
+    // monthlyVolumesMap = TODOS os records (escala ENTRANTE por volume).
+    monthlyVolumesMap.set(
+      r.assigned_promoter_id,
+      (monthlyVolumesMap.get(r.assigned_promoter_id) ?? 0) + net
+    );
+    // frenteCProductionMap = produção VÁLIDA — espelha validRecords do motor
+    // (isProductionStatus && !cancellation_date && !is_srcc_restricted).
+    const st = normalizeText(r.status);
+    const isProd = st === "PRODUCAO" || st === "PRODUCTION";
+    if (isProd && !r.cancellation_date && !r.is_srcc_restricted) {
+      frenteCProductionMap.set(
+        r.assigned_promoter_id,
+        (frenteCProductionMap.get(r.assigned_promoter_id) ?? 0) + net
+      );
+    }
   }
 
-  return { profilesMap, scalesMap, monthlyVolumesMap };
+  // 4. FRENTE C — escala de repasse da competência + metas (meta_1/meta_2).
+  const competencia = `${year}-${String(month).padStart(2, "0")}-01`;
+  const [goalRes, targetsRes] = await Promise.all([
+    supabase
+      .from("promoter_goal_repasse")
+      .select("promoter_id, pct_base, pct_meta1, pct_meta2")
+      .eq("competencia", competencia)
+      .in("promoter_id", promoterIds),
+    supabase
+      .from("monthly_targets")
+      .select("promoter_id, meta_1, meta_2")
+      .eq("year", year)
+      .eq("month", month)
+      .in("promoter_id", promoterIds),
+  ]);
+  for (const g of goalRes.data ?? []) {
+    const r = g as { promoter_id: string; pct_base: number; pct_meta1: number | null; pct_meta2: number | null };
+    goalRepasseMap.set(r.promoter_id, { pct_base: Number(r.pct_base), pct_meta1: r.pct_meta1, pct_meta2: r.pct_meta2 });
+  }
+  for (const t of targetsRes.data ?? []) {
+    const r = t as { promoter_id: string; meta_1: number | null; meta_2: number | null };
+    targetsMap.set(r.promoter_id, { meta1: Number(r.meta_1 ?? 0), meta2: Number(r.meta_2 ?? 0) });
+  }
+
+  return { profilesMap, scalesMap, monthlyVolumesMap, goalRepasseMap, targetsMap, frenteCProductionMap };
 }
 
 /**
@@ -680,7 +803,7 @@ export async function recalculateSingleProposal(
     const { data: record, error: fetchErr } = await supabase
       .from("daily_production_records")
       .select(
-        "id, assigned_promoter_id, net_value, raw_payload, movement_date, company_id"
+        "id, assigned_promoter_id, net_value, raw_payload, company_received_percent, movement_date, company_id, convenio_code, product_description"
       )
       .eq("id", recordId)
       .maybeSingle();
@@ -715,10 +838,23 @@ export async function recalculateSingleProposal(
     const overrideValue =
       manual?.active !== false ? manual?.share_percent_override ?? null : null;
 
-    // Pre-carrega dados de cascata para 1 promoter no mes.
-    const { profilesMap, scalesMap, monthlyVolumesMap } =
+    // Pre-carrega dados de cascata para 1 promoter no mes (inclui Frente C).
+    const { profilesMap, scalesMap, monthlyVolumesMap, goalRepasseMap, targetsMap, frenteCProductionMap } =
       await fetchPromoterShareData(supabase, [promoterId], year, month);
+    // Nome do promotor (carve-out Aldalene INSS).
+    const { data: promRow } = await supabase
+      .from("promoters")
+      .select("name")
+      .eq("id", promoterId)
+      .maybeSingle();
 
+    const aVista = getAVistaPercent(
+      record as { raw_payload: Record<string, unknown> | null }
+    );
+    const aVistaClamped = Math.min(Math.max(Number(aVista ?? 0), 0), 5.8);
+
+    // FRENTE C — mesma fonte única do motor e da tela de edição.
+    const tgt = targetsMap.get(promoterId);
     const resolution = resolvePromoterShareSync({
       record: {
         assigned_promoter_id: promoterId,
@@ -727,12 +863,17 @@ export async function recalculateSingleProposal(
       profilesMap,
       scalesMap,
       monthlyVolumesMap,
+      frenteC: {
+        goalRepasse: goalRepasseMap.get(promoterId) ?? null,
+        productionValue: frenteCProductionMap.get(promoterId) ?? 0,
+        target1Value: tgt?.meta1 ?? 0,
+        target2Value: tgt?.meta2 ?? 0,
+        isAldaleneInss:
+          normalizeText((promRow as { name?: string } | null)?.name).includes("ALDALENE") &&
+          isInssRecord(record as { convenio_code?: string | null; product_description?: string | null }),
+        isFaixa580: aVistaClamped >= 5.8 - 0.001,
+      },
     });
-
-    const aVista = getAVistaPercent(
-      record as { raw_payload: Record<string, unknown> | null }
-    );
-    const aVistaClamped = Math.min(Math.max(Number(aVista ?? 0), 0), 5.8);
     const netValue = Number(
       (record as { net_value: number | null }).net_value ?? 0
     );

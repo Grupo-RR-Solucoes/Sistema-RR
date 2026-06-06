@@ -16,10 +16,34 @@ import {
   getCompanyCommissionAmount,
   getInstallmentCount,
   getSrccRestrictionLabel,
+  isInssRecord,
   recalculateSingleProposal,
   resolvePromoterShareSync,
 } from "@/lib/proposalDetailing";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { detectClosedMonth } from "@/lib/cmsMonthly";
+import { buildCmsProposalRows, buildCmsProposalRowsBatch } from "@/lib/promoterReportData";
+
+// Mês FECHADO (cms) — mapeia a CmsProposalRow (ground truth pago) para o shape
+// que a tela /comissoes/editar renderiza, em modo READ-ONLY. Sem chave de edição
+// (id é da entry cms, não daily_production_record_id) e sem cascata de share.
+function mapCmsRowToEditor(r: any, promoterName: string) {
+  return {
+    ...r,
+    promoter_name: promoterName,
+    a_vista_percent: r.company_received_percent,
+    promoter_insurance_amount: r.insurance_commission_amount,
+    promoter_share_amount: r.promoter_commission_amount,
+    commission_rule_id: null,
+    manual_notes: "",
+    share_percent_input: "",
+    share_percent_effective: null,
+    share_percent_source: "cms",
+    share_percent_override: null,
+    promotiva_status: "FECHADO",
+    read_only: true,
+  };
+}
 
 // FIX-1.E.6.F — formata uma faixa da scale SEGURO_SLIP em rotulo
 // legivel para a UI. Bordas inferiores inclusivas, superiores
@@ -89,6 +113,7 @@ type ProductionRecord = {
   contract_number: string | null;
   product_code: string | null;
   product_description: string | null;
+  convenio_code: string | null;
   j_key: string | null;
   contract_date: string | null;
   interest_rate: number | null;
@@ -174,6 +199,48 @@ export async function GET(req: Request) {
       );
     }
 
+    // Mês FECHADO por cms -> a produção vive em cms_promoter_entries (ground
+    // truth pago), NÃO no daily. Retorna as linhas do cms em READ-ONLY (mesma
+    // fonte do PromotorView/relatório). Sem caminho de edição.
+    let closedMonth = false;
+    try {
+      closedMonth = await detectClosedMonth(supabase, year, month);
+    } catch {
+      closedMonth = false;
+    }
+    if (closedMonth) {
+      let ids: string[] = [];
+      if (promoterId) {
+        ids = [promoterId];
+      } else {
+        let q = supabase
+          .from("cms_promoter_entries")
+          .select("promoter_id")
+          .eq("prod_year", year)
+          .eq("prod_month", month)
+          .not("promoter_id", "is", null);
+        if (companyId) q = q.eq("company_id", companyId);
+        const { data } = await q;
+        ids = [...new Set((data || []).map((r: any) => r.promoter_id as string))];
+      }
+      if (ids.length === 0) {
+        return NextResponse.json({ rows: [], promoterInsuranceSummaries: [], closed: true, proposalSource: "cms" });
+      }
+      const { data: proms } = await supabase.from("promoters").select("id, name").in("id", ids);
+      const nameById = new Map((proms || []).map((p: any) => [p.id, p.name as string]));
+      const cmsRows: any[] = [];
+      if (ids.length === 1) {
+        const list = await buildCmsProposalRows(supabase, ids[0], year, month);
+        for (const r of list) cmsRows.push(mapCmsRowToEditor(r, nameById.get(ids[0]) || ""));
+      } else {
+        const byProm = await buildCmsProposalRowsBatch(supabase, ids, year, month);
+        for (const [pid, list] of byProm) {
+          for (const r of list) cmsRows.push(mapCmsRowToEditor(r, nameById.get(pid) || ""));
+        }
+      }
+      return NextResponse.json({ rows: cmsRows, promoterInsuranceSummaries: [], closed: true, proposalSource: "cms" });
+    }
+
     const { start, end } = getMonthRange(year, month);
 
     const records = await fetchAllPaged<ProductionRecord>(() => {
@@ -187,6 +254,7 @@ export async function GET(req: Request) {
           contract_number,
           product_code,
           product_description,
+          convenio_code,
           j_key,
           contract_date,
           interest_rate,
@@ -319,8 +387,14 @@ export async function GET(req: Request) {
     // Dia 4.5 Etapa B: pre-carrega 3 maps (profiles + escalas + volume
     // mensal) para a cascata sync de share_percent. fetchPromoterShareData
     // faz no maximo 3-4 queries em batch independente do numero de rows.
-    const { profilesMap, scalesMap, monthlyVolumesMap } =
-      await fetchPromoterShareData(supabase, promoterIds, year, month);
+    const {
+      profilesMap,
+      scalesMap,
+      monthlyVolumesMap,
+      goalRepasseMap,
+      targetsMap,
+      frenteCProductionMap,
+    } = await fetchPromoterShareData(supabase, promoterIds, year, month);
 
     const rows = records.map((record) => {
       const promoter = promoters.find((p) => p.id === record.assigned_promoter_id);
@@ -345,6 +419,20 @@ export async function GET(req: Request) {
       // Dia 4.5 Etapa B: cascata nova de share_percent.
       const aVistaPercent = getAVistaPercent(record);
       const overrideValue = manual?.share_percent_override ?? null;
+      // FRENTE C — monta o input da fonte única (mesma do calculate/monthly):
+      // produção VÁLIDA, metas, Aldalene INSS, faixa 5,80%.
+      const pid = record.assigned_promoter_id ?? "";
+      const aVistaClampedRec = Math.min(Math.max(Number(aVistaPercent ?? 0), 0), 5.8);
+      const tgt = targetsMap.get(pid);
+      const frenteC = {
+        goalRepasse: goalRepasseMap.get(pid) ?? null,
+        productionValue: frenteCProductionMap.get(pid) ?? 0,
+        target1Value: tgt?.meta1 ?? 0,
+        target2Value: tgt?.meta2 ?? 0,
+        isAldaleneInss:
+          String(promoter?.name ?? "").toUpperCase().includes("ALDALENE") && isInssRecord(record),
+        isFaixa580: aVistaClampedRec >= 5.8 - 0.001,
+      };
       const shareResolution = resolvePromoterShareSync({
         record: {
           assigned_promoter_id: record.assigned_promoter_id,
@@ -353,6 +441,7 @@ export async function GET(req: Request) {
         profilesMap,
         scalesMap,
         monthlyVolumesMap,
+        frenteC,
       });
 
       return {
@@ -460,7 +549,7 @@ export async function GET(req: Request) {
       }
     }
 
-    return NextResponse.json({ rows, promoterInsuranceSummaries });
+    return NextResponse.json({ rows, promoterInsuranceSummaries, closed: false, proposalSource: "daily" });
   } catch (error) {
     return apiGuardErrorResponse(error);
   }
@@ -499,6 +588,31 @@ export async function POST(req: Request) {
         { error: "Informe dailyProductionRecordId e promoterId." },
         { status: 400 }
       );
+    }
+
+    // Trava de servidor (defesa em profundidade): mês FECHADO por cms é
+    // ground truth da Promotiva — não editável. Bloqueia mesmo que a UI
+    // (que esconde os controles em read-only) seja burlada.
+    {
+      const { data: rec } = await supabase
+        .from("daily_production_records")
+        .select("movement_date")
+        .eq("id", dailyProductionRecordId)
+        .maybeSingle();
+      if (!rec || !rec.movement_date) {
+        return NextResponse.json(
+          { error: "Proposta não encontrada (mês consolidado via cms não é editável)." },
+          { status: 404 }
+        );
+      }
+      const d = new Date(rec.movement_date);
+      const closed = await detectClosedMonth(supabase, d.getUTCFullYear(), d.getUTCMonth() + 1).catch(() => false);
+      if (closed) {
+        return NextResponse.json(
+          { error: "Mês consolidado via cms (valores finais da Promotiva) — não editável." },
+          { status: 403 }
+        );
+      }
     }
 
     // Fetch previo para audit (snapshot do valor anterior, se existir)
@@ -601,6 +715,29 @@ export async function DELETE(req: Request) {
         { error: "Informe dailyProductionRecordId." },
         { status: 400 }
       );
+    }
+
+    // Trava de servidor: mês FECHADO por cms não é editável (idem POST).
+    {
+      const { data: rec } = await supabase
+        .from("daily_production_records")
+        .select("movement_date")
+        .eq("id", dailyProductionRecordId)
+        .maybeSingle();
+      if (!rec || !rec.movement_date) {
+        return NextResponse.json(
+          { error: "Proposta não encontrada (mês consolidado via cms não é editável)." },
+          { status: 404 }
+        );
+      }
+      const d = new Date(rec.movement_date);
+      const closed = await detectClosedMonth(supabase, d.getUTCFullYear(), d.getUTCMonth() + 1).catch(() => false);
+      if (closed) {
+        return NextResponse.json(
+          { error: "Mês consolidado via cms (valores finais da Promotiva) — não editável." },
+          { status: 403 }
+        );
+      }
     }
 
     // Fetch para audit snapshot antes de deletar

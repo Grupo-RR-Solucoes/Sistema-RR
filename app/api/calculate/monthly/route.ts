@@ -18,6 +18,7 @@ import { getPrazoTrp } from "@/lib/prazoTrp";
 import { getProductionWindow } from "@/lib/productionPeriod";
 import {
   fetchPromoterShareData,
+  resolveFrenteCShare,
   resolvePromoterShareSync,
 } from "@/lib/proposalDetailing";
 
@@ -1135,32 +1136,20 @@ export async function POST(req: Request) {
             // atingiu o teto 5,80. So nessa faixa a escala por meta entra.
             const isFaixa580 = aVistaClamped >= 5.8 - 0.001;
 
-            if (isAldalenePromoter && isInssRecord(record)) {
-              // Carve-out: INSS da Aldalene fica FORA da escala — repasse fixo.
-              commissionPercent = aVistaClamped * ALDALENE_INSS_FIXED_SHARE;
-              productionRuleSource = `${aVistaSource}+FRENTE_C_INSS_ALDALENE_FIXO`;
-            } else if (isFaixa580 && goalRepasse) {
-              // Escala por meta: producao_mes (productionValue) vs bonus1/bonus2
-              // (= meta_1/meta_2 de monthly_targets, ja em target1/2Value).
-              let escalaShare = Number(goalRepasse.pct_base);
-              let faixaMeta = "BASE";
-              if (
-                target2Value > 0 &&
-                productionValue >= target2Value &&
-                goalRepasse.pct_meta2 != null
-              ) {
-                escalaShare = Number(goalRepasse.pct_meta2);
-                faixaMeta = "META2";
-              } else if (
-                target1Value > 0 &&
-                productionValue >= target1Value &&
-                goalRepasse.pct_meta1 != null
-              ) {
-                escalaShare = Number(goalRepasse.pct_meta1);
-                faixaMeta = "META1";
-              }
-              commissionPercent = aVistaClamped * escalaShare;
-              productionRuleSource = `${aVistaSource}+FRENTE_C_ESCALA_${faixaMeta}`;
+            // FRENTE C — escala da FONTE ÚNICA (resolveFrenteCShare). Mesma
+            // regra que a tela de edição agora aplica. Aldalene INSS fixo +
+            // escala por meta. null => cai na cascata viva (profile/default).
+            const fcShare = resolveFrenteCShare({
+              goalRepasse,
+              productionValue,
+              target1Value,
+              target2Value,
+              isAldaleneInss: isAldalenePromoter && isInssRecord(record),
+              isFaixa580,
+            });
+            if (fcShare) {
+              commissionPercent = aVistaClamped * fcShare.share;
+              productionRuleSource = `${aVistaSource}+${fcShare.source}`;
             } else {
               // Mantem o acordo atual (cascata viva Etapa B) — NAO mexer.
               const resolution = resolvePromoterShareSync({
