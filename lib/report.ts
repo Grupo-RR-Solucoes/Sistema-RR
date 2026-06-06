@@ -1937,7 +1937,11 @@ export async function buildReportPreview(
       promoterScope === "individual"
         ? !data.selectedPromoterId
           ? ["Selecione um promotor antes de gerar a saida individual."]
-          : data.proposalRows.length === 0
+          : // Etapa 8 fix: usa proposal_count (vem do monthlyResults/cms no mes
+            // FECHADO), nao proposalRows do daily — que fica vazio no fechado e
+            // dava alerta falso. O export ja sai completo do cms (ex.: Luciana
+            // mai = 23 registros).
+            (selectedPromoter?.proposal_count ?? 0) === 0
             ? ["O promotor selecionado nao possui propostas detalhadas nesta competencia."]
             : []
         : [],
