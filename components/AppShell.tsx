@@ -45,7 +45,6 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/promotores", label: "Promotores", icon: "PM", visibleTo: ["socio", "funcionario", "promotor"] },
       { href: "/projecao", label: "Projeção", icon: "PJ", visibleTo: ["socio", "funcionario", "promotor"] },
-      { href: "/metas", label: "Metas", icon: "MT", visibleTo: ["socio", "funcionario"] },
       { href: "/cadastros", label: "Cadastros", icon: "CD", visibleTo: ["socio", "funcionario"] },
     ],
   },

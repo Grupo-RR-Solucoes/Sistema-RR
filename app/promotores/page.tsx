@@ -166,7 +166,7 @@ export default function PromotoresPage() {
 
 function PromotoresFullPage() {
   const [activeSection, setActiveSection] = useState<
-    "resumo" | "descontos" | "detalhamento" | "migracao"
+    "resumo" | "metas" | "descontos" | "detalhamento" | "migracao"
   >("resumo");
   const [selectedKey, setSelectedKey] = useState("");
   const [companyId, setCompanyId] = useState("");
@@ -177,12 +177,6 @@ function PromotoresFullPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [recalculating, setRecalculating] = useState(false);
-  const [targetForm, setTargetForm] = useState({
-    promoterId: "",
-    meta: "",
-    meta1: "",
-    meta2: "",
-  });
   const [agreementForm, setAgreementForm] = useState({
     promoterId: "",
     productionShare: "",
@@ -201,13 +195,18 @@ function PromotoresFullPage() {
     applyToCompany: false,
     notes: "",
   });
-  const [savingTarget, setSavingTarget] = useState(false);
   const [savingAgreement, setSavingAgreement] = useState(false);
   const [savingDiscount, setSavingDiscount] = useState(false);
   const [deletingDiscountId, setDeletingDiscountId] = useState("");
   const [proposalTargets, setProposalTargets] = useState<Record<string, string>>({});
   const [proposalReasons, setProposalReasons] = useState<Record<string, string>>({});
   const [movingProposalId, setMovingProposalId] = useState("");
+  // Aba "Metas & escala" (Fase 2 p2: editor em lote migrado da /metas — reusa
+  // /api/metas verbatim; a escala grava em promoter_goal_repasse, onde o motor lê).
+  const [metasRows, setMetasRows] = useState<MetaRow[]>([]);
+  const [metasDrafts, setMetasDrafts] = useState<Record<string, MetaDraft>>({});
+  const [metasLoading, setMetasLoading] = useState(false);
+  const [savingMetaId, setSavingMetaId] = useState("");
 
   const specialistQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -307,21 +306,6 @@ function PromotoresFullPage() {
 
   useEffect(() => {
     const selectedSummary = data.summaryRows.find((row) => row.promoter_id === promoterId);
-
-    if (!selectedSummary) {
-      return;
-    }
-
-    setTargetForm({
-      promoterId: selectedSummary.promoter_id,
-      meta: selectedSummary.target_value ? String(selectedSummary.target_value) : "",
-      meta1: selectedSummary.target_1_value ? String(selectedSummary.target_1_value) : "",
-      meta2: selectedSummary.target_2_value ? String(selectedSummary.target_2_value) : "",
-    });
-  }, [data.summaryRows, promoterId]);
-
-  useEffect(() => {
-    const selectedSummary = data.summaryRows.find((row) => row.promoter_id === promoterId);
     const productionAgreement = data.agreementRows.find(
       (row) => row.agreement_type === "PRODUCTION"
     );
@@ -390,52 +374,6 @@ function PromotoresFullPage() {
       setError(err.message || "Erro ao recalcular a competencia.");
     } finally {
       setRecalculating(false);
-    }
-  }
-
-  async function handleTargetSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    try {
-      setSavingTarget(true);
-      setError("");
-      setNotice("");
-
-      const [year, month] = (selectedKey || data.selectedPeriod.key || "").split("-");
-
-      const selectedSummary = data.summaryRows.find(
-        (row) => row.promoter_id === targetForm.promoterId
-      );
-
-      const response = await fetch("/api/promotores", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: "target_upsert",
-          promoterId: targetForm.promoterId,
-          companyId: selectedSummary?.company_id || null,
-          year: Number(year),
-          month: Number(month),
-          meta: parseBrazilianNumber(targetForm.meta),
-          meta1: parseBrazilianNumber(targetForm.meta1),
-          meta2: parseBrazilianNumber(targetForm.meta2),
-        }),
-      });
-
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "Erro ao salvar meta.");
-      }
-
-      setReloadKey((value) => value + 1);
-      setNotice("Meta mensal salva com sucesso.");
-    } catch (err: any) {
-      setError(err.message || "Erro ao salvar meta.");
-    } finally {
-      setSavingTarget(false);
     }
   }
 
@@ -680,6 +618,105 @@ function PromotoresFullPage() {
     [data.discountRows]
   );
 
+  // ---- Aba "Metas & escala": carrega/salva via /api/metas (reuso verbatim) ----
+  async function loadMetas() {
+    try {
+      setMetasLoading(true);
+      setError("");
+      const key = selectedKey || data.selectedPeriod.key || "";
+      const [year, month] = key.split("-");
+      if (!year || !month) {
+        setMetasRows([]);
+        return;
+      }
+      const params = new URLSearchParams({ year, month: String(Number(month)) });
+      if (companyId) params.set("companyId", companyId);
+      const res = await fetch(`/api/metas?${params.toString()}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Falha ao carregar metas.");
+      const rows: MetaRow[] = json.rows || [];
+      setMetasRows(rows);
+      const d: Record<string, MetaDraft> = {};
+      for (const r of rows) d[r.promoter_id] = metaRowToDraft(r);
+      setMetasDrafts(d);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao carregar metas.");
+      setMetasRows([]);
+    } finally {
+      setMetasLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeSection === "metas") {
+      loadMetas();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection, selectedKey, companyId, reloadKey]);
+
+  function setMetaDraft(id: string, patch: Partial<MetaDraft>) {
+    setMetasDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  }
+
+  async function saveMetaRow(row: MetaRow) {
+    const d = metasDrafts[row.promoter_id];
+    if (!d) return;
+    setSavingMetaId(row.promoter_id);
+    setError("");
+    setNotice("");
+    try {
+      const key = selectedKey || data.selectedPeriod.key || "";
+      const [yearS, monthS] = key.split("-");
+      const year = Number(yearS);
+      const month = Number(monthS);
+      const num = (s: string) => Number(String(s).replace(",", ".")) || 0;
+      const pctOrNull = (s: string) => (s === "" || s == null ? null : num(s) / 100);
+
+      // monthly_targets (meta/meta_1/meta_2) — MESMO upsert do target_upsert.
+      const metaRes = await fetch("/api/metas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "meta_upsert",
+          promoterId: row.promoter_id,
+          companyId: row.company_id,
+          year,
+          month,
+          meta: num(d.meta),
+          bonus1: num(d.bonus1),
+          bonus2: num(d.bonus2),
+        }),
+      });
+      if (!metaRes.ok) throw new Error((await metaRes.json())?.error || "Falha ao salvar metas.");
+
+      // promoter_goal_repasse (a ESCALA Frente C) — só quando há % base.
+      if (d.pct_base !== "") {
+        const repRes = await fetch("/api/metas", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "repasse_upsert",
+            promoterId: row.promoter_id,
+            year,
+            month,
+            pct_base: num(d.pct_base) / 100,
+            pct_meta1: pctOrNull(d.pct_meta1),
+            pct_meta2: pctOrNull(d.pct_meta2),
+          }),
+        });
+        if (!repRes.ok) throw new Error((await repRes.json())?.error || "Falha ao salvar escala.");
+      }
+
+      setNotice(`Metas/escala salvas: ${row.promoter_name}.`);
+      setReloadKey((v) => v + 1); // atualiza o Resumo (meta/faixa podem mudar)
+      await loadMetas();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar metas.");
+    } finally {
+      setSavingMetaId("");
+    }
+  }
+
   const competenceLabel =
     data.periods.find((period) => period.key === (selectedKey || data.selectedPeriod.key))
       ?.label ||
@@ -691,6 +728,7 @@ function PromotoresFullPage() {
   })();
   const tabs: Array<{ key: typeof activeSection; label: string }> = [
     { key: "resumo", label: "Resumo" },
+    { key: "metas", label: "Metas & escala" },
     { key: "descontos", label: "Descontos" },
     { key: "detalhamento", label: "Detalhamento" },
     { key: "migracao", label: "Migração" },
@@ -961,8 +999,8 @@ function PromotoresFullPage() {
                     <h3>Edição do promotor</h3>
                     <p className="who">Nenhum promotor selecionado</p>
                     <p className="empty" style={{ marginTop: 14 }}>
-                      Selecione uma linha na tabela para ajustar a <b>meta mensal</b> e o{" "}
-                      <b>acordo de repasse</b>.
+                      Selecione uma linha na tabela para ajustar o <b>acordo de repasse</b>.
+                      Metas e a escala de % ficam na aba <b>Metas &amp; escala</b>.
                     </p>
                   </div>
                 ) : (
@@ -971,48 +1009,6 @@ function PromotoresFullPage() {
                     <p className="who">
                       {selectedPromoterSummary.company_name} · {selectedPromoterSummary.status}
                     </p>
-
-                    <form className="mini" onSubmit={handleTargetSubmit}>
-                      <h4>Meta mensal</h4>
-                      <div className="field">
-                        <label>Meta de produção (R$)</label>
-                        <div className="inwrap">
-                          <span className="pre">R$</span>
-                          <input
-                            className="num"
-                            value={targetForm.meta}
-                            onChange={(event) =>
-                              setTargetForm((current) => ({ ...current, meta: event.target.value }))
-                            }
-                          />
-                        </div>
-                      </div>
-                      <div className="pair">
-                        <div className="field">
-                          <label>Meta 1 (R$)</label>
-                          <input
-                            className="num nopre"
-                            value={targetForm.meta1}
-                            onChange={(event) =>
-                              setTargetForm((current) => ({ ...current, meta1: event.target.value }))
-                            }
-                          />
-                        </div>
-                        <div className="field">
-                          <label>Meta 2 (R$)</label>
-                          <input
-                            className="num nopre"
-                            value={targetForm.meta2}
-                            onChange={(event) =>
-                              setTargetForm((current) => ({ ...current, meta2: event.target.value }))
-                            }
-                          />
-                        </div>
-                      </div>
-                      <button className="save" type="submit" disabled={savingTarget}>
-                        {savingTarget ? "Salvando…" : "Salvar meta"}
-                      </button>
-                    </form>
 
                     <form className="mini" onSubmit={handleAgreementSubmit}>
                       <h4>Acordo de repasse</h4>
@@ -1078,6 +1074,143 @@ function PromotoresFullPage() {
                   </div>
                 )}
               </aside>
+            </div>
+          </section>
+        ) : null}
+
+        {/* PANEL: METAS & ESCALA */}
+        {activeSection === "metas" ? (
+          <section className="panel active">
+            <div className="card">
+              <div className="card-head">
+                <div>
+                  <h2>Metas &amp; escala · {competenceShort}</h2>
+                  <p className="csub">
+                    META / BÔNUS e a escala de repasse (% base / meta&nbsp;1 / meta&nbsp;2) por
+                    promotor — em lote, salvar por linha. A escala alimenta o motor de comissão
+                    (Frente C): grava em promoter_goal_repasse, a mesma fonte que o cálculo lê.
+                  </p>
+                </div>
+                <span className="chip soft">{metasRows.length} promotores</span>
+              </div>
+              {metasLoading ? (
+                <div className="state">Carregando metas…</div>
+              ) : metasRows.length === 0 ? (
+                <div className="state">Sem metas ou escala para esta competência.</div>
+              ) : (
+                <div className="scroll">
+                  <table className="wide">
+                    <thead>
+                      <tr>
+                        <th className="l sticky">Promotor</th>
+                        <th className="l">Estado</th>
+                        <th>Meta (R$)</th>
+                        <th>Bônus 1 (R$)</th>
+                        <th>Bônus 2 (R$)</th>
+                        <th>Produção</th>
+                        <th>Falta p/ meta</th>
+                        <th className="l">Faixa</th>
+                        <th>% Base</th>
+                        <th>% Meta 1</th>
+                        <th>% Meta 2</th>
+                        <th>% Vigente</th>
+                        <th className="l">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {metasRows.map((row) => {
+                        const d = metasDrafts[row.promoter_id];
+                        if (!d) return null;
+                        return (
+                          <tr key={row.promoter_id}>
+                            <td className="l sticky prom" data-l="Promotor">
+                              {row.promoter_name}
+                            </td>
+                            <td className="l muted" data-l="Estado">
+                              {row.estado}
+                            </td>
+                            <td className="num" data-l="Meta (R$)">
+                              <input
+                                className="mtin"
+                                inputMode="decimal"
+                                value={d.meta}
+                                onChange={(e) => setMetaDraft(row.promoter_id, { meta: e.target.value })}
+                              />
+                            </td>
+                            <td className="num" data-l="Bônus 1 (R$)">
+                              <input
+                                className="mtin"
+                                inputMode="decimal"
+                                value={d.bonus1}
+                                onChange={(e) => setMetaDraft(row.promoter_id, { bonus1: e.target.value })}
+                              />
+                            </td>
+                            <td className="num" data-l="Bônus 2 (R$)">
+                              <input
+                                className="mtin"
+                                inputMode="decimal"
+                                value={d.bonus2}
+                                onChange={(e) => setMetaDraft(row.promoter_id, { bonus2: e.target.value })}
+                              />
+                            </td>
+                            <td className="num" data-l="Produção">
+                              {formatCurrency(row.production)}
+                            </td>
+                            <td className="num pay" data-l="Falta p/ meta">
+                              {formatCurrency(row.falta_meta)}
+                            </td>
+                            <td className="l" data-l="Faixa">
+                              <span className={`mtfaixa ${row.faixa.toLowerCase()}`}>
+                                {FAIXA_LABEL[row.faixa]}
+                              </span>
+                            </td>
+                            <td className="num" data-l="% Base">
+                              <input
+                                className="mtin pct"
+                                inputMode="decimal"
+                                placeholder="%"
+                                value={d.pct_base}
+                                onChange={(e) => setMetaDraft(row.promoter_id, { pct_base: e.target.value })}
+                              />
+                            </td>
+                            <td className="num" data-l="% Meta 1">
+                              <input
+                                className="mtin pct"
+                                inputMode="decimal"
+                                placeholder="%"
+                                value={d.pct_meta1}
+                                onChange={(e) => setMetaDraft(row.promoter_id, { pct_meta1: e.target.value })}
+                              />
+                            </td>
+                            <td className="num" data-l="% Meta 2">
+                              <input
+                                className="mtin pct"
+                                inputMode="decimal"
+                                placeholder="%"
+                                value={d.pct_meta2}
+                                onChange={(e) => setMetaDraft(row.promoter_id, { pct_meta2: e.target.value })}
+                              />
+                            </td>
+                            <td className="num pay" data-l="% Vigente">
+                              {pctLabel(row.pct_vigente)}
+                            </td>
+                            <td className="l" data-l="Ação">
+                              <button
+                                type="button"
+                                className="tinybtn"
+                                disabled={savingMetaId === row.promoter_id}
+                                onClick={() => saveMetaRow(row)}
+                              >
+                                {savingMetaId === row.promoter_id ? "Salvando…" : "Salvar"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </section>
         ) : null}
@@ -1578,6 +1711,61 @@ function formatDate(value?: string | null) {
   return new Intl.DateTimeFormat("pt-BR").format(date);
 }
 
+// ---- Aba "Metas & escala" (migrada da /metas) ----
+type MetaRow = {
+  promoter_id: string;
+  promoter_name: string;
+  company_id: string | null;
+  company_name: string;
+  estado: string;
+  meta: number;
+  bonus1: number;
+  bonus2: number;
+  production: number;
+  falta_meta: number;
+  faixa: "BASE" | "META1" | "META2";
+  pct_vigente: number | null;
+  pct_base: number | null;
+  pct_meta1: number | null;
+  pct_meta2: number | null;
+  has_repasse: boolean;
+};
+type MetaDraft = {
+  meta: string;
+  bonus1: string;
+  bonus2: string;
+  pct_base: string;
+  pct_meta1: string;
+  pct_meta2: string;
+};
+
+const FAIXA_LABEL: Record<string, string> = {
+  BASE: "Base",
+  META1: "Meta 1",
+  META2: "Meta 2",
+};
+
+// decimal (0.6666) -> display ("66.66"); valor R$ -> string crua.
+function metaRowToDraft(r: MetaRow): MetaDraft {
+  const pp = (f: number | null) => (f == null ? "" : String(+(f * 100).toFixed(4)));
+  return {
+    meta: r.meta ? String(r.meta) : "",
+    bonus1: r.bonus1 ? String(r.bonus1) : "",
+    bonus2: r.bonus2 ? String(r.bonus2) : "",
+    pct_base: pp(r.pct_base),
+    pct_meta1: pp(r.pct_meta1),
+    pct_meta2: pp(r.pct_meta2),
+  };
+}
+
+function pctLabel(fraction: number | null) {
+  if (fraction == null) return "—";
+  return `${(fraction * 100).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}%`;
+}
+
 const CSS = `
 .rrprom{
   --navy:#0F1F4A; --navy-deep:#0B1838; --navy-bar:#1E3066;
@@ -1682,6 +1870,13 @@ const CSS = `
 .rrprom .pay{font-weight:600;color:var(--ink);}
 .rrprom .neg{color:var(--red);}
 .rrprom .muted{color:var(--ink-2);}
+.rrprom .mtin{width:96px;border:1px solid var(--bd);border-radius:8px;padding:7px 9px;font-family:inherit;font-size:13px;color:var(--ink);text-align:right;background:#fff;}
+.rrprom .mtin:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,31,74,.08);}
+.rrprom .mtin.pct{width:70px;}
+.rrprom .mtfaixa{display:inline-flex;align-items:center;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap;}
+.rrprom .mtfaixa.base{color:var(--ink-2);background:#F1F3F7;border:1px solid var(--bd);}
+.rrprom .mtfaixa.meta1{color:var(--amber);background:var(--amber-bg);border:1px solid var(--amber-bd);}
+.rrprom .mtfaixa.meta2{color:var(--gold-deep);background:#FBF1DC;border:1px solid #EAD7A6;}
 .rrprom tfoot td{padding:13px 16px;border-top:1.5px solid var(--bd);font-weight:600;text-align:right;white-space:nowrap;background:#FBFBFD;}
 .rrprom tfoot td.l{text-align:left;color:var(--ink-2);}
 .rrprom tfoot .sticky{background:#FBFBFD;}
