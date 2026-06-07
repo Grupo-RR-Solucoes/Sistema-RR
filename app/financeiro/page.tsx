@@ -1,1662 +1,574 @@
 "use client";
 
-import type { CSSProperties, FormEvent, ReactNode } from "react";
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 
-type PeriodOption = {
-  key: string;
-  label: string;
-  year: number;
-  month: number;
-};
+// Etapa 8 (enxugar menu) Fase 3 — Tela A "Financeiro" (socio): consolida o antigo
+// /financeiro (Caixa & Resultado) + /dre numa tela de 2 abas. Reusa /api/financeiro
+// e /api/dre verbatim (zero religação). Entrada preservada: SALDO INICIAL (a despesa
+// virou só visão + link pro /despesas, que é o CRUD canônico).
 
-type Summary = {
-  periodLabel: string;
-  openingBalance: number;
+type Period = { key: string; label: string; year: number; month: number };
+
+type FinSummary = {
   receivedNet: number;
-  actualCash: number;
-  actualPrt: number;
-  actualInsurance: number;
-  actualEstorno: number;
-  actualRenewal: number;
   totalExpenses: number;
-  paidExpenses: number;
-  pendingExpenses: number;
+  comissoesPagas: number;
   operatingResult: number;
-  cashBalance: number;
-  futureDeferredBalance: number;
-  companiesCount: number;
-  expensesCount: number;
-};
-
-type CategoryTotal = {
-  label: string;
-  value: number;
-};
-
-type CashTrendPoint = {
-  key: string;
-  label: string;
+  actualPrt: number;
   openingBalance: number;
-  receivedNet: number;
-  totalExpenses: number;
-  paidExpenses: number;
   cashBalance: number;
 };
-
-type CompanyRow = {
-  id: string;
-  label: string;
-  cnpj?: string;
-  scope: "GROUP" | "COMPANY";
-  openingBalance: number;
-  receivedNet: number;
-  totalExpenses: number;
-  paidExpenses: number;
-  netResult: number;
-  cashBalance: number;
-};
-
-type ExpenseRow = {
-  id: string;
-  scope: "GROUP" | "COMPANY";
-  company_id?: string | null;
-  company_name: string;
-  company_cnpj?: string;
-  category_id?: string | null;
-  category_name: string;
-  description: string;
-  amount: number;
-  due_date?: string | null;
-  payment_date?: string | null;
-  status: string;
-  notes?: string | null;
-  created_at?: string | null;
-};
-
-type OpeningBalanceRow = {
-  id: string;
-  scope: "GROUP" | "COMPANY";
-  company_id?: string | null;
-  company_name: string;
-  company_cnpj?: string;
-  opening_balance: number;
-  created_at?: string | null;
-};
-
-type Category = {
-  id: string;
-  name: string;
-};
-
-type Company = {
-  id: string;
-  name: string;
-  cnpj: string;
-};
-
-type FinancialPayload = {
-  periods: PeriodOption[];
-  selectedPeriod: PeriodOption;
-  summary: Summary;
-  categoryTotals: CategoryTotal[];
-  cashTrend: CashTrendPoint[];
-  companyRows: CompanyRow[];
-  expenseRows: ExpenseRow[];
-  openingBalanceRows: OpeningBalanceRow[];
-  categories: Category[];
-  companies: Company[];
+type CashTrend = { key: string; label: string; receivedNet: number; totalExpenses: number; comissoesPagas: number };
+type CatTotal = Record<string, unknown>;
+type FinPayload = {
+  periods: Period[];
+  selectedPeriod: Period | null;
+  summary: FinSummary;
+  cashTrend: CashTrend[];
+  categoryTotals: CatTotal[];
   alerts: string[];
 };
 
-type ExpenseFormState = {
-  year: string;
-  month: string;
-  scope: "GROUP" | "COMPANY";
-  companyId: string;
-  categoryId: string;
-  description: string;
-  amount: string;
-  dueDate: string;
-  paymentDate: string;
-  status: "PLANNED" | "PAID";
-  notes: string;
+type DreRow = {
+  scope: "COMPANY" | "GROUP";
+  name: string;
+  receita: number;
+  comissoes: number;
+  despesas: number;
+  resultadoLiquido: number;
+};
+type DrePayload = {
+  closed: boolean;
+  period: Period | null;
+  companies: DreRow[];
+  group: DreRow | null;
+  alerts: string[];
 };
 
-type OpeningFormState = {
-  year: string;
-  month: string;
-  scope: "GROUP" | "COMPANY";
-  companyId: string;
-  openingBalance: string;
-};
+const brl = (v: number | null | undefined) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(Number(v ?? 0));
+const brl2 = (v: number | null | undefined) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 }).format(Number(v ?? 0));
 
-const emptyPayload: FinancialPayload = {
-  periods: [],
-  selectedPeriod: {
-    key: "",
-    label: "sem competencia",
-    year: 0,
-    month: 0,
-  },
-  summary: {
-    periodLabel: "sem competencia",
-    openingBalance: 0,
-    receivedNet: 0,
-    actualCash: 0,
-    actualPrt: 0,
-    actualInsurance: 0,
-    actualEstorno: 0,
-    actualRenewal: 0,
-    totalExpenses: 0,
-    paidExpenses: 0,
-    pendingExpenses: 0,
-    operatingResult: 0,
-    cashBalance: 0,
-    futureDeferredBalance: 0,
-    companiesCount: 0,
-    expensesCount: 0,
-  },
-  categoryTotals: [],
-  cashTrend: [],
-  companyRows: [],
-  expenseRows: [],
-  openingBalanceRows: [],
-  categories: [],
-  companies: [],
-  alerts: [],
-};
-
-const initialExpenseForm: ExpenseFormState = {
-  year: "",
-  month: "",
-  scope: "GROUP",
-  companyId: "",
-  categoryId: "",
-  description: "",
-  amount: "",
-  dueDate: "",
-  paymentDate: "",
-  status: "PLANNED",
-  notes: "",
-};
-
-const initialOpeningForm: OpeningFormState = {
-  year: "",
-  month: "",
-  scope: "GROUP",
-  companyId: "",
-  openingBalance: "",
-};
+function isClosed(p: { year: number; month: number }) {
+  const n = new Date();
+  return p.year < n.getFullYear() || (p.year === n.getFullYear() && p.month < n.getMonth() + 1);
+}
+function pick(o: Record<string, unknown>, keys: string[]): number | string | undefined {
+  for (const k of keys) {
+    const v = o[k];
+    if (v !== undefined && v !== null) return v as number | string;
+  }
+  return undefined;
+}
 
 export default function FinanceiroPage() {
-  const [activeSection, setActiveSection] = useState<
-    "visao" | "lancamentos" | "historico"
-  >("visao");
+  const [tab, setTab] = useState<"caixa" | "dre">("caixa");
   const [selectedKey, setSelectedKey] = useState("");
-  const [reloadKey, setReloadKey] = useState(0);
-  const [data, setData] = useState<FinancialPayload>(emptyPayload);
+  const [fin, setFin] = useState<FinPayload | null>(null);
+  const [dre, setDre] = useState<DrePayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [expenseForm, setExpenseForm] = useState<ExpenseFormState>(initialExpenseForm);
-  const [openingForm, setOpeningForm] = useState<OpeningFormState>(initialOpeningForm);
-  const [categoryName, setCategoryName] = useState("");
-  const [notice, setNotice] = useState("");
-  const [submitting, setSubmitting] = useState<"" | "expense" | "opening" | "category">("");
+  const [saldo, setSaldo] = useState("");
+  const [savingSaldo, setSavingSaldo] = useState(false);
+  const [saldoDone, setSaldoDone] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     async function load() {
       try {
         setLoading(true);
         setError("");
-
-        const params = new URLSearchParams();
-
-        if (selectedKey) {
-          const [year, month] = selectedKey.split("-");
-          params.set("year", year);
-          params.set("month", month);
+        const q = selectedKey
+          ? `?year=${selectedKey.split("-")[0]}&month=${Number(selectedKey.split("-")[1])}`
+          : "";
+        const [fr, dr] = await Promise.all([fetch(`/api/financeiro${q}`), fetch(`/api/dre${q}`)]);
+        const fj = await fr.json();
+        const dj = await dr.json();
+        if (!fr.ok) throw new Error(fj?.error || "Erro ao carregar o financeiro.");
+        if (!cancelled) {
+          setFin(fj as FinPayload);
+          setDre(dr.ok ? (dj as DrePayload) : null);
         }
-
-        const response = await fetch(
-          `/api/financeiro${params.toString() ? `?${params.toString()}` : ""}`
-        );
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(payload?.error || "Erro ao carregar financeiro.");
-        }
-
-        setData(payload || emptyPayload);
-      } catch (err: any) {
-        setError(err.message || "Erro ao carregar financeiro.");
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Erro ao carregar.");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
-
     load();
-  }, [selectedKey, reloadKey]);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedKey]);
 
   useEffect(() => {
-    if (!data.selectedPeriod.year || !data.selectedPeriod.month) return;
+    if (selectedKey || !fin?.periods?.length) return;
+    const closed = fin.periods.filter(isClosed);
+    const pick0 = closed.reduce<Period | null>((best, p) => {
+      if (!best) return p;
+      return p.year > best.year || (p.year === best.year && p.month > best.month) ? p : best;
+    }, null);
+    const target = pick0?.key || fin.selectedPeriod?.key || "";
+    if (target) setSelectedKey(target);
+  }, [fin, selectedKey]);
 
-    setExpenseForm((current) => ({
-      ...current,
-      year: String(data.selectedPeriod.year),
-      month: String(data.selectedPeriod.month),
+  const periodKey = selectedKey || fin?.selectedPeriod?.key || "";
+  const period = fin?.periods.find((p) => p.key === periodKey) || fin?.selectedPeriod || null;
+  const periodShort = period?.label || "—";
+
+  const chart = useMemo(() => {
+    const rows = fin?.cashTrend || [];
+    if (rows.length === 0) return null;
+    const saidaOf = (r: CashTrend) => r.totalExpenses + (r.comissoesPagas || 0);
+    const yMax = Math.max(1, ...rows.map((r) => Math.max(r.receivedNet, saidaOf(r)))) * 1.12;
+    const W = 1000, H = 320, padL = 56, padR = 16, padT = 16, padB = 40;
+    const x0 = padL, x1 = W - padR, y1 = H - padB;
+    const fy = (v: number) => y1 - (y1 - padT) * (v / yMax);
+    const n = rows.length, groupW = (x1 - x0) / n, barW = 24, gap = 8;
+    const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => ({ v: t * yMax, y: fy(t * yMax) }));
+    const bars = rows.map((r, i) => {
+      const cx = x0 + groupW * i + groupW / 2;
+      const saidas = saidaOf(r);
+      return {
+        label: r.label.split("/")[0],
+        inX: cx - barW - gap / 2, inY: fy(r.receivedNet), inH: y1 - fy(r.receivedNet),
+        outX: cx + gap / 2, outY: fy(saidas), outH: y1 - fy(saidas),
+        cur: i === rows.length - 1, cx,
+      };
+    });
+    return { W, H, x0, x1, y1, ticks, bars };
+  }, [fin]);
+
+  const cats = useMemo(() => {
+    const raw = fin?.categoryTotals || [];
+    const mapped = raw.map((c) => ({
+      name: String(pick(c, ["name", "category", "categoryName", "nome"]) ?? "—"),
+      total: Number(pick(c, ["total", "amount", "value", "valor"]) ?? 0),
+      pct: Number(pick(c, ["percent", "pct", "participacao"]) ?? 0),
     }));
+    const totalAll = mapped.reduce((s, c) => s + c.total, 0);
+    return mapped.map((c) => ({ ...c, pct: c.pct || (totalAll > 0 ? (c.total / totalAll) * 100 : 0) }));
+  }, [fin]);
 
-    setOpeningForm((current) => ({
-      ...current,
-      year: String(data.selectedPeriod.year),
-      month: String(data.selectedPeriod.month),
-    }));
-  }, [data.selectedPeriod.key, data.selectedPeriod.month, data.selectedPeriod.year]);
-
-  async function handleExpenseSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting("expense");
-    setNotice("");
-
-    try {
-      const response = await fetch("/api/financeiro", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: "expense",
-          year: Number(expenseForm.year),
-          month: Number(expenseForm.month),
-          scope: expenseForm.scope,
-          companyId: expenseForm.scope === "COMPANY" ? expenseForm.companyId : null,
-          categoryId: expenseForm.categoryId || null,
-          description: expenseForm.description,
-          amount: parseBrazilianNumber(expenseForm.amount),
-          dueDate: expenseForm.dueDate || null,
-          paymentDate: expenseForm.paymentDate || null,
-          status: expenseForm.status,
-          notes: expenseForm.notes || null,
-        }),
-      });
-
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "Erro ao lancar despesa.");
-      }
-
-      const periodKey = `${expenseForm.year}-${String(Number(expenseForm.month)).padStart(2, "0")}`;
-      setSelectedKey(periodKey);
-      setReloadKey((value) => value + 1);
-      setExpenseForm((current) => ({
-        ...current,
-        description: "",
-        amount: "",
-        dueDate: "",
-        paymentDate: "",
-        notes: "",
-      }));
-      setNotice("Despesa lancada com sucesso.");
-    } catch (err: any) {
-      setNotice(err.message || "Erro ao lancar despesa.");
-    } finally {
-      setSubmitting("");
+  function onSaldoInput(raw: string) {
+    const digits = raw.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+    if (!digits) {
+      setSaldo("");
+      return;
     }
+    const p = digits.padStart(3, "0");
+    const cents = p.slice(-2);
+    const intp = p.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+    setSaldo(`${intp},${cents}`);
   }
 
-  async function handleOpeningSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting("opening");
-    setNotice("");
-
+  async function saveSaldo(e: React.FormEvent) {
+    e.preventDefault();
+    if (!saldo || !period) return;
+    const openingBalance = Number(saldo.replace(/\./g, "").replace(",", ".")) || 0;
     try {
-      const response = await fetch("/api/financeiro", {
+      setSavingSaldo(true);
+      setError("");
+      const res = await fetch("/api/financeiro", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "opening_balance",
-          year: Number(openingForm.year),
-          month: Number(openingForm.month),
-          scope: openingForm.scope,
-          companyId: openingForm.scope === "COMPANY" ? openingForm.companyId : null,
-          openingBalance: parseBrazilianNumber(openingForm.openingBalance),
+          scope: "GROUP",
+          year: period.year,
+          month: period.month,
+          openingBalance,
         }),
       });
-
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "Erro ao salvar saldo inicial.");
-      }
-
-      const periodKey = `${openingForm.year}-${String(Number(openingForm.month)).padStart(2, "0")}`;
-      setSelectedKey(periodKey);
-      setReloadKey((value) => value + 1);
-      setOpeningForm((current) => ({
-        ...current,
-        openingBalance: "",
-      }));
-      setNotice("Saldo inicial salvo com sucesso.");
-    } catch (err: any) {
-      setNotice(err.message || "Erro ao salvar saldo inicial.");
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error || "Erro ao lançar o saldo inicial.");
+      setSaldoDone(true);
+      setTimeout(() => setSaldoDone(false), 2200);
+      setSelectedKey(period.key);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar o saldo.");
     } finally {
-      setSubmitting("");
+      setSavingSaldo(false);
     }
   }
-
-  async function handleCategorySubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting("category");
-    setNotice("");
-
-    try {
-      const response = await fetch("/api/financeiro", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: "category",
-          name: categoryName,
-        }),
-      });
-
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "Erro ao criar categoria.");
-      }
-
-      setReloadKey((value) => value + 1);
-      setCategoryName("");
-      setExpenseForm((current) => ({
-        ...current,
-        categoryId: payload?.category?.id || current.categoryId,
-      }));
-      setNotice("Categoria salva com sucesso.");
-    } catch (err: any) {
-      setNotice(err.message || "Erro ao criar categoria.");
-    } finally {
-      setSubmitting("");
-    }
-  }
-
-  const periodValue = selectedKey || data.selectedPeriod.key || "";
 
   return (
-    <section style={styles.page}>
-      <div style={styles.hero}>
-        <article style={styles.heroMain}>
-          <div style={styles.kicker}>Fluxo de caixa</div>
-          <h2 style={styles.title}>Financeiro consolidado do grupo</h2>
-          <p style={styles.description}>
-            Esta tela combina fechamento real, PRT futuro, despesas e saldo inicial
-            para mostrar o resultado do mes e o caixa projetado sem depender de
-            controles paralelos.
-          </p>
-        </article>
+    <div className="rrfin">
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <main className="wrap">
+        <nav className="crumb">
+          <Link href="/dashboard">Visão geral</Link>
+          <span className="sep">/</span>
+          <span>Financeiro</span>
+        </nav>
 
-        <article style={styles.heroAside}>
-          <div style={styles.selectorLabel}>Competencia analisada</div>
-          <select
-            value={periodValue}
-            onChange={(event) => setSelectedKey(event.target.value)}
-            style={styles.select}
-          >
-            {data.periods.length === 0 ? (
-              <option value="">Sem competencia</option>
-            ) : null}
-            {data.periods.map((period) => (
-              <option key={period.key} value={period.key}>
-                {period.label}
-              </option>
-            ))}
-          </select>
-
-          <div style={styles.heroStats}>
-            <div style={styles.heroStat}>
-              <span style={styles.heroStatLabel}>Empresas</span>
-              <strong style={styles.heroStatValue}>
-                {formatNumber(data.summary.companiesCount)}
-              </strong>
-            </div>
-            <div style={styles.heroStat}>
-              <span style={styles.heroStatLabel}>Despesas</span>
-              <strong style={styles.heroStatValue}>
-                {formatNumber(data.summary.expensesCount)}
-              </strong>
-            </div>
-          </div>
-        </article>
-      </div>
-
-      {error ? <div style={styles.errorBox}>{error}</div> : null}
-      {notice ? <div style={styles.noticeBox}>{notice}</div> : null}
-
-      {data.alerts.map((alert) => (
-        <div key={alert} style={styles.alertBox}>
-          {alert}
-        </div>
-      ))}
-
-      <div style={styles.summaryGrid}>
-        <MetricCard
-          label="Saldo inicial"
-          value={formatCurrency(data.summary.openingBalance)}
-          detail="Saldo manual de abertura somado entre grupo e empresas."
-          tone="blue"
-        />
-        <MetricCard
-          label="Recebido real"
-          value={formatCurrency(data.summary.receivedNet)}
-          detail="Fechamento liquido efetivamente recebido no mes."
-          tone="gold"
-        />
-        <MetricCard
-          label="Despesas do mes"
-          value={formatCurrency(data.summary.totalExpenses)}
-          detail={`Pagas ${formatCurrency(data.summary.paidExpenses)} | Pendentes ${formatCurrency(
-            data.summary.pendingExpenses
-          )}.`}
-          tone="blue"
-        />
-        <MetricCard
-          label="Resultado operacional"
-          value={formatCurrency(data.summary.operatingResult)}
-          detail="Recebimento real menos despesas lancadas."
-          tone={data.summary.operatingResult >= 0 ? "gold" : "blue"}
-        />
-        <MetricCard
-          label="Saldo de caixa"
-          value={formatCurrency(data.summary.cashBalance)}
-          detail="Saldo inicial + recebido real - despesas pagas."
-          tone="gold"
-        />
-        <MetricCard
-          label="Carteira PRT futura"
-          value={formatCurrency(data.summary.futureDeferredBalance)}
-          detail="Saldo de PRT ainda nao liquidado."
-          tone="blue"
-        />
-      </div>
-
-      <div style={styles.subsectionNav}>
-        <button
-          type="button"
-          onClick={() => setActiveSection("visao")}
-          style={{
-            ...styles.subsectionButton,
-            ...(activeSection === "visao" ? styles.subsectionButtonActive : {}),
-          }}
-        >
-          Visao consolidada
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveSection("historico")}
-          style={{
-            ...styles.subsectionButton,
-            ...(activeSection === "historico" ? styles.subsectionButtonActive : {}),
-          }}
-        >
-          Historico
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveSection("lancamentos")}
-          style={{
-            ...styles.subsectionButton,
-            ...(activeSection === "lancamentos" ? styles.subsectionButtonActive : {}),
-          }}
-        >
-          Lancamentos
-        </button>
-      </div>
-
-      {activeSection === "historico" ? (
-      <div style={styles.topGrid}>
-        <article style={styles.chartCard}>
-          <div style={styles.sectionHeader}>
+        <header className="header">
+          <div className="header-top">
             <div>
-              <div style={styles.sectionKicker}>Historico</div>
-              <h3 style={styles.sectionTitle}>Fluxo de caixa mensal</h3>
+              <p className="brand">GRUPO RR CRED</p>
+              <h1>Financeiro</h1>
             </div>
-            <div style={styles.sectionChip}>{data.cashTrend.length} meses</div>
-          </div>
-          <CashTrendChart items={data.cashTrend} loading={loading} />
-        </article>
-
-        <article style={styles.chartCard}>
-          <div style={styles.sectionHeader}>
-            <div>
-              <div style={styles.sectionKicker}>Despesas</div>
-              <h3 style={styles.sectionTitle}>Participacao por categoria</h3>
+            <div className="comp">
+              <select aria-label="Competência" value={periodKey} onChange={(e) => setSelectedKey(e.target.value)}>
+                {(fin?.periods ?? []).map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label} · {isClosed(p) ? "fechado" : "em aberto"}
+                  </option>
+                ))}
+              </select>
+              <span className="chev">▾</span>
             </div>
-            <div style={styles.sectionChip}>{data.categoryTotals.length} categorias</div>
           </div>
-          <CategoryBreakdown items={data.categoryTotals} loading={loading} />
-        </article>
-      </div>
-      ) : null}
+          <div className="tabs" role="tablist">
+            <button className="tab" role="tab" aria-selected={tab === "caixa"} onClick={() => setTab("caixa")}>
+              Caixa &amp; Resultado
+            </button>
+            <button className="tab" role="tab" aria-selected={tab === "dre"} onClick={() => setTab("dre")}>
+              DRE
+            </button>
+          </div>
+        </header>
 
-      {activeSection === "visao" ? (
-      <div style={styles.contentGrid}>
-        <article style={styles.tableCard}>
-          <div style={styles.sectionHeader}>
-            <div>
-              <div style={styles.sectionKicker}>Visao por caixa</div>
-              <h3 style={styles.sectionTitle}>Grupo e empresas</h3>
+        {error ? <div className="banner err">{error}</div> : null}
+        {loading ? <div className="state">Carregando financeiro…</div> : null}
+
+        {!loading && tab === "caixa" && fin ? (
+          <div className="panes">
+            <div className="summary">
+              <div className="scard">
+                <p className="k">Recebido</p>
+                <div className="v num">{brl(fin.summary.receivedNet)}</div>
+                <div className="s">crédito recebido (bruto)</div>
+              </div>
+              <div className="scard">
+                <p className="k">Comissões pagas</p>
+                <div className="v num">{brl(fin.summary.comissoesPagas)}</div>
+                <div className="s gold">repasse aos promotores</div>
+              </div>
+              <div className="scard">
+                <p className="k">Despesas</p>
+                <div className="v num">{brl(fin.summary.totalExpenses)}</div>
+                <div className="s">operacionais</div>
+              </div>
+              <div className="scard accent">
+                <p className="k">Saldo do mês</p>
+                <div className="v num">{brl(fin.summary.operatingResult)}</div>
+                <div className="s green">recebido − comissões − despesas</div>
+              </div>
             </div>
-            <div style={styles.sectionChip}>{data.companyRows.length} caixas</div>
-          </div>
+            <p className="note"><span className="dot" />Saldo de <b>caixa</b> = recebido − comissões pagas − despesas. Difere do resultado da DRE pela receita complementar (competência, não caixa).</p>
 
-          {loading ? (
-            <div style={styles.emptyState}>Carregando consolidacao financeira...</div>
-          ) : data.companyRows.length === 0 ? (
-            <div style={styles.emptyState}>Sem movimento financeiro nesta competencia.</div>
-          ) : (
-            <div
-              className={`rr-table-wrap${data.companyRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
-              style={styles.tableWrap}
-            >
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Escopo</th>
-                    <th style={styles.th}>Saldo inicial</th>
-                    <th style={styles.th}>Recebido</th>
-                    <th style={styles.th}>Despesas</th>
-                    <th style={styles.th}>Despesas pagas</th>
-                    <th style={styles.th}>Resultado</th>
-                    <th style={styles.th}>Caixa</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.companyRows.map((row) => (
-                    <tr key={row.id}>
-                      <td style={styles.td}>
-                        <div style={styles.companyName}>{row.label}</div>
-                        <div style={styles.companyMeta}>
-                          {row.scope === "GROUP" ? "Consolidado de grupo" : row.cnpj || "-"}
+            <section className="card">
+              <div className="card-head">
+                <div>
+                  <h2>Fluxo de caixa &amp; despesas</h2>
+                  <p className="csub">Entradas, saídas e composição</p>
+                </div>
+                <span className="socio">SÓCIOS</span>
+              </div>
+              <div className="flow">
+                <div className="panel">
+                  <p className="panel-title">Fluxo de caixa mensal</p>
+                  {chart ? (
+                    <svg className="flux" viewBox={`0 0 ${chart.W} ${chart.H}`} role="img" aria-label="Entradas e saídas mensais">
+                      {chart.ticks.map((t, i) => (
+                        <g key={i}>
+                          <line x1={chart.x0} x2={chart.x1} y1={t.y} y2={t.y} stroke="#E9ECF1" strokeWidth={i === 0 ? 1.5 : 1} />
+                          <text x={chart.x0 - 12} y={t.y + 4} textAnchor="end" fill="#9AA1B0" fontSize="13" fontFamily="'IBM Plex Mono', monospace">
+                            {t.v === 0 ? "0" : `${Math.round(t.v / 1000)}k`}
+                          </text>
+                        </g>
+                      ))}
+                      {chart.bars.map((b, i) => (
+                        <g key={i}>
+                          <rect x={b.inX} y={b.inY} width={24} height={b.inH} rx={5} fill="#0F1F4A" />
+                          <rect x={b.outX} y={b.outY} width={24} height={b.outH} rx={5} fill="#D6A13F" />
+                          <text x={b.cx} y={chart.H - 14} textAnchor="middle" fill={b.cur ? "#0F1F4A" : "#9AA1B0"} fontSize="13" fontWeight={b.cur ? 600 : 400}>
+                            {b.label}
+                          </text>
+                        </g>
+                      ))}
+                    </svg>
+                  ) : (
+                    <div className="state">Sem histórico de caixa.</div>
+                  )}
+                  <div className="legend">
+                    <span><i className="in" />Entradas</span>
+                    <span><i className="out" />Saídas</span>
+                  </div>
+                </div>
+                <div className="panel">
+                  <p className="panel-title">Participação por categoria</p>
+                  {cats.length === 0 ? (
+                    <div className="state sm">Sem despesas lançadas nesta competência.</div>
+                  ) : (
+                    <div className="cats">
+                      {cats.map((c, i) => (
+                        <div key={c.name} className={`cat${i === 0 ? " lead" : ""}`}>
+                          <div className="top">
+                            <span className="nm">{c.name}</span>
+                            <span className="pc num">{c.pct.toFixed(1).replace(".", ",")}%</span>
+                          </div>
+                          <div className="track"><div className="fill" style={{ width: `${Math.min(100, c.pct)}%` }} /></div>
                         </div>
-                      </td>
-                      <td style={styles.td}>{formatCurrency(row.openingBalance)}</td>
-                      <td style={styles.td}>{formatCurrency(row.receivedNet)}</td>
-                      <td style={styles.td}>{formatCurrency(row.totalExpenses)}</td>
-                      <td style={styles.td}>{formatCurrency(row.paidExpenses)}</td>
-                      <td style={styles.tdStrong}>{formatCurrency(row.netResult)}</td>
-                      <td style={styles.tdStrong}>{formatCurrency(row.cashBalance)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </article>
-
-      </div>
-      ) : null}
-
-      {activeSection === "lancamentos" ? (
-      <div style={styles.contentGrid}>
-        <aside style={styles.formRail}>
-          <article style={styles.formCard}>
-            <div style={styles.sectionHeaderCompact}>
-              <div>
-                <div style={styles.sectionKicker}>Lancamento manual</div>
-                <h3 style={styles.sectionTitle}>Nova despesa</h3>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-            <form onSubmit={handleExpenseSubmit} style={styles.formGrid}>
-              <FormRow label="Ano">
-                <input
-                  value={expenseForm.year}
-                  onChange={(event) =>
-                    setExpenseForm((current) => ({ ...current, year: event.target.value }))
-                  }
-                  style={styles.input}
-                  inputMode="numeric"
-                />
-              </FormRow>
-              <FormRow label="Mes">
-                <select
-                  value={expenseForm.month}
-                  onChange={(event) =>
-                    setExpenseForm((current) => ({ ...current, month: event.target.value }))
-                  }
-                  style={styles.input}
-                >
-                  {Array.from({ length: 12 }, (_, index) => String(index + 1)).map((month) => (
-                    <option key={month} value={month}>
-                      {month.padStart(2, "0")}
-                    </option>
-                  ))}
-                </select>
-              </FormRow>
-              <FormRow label="Escopo">
-                <select
-                  value={expenseForm.scope}
-                  onChange={(event) =>
-                    setExpenseForm((current) => ({
-                      ...current,
-                      scope: event.target.value as "GROUP" | "COMPANY",
-                      companyId: event.target.value === "COMPANY" ? current.companyId : "",
-                    }))
-                  }
-                  style={styles.input}
-                >
-                  <option value="GROUP">Grupo</option>
-                  <option value="COMPANY">Empresa</option>
-                </select>
-              </FormRow>
-              {expenseForm.scope === "COMPANY" ? (
-                <FormRow label="Empresa">
-                  <select
-                    value={expenseForm.companyId}
-                    onChange={(event) =>
-                      setExpenseForm((current) => ({ ...current, companyId: event.target.value }))
-                    }
-                    style={styles.input}
-                  >
-                    <option value="">Selecione</option>
-                    {data.companies.map((company) => (
-                      <option key={company.id} value={company.id}>
-                        {company.name}
-                      </option>
+            </section>
+
+            <section className="card">
+              <div className="card-head">
+                <div>
+                  <h2>Despesas do mês</h2>
+                  <p className="csub">Visão consolidada · {periodShort} — somente leitura</p>
+                </div>
+                <Link className="card-link" href="/despesas">Gerenciar despesas <span className="arr">→</span></Link>
+              </div>
+              {cats.length === 0 ? (
+                <div className="state sm">Nenhuma despesa lançada. Lance em <Link href="/despesas" className="ilink">Gerenciar despesas</Link>.</div>
+              ) : (
+                <>
+                  <div className="dlist">
+                    {cats.map((c, i) => (
+                      <div key={c.name} className={`drow${i === 0 ? " lead" : ""}`}>
+                        <span className="dot" />
+                        <span className="nm">{c.name}</span>
+                        <span className="amt num">{brl(c.total)}</span>
+                      </div>
                     ))}
-                  </select>
-                </FormRow>
-              ) : null}
-              <FormRow label="Categoria">
-                <select
-                  value={expenseForm.categoryId}
-                  onChange={(event) =>
-                    setExpenseForm((current) => ({ ...current, categoryId: event.target.value }))
-                  }
-                  style={styles.input}
-                >
-                  <option value="">Sem categoria</option>
-                  {data.categories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-              </FormRow>
-              <FormRow label="Descricao">
-                <input
-                  value={expenseForm.description}
-                  onChange={(event) =>
-                    setExpenseForm((current) => ({
-                      ...current,
-                      description: event.target.value,
-                    }))
-                  }
-                  style={styles.input}
-                />
-              </FormRow>
-              <FormRow label="Valor">
-                <input
-                  value={expenseForm.amount}
-                  onChange={(event) =>
-                    setExpenseForm((current) => ({ ...current, amount: event.target.value }))
-                  }
-                  style={styles.input}
-                  placeholder="0,00"
-                />
-              </FormRow>
-              <FormRow label="Vencimento">
-                <input
-                  type="date"
-                  value={expenseForm.dueDate}
-                  onChange={(event) =>
-                    setExpenseForm((current) => ({ ...current, dueDate: event.target.value }))
-                  }
-                  style={styles.input}
-                />
-              </FormRow>
-              <FormRow label="Pagamento">
-                <input
-                  type="date"
-                  value={expenseForm.paymentDate}
-                  onChange={(event) =>
-                    setExpenseForm((current) => ({
-                      ...current,
-                      paymentDate: event.target.value,
-                    }))
-                  }
-                  style={styles.input}
-                />
-              </FormRow>
-              <FormRow label="Status">
-                <select
-                  value={expenseForm.status}
-                  onChange={(event) =>
-                    setExpenseForm((current) => ({
-                      ...current,
-                      status: event.target.value as "PLANNED" | "PAID",
-                    }))
-                  }
-                  style={styles.input}
-                >
-                  <option value="PLANNED">Planejada</option>
-                  <option value="PAID">Paga</option>
-                </select>
-              </FormRow>
-              <FormRow label="Observacoes">
-                <textarea
-                  value={expenseForm.notes}
-                  onChange={(event) =>
-                    setExpenseForm((current) => ({ ...current, notes: event.target.value }))
-                  }
-                  style={styles.textarea}
-                />
-              </FormRow>
-              <button type="submit" style={styles.primaryButton} disabled={submitting === "expense"}>
-                {submitting === "expense" ? "Salvando..." : "Lancar despesa"}
-              </button>
-            </form>
-          </article>
+                  </div>
+                  <div className="dtot">
+                    <span className="l">Total de despesas · {periodShort}</span>
+                    <span className="v num">{brl(fin.summary.totalExpenses)}</span>
+                  </div>
+                </>
+              )}
+            </section>
 
-          <article style={styles.formCard}>
-            <div style={styles.sectionHeaderCompact}>
-              <div>
-                <div style={styles.sectionKicker}>Saldo inicial</div>
-                <h3 style={styles.sectionTitle}>Abrir caixa do mes</h3>
+            <div className="open">
+              <span className="oi">R$</span>
+              <div className="otxt">
+                <h3>Abrir caixa do mês</h3>
+                <p>Lance o saldo inicial da competência ({periodShort}) para iniciar a conciliação de caixa.</p>
               </div>
+              <form onSubmit={saveSaldo} autoComplete="off">
+                <div className="field">
+                  <span className="pre">R$</span>
+                  <input type="text" inputMode="decimal" placeholder="0,00" aria-label="Saldo inicial" value={saldo} onChange={(e) => onSaldoInput(e.target.value)} />
+                </div>
+                <button type="submit" className={`save${saldoDone ? " done" : ""}`} disabled={savingSaldo}>
+                  {saldoDone ? "Saldo lançado" : savingSaldo ? "Salvando…" : "Salvar saldo"} <span className="ck">✓</span>
+                </button>
+              </form>
+              <p className="help"><span className="dot" />Única entrada desta tela · demais lançamentos em <Link href="/despesas" className="ilink">Gerenciar despesas</Link>.</p>
             </div>
-            <form onSubmit={handleOpeningSubmit} style={styles.formGrid}>
-              <FormRow label="Ano">
-                <input
-                  value={openingForm.year}
-                  onChange={(event) =>
-                    setOpeningForm((current) => ({ ...current, year: event.target.value }))
-                  }
-                  style={styles.input}
-                  inputMode="numeric"
-                />
-              </FormRow>
-              <FormRow label="Mes">
-                <select
-                  value={openingForm.month}
-                  onChange={(event) =>
-                    setOpeningForm((current) => ({ ...current, month: event.target.value }))
-                  }
-                  style={styles.input}
-                >
-                  {Array.from({ length: 12 }, (_, index) => String(index + 1)).map((month) => (
-                    <option key={month} value={month}>
-                      {month.padStart(2, "0")}
-                    </option>
-                  ))}
-                </select>
-              </FormRow>
-              <FormRow label="Escopo">
-                <select
-                  value={openingForm.scope}
-                  onChange={(event) =>
-                    setOpeningForm((current) => ({
-                      ...current,
-                      scope: event.target.value as "GROUP" | "COMPANY",
-                      companyId: event.target.value === "COMPANY" ? current.companyId : "",
-                    }))
-                  }
-                  style={styles.input}
-                >
-                  <option value="GROUP">Grupo</option>
-                  <option value="COMPANY">Empresa</option>
-                </select>
-              </FormRow>
-              {openingForm.scope === "COMPANY" ? (
-                <FormRow label="Empresa">
-                  <select
-                    value={openingForm.companyId}
-                    onChange={(event) =>
-                      setOpeningForm((current) => ({ ...current, companyId: event.target.value }))
-                    }
-                    style={styles.input}
-                  >
-                    <option value="">Selecione</option>
-                    {data.companies.map((company) => (
-                      <option key={company.id} value={company.id}>
-                        {company.name}
-                      </option>
+          </div>
+        ) : null}
+
+        {!loading && tab === "dre" ? (
+          <div className="panes">
+            {!dre || !dre.group ? (
+              <div className="card">
+                <div className="state">
+                  {dre?.alerts?.[0] || "DRE indisponível para esta competência (só meses fechados com receita)."}
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="note"><span className="dot" /><b>DRE gerencial · {dre.period?.label || periodShort}</b>&nbsp;— resultado consolidado por CNPJ</p>
+                <section className="card">
+                  <div className="card-head">
+                    <div>
+                      <h2>Resultado por empresa</h2>
+                      <p className="csub">Receita − comissões − despesas = resultado</p>
+                    </div>
+                    <span className="socio">SÓCIOS</span>
+                  </div>
+                  <div className="dre-tbl">
+                    <div className="dhead">
+                      <span className="h">Empresa</span>
+                      <span className="h r">Receita</span>
+                      <span className="h r">Comissões</span>
+                      <span className="h r">Despesas</span>
+                      <span className="h r">Resultado</span>
+                    </div>
+                    {dre.companies.map((c) => (
+                      <div className="dr" key={c.name}>
+                        <div className="emp"><span className="st" />{c.name}</div>
+                        <div className="dcell"><span className="k">Receita</span><span className="v num muted">{brl2(c.receita)}</span></div>
+                        <div className="dcell"><span className="k">Comissões</span><span className="v num neg">−{brl2(c.comissoes)}</span></div>
+                        <div className="dcell"><span className="k">Despesas</span><span className="v num neg">{c.despesas ? `−${brl2(c.despesas)}` : brl2(0)}</span></div>
+                        <div className="dcell"><span className="k">Resultado</span><span className="v num res">{brl2(c.resultadoLiquido)}</span></div>
+                      </div>
                     ))}
-                  </select>
-                </FormRow>
-              ) : null}
-              <FormRow label="Valor">
-                <input
-                  value={openingForm.openingBalance}
-                  onChange={(event) =>
-                    setOpeningForm((current) => ({
-                      ...current,
-                      openingBalance: event.target.value,
-                    }))
-                  }
-                  style={styles.input}
-                  placeholder="0,00"
-                />
-              </FormRow>
-              <button type="submit" style={styles.secondaryButton} disabled={submitting === "opening"}>
-                {submitting === "opening" ? "Salvando..." : "Salvar saldo inicial"}
-              </button>
-            </form>
-          </article>
-
-          <article style={styles.formCard}>
-            <div style={styles.sectionHeaderCompact}>
-              <div>
-                <div style={styles.sectionKicker}>Categorias</div>
-                <h3 style={styles.sectionTitle}>Nova categoria</h3>
-              </div>
-            </div>
-            <form onSubmit={handleCategorySubmit} style={styles.formGrid}>
-              <FormRow label="Nome">
-                <input
-                  value={categoryName}
-                  onChange={(event) => setCategoryName(event.target.value)}
-                  style={styles.input}
-                />
-              </FormRow>
-              <button type="submit" style={styles.secondaryButton} disabled={submitting === "category"}>
-                {submitting === "category" ? "Salvando..." : "Salvar categoria"}
-              </button>
-            </form>
-          </article>
-        </aside>
-      </div>
-      ) : null}
-
-      {activeSection === "lancamentos" ? (
-      <div style={styles.bottomGrid}>
-        <article style={styles.tableCard}>
-          <div style={styles.sectionHeader}>
-            <div>
-              <div style={styles.sectionKicker}>Movimentos do mes</div>
-              <h3 style={styles.sectionTitle}>Despesas lancadas</h3>
-            </div>
-            <div style={styles.sectionChip}>{data.expenseRows.length} despesas</div>
-          </div>
-
-          {loading ? (
-            <div style={styles.emptyState}>Carregando despesas...</div>
-          ) : data.expenseRows.length === 0 ? (
-            <div style={styles.emptyState}>Nenhuma despesa lancada nesta competencia.</div>
-          ) : (
-            <div
-              className={`rr-table-wrap${data.expenseRows.length > 15 ? " rr-table-wrap--scrollable" : ""}`}
-              style={styles.tableWrap}
-            >
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Descricao</th>
-                    <th style={styles.th}>Escopo</th>
-                    <th style={styles.th}>Categoria</th>
-                    <th style={styles.th}>Valor</th>
-                    <th style={styles.th}>Status</th>
-                    <th style={styles.th}>Vencimento</th>
-                    <th style={styles.th}>Pagamento</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.expenseRows.map((row) => (
-                    <tr key={row.id}>
-                      <td style={styles.td}>
-                        <div style={styles.companyName}>{row.description}</div>
-                        <div style={styles.companyMeta}>{row.company_name}</div>
-                      </td>
-                      <td style={styles.td}>{row.scope === "GROUP" ? "Grupo" : "Empresa"}</td>
-                      <td style={styles.td}>{row.category_name}</td>
-                      <td style={styles.tdStrong}>{formatCurrency(row.amount)}</td>
-                      <td style={styles.td}>
-                        <span
-                          style={{
-                            ...styles.badge,
-                            ...(normalizeStatus(row.status) === "PAID"
-                              ? styles.badgeOk
-                              : styles.badgeWarning),
-                          }}
-                        >
-                          {normalizeStatus(row.status) === "PAID" ? "paga" : "planejada"}
-                        </span>
-                      </td>
-                      <td style={styles.td}>{formatDate(row.due_date)}</td>
-                      <td style={styles.td}>{formatDate(row.payment_date)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </article>
-
-        <article style={styles.tableCard}>
-          <div style={styles.sectionHeader}>
-            <div>
-              <div style={styles.sectionKicker}>Abertura do mes</div>
-              <h3 style={styles.sectionTitle}>Saldos iniciais</h3>
-            </div>
-            <div style={styles.sectionChip}>{data.openingBalanceRows.length} saldos</div>
-          </div>
-
-          {loading ? (
-            <div style={styles.emptyState}>Carregando saldos...</div>
-          ) : data.openingBalanceRows.length === 0 ? (
-            <div style={styles.emptyState}>Nenhum saldo inicial lancado nesta competencia.</div>
-          ) : (
-            <div style={styles.list}>
-              {data.openingBalanceRows.map((row) => (
-                <div key={row.id} style={styles.listItem}>
-                  <div>
-                    <div style={styles.companyName}>{row.company_name}</div>
-                    <div style={styles.companyMeta}>
-                      {row.scope === "GROUP" ? "Grupo RR" : row.company_cnpj || "-"}
+                    <div className="dr total">
+                      <div className="emp"><span className="st" />{dre.group.name}</div>
+                      <div className="dcell"><span className="k">Receita</span><span className="v num">{brl2(dre.group.receita)}</span></div>
+                      <div className="dcell"><span className="k">Comissões</span><span className="v num neg">−{brl2(dre.group.comissoes)}</span></div>
+                      <div className="dcell"><span className="k">Despesas</span><span className="v num neg">{dre.group.despesas ? `−${brl2(dre.group.despesas)}` : brl2(0)}</span></div>
+                      <div className="dcell"><span className="k">Resultado</span><span className="v num res">{brl2(dre.group.resultadoLiquido)}</span></div>
                     </div>
                   </div>
-                  <strong style={styles.listValue}>{formatCurrency(row.opening_balance)}</strong>
-                </div>
-              ))}
-            </div>
-          )}
-        </article>
-      </div>
-      ) : null}
-    </section>
-  );
-}
-
-function FormRow({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <label style={styles.formRow}>
-      <span style={styles.formLabel}>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  detail,
-  tone,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-  tone: "blue" | "gold";
-}) {
-  return (
-    <article
-      style={{
-        ...styles.metricCard,
-        background:
-          tone === "blue"
-            ? "linear-gradient(135deg, rgba(13,77,227,0.12) 0%, rgba(255,255,255,0.98) 100%)"
-            : "linear-gradient(135deg, rgba(255,240,0,0.18) 0%, rgba(214,161,63,0.18) 100%)",
-      }}
-    >
-      <div style={styles.metricLabel}>{label}</div>
-      <div
-        style={{
-          ...styles.metricValue,
-          color: tone === "blue" ? "var(--rr-blue-deep)" : "#9a6b06",
-        }}
-      >
-        {value}
-      </div>
-      <div style={styles.metricDetail}>{detail}</div>
-    </article>
-  );
-}
-
-function CashTrendChart({
-  items,
-  loading,
-}: {
-  items: CashTrendPoint[];
-  loading: boolean;
-}) {
-  if (loading) {
-    return <div style={styles.emptyState}>Carregando historico financeiro...</div>;
-  }
-
-  if (items.length === 0) {
-    return <div style={styles.emptyState}>Sem historico suficiente para o fluxo de caixa.</div>;
-  }
-
-  const maxValue = Math.max(
-    1,
-    ...items.flatMap((item) => [item.cashBalance, item.receivedNet])
-  );
-
-  return (
-    <div style={styles.barChart}>
-      {items.map((item) => (
-        <div key={item.key} style={styles.barColumn}>
-          <div style={styles.barValue}>{formatCurrencyCompact(item.cashBalance)}</div>
-          <div style={styles.barTrack}>
-            <div
-              style={{
-                ...styles.barFillBack,
-                height: `${Math.max((item.receivedNet / maxValue) * 100, item.receivedNet > 0 ? 10 : 0)}%`,
-              }}
-            />
-            <div
-              style={{
-                ...styles.barFillFront,
-                height: `${Math.max((item.cashBalance / maxValue) * 100, item.cashBalance > 0 ? 10 : 0)}%`,
-              }}
-            />
+                </section>
+              </>
+            )}
           </div>
-          <div style={styles.barLabel}>{item.label}</div>
-        </div>
-      ))}
+        ) : null}
+      </main>
     </div>
   );
 }
 
-function CategoryBreakdown({
-  items,
-  loading,
-}: {
-  items: CategoryTotal[];
-  loading: boolean;
-}) {
-  if (loading) {
-    return <div style={styles.emptyState}>Carregando categorias...</div>;
-  }
-
-  if (items.length === 0) {
-    return <div style={styles.emptyState}>Nenhuma despesa categorizada neste mes.</div>;
-  }
-
-  const maxValue = Math.max(...items.map((item) => item.value), 1);
-
-  return (
-    <div style={styles.categoryList}>
-      {items.map((item, index) => (
-        <div key={item.label} style={styles.categoryItem}>
-          <div style={styles.categoryTop}>
-            <span style={styles.categoryLabel}>{item.label}</span>
-            <strong style={styles.categoryValue}>{formatCurrency(item.value)}</strong>
-          </div>
-          <div style={styles.categoryTrack}>
-            <div
-              style={{
-                ...styles.categoryFill,
-                width: `${Math.max((item.value / maxValue) * 100, 8)}%`,
-                background: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
-              }}
-            />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+const CSS = `
+.rrfin{
+  --navy:#0F1F4A; --navy-bar:#1E3066; --yellow:#FFF000; --gold:#D6A13F; --gold-deep:#B9842A; --gold-soft:#E7BE6A;
+  --green:#3C9D6B; --green-soft:#5FB98A; --red:#C0443C; --red-bg:#FBECEB;
+  --page:#EDEFF3; --card:#FFFFFF; --bd:#E4E7EC; --bd-soft:#EEF0F4;
+  --ink:#16203A; --ink-2:#4B5468; --ink-3:#838B9C; --r-lg:20px; --r-md:16px;
+  --shadow:0 1px 2px rgba(15,31,74,.04), 0 8px 24px rgba(15,31,74,.05);
+  background:var(--page);color:var(--ink);font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.45;
 }
+.rrfin *{box-sizing:border-box;}
+.rrfin .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+.rrfin .wrap{max-width:1080px;margin:0 auto;padding:34px 28px 56px;display:flex;flex-direction:column;gap:22px;}
+.rrfin .crumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-3);margin:-6px 2px -4px;}
+.rrfin .crumb a{color:var(--ink-2);text-decoration:none;font-weight:500;}
+.rrfin .crumb a:hover{color:var(--navy);}
+.rrfin .crumb .sep{color:#C2C8D2;}
+.rrfin .header{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 34px;color:#fff;position:relative;overflow:hidden;}
+.rrfin .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
+.rrfin .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
+.rrfin .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
+.rrfin .header h1{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
+.rrfin .comp{position:relative;}
+.rrfin .comp select{appearance:none;-webkit-appearance:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);color:#E4E9F4;padding:8px 36px 8px 14px;border-radius:999px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
+.rrfin .comp select option{color:#16203A;}
+.rrfin .comp select:focus{outline:none;border-color:rgba(255,255,255,.35);}
+.rrfin .comp .chev{position:absolute;right:14px;top:50%;transform:translateY(-50%);pointer-events:none;color:#9DA9C6;font-size:11px;}
+.rrfin .tabs{margin-top:26px;display:inline-flex;gap:4px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:5px;width:fit-content;}
+.rrfin .tab{appearance:none;border:none;background:transparent;color:#B7C1DA;font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 18px;border-radius:999px;cursor:pointer;transition:.15s;white-space:nowrap;}
+.rrfin .tab:hover{color:#fff;}
+.rrfin .tab[aria-selected="true"]{background:#fff;color:var(--navy);}
+.rrfin .socio{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--gold-deep);}
+.rrfin .banner{border-radius:var(--r-md);padding:12px 16px;font-size:13px;background:var(--red-bg);border:1px solid #E9B7B2;color:#8E2F28;}
+.rrfin .state{padding:24px 4px;font-size:13.5px;color:var(--ink-3);}
+.rrfin .state.sm{padding:14px 2px;}
+.rrfin .ilink{color:var(--navy);font-weight:600;text-decoration:none;}
+.rrfin .ilink:hover{color:var(--gold);}
+.rrfin .panes{display:flex;flex-direction:column;gap:22px;}
+.rrfin .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+.rrfin .scard{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--shadow);padding:18px 20px 20px;}
+.rrfin .scard .k{font-size:12px;font-weight:500;color:var(--ink-3);margin:0 0 11px;}
+.rrfin .scard .v{font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);}
+.rrfin .scard .s{font-size:12px;margin-top:9px;color:var(--ink-3);}
+.rrfin .scard .s.green{color:var(--green);}
+.rrfin .scard .s.gold{color:var(--gold-deep);}
+.rrfin .scard.accent{background:var(--navy);border-color:var(--navy);}
+.rrfin .scard.accent .k{color:#9DA9C6;}
+.rrfin .scard.accent .v{color:#fff;}
+.rrfin .scard.accent .s{color:#8C98B6;}
+.rrfin .scard.accent .s.green{color:var(--green-soft);}
+.rrfin .card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:26px 28px;}
+.rrfin .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:4px;}
+.rrfin .card-head h2{font-size:16.5px;font-weight:600;letter-spacing:-.01em;margin:0;color:var(--ink);}
+.rrfin .card-head .csub{font-size:12.5px;color:var(--ink-3);margin:5px 0 0;}
+.rrfin .card-link{font-size:12.5px;font-weight:600;color:var(--navy);text-decoration:none;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;}
+.rrfin .card-link:hover{color:var(--gold);}
+.rrfin .flow{display:grid;grid-template-columns:1.4fr 1fr;gap:0;margin-top:20px;}
+.rrfin .flow .panel{padding:0 30px;position:relative;}
+.rrfin .flow .panel:first-child{padding-left:0;}
+.rrfin .flow .panel + .panel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:1px;background:var(--bd-soft);}
+.rrfin .panel-title{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin:0 0 16px;}
+.rrfin svg.flux{width:100%;height:auto;display:block;}
+.rrfin .legend{display:flex;gap:18px;margin-top:14px;font-size:12px;color:var(--ink-2);}
+.rrfin .legend span{display:inline-flex;align-items:center;gap:7px;}
+.rrfin .legend i{width:11px;height:11px;border-radius:3px;display:inline-block;}
+.rrfin .legend i.in{background:var(--navy);}
+.rrfin .legend i.out{background:var(--gold);}
+.rrfin .cats{display:flex;flex-direction:column;gap:13px;}
+.rrfin .cat .top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:6px;}
+.rrfin .cat .nm{font-size:13px;font-weight:500;color:var(--ink-2);}
+.rrfin .cat .pc{font-size:12px;font-weight:600;color:var(--ink);}
+.rrfin .cat .track{height:8px;border-radius:6px;background:#EFF1F5;overflow:hidden;}
+.rrfin .cat .fill{height:100%;border-radius:6px;background:var(--navy);}
+.rrfin .cat.lead .fill{background:linear-gradient(90deg,var(--gold-deep),var(--gold));}
+.rrfin .cat.lead .nm{color:var(--ink);font-weight:600;}
+.rrfin .dlist{margin-top:18px;display:flex;flex-direction:column;}
+.rrfin .drow{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px;padding:14px 2px;border-top:1px solid var(--bd-soft);}
+.rrfin .drow:first-child{border-top:none;}
+.rrfin .drow .dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--navy-bar);}
+.rrfin .drow.lead .dot{background:var(--gold);}
+.rrfin .drow .nm{font-size:14.5px;font-weight:600;color:var(--ink);}
+.rrfin .drow .amt{font-size:15px;font-weight:600;color:var(--ink);text-align:right;}
+.rrfin .dtot{display:grid;grid-template-columns:1fr auto;align-items:center;gap:16px;margin-top:6px;padding:16px 2px 2px;border-top:2px solid var(--bd);}
+.rrfin .dtot .l{font-size:13px;font-weight:600;color:var(--ink-2);}
+.rrfin .dtot .v{font-size:16px;font-weight:700;color:var(--ink);text-align:right;}
+.rrfin .open{background:var(--card);border:1px dashed #CDD3DE;border-radius:var(--r-md);padding:20px 22px;display:flex;align-items:center;gap:22px;flex-wrap:wrap;}
+.rrfin .open .oi{flex:none;width:40px;height:40px;border-radius:11px;background:#F1F3F7;border:1px solid var(--bd);display:grid;place-items:center;color:var(--navy);font-weight:700;font-size:13px;}
+.rrfin .open .otxt{flex:1;min-width:200px;}
+.rrfin .open .otxt h3{font-size:14.5px;font-weight:600;margin:0 0 3px;color:var(--ink);}
+.rrfin .open .otxt p{font-size:12.5px;color:var(--ink-3);margin:0;}
+.rrfin .open form{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.rrfin .field{position:relative;display:inline-flex;align-items:center;}
+.rrfin .field .pre{position:absolute;left:14px;font-size:13.5px;font-weight:600;color:var(--ink-3);pointer-events:none;}
+.rrfin .field input{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;font-size:15px;font-weight:600;color:var(--ink);width:170px;padding:11px 14px 11px 40px;border:1px solid var(--bd);border-radius:10px;background:#fff;outline:none;}
+.rrfin .field input:focus{border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,31,74,.08);}
+.rrfin .save{display:inline-flex;align-items:center;gap:8px;background:var(--navy);color:#fff;border:none;border-radius:10px;padding:12px 20px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s;white-space:nowrap;}
+.rrfin .save:hover{background:#16285C;}
+.rrfin .save:disabled{opacity:.7;cursor:default;}
+.rrfin .save .ck{color:var(--yellow);font-size:13px;}
+.rrfin .save.done{background:var(--green);}
+.rrfin .save.done .ck{color:#fff;}
+.rrfin .open .help{flex-basis:100%;font-size:11.5px;color:var(--ink-3);margin:0;display:flex;align-items:center;gap:7px;}
+.rrfin .open .help .dot{width:6px;height:6px;border-radius:50%;background:var(--green);}
+.rrfin .note{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-3);margin:-4px 4px;}
+.rrfin .note .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(60,157,107,.13);}
+.rrfin .note b{color:var(--ink-2);font-weight:600;}
+.rrfin .dre-tbl{margin-top:18px;}
+.rrfin .dhead,.rrfin .dr{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr 1fr;align-items:center;gap:14px;}
+.rrfin .dhead{padding:0 2px 11px;border-bottom:1px solid var(--bd);}
+.rrfin .dhead .h{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
+.rrfin .dhead .h.r{text-align:right;}
+.rrfin .dr{padding:15px 2px;border-top:1px solid var(--bd-soft);}
+.rrfin .dr:first-of-type{border-top:none;}
+.rrfin .dr .emp{display:flex;align-items:center;gap:11px;font-size:14.5px;font-weight:600;color:var(--ink);}
+.rrfin .dr .emp .st{width:9px;height:9px;border-radius:50%;background:var(--green);flex:none;box-shadow:0 0 0 3px rgba(60,157,107,.13);}
+.rrfin .dcell .k{display:none;}
+.rrfin .dcell .v{font-size:14.5px;font-weight:600;text-align:right;display:block;}
+.rrfin .dcell .v.muted{color:var(--ink-2);font-weight:500;}
+.rrfin .dcell .v.neg{color:var(--red);font-weight:500;}
+.rrfin .dcell .v.res{color:var(--green);}
+.rrfin .dr.total{margin-top:6px;padding:18px 2px 4px;border-top:2px solid var(--bd);}
+.rrfin .dr.total .emp{font-size:15px;color:var(--navy);}
+.rrfin .dr.total .emp .st{background:var(--gold);box-shadow:0 0 0 3px rgba(214,161,63,.16);}
+.rrfin .dr.total .dcell .v{font-size:15.5px;font-weight:700;color:var(--ink);}
+.rrfin .dr.total .dcell .v.neg{color:var(--red);}
+.rrfin .dr.total .dcell .v.res{color:var(--green);}
 
-function parseBrazilianNumber(value: string) {
-  const normalized = String(value || "")
-    .trim()
-    .replace(/\s/g, "")
-    .replace(/\.(?=\d{3}(\D|$))/g, "")
-    .replace(",", ".");
-
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
+@media (max-width:760px){
+  .rrfin .wrap{padding:18px 16px 40px;gap:16px;}
+  .rrfin .header{padding:22px 20px 24px;}
+  .rrfin .header h1{font-size:22px;}
+  .rrfin .tabs{width:100%;}
+  .rrfin .tab{flex:1;text-align:center;}
+  .rrfin .summary{grid-template-columns:1fr 1fr;}
+  .rrfin .card{padding:20px 18px;}
+  .rrfin .flow{grid-template-columns:1fr;gap:24px;}
+  .rrfin .flow .panel{padding:0;}
+  .rrfin .flow .panel + .panel{padding-top:24px;border-top:1px solid var(--bd-soft);}
+  .rrfin .flow .panel + .panel::before{display:none;}
+  .rrfin .open{flex-direction:column;align-items:flex-start;gap:16px;}
+  .rrfin .dhead{display:none;}
+  .rrfin .dr{grid-template-columns:1fr 1fr;gap:8px 14px;}
+  .rrfin .dr .emp{grid-column:1 / -1;margin-bottom:2px;}
+  .rrfin .dcell{display:flex;flex-direction:column;gap:2px;}
+  .rrfin .dcell .v{text-align:left;}
+  .rrfin .dcell .k{display:block;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--ink-3);}
+  .rrfin .dr.total{grid-template-columns:1fr 1fr;}
+  .rrfin .dr.total .emp{grid-column:1 / -1;}
 }
-
-function normalizeStatus(value?: string) {
-  const normalized = String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toUpperCase();
-
-  return normalized;
-}
-
-function formatCurrency(value?: number) {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(Number(value || 0));
-}
-
-function formatCurrencyCompact(value?: number) {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(Number(value || 0));
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return "-";
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-
-  return new Intl.DateTimeFormat("pt-BR").format(date);
-}
-
-function formatNumber(value?: number) {
-  return new Intl.NumberFormat("pt-BR").format(Number(value || 0));
-}
-
-const CATEGORY_COLORS = [
-  "#0d4de3",
-  "#f0b53f",
-  "#0b1633",
-  "#fff000",
-  "#1d63e9",
-  "#7c5cff",
-];
-
-const styles: Record<string, CSSProperties> = {
-  page: {
-    display: "grid",
-    gap: "16px",
-  },
-  hero: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: "14px",
-  },
-  heroMain: {
-    background:
-      "linear-gradient(145deg, rgba(255,255,255,0.95) 0%, rgba(255,253,245,0.98) 100%)",
-    borderRadius: "22px",
-    padding: "22px",
-    border: "1px solid var(--rr-line)",
-    boxShadow: "var(--rr-shadow)",
-  },
-  kicker: {
-    fontSize: "12px",
-    textTransform: "uppercase",
-    letterSpacing: "0.18em",
-    color: "var(--rr-blue)",
-    fontWeight: 800,
-    marginBottom: "10px",
-  },
-  title: {
-    margin: 0,
-    fontSize: "clamp(2rem, 3vw, 3.2rem)",
-    color: "var(--rr-ink)",
-  },
-  description: {
-    margin: "14px 0 0",
-    fontSize: "14px",
-    lineHeight: 1.62,
-    color: "var(--rr-muted)",
-  },
-  heroAside: {
-    background:
-      "linear-gradient(180deg, rgba(13,77,227,0.96) 0%, rgba(7,37,125,0.98) 100%)",
-    borderRadius: "22px",
-    padding: "20px",
-    border: "1px solid rgba(255,255,255,0.12)",
-    boxShadow: "var(--rr-shadow)",
-    display: "grid",
-    gap: "16px",
-    alignContent: "start",
-  },
-  selectorLabel: {
-    fontSize: "11px",
-    textTransform: "uppercase",
-    letterSpacing: "0.16em",
-    color: "rgba(255,255,255,0.72)",
-    fontWeight: 800,
-  },
-  select: {
-    width: "100%",
-    borderRadius: "16px",
-    border: "1px solid rgba(255,255,255,0.18)",
-    padding: "14px 16px",
-    fontSize: "15px",
-    fontWeight: 700,
-    background: "rgba(255,255,255,0.92)",
-    color: "var(--rr-blue-deep)",
-    outline: "none",
-  },
-  heroStats: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-    gap: "12px",
-  },
-  heroStat: {
-    borderRadius: "18px",
-    padding: "14px",
-    background: "rgba(255,255,255,0.08)",
-    border: "1px solid rgba(255,255,255,0.12)",
-    display: "grid",
-    gap: "6px",
-  },
-  heroStatLabel: {
-    fontSize: "11px",
-    textTransform: "uppercase",
-    letterSpacing: "0.12em",
-    color: "rgba(255,255,255,0.7)",
-  },
-  heroStatValue: {
-    fontSize: "22px",
-    color: "var(--rr-yellow)",
-    fontFamily: "var(--font-heading)",
-  },
-  errorBox: {
-    background: "rgba(255,255,255,0.92)",
-    border: "1px solid rgba(239,68,68,0.24)",
-    color: "#991b1b",
-    borderRadius: "18px",
-    padding: "16px",
-  },
-  noticeBox: {
-    background: "rgba(255,255,255,0.92)",
-    border: "1px solid rgba(13,77,227,0.14)",
-    color: "var(--rr-blue-deep)",
-    borderRadius: "18px",
-    padding: "16px",
-  },
-  alertBox: {
-    background: "rgba(255,255,255,0.92)",
-    border: "1px solid rgba(13,77,227,0.12)",
-    color: "var(--rr-blue-deep)",
-    borderRadius: "18px",
-    padding: "16px",
-    lineHeight: 1.6,
-  },
-  summaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-    gap: "10px",
-  },
-  subsectionNav: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "8px",
-    marginTop: "-2px",
-  },
-  subsectionButton: {
-    border: "1px solid rgba(13,77,227,0.12)",
-    borderRadius: "999px",
-    background: "rgba(255,255,255,0.92)",
-    color: "var(--rr-blue-deep)",
-    padding: "10px 14px",
-    fontSize: "13px",
-    fontWeight: 800,
-    cursor: "pointer",
-    boxShadow: "var(--rr-shadow-soft)",
-  },
-  subsectionButtonActive: {
-    background:
-      "linear-gradient(135deg, rgba(13,77,227,0.98) 0%, rgba(7,37,125,0.98) 100%)",
-    color: "#ffffff",
-    border: "1px solid rgba(13,77,227,0.98)",
-  },
-  metricCard: {
-    borderRadius: "18px",
-    border: "1px solid var(--rr-line)",
-    padding: "16px",
-    boxShadow: "var(--rr-shadow-soft)",
-  },
-  metricLabel: {
-    fontSize: "11px",
-    textTransform: "uppercase",
-    letterSpacing: "0.14em",
-    color: "var(--rr-blue)",
-    marginBottom: "8px",
-    fontWeight: 800,
-  },
-  metricValue: {
-    fontSize: "24px",
-    fontWeight: 800,
-    fontFamily: "var(--font-heading)",
-    marginBottom: "8px",
-    lineHeight: 1.2,
-  },
-  metricDetail: {
-    fontSize: "12px",
-    lineHeight: 1.5,
-    color: "var(--rr-muted)",
-  },
-  topGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: "14px",
-    alignItems: "start",
-  },
-  contentGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: "14px",
-    alignItems: "start",
-  },
-  bottomGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: "14px",
-    alignItems: "start",
-  },
-  chartCard: {
-    background: "rgba(255,255,255,0.94)",
-    borderRadius: "22px",
-    border: "1px solid var(--rr-line)",
-    boxShadow: "var(--rr-shadow-soft)",
-    overflow: "hidden",
-    paddingBottom: "18px",
-  },
-  tableCard: {
-    background: "rgba(255,255,255,0.94)",
-    borderRadius: "22px",
-    border: "1px solid var(--rr-line)",
-    overflow: "hidden",
-    boxShadow: "var(--rr-shadow-soft)",
-  },
-  formRail: {
-    display: "grid",
-    gap: "14px",
-    position: "sticky",
-    top: "84px",
-  },
-  formCard: {
-    background: "rgba(255,255,255,0.94)",
-    borderRadius: "22px",
-    border: "1px solid var(--rr-line)",
-    boxShadow: "var(--rr-shadow-soft)",
-    overflow: "hidden",
-    paddingBottom: "18px",
-  },
-  sectionHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "12px",
-    flexWrap: "wrap",
-    padding: "18px 18px 0",
-  },
-  sectionChip: {
-    padding: "8px 12px",
-    borderRadius: "999px",
-    background: "rgba(13,77,227,0.08)",
-    border: "1px solid rgba(13,77,227,0.12)",
-    color: "var(--rr-blue-deep)",
-    fontSize: "12px",
-    fontWeight: 800,
-  },
-  sectionHeaderCompact: {
-    padding: "18px 18px 0",
-  },
-  sectionKicker: {
-    fontSize: "12px",
-    textTransform: "uppercase",
-    letterSpacing: "0.14em",
-    color: "var(--rr-blue)",
-    marginBottom: "8px",
-    fontWeight: 800,
-  },
-  sectionTitle: {
-    margin: 0,
-    fontSize: "22px",
-    color: "var(--rr-ink)",
-  },
-  barChart: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(48px, 1fr))",
-    gap: "10px",
-    alignItems: "end",
-    padding: "16px 18px 0",
-    minHeight: "210px",
-  },
-  barColumn: {
-    display: "grid",
-    gap: "8px",
-    alignItems: "end",
-    justifyItems: "center",
-  },
-  barValue: {
-    fontSize: "11px",
-    color: "var(--rr-muted)",
-    fontWeight: 700,
-  },
-  barTrack: {
-    width: "100%",
-    maxWidth: "40px",
-    height: "118px",
-    borderRadius: "14px",
-    background: "linear-gradient(180deg, rgba(13,77,227,0.06) 0%, rgba(13,77,227,0.12) 100%)",
-    display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "center",
-    gap: "4px",
-    padding: "4px",
-  },
-  barFillBack: {
-    width: "45%",
-    borderRadius: "10px",
-    background: "linear-gradient(180deg, rgba(13,77,227,0.95) 0%, rgba(7,37,125,0.98) 100%)",
-    boxShadow: "0 12px 22px rgba(13,77,227,0.16)",
-  },
-  barFillFront: {
-    width: "45%",
-    borderRadius: "10px",
-    background: "linear-gradient(180deg, rgba(255,240,0,1) 0%, rgba(214,161,63,0.95) 100%)",
-    boxShadow: "0 12px 22px rgba(214,161,63,0.18)",
-  },
-  barLabel: {
-    fontSize: "12px",
-    color: "var(--rr-blue-deep)",
-    fontWeight: 700,
-  },
-  categoryList: {
-    display: "grid",
-    gap: "12px",
-    padding: "16px 18px 0",
-  },
-  categoryItem: {
-    display: "grid",
-    gap: "8px",
-  },
-  categoryTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "10px",
-    alignItems: "center",
-  },
-  categoryLabel: {
-    fontSize: "13px",
-    fontWeight: 700,
-    color: "var(--rr-ink)",
-  },
-  categoryValue: {
-    fontSize: "13px",
-    color: "var(--rr-blue-deep)",
-  },
-  categoryTrack: {
-    width: "100%",
-    height: "12px",
-    borderRadius: "999px",
-    background: "rgba(13,77,227,0.08)",
-    overflow: "hidden",
-  },
-  categoryFill: {
-    height: "100%",
-    borderRadius: "999px",
-  },
-  tableWrap: {
-    overflowX: "auto",
-    padding: "14px 18px 18px",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "separate",
-    borderSpacing: 0,
-  },
-  th: {
-    textAlign: "left",
-    fontSize: "11px",
-    textTransform: "uppercase",
-    letterSpacing: "0.12em",
-    color: "var(--rr-blue)",
-    padding: "0 12px 12px 0",
-    borderBottom: "1px solid var(--rr-line)",
-    fontWeight: 800,
-    whiteSpace: "nowrap",
-    position: "sticky",
-    top: 0,
-    background: "rgba(255,255,255,0.98)",
-    zIndex: 1,
-  },
-  td: {
-    padding: "12px 12px 12px 0",
-    fontSize: "13px",
-    color: "var(--rr-muted)",
-    borderBottom: "1px solid rgba(13,77,227,0.08)",
-    whiteSpace: "nowrap",
-    verticalAlign: "top",
-  },
-  tdStrong: {
-    padding: "12px 12px 12px 0",
-    fontSize: "13px",
-    color: "var(--rr-ink)",
-    borderBottom: "1px solid rgba(13,77,227,0.08)",
-    whiteSpace: "nowrap",
-    fontWeight: 800,
-    verticalAlign: "top",
-  },
-  companyName: {
-    color: "var(--rr-ink)",
-    fontWeight: 700,
-    marginBottom: "4px",
-  },
-  companyMeta: {
-    fontSize: "12px",
-    color: "var(--rr-muted)",
-  },
-  formGrid: {
-    display: "grid",
-    gap: "10px",
-    padding: "14px 18px 0",
-  },
-  formRow: {
-    display: "grid",
-    gap: "6px",
-  },
-  formLabel: {
-    fontSize: "12px",
-    color: "var(--rr-blue)",
-    fontWeight: 800,
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-  },
-  input: {
-    width: "100%",
-    borderRadius: "12px",
-    border: "1px solid rgba(13,77,227,0.14)",
-    padding: "10px 12px",
-    fontSize: "14px",
-    color: "var(--rr-ink)",
-    background: "rgba(255,255,255,0.96)",
-    outline: "none",
-  },
-  textarea: {
-    width: "100%",
-    minHeight: "92px",
-    borderRadius: "12px",
-    border: "1px solid rgba(13,77,227,0.14)",
-    padding: "10px 12px",
-    fontSize: "14px",
-    color: "var(--rr-ink)",
-    background: "rgba(255,255,255,0.96)",
-    outline: "none",
-    resize: "vertical",
-    fontFamily: "inherit",
-  },
-  primaryButton: {
-    border: 0,
-    borderRadius: "16px",
-    padding: "14px 16px",
-    fontSize: "14px",
-    fontWeight: 800,
-    cursor: "pointer",
-    color: "#ffffff",
-    background:
-      "linear-gradient(135deg, rgba(13,77,227,0.98) 0%, rgba(7,37,125,0.98) 100%)",
-    boxShadow: "0 14px 28px rgba(13,77,227,0.16)",
-  },
-  secondaryButton: {
-    border: 0,
-    borderRadius: "16px",
-    padding: "14px 16px",
-    fontSize: "14px",
-    fontWeight: 800,
-    cursor: "pointer",
-    color: "var(--rr-blue-deep)",
-    background:
-      "linear-gradient(135deg, rgba(255,240,0,0.95) 0%, rgba(214,161,63,0.92) 100%)",
-    boxShadow: "0 14px 24px rgba(214,161,63,0.14)",
-  },
-  badge: {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "6px 10px",
-    borderRadius: "999px",
-    fontSize: "11px",
-    fontWeight: 800,
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-  },
-  badgeOk: {
-    background: "rgba(13,77,227,0.1)",
-    color: "var(--rr-blue-deep)",
-  },
-  badgeWarning: {
-    background: "rgba(245,158,11,0.14)",
-    color: "#92400e",
-  },
-  list: {
-    display: "grid",
-    gap: "10px",
-    padding: "14px 18px 18px",
-  },
-  listItem: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "14px",
-    alignItems: "center",
-    padding: "14px",
-    borderRadius: "16px",
-    background:
-      "linear-gradient(135deg, rgba(255,240,0,0.12) 0%, rgba(255,255,255,0.96) 100%)",
-    border: "1px solid rgba(13,77,227,0.1)",
-  },
-  listValue: {
-    fontSize: "15px",
-    fontWeight: 800,
-    color: "var(--rr-blue-deep)",
-  },
-  emptyState: {
-    margin: "14px 18px 18px",
-    padding: "16px",
-    color: "var(--rr-muted)",
-    fontSize: "14px",
-    lineHeight: 1.6,
-    borderRadius: "16px",
-    border: "1px dashed rgba(13,77,227,0.16)",
-    background:
-      "linear-gradient(135deg, rgba(13,77,227,0.04) 0%, rgba(255,255,255,0.96) 100%)",
-  },
-};
+`;

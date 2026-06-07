@@ -1,334 +1,523 @@
 "use client";
 
-import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 
-import FeedbackBanner from "../../components/FeedbackBanner";
-import { useUser } from "../../lib/auth/useUser";
+// Etapa 8 (enxugar menu) Fase 3 — Tela B "Receita & Simples" (socio + funcionario):
+// RBT12/Simples por CNPJ + entrada de RECEITA COMPLEMENTAR. Reusa /api/rbt12 e
+// /api/receita-lancamentos verbatim (zero religação). Sai do conjunto financeiro
+// socio-only justamente porque o funcionario opera receita/RBT12.
 
-// ---- tipos espelham lib/rbt12.ts ----
-type SerieMes = { competencia: string; fechamento: number; manual: number; total: number; fonteFechamento: string | null };
+const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
 type Empresa = {
-  company_id: string; cnpj: string; name: string; group_code: string | null;
-  rbt12: number; faixa: number | null; aliquota: number | null; acimaSimples: boolean;
-  tetoFaixaAtual: number | null; faltaProxima: number; pctFaltaTeto: number;
-  sinal: "verde" | "amarelo" | "acima";
-  mesesEsperados: number; mesesPresentes: number; janelaParcial: boolean; mesesFaltando: string[];
-  serie: SerieMes[]; totalFechamento: number; totalManual: number;
+  company_id: string;
+  cnpj: string;
+  name: string;
+  rbt12: number;
+  faixa: number;
+  faltaProxima: number;
+  sinal: string;
 };
-type Rbt12Payload = {
-  referencia: { ano: number; mes: number; key: string };
-  referenciaProducao: { ano: number; mes: number; key: string };
-  competenciaTipo: string;
-  janela: { de: string; ate: string; meses: number };
-  empresas: Empresa[];
-  grupo: { rbt12: number; limiteSimples: number; pctLimite: number; faltaLimite: number; sinal: "verde" | "amarelo" | "vermelho" };
+type Grupo = { rbt12: number; limiteSimples: number; pctLimite: number; faltaLimite: number; sinal: string };
+type RbtPayload = { referencia: { ano: number; mes: number }; empresas: Empresa[]; grupo: Grupo };
+
+type CompanyOpt = { id: string; name: string; cnpj: string; group_code?: string };
+type Lancamento = {
+  id: string;
+  company_id: string;
+  ano: number;
+  mes: number;
+  categoria: string;
+  valor: number;
+  descricao: string;
 };
-type Lancamento = { id: string; company_id: string; ano: number; mes: number; categoria: string; valor: number; descricao: string | null };
-type CompanyOpt = { id: string; name: string; cnpj: string; group_code: string | null };
 
-const MONTHS_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-const CATEGORIAS = ["CONSORCIO", "AJUSTE_CONTADOR", "OUTRO"];
-const CAT_LABEL: Record<string, string> = { CONSORCIO: "Consórcio", AJUSTE_CONTADOR: "Ajuste contador", OUTRO: "Outro" };
+const brl = (v: number | null | undefined) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(Number(v ?? 0));
+const mm = (v: number) => `R$ ${(v / 1e6).toFixed(2).replace(".", ",")}MM`;
 
-function brl(v: number) { return Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
-function compLabel(key: string) { const [y, m] = key.split("-"); return `${MONTHS_PT[Number(m) - 1]}/${y}`; }
-// produção correspondente a uma competência fiscal (fiscal - 1 mês).
-function prodLabel(key: string) {
-  const [y, m] = key.split("-").map(Number);
-  const pm = m === 1 ? 12 : m - 1; const py = m === 1 ? y - 1 : y;
-  return `${MONTHS_PT[pm - 1]}/${py}`;
-}
-
-// Períodos do seletor são competências FISCAIS (recebimento). 15 meses a partir
-// de jun/2026 (fiscal) = produção de maio/2026 (último arquivo).
 function buildPeriods() {
   const out: { key: string; label: string; ano: number; mes: number }[] = [];
-  let y = 2026, m = 6;
-  for (let i = 0; i < 15; i++) {
-    const key = `${y}-${String(m).padStart(2, "0")}`;
-    out.push({ key, label: `${MONTHS_PT[m - 1]}/${y} (prod. ${prodLabel(key)})`, ano: y, mes: m });
-    m--; if (m === 0) { m = 12; y--; }
+  const n = new Date();
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(n.getFullYear(), n.getMonth() - i, 1);
+    const ano = d.getFullYear();
+    const mes = d.getMonth() + 1;
+    out.push({ key: `${ano}-${String(mes).padStart(2, "0")}`, label: `${MESES[mes - 1]}/${ano}`, ano, mes });
   }
   return out;
 }
+function isClosed(ano: number, mes: number) {
+  const n = new Date();
+  return ano < n.getFullYear() || (ano === n.getFullYear() && mes < n.getMonth() + 1);
+}
+// semáforo: verde -> g | amarelo -> a | acima/vermelho -> r
+function sem(sinal: string) {
+  const s = String(sinal || "").toLowerCase();
+  if (s.includes("verm") || s.includes("acima") || s.includes("crit")) return "r";
+  if (s.includes("amar") || s.includes("aten")) return "a";
+  return "g";
+}
+const ZONE: Record<string, string> = { g: "Saudável", a: "Atenção", r: "Crítico" };
+const CAT_LABEL: Record<string, string> = { CONSORCIO: "Consórcio", AJUSTE_CONTADOR: "Ajuste contador", OUTRO: "Outro" };
 
 export default function ReceitasPage() {
-  const { user, loading: userLoading } = useUser();
   const periods = useMemo(buildPeriods, []);
-  const [refKey, setRefKey] = useState("2026-06");
-  const [rbt12, setRbt12] = useState<Rbt12Payload | null>(null);
-  const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
+  const [selectedKey, setSelectedKey] = useState("");
+  const [rbt, setRbt] = useState<RbtPayload | null>(null);
   const [companies, setCompanies] = useState<CompanyOpt[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<{ kind: "success" | "error"; msg: string } | null>(null);
+  const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  // form receita complementar
+  const [fComp, setFComp] = useState("");
+  const [fEmp, setFEmp] = useState("");
+  const [fValor, setFValor] = useState("");
+  const [fTipo, setFTipo] = useState("CONSORCIO");
+  const [fDesc, setFDesc] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
-  // form de lancamento
-  const emptyForm = { id: "", company_id: "", ano: "2026", mes: "5", categoria: "CONSORCIO", valor: "", descricao: "" };
-  const [form, setForm] = useState({ ...emptyForm });
+  const periodKey = selectedKey || periods.find((p) => isClosed(p.ano, p.mes))?.key || periods[0]?.key || "";
+  const period = periods.find((p) => p.key === periodKey) || periods[0];
 
-  const period = periods.find((p) => p.key === refKey) ?? periods[1];
-  const canEdit = user?.role === "socio" || user?.role === "funcionario";
-
-  const load = useCallback(async () => {
-    setLoading(true); setFeedback(null);
+  async function loadAll() {
     try {
-      const [rRes, lRes] = await Promise.all([
+      setLoading(true);
+      setError("");
+      const [rr, rc] = await Promise.all([
         fetch(`/api/rbt12?ano=${period.ano}&mes=${period.mes}`),
         fetch(`/api/receita-lancamentos`),
       ]);
-      const rJson = await rRes.json();
-      if (!rRes.ok) throw new Error(rJson?.error || "Falha ao calcular RBT12.");
-      setRbt12(rJson);
-      const lJson = await lRes.json();
-      if (lRes.ok) { setLancamentos(lJson.lancamentos || []); setCompanies(lJson.companies || []); }
-    } catch (e: any) {
-      setFeedback({ kind: "error", msg: e?.message || "Erro ao carregar." });
-    } finally { setLoading(false); }
-  }, [period.ano, period.mes]);
+      const rj = await rr.json();
+      const cj = await rc.json();
+      if (!rr.ok) throw new Error(rj?.error || "Erro ao carregar o RBT12.");
+      setRbt(rj as RbtPayload);
+      setCompanies((cj.companies || []) as CompanyOpt[]);
+      setLancamentos((cj.lancamentos || []) as Lancamento[]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao carregar.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  useEffect(() => { if (canEdit) load(); }, [canEdit, load]);
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodKey]);
 
-  async function salvarLancamento() {
-    if (!form.company_id) { setFeedback({ kind: "error", msg: "Escolha a empresa." }); return; }
-    setFeedback(null);
+  // defaults do form
+  useEffect(() => {
+    if (!fComp) setFComp(periodKey);
+  }, [periodKey, fComp]);
+  useEffect(() => {
+    if (!fEmp && companies[0]) setFEmp(companies[0].id);
+  }, [companies, fEmp]);
+
+  function onValor(raw: string) {
+    const digits = raw.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+    if (!digits) {
+      setFValor("");
+      return;
+    }
+    const p = digits.padStart(3, "0");
+    setFValor(`${p.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, ".")},${p.slice(-2)}`);
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    // a API parseia valor como STRING BR ("." = milhar, "," = decimal) — manda o
+    // valor mascarado tal qual (fValor), NÃO o número JS (senão vira 100x).
+    const valorNum = Number(fValor.replace(/\./g, "").replace(",", ".")) || 0;
+    if (!valorNum || !fEmp) return;
+    const p = periods.find((x) => x.key === fComp) || period;
     try {
-      const isEdit = !!form.id;
+      setSaving(true);
+      setError("");
       const res = await fetch("/api/receita-lancamentos", {
-        method: isEdit ? "PATCH" : "POST",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id: form.id || undefined,
-          company_id: form.company_id, ano: Number(form.ano), mes: Number(form.mes),
-          categoria: form.categoria, valor: form.valor, descricao: form.descricao,
+          company_id: fEmp,
+          ano: p.ano,
+          mes: p.mes,
+          categoria: fTipo,
+          valor: fValor,
+          descricao: fDesc.trim() || "Receita complementar",
         }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Falha ao salvar.");
-      setFeedback({ kind: "success", msg: isEdit ? "Lançamento atualizado." : "Lançamento criado." });
-      setForm({ ...emptyForm, company_id: form.company_id, ano: form.ano, mes: form.mes });
-      await load();
-    } catch (e: any) { setFeedback({ kind: "error", msg: e?.message || "Erro ao salvar." }); }
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error || "Erro ao lançar a receita.");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2200);
+      setFValor("");
+      setFDesc("");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  async function excluir(id: string) {
-    setFeedback(null);
+  async function remove(id: string) {
+    if (!window.confirm("Remover este lançamento de receita complementar?")) return;
     try {
       const res = await fetch(`/api/receita-lancamentos?id=${id}`, { method: "DELETE" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Falha ao excluir.");
-      setFeedback({ kind: "success", msg: "Lançamento excluído." });
-      await load();
-    } catch (e: any) { setFeedback({ kind: "error", msg: e?.message || "Erro ao excluir." }); }
+      if (!res.ok) throw new Error("Erro ao remover.");
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao remover.");
+    }
   }
 
-  function editar(l: Lancamento) {
-    setForm({ id: l.id, company_id: l.company_id, ano: String(l.ano), mes: String(l.mes), categoria: l.categoria, valor: String(l.valor), descricao: l.descricao || "" });
-  }
-
-  const companyName = (id: string) => companies.find((c) => c.id === id)?.name || id;
-
-  if (userLoading) return <div style={styles.note}>Carregando…</div>;
-  if (!canEdit) return <div style={styles.note}>Acesso restrito a sócios e funcionários.</div>;
+  const compName = (id: string) => companies.find((c) => c.id === id)?.name || "—";
+  const lblOf = (l: Lancamento) => `${MESES[(l.mes || 1) - 1]}/${l.ano}`;
+  const totalComp = lancamentos.reduce((s, l) => s + Number(l.valor || 0), 0);
+  const teto = rbt?.grupo.limiteSimples || 4800000;
 
   return (
-    <div style={styles.page}>
-      <div style={styles.header}>
-        <div>
-          <div style={styles.kicker}>Controle · Simples Nacional (Anexo III)</div>
-          <h2 style={styles.title}>Receita &amp; RBT12 por CNPJ</h2>
-        </div>
-        <label style={styles.field}>
-          <span style={styles.fieldLabel}>Competência fiscal (recebimento)</span>
-          <select value={refKey} onChange={(e) => setRefKey(e.target.value)} style={styles.input}>
-            {periods.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-          </select>
-        </label>
-      </div>
+    <div className="rrrec">
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <main className="wrap">
+        <nav className="crumb">
+          <Link href="/dashboard">Visão geral</Link>
+          <span className="sep">/</span>
+          <span>Receita &amp; Simples</span>
+        </nav>
 
-      {feedback ? <FeedbackBanner variant={feedback.kind} title={feedback.msg} /> : null}
-      {rbt12 ? (
-        <div style={styles.fiscalBanner}>
-          <strong>Competência FISCAL (regime de caixa): {compLabel(rbt12.referencia.key)}</strong> — corresponde à produção de {compLabel(rbt12.referenciaProducao.key)}.
-          {" "}Janela 12m fiscal: {compLabel(rbt12.janela.de)} → {compLabel(rbt12.janela.ate)}. Receita = fechamento (mês de produção, deslocado +1 mês) + lançamentos manuais (já em competência fiscal).
-          {" "}⚠ O Dashboard é por <em>produção</em> — os meses não batem 1:1, e isso é esperado (não é divergência).
-        </div>
-      ) : null}
-
-      {/* ---- Cards RBT12 ---- */}
-      <div style={styles.cardsGrid}>
-        {(rbt12?.empresas || []).map((e) => {
-          const cor = e.sinal === "acima" ? "#cc2b49" : e.sinal === "amarelo" ? "var(--rr-gold)" : "#178a5a";
-          const open = expanded === e.company_id;
-          return (
-            <div key={e.company_id} style={{ ...styles.card, borderTop: `4px solid ${cor}` }}>
-              <div style={styles.cardTop}>
-                <div>
-                  <div style={styles.cardName}>{e.name}</div>
-                  <div style={styles.cardCnpj}>{e.cnpj}</div>
-                </div>
-                <span style={{ ...styles.faixaPill, background: cor }}>
-                  {e.acimaSimples ? "ACIMA" : `Faixa ${e.faixa}`}
-                </span>
-              </div>
-              <div style={styles.rbtValue}>{brl(e.rbt12)}</div>
-              <div style={styles.cardMeta}>
-                RBT12 · alíquota {e.aliquota != null ? `${(e.aliquota * 100).toFixed(2)}%` : "—"}
-              </div>
-              <div style={styles.cardRow}><span>Fechamento</span><span>{brl(e.totalFechamento)}</span></div>
-              <div style={styles.cardRow}><span>Manual</span><span>{brl(e.totalManual)}</span></div>
-              <div style={styles.cardRow}>
-                <span>Falta p/ próxima</span>
-                <span style={{ fontWeight: 700 }}>{e.acimaSimples ? "—" : `${brl(e.faltaProxima)} (${(e.pctFaltaTeto * 100).toFixed(1)}%)`}</span>
-              </div>
-              {e.janelaParcial ? (
-                <div style={styles.parcial}>⚠ Janela parcial: {e.mesesPresentes}/{e.mesesEsperados} meses (falta {e.mesesFaltando.map(compLabel).join(", ")})</div>
-              ) : null}
-              <button type="button" style={styles.expandBtn} onClick={() => setExpanded(open ? null : e.company_id)}>
-                {open ? "Ocultar série" : "Ver série mensal"}
-              </button>
-              {open ? (
-                <table style={styles.serieTable}>
-                  <thead><tr><th style={styles.sTh}>Mês fiscal</th><th style={styles.sThNum}>Fechamento</th><th style={styles.sThNum}>Manual</th><th style={styles.sThNum}>Total</th></tr></thead>
-                  <tbody>
-                    {e.serie.map((s) => (
-                      <tr key={s.competencia}>
-                        <td style={styles.sTd}>{compLabel(s.competencia)}{s.fonteFechamento === "temp" ? " ·T" : ""}</td>
-                        <td style={styles.sTdNum}>{brl(s.fechamento)}</td>
-                        <td style={styles.sTdNum}>{s.manual ? brl(s.manual) : "—"}</td>
-                        <td style={{ ...styles.sTdNum, fontWeight: 700 }}>{brl(s.total)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : null}
+        <header className="header">
+          <div className="header-top">
+            <div>
+              <p className="brand">GRUPO RR CRED</p>
+              <h1>Receita &amp; Simples</h1>
             </div>
-          );
-        })}
-        {rbt12 ? (() => {
-          const g = rbt12.grupo;
-          const cor = g.sinal === "vermelho" ? "#cc2b49" : g.sinal === "amarelo" ? "var(--rr-gold)" : "#178a5a";
-          return (
-            <div style={{ ...styles.card, borderTop: `4px solid ${cor}`, background: "#f7f9fc" }}>
-              <div style={styles.cardName}>GRUPO — limite do Simples</div>
-              <div style={styles.cardCnpj}>receita somada dos 4 CNPJs</div>
-              <div style={styles.rbtValue}>{brl(g.rbt12)}</div>
-              <div style={styles.cardMeta}>
-                <strong style={{ color: cor }}>{(g.pctLimite * 100).toFixed(1)}%</strong> do limite de {brl(g.limiteSimples)}
+            <div className="hr-right">
+              <div className="comp">
+                <select aria-label="Competência" value={periodKey} onChange={(e) => setSelectedKey(e.target.value)}>
+                  {periods.map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.label} · {isClosed(p.ano, p.mes) ? "fechado" : "em aberto"}
+                    </option>
+                  ))}
+                </select>
+                <span className="chev">▾</span>
               </div>
-              <div style={styles.cardRow}><span>Falta p/ o teto</span><span style={{ fontWeight: 700 }}>{brl(g.faltaLimite)}</span></div>
-              <div style={{ ...styles.parcial, background: g.sinal === "verde" ? "#e6f4ec" : "var(--rr-gold-soft)", color: g.sinal === "vermelho" ? "#cc2b49" : "var(--rr-gold-deep)" }}>
-                Monitoramento do <strong>limite de permanência</strong> no Simples (R$ 4,8 MM/ano somados do grupo). Estourar exclui o grupo do regime. <strong>Não é faixa nem base de DAS</strong> — cada CNPJ é tributado pela faixa dele (acima).
-              </div>
+              <span className="access">Sócios + equipe fiscal</span>
             </div>
-          );
-        })() : null}
-      </div>
-
-      {/* ---- Lançamentos manuais ---- */}
-      <h3 style={styles.sectionTitle}>Lançamentos manuais de receita</h3>
-      <div style={styles.formCard}>
-        <div style={styles.formGrid}>
-          <label style={styles.field}><span style={styles.fieldLabel}>Empresa</span>
-            <select value={form.company_id} onChange={(e) => setForm({ ...form, company_id: e.target.value })} style={styles.input}>
-              <option value="">Selecione</option>
-              {companies.map((c) => <option key={c.id} value={c.id}>{c.group_code} · {c.name}</option>)}
-            </select>
-          </label>
-          <label style={styles.field}><span style={styles.fieldLabel}>Ano</span>
-            <input value={form.ano} onChange={(e) => setForm({ ...form, ano: e.target.value })} style={styles.input} inputMode="numeric" />
-          </label>
-          <label style={styles.field}><span style={styles.fieldLabel}>Mês (fiscal)</span>
-            <select value={form.mes} onChange={(e) => setForm({ ...form, mes: e.target.value })} style={styles.input}>
-              {MONTHS_PT.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-            </select>
-          </label>
-          <label style={styles.field}><span style={styles.fieldLabel}>Categoria</span>
-            <select value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })} style={styles.input}>
-              {CATEGORIAS.map((c) => <option key={c} value={c}>{CAT_LABEL[c]}</option>)}
-            </select>
-          </label>
-          <label style={styles.field}><span style={styles.fieldLabel}>Valor (R$)</span>
-            <input value={form.valor} onChange={(e) => setForm({ ...form, valor: e.target.value })} style={styles.input} inputMode="decimal" placeholder="0,00" />
-          </label>
-          <label style={{ ...styles.field, minWidth: 240 }}><span style={styles.fieldLabel}>Descrição</span>
-            <input value={form.descricao} onChange={(e) => setForm({ ...form, descricao: e.target.value })} style={styles.input} placeholder="ex.: consórcio recebido à parte" />
-          </label>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-            <button type="button" style={styles.primaryBtn} onClick={salvarLancamento}>{form.id ? "Atualizar" : "Lançar"}</button>
-            {form.id ? <button type="button" style={styles.secondaryBtn} onClick={() => setForm({ ...emptyForm })}>Cancelar</button> : null}
           </div>
-        </div>
-      </div>
 
-      <div className={`rr-table-wrap${lancamentos.length > 15 ? " rr-table-wrap--scrollable" : ""}`}>
-        <table style={styles.table}>
-          <thead><tr>
-            <th style={styles.th}>Empresa</th><th style={styles.th}>Competência</th><th style={styles.th}>Categoria</th>
-            <th style={styles.thNum}>Valor</th><th style={styles.th}>Descrição</th><th style={styles.th}></th>
-          </tr></thead>
-          <tbody>
-            {lancamentos.length === 0 && !loading ? (
-              <tr><td colSpan={6} style={styles.empty}>Nenhum lançamento manual. (Lembre de rodar a migration da tabela.)</td></tr>
-            ) : null}
-            {lancamentos.map((l) => (
-              <tr key={l.id}>
-                <td style={styles.td}>{companyName(l.company_id)}</td>
-                <td style={styles.td}>{compLabel(`${l.ano}-${String(l.mes).padStart(2, "0")}`)}</td>
-                <td style={styles.td}>{CAT_LABEL[l.categoria] || l.categoria}</td>
-                <td style={styles.tdNum}>{brl(l.valor)}</td>
-                <td style={styles.td}>{l.descricao || "—"}</td>
-                <td style={styles.td}>
-                  <button type="button" style={styles.linkBtn} onClick={() => editar(l)}>editar</button>
-                  <button type="button" style={{ ...styles.linkBtn, color: "#cc2b49" }} onClick={() => excluir(l.id)}>excluir</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+          {rbt ? (
+            <>
+              <div className="gstat">
+                <div>
+                  <p className="lbl"><span className={`sem ${sem(rbt.grupo.sinal)}`} />RBT12 consolidado do grupo · ref. {period.label}</p>
+                  <div className="big num">{brl(rbt.grupo.rbt12)}<small>/ {mm(teto)}</small></div>
+                </div>
+                <div className="right">
+                  <div className={`pct num ${sem(rbt.grupo.sinal)}`}>{(rbt.grupo.pctLimite * 100).toFixed(1).replace(".", ",")}%</div>
+                  <div className="pct-k">do teto · {ZONE[sem(rbt.grupo.sinal)].toLowerCase()}</div>
+                </div>
+              </div>
+              <div className="gbar">
+                <div className="track"><div className={`fill ${sem(rbt.grupo.sinal)}`} style={{ width: `${Math.min(100, rbt.grupo.pctLimite * 100)}%` }} /></div>
+                <div className="scale"><span>R$ 0</span><span className="mid">atenção a partir de 60%</span><span>teto {mm(teto)}</span></div>
+              </div>
+            </>
+          ) : null}
+        </header>
+
+        {error ? <div className="banner err">{error}</div> : null}
+        {loading ? <div className="state">Carregando RBT12…</div> : null}
+
+        {!loading && rbt ? (
+          <>
+            <div className="sec-title">
+              <h2>Por CNPJ · acompanhamento do Simples</h2>
+              <div className="legend">
+                <span><i className="g" />Saudável &lt;60%</span>
+                <span><i className="a" />Atenção 60–85%</span>
+                <span><i className="r" />Crítico &gt;85%</span>
+              </div>
+            </div>
+
+            <section className="cgrid">
+              {rbt.empresas.map((emp) => {
+                const sg = sem(emp.sinal);
+                const pctTeto = teto > 0 ? (emp.rbt12 / teto) * 100 : 0;
+                const folga = Math.max(0, teto - emp.rbt12);
+                return (
+                  <div className="ccard" key={emp.company_id}>
+                    <div className="ch">
+                      <div className="nm"><span className={`sem ${sg}`} />{emp.name}</div>
+                      <span className="faixa">Faixa {emp.faixa}</span>
+                    </div>
+                    <p className="rbt-k">RBT12 · receita acumulada 12 meses</p>
+                    <div className="rbt num">{brl(emp.rbt12)}</div>
+                    <div className="bar"><div className="track"><div className={`fill ${sg}`} style={{ width: `${Math.min(100, pctTeto)}%` }} /></div></div>
+                    <div className="meta">
+                      <span className="pct num"><b>{pctTeto.toFixed(1).replace(".", ",")}%</b> do teto</span>
+                      <span className="folga num">folga <b>{mm(folga)}</b></span>
+                    </div>
+                    <div className={`zone ${sg}`}>● {ZONE[sg]} <span className="tt">· {sg === "g" ? "abaixo do teto" : sg === "a" ? "monitorar ritmo" : "perto do limite"}</span></div>
+                  </div>
+                );
+              })}
+            </section>
+
+            <p className="note"><span className="gi">∿</span>Cada CNPJ tem teto próprio de <b>{mm(teto)}/ano</b> no Simples. O semáforo do grupo soma os {rbt.empresas.length} e sinaliza ritmo agregado.</p>
+
+            {/* RECEITA COMPLEMENTAR */}
+            <section className="card">
+              <div className="card-head">
+                <div>
+                  <h2>Receita complementar</h2>
+                  <p className="csub">Lançamento manual que entra no RBT12 além da apuração automática</p>
+                </div>
+              </div>
+              <div className="rc">
+                <div className="form-col">
+                  <form onSubmit={submit} autoComplete="off">
+                    <div className="form-grid">
+                      <div className="fld">
+                        <label>Competência</label>
+                        <div className="ctrl">
+                          <select value={fComp} onChange={(e) => setFComp(e.target.value)}>
+                            {periods.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+                          </select>
+                          <span className="chev">▾</span>
+                        </div>
+                      </div>
+                      <div className="fld">
+                        <label>Empresa</label>
+                        <div className="ctrl">
+                          <select value={fEmp} onChange={(e) => setFEmp(e.target.value)}>
+                            {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                          <span className="chev">▾</span>
+                        </div>
+                      </div>
+                      <div className="fld">
+                        <label>Valor</label>
+                        <div className="ctrl">
+                          <span className="pre">R$</span>
+                          <input className="money" inputMode="decimal" placeholder="0,00" value={fValor} onChange={(e) => onValor(e.target.value)} />
+                        </div>
+                      </div>
+                      <div className="fld">
+                        <label>Natureza</label>
+                        <div className="ctrl">
+                          <select value={fTipo} onChange={(e) => setFTipo(e.target.value)}>
+                            <option value="CONSORCIO">Consórcio</option>
+                            <option value="AJUSTE_CONTADOR">Ajuste contador</option>
+                            <option value="OUTRO">Outro</option>
+                          </select>
+                          <span className="chev">▾</span>
+                        </div>
+                      </div>
+                      <div className="fld full">
+                        <label>Descrição</label>
+                        <div className="ctrl">
+                          <input placeholder="Ex.: consultoria avulsa para parceiro" value={fDesc} onChange={(e) => setFDesc(e.target.value)} />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="rc-actions">
+                      <button type="submit" className={`save${saved ? " done" : ""}`} disabled={saving}>
+                        {saved ? "Lançamento salvo" : saving ? "Salvando…" : "Salvar lançamento"} <span className="ck">✓</span>
+                      </button>
+                      <span className="hint">Entra no RBT12 da empresa na competência selecionada.</span>
+                    </div>
+                  </form>
+                </div>
+
+                <div className="list-col">
+                  <div className="lh">
+                    <h3>Receitas complementares lançadas</h3>
+                    <span className="ct">{lancamentos.length} lançamentos</span>
+                  </div>
+                  {lancamentos.length === 0 ? (
+                    <div className="state sm">Nenhum lançamento complementar.</div>
+                  ) : (
+                    <>
+                      <div className="rlist">
+                        {lancamentos.map((l) => (
+                          <div className="ritem" key={l.id}>
+                            <span className="desc">{l.descricao || "Receita complementar"}</span>
+                            <span className="amt num">{brl(l.valor)}</span>
+                            <span className="meta">
+                              <span className="pill">{compName(l.company_id)}</span>
+                              <span className="dotsep">·</span>{lblOf(l)}
+                              <span className="dotsep">·</span>{CAT_LABEL[l.categoria] || l.categoria}
+                              <button type="button" className="del" title="Remover" onClick={() => remove(l.id)}>×</button>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="rlist-foot">
+                        <span className="l">Total complementar lançado</span>
+                        <span className="v num">{brl(totalComp)}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </section>
+          </>
+        ) : null}
+      </main>
     </div>
   );
 }
 
-const styles: Record<string, CSSProperties> = {
-  page: { display: "flex", flexDirection: "column", gap: 16 },
-  header: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" },
-  kicker: { fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--rr-gold)" },
-  title: { margin: 0, fontSize: 22, color: "var(--rr-navy)", fontWeight: 800 },
-  footnote: { fontSize: 12, color: "var(--rr-muted)", margin: 0 },
-  fiscalBanner: { fontSize: 13, color: "var(--rr-navy)", background: "var(--rr-yellow-soft)", border: "1px solid var(--rr-gold)", borderRadius: 10, padding: "10px 14px", lineHeight: 1.5 },
-  cardsGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 },
-  card: { background: "var(--rr-panel)", border: "1px solid var(--rr-line)", borderRadius: 12, padding: 16, boxShadow: "var(--rr-shadow-soft)" },
-  cardTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 },
-  cardName: { fontWeight: 800, color: "var(--rr-navy)", fontSize: 15 },
-  cardCnpj: { fontSize: 12, color: "var(--rr-muted)" },
-  faixaPill: { color: "#fff", fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 999, whiteSpace: "nowrap" },
-  rbtValue: { fontSize: 26, fontWeight: 800, color: "var(--rr-navy)", marginTop: 10 },
-  cardMeta: { fontSize: 12, color: "var(--rr-muted)", marginBottom: 8 },
-  cardRow: { display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--rr-navy)", padding: "2px 0" },
-  parcial: { marginTop: 8, fontSize: 12, color: "var(--rr-gold-deep)", background: "var(--rr-gold-soft)", borderRadius: 8, padding: "6px 8px" },
-  expandBtn: { marginTop: 10, width: "100%", height: 30, borderRadius: 7, border: "1px solid var(--rr-line-strong)", background: "#fff", color: "var(--rr-navy)", fontWeight: 600, cursor: "pointer" },
-  serieTable: { width: "100%", borderCollapse: "collapse", marginTop: 10, fontSize: 12 },
-  sTh: { textAlign: "left", padding: "4px 6px", color: "var(--rr-muted)", borderBottom: "1px solid var(--rr-line)" },
-  sThNum: { textAlign: "right", padding: "4px 6px", color: "var(--rr-muted)", borderBottom: "1px solid var(--rr-line)" },
-  sTd: { padding: "3px 6px", color: "var(--rr-navy)" },
-  sTdNum: { padding: "3px 6px", color: "var(--rr-navy)", textAlign: "right" },
-  sectionTitle: { margin: "8px 0 0", fontSize: 17, color: "var(--rr-navy)", fontWeight: 800 },
-  formCard: { background: "var(--rr-panel)", border: "1px solid var(--rr-line)", borderRadius: 12, padding: 16 },
-  formGrid: { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" },
-  field: { display: "flex", flexDirection: "column", gap: 6, minWidth: 130 },
-  fieldLabel: { fontSize: 11, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--rr-muted)" },
-  input: { height: 38, padding: "0 10px", borderRadius: 8, border: "1px solid var(--rr-line-strong)", background: "#fff", color: "var(--rr-navy)", fontSize: 14 },
-  primaryBtn: { height: 38, padding: "0 18px", borderRadius: 8, border: "none", background: "var(--rr-navy)", color: "#fff000", fontWeight: 700, cursor: "pointer" },
-  secondaryBtn: { height: 38, padding: "0 14px", borderRadius: 8, border: "1px solid var(--rr-line-strong)", background: "#fff", color: "var(--rr-navy)", fontWeight: 600, cursor: "pointer" },
-  table: { width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 760 },
-  th: { textAlign: "left", padding: "10px", color: "var(--rr-navy)", fontWeight: 700, borderBottom: "1px solid var(--rr-line)", whiteSpace: "nowrap" },
-  thNum: { textAlign: "right", padding: "10px", color: "var(--rr-navy)", fontWeight: 700, borderBottom: "1px solid var(--rr-line)" },
-  td: { padding: "8px 10px", borderBottom: "1px solid var(--rr-line)", color: "var(--rr-navy)", whiteSpace: "nowrap" },
-  tdNum: { padding: "8px 10px", borderBottom: "1px solid var(--rr-line)", color: "var(--rr-navy)", textAlign: "right", whiteSpace: "nowrap" },
-  linkBtn: { background: "none", border: "none", color: "var(--rr-blue)", cursor: "pointer", fontWeight: 600, marginRight: 10, padding: 0 },
-  empty: { padding: 24, textAlign: "center", color: "var(--rr-muted)" },
-  note: { padding: 24, color: "var(--rr-muted)" },
-};
+const CSS = `
+.rrrec{
+  --navy:#0F1F4A; --yellow:#FFF000; --gold:#D6A13F; --gold-deep:#B9842A;
+  --green:#3C9D6B; --green-soft:#5FB98A; --green-bg:#E9F5EF;
+  --warn:#D69A1E; --warn-soft:#E7BE6A; --warn-bg:#FBF1DC;
+  --red:#C0443C; --red-soft:#E07A72; --red-bg:#FBECEB;
+  --page:#EDEFF3; --card:#FFFFFF; --bd:#E4E7EC; --bd-soft:#EEF0F4;
+  --ink:#16203A; --ink-2:#4B5468; --ink-3:#838B9C; --r-lg:20px; --r-md:16px;
+  --shadow:0 1px 2px rgba(15,31,74,.04), 0 8px 24px rgba(15,31,74,.05);
+  background:var(--page);color:var(--ink);font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.45;
+}
+.rrrec *{box-sizing:border-box;}
+.rrrec .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+.rrrec .wrap{max-width:1080px;margin:0 auto;padding:34px 28px 56px;display:flex;flex-direction:column;gap:22px;}
+.rrrec .crumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-3);margin:-6px 2px -4px;}
+.rrrec .crumb a{color:var(--ink-2);text-decoration:none;font-weight:500;}
+.rrrec .crumb a:hover{color:var(--navy);}
+.rrrec .crumb .sep{color:#C2C8D2;}
+.rrrec .header{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 34px;color:#fff;position:relative;overflow:hidden;}
+.rrrec .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
+.rrrec .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
+.rrrec .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
+.rrrec .header h1{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
+.rrrec .hr-right{display:flex;flex-direction:column;align-items:flex-end;gap:10px;}
+.rrrec .comp{position:relative;}
+.rrrec .comp select{appearance:none;-webkit-appearance:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);color:#E4E9F4;padding:8px 36px 8px 14px;border-radius:999px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
+.rrrec .comp select option{color:#16203A;}
+.rrrec .comp select:focus{outline:none;border-color:rgba(255,255,255,.35);}
+.rrrec .comp .chev{position:absolute;right:14px;top:50%;transform:translateY(-50%);pointer-events:none;color:#9DA9C6;font-size:11px;}
+.rrrec .access{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:500;color:#9DA9C6;}
+.rrrec .gstat{margin-top:28px;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;}
+.rrrec .gstat .lbl{font-size:12px;font-weight:500;color:#9DA9C6;margin:0 0 11px;display:flex;align-items:center;gap:9px;}
+.rrrec .gstat .lbl .sem{width:10px;height:10px;border-radius:50%;}
+.rrrec .gstat .big{font-size:42px;font-weight:700;letter-spacing:-.025em;line-height:.95;color:#fff;}
+.rrrec .gstat .big small{font-size:19px;font-weight:600;color:#A6B0CB;margin-left:8px;letter-spacing:0;}
+.rrrec .gstat .right{text-align:right;}
+.rrrec .gstat .pct{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1;}
+.rrrec .gstat .pct.g{color:var(--green-soft);}
+.rrrec .gstat .pct.a{color:var(--warn-soft);}
+.rrrec .gstat .pct.r{color:var(--red-soft);}
+.rrrec .gstat .pct-k{font-size:12px;color:#9DA9C6;margin-top:8px;}
+.rrrec .sem.g{background:var(--green);box-shadow:0 0 0 4px rgba(60,157,107,.18);}
+.rrrec .sem.a{background:var(--warn);box-shadow:0 0 0 4px rgba(214,154,30,.20);}
+.rrrec .sem.r{background:var(--red);box-shadow:0 0 0 4px rgba(192,68,60,.18);}
+.rrrec .gbar{margin-top:20px;}
+.rrrec .gbar .track{height:9px;border-radius:6px;background:rgba(255,255,255,.10);overflow:hidden;}
+.rrrec .gbar .fill{height:100%;border-radius:6px;}
+.rrrec .gbar .fill.g{background:linear-gradient(90deg,var(--green),var(--green-soft));}
+.rrrec .gbar .fill.a{background:linear-gradient(90deg,var(--warn),var(--warn-soft));}
+.rrrec .gbar .fill.r{background:linear-gradient(90deg,var(--red),var(--red-soft));}
+.rrrec .gbar .scale{display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:#7C88A8;}
+.rrrec .gbar .scale .mid{color:#9DA9C6;}
+.rrrec .banner{border-radius:var(--r-md);padding:12px 16px;font-size:13px;background:var(--red-bg);border:1px solid #E9B7B2;color:#8E2F28;}
+.rrrec .state{padding:24px 4px;font-size:13.5px;color:var(--ink-3);}
+.rrrec .state.sm{padding:14px 2px;}
+.rrrec .sec-title{display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin:4px 2px -4px;flex-wrap:wrap;}
+.rrrec .sec-title h2{font-size:16.5px;font-weight:600;letter-spacing:-.01em;margin:0;color:var(--ink);}
+.rrrec .sec-title .legend{display:flex;gap:16px;font-size:12px;color:var(--ink-3);}
+.rrrec .sec-title .legend span{display:inline-flex;align-items:center;gap:6px;}
+.rrrec .sec-title .legend i{width:9px;height:9px;border-radius:50%;display:inline-block;}
+.rrrec .legend i.g{background:var(--green);}
+.rrrec .legend i.a{background:var(--warn);}
+.rrrec .legend i.r{background:var(--red);}
+.rrrec .cgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.rrrec .ccard{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:24px 26px;display:flex;flex-direction:column;}
+.rrrec .ccard .ch{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;}
+.rrrec .ccard .nm{display:flex;align-items:center;gap:11px;font-size:15.5px;font-weight:600;color:var(--ink);}
+.rrrec .ccard .sem{width:11px;height:11px;border-radius:50%;flex:none;}
+.rrrec .ccard .faixa{font-size:11.5px;font-weight:600;color:var(--ink-2);background:#F3F5F8;border:1px solid var(--bd);padding:4px 10px;border-radius:7px;white-space:nowrap;}
+.rrrec .ccard .rbt-k{font-size:12px;font-weight:500;color:var(--ink-3);margin:0 0 6px;}
+.rrrec .ccard .rbt{font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);}
+.rrrec .ccard .bar{margin-top:20px;}
+.rrrec .ccard .bar .track{height:8px;border-radius:6px;background:#EFF1F5;overflow:hidden;}
+.rrrec .ccard .bar .fill{height:100%;border-radius:6px;}
+.rrrec .ccard .bar .fill.g{background:linear-gradient(90deg,var(--green),var(--green-soft));}
+.rrrec .ccard .bar .fill.a{background:linear-gradient(90deg,var(--warn),var(--warn-soft));}
+.rrrec .ccard .bar .fill.r{background:linear-gradient(90deg,var(--red),var(--red-soft));}
+.rrrec .ccard .meta{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:11px;}
+.rrrec .ccard .meta .pct{font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;}
+.rrrec .ccard .meta .pct b{color:var(--green);}
+.rrrec .ccard .meta .folga{font-size:12px;color:var(--ink-3);white-space:nowrap;}
+.rrrec .ccard .meta .folga b{color:var(--ink-2);font-weight:600;}
+.rrrec .ccard .zone{font-size:11.5px;font-weight:600;margin-top:14px;padding-top:13px;border-top:1px solid var(--bd-soft);display:flex;align-items:center;gap:8px;}
+.rrrec .ccard .zone.g{color:var(--green);}
+.rrrec .ccard .zone.a{color:var(--warn);}
+.rrrec .ccard .zone.r{color:var(--red);}
+.rrrec .ccard .zone .tt{color:var(--ink-3);font-weight:500;}
+.rrrec .note{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-3);margin:-2px 4px;}
+.rrrec .note .gi{width:16px;height:16px;border-radius:5px;background:#F1F3F7;border:1px solid var(--bd);display:grid;place-items:center;font-size:10px;color:var(--ink-3);}
+.rrrec .note b{color:var(--ink-2);font-weight:600;}
+.rrrec .card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:26px 28px;}
+.rrrec .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:4px;}
+.rrrec .card-head h2{font-size:16.5px;font-weight:600;letter-spacing:-.01em;margin:0;color:var(--ink);}
+.rrrec .card-head .csub{font-size:12.5px;color:var(--ink-3);margin:5px 0 0;}
+.rrrec .rc{display:grid;grid-template-columns:1.05fr .95fr;gap:0;}
+.rrrec .rc .form-col{padding-right:30px;border-right:1px solid var(--bd-soft);}
+.rrrec .rc .list-col{padding-left:30px;}
+.rrrec .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px;}
+.rrrec .fld{display:flex;flex-direction:column;gap:7px;}
+.rrrec .fld.full{grid-column:1 / -1;}
+.rrrec .fld label{font-size:11.5px;font-weight:600;letter-spacing:.03em;color:var(--ink-2);}
+.rrrec .ctrl{position:relative;display:flex;align-items:center;}
+.rrrec .ctrl .pre{position:absolute;left:13px;font-size:13.5px;font-weight:600;color:var(--ink-3);pointer-events:none;}
+.rrrec .ctrl select,.rrrec .ctrl input{width:100%;font-family:inherit;font-size:13.5px;color:var(--ink);border:1px solid var(--bd);border-radius:10px;background:#fff;padding:11px 13px;outline:none;}
+.rrrec .ctrl input.money{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;font-weight:600;padding-left:38px;}
+.rrrec .ctrl select{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:34px;}
+.rrrec .ctrl .chev{position:absolute;right:13px;pointer-events:none;color:var(--ink-3);font-size:11px;}
+.rrrec .ctrl select:focus,.rrrec .ctrl input:focus{border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,31,74,.08);}
+.rrrec .rc-actions{display:flex;align-items:center;gap:14px;margin-top:18px;flex-wrap:wrap;}
+.rrrec .save{display:inline-flex;align-items:center;gap:8px;background:var(--navy);color:#fff;border:none;border-radius:10px;padding:12px 22px;font-family:inherit;font-size:13px;font-weight:600;cursor:pointer;}
+.rrrec .save:hover{background:#16285C;}
+.rrrec .save:disabled{opacity:.7;cursor:default;}
+.rrrec .save .ck{color:var(--yellow);font-size:13px;}
+.rrrec .save.done{background:var(--green);}
+.rrrec .save.done .ck{color:#fff;}
+.rrrec .rc-actions .hint{font-size:11.5px;color:var(--ink-3);max-width:220px;}
+.rrrec .list-col .lh{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:4px;}
+.rrrec .list-col .lh h3{font-size:13px;font-weight:600;color:var(--ink);margin:0;}
+.rrrec .list-col .lh .ct{font-size:11.5px;color:var(--ink-3);}
+.rrrec .rlist{display:flex;flex-direction:column;}
+.rrrec .ritem{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:14px 2px;border-top:1px solid var(--bd-soft);}
+.rrrec .ritem:first-child{border-top:none;}
+.rrrec .ritem .desc{font-size:13.5px;font-weight:600;color:var(--ink);}
+.rrrec .ritem .amt{font-size:14px;font-weight:600;color:var(--green);text-align:right;}
+.rrrec .ritem .meta{grid-column:1 / -1;font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.rrrec .ritem .meta .pill{font-size:10.5px;font-weight:600;color:var(--ink-2);background:#F3F5F8;border:1px solid var(--bd);padding:2px 7px;border-radius:6px;}
+.rrrec .ritem .meta .dotsep{color:#C2C8D2;}
+.rrrec .ritem .meta .del{margin-left:auto;appearance:none;border:none;background:none;color:var(--ink-3);font-size:16px;line-height:1;cursor:pointer;padding:0 4px;}
+.rrrec .ritem .meta .del:hover{color:var(--red);}
+.rrrec .rlist-foot{display:grid;grid-template-columns:1fr auto;gap:12px;margin-top:6px;padding:14px 2px 2px;border-top:2px solid var(--bd);}
+.rrrec .rlist-foot .l{font-size:12px;font-weight:600;color:var(--ink-2);}
+.rrrec .rlist-foot .v{font-size:14.5px;font-weight:700;color:var(--green);text-align:right;}
+
+@media (max-width:820px){
+  .rrrec .rc{grid-template-columns:1fr;}
+  .rrrec .rc .form-col{padding-right:0;border-right:none;padding-bottom:26px;border-bottom:1px solid var(--bd-soft);}
+  .rrrec .rc .list-col{padding-left:0;padding-top:26px;}
+}
+@media (max-width:680px){
+  .rrrec .wrap{padding:18px 16px 40px;gap:16px;}
+  .rrrec .header{padding:22px 20px 24px;}
+  .rrrec .header h1{font-size:22px;}
+  .rrrec .hr-right{align-items:flex-start;}
+  .rrrec .gstat .big{font-size:34px;}
+  .rrrec .cgrid{grid-template-columns:1fr;}
+  .rrrec .ccard,.rrrec .card{padding:20px 18px;}
+  .rrrec .form-grid{grid-template-columns:1fr;}
+}
+`;

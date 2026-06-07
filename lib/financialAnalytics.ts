@@ -94,6 +94,7 @@ export type FinanceSummary = {
   totalExpenses: number;
   paidExpenses: number;
   pendingExpenses: number;
+  comissoesPagas: number;
   operatingResult: number;
   cashBalance: number;
   futureDeferredBalance: number;
@@ -113,6 +114,7 @@ export type FinanceCashTrendPoint = {
   receivedNet: number;
   totalExpenses: number;
   paidExpenses: number;
+  comissoesPagas: number;
   cashBalance: number;
 };
 
@@ -227,7 +229,7 @@ export async function buildFinancialAnalytics(
     month?: number;
   }
 ): Promise<FinancialAnalyticsPayload> {
-  const [companies, categories, closings, expenses, openingBalances, deferredRows] =
+  const [companies, categories, closings, expenses, openingBalances, deferredRows, pmrRows] =
     await Promise.all([
       fetchAllRows<CompanyRow>(() =>
         supabase
@@ -276,11 +278,33 @@ export async function buildFinancialAnalytics(
           .select("id, valor, status, data_prevista")
           .order("data_prevista", { ascending: true })
       ),
+      // COMISSÃO PAGA (repasse aos promotores) — saída de caixa real. Mesma base
+      // da DRE: payable = final_commission_value − discount_value (cms/motor) por
+      // competência (payable_commission_value é campo computado, não coluna).
+      fetchAllRows<{
+        year: number;
+        month: number;
+        company_id: string | null;
+        final_commission_value: number | null;
+        discount_value: number | null;
+      }>(() =>
+        supabase
+          .from("promoter_monthly_results")
+          .select("year, month, company_id, final_commission_value, discount_value")
+      ),
     ]);
 
   const companyById = new Map(companies.map((company) => [company.id, company]));
   const companyByCnpj = new Map(companies.map((company) => [company.cnpj, company]));
   const categoryById = new Map(categories.map((category) => [category.id, category]));
+
+  // Comissão paga (saída de caixa) por competência — Σ payable_commission_value.
+  const comissaoByPeriod = new Map<string, number>();
+  for (const row of pmrRows) {
+    const k = getPeriodKey(row.year, row.month);
+    const payable = toNumber(row.final_commission_value) - toNumber(row.discount_value);
+    comissaoByPeriod.set(k, toNumber(comissaoByPeriod.get(k)) + payable);
+  }
 
   const periodMap = new Map<string, FinancePeriodOption>();
   const now = new Date();
@@ -396,6 +420,8 @@ export async function buildFinancialAnalytics(
     }, 0)
   );
 
+  const comissoesPagas = roundMoney(comissaoByPeriod.get(selectedPeriod.key) ?? 0);
+
   const summary: FinanceSummary = {
     periodLabel: selectedPeriod.label,
     openingBalance,
@@ -408,8 +434,15 @@ export async function buildFinancialAnalytics(
     totalExpenses,
     paidExpenses,
     pendingExpenses,
-    operatingResult: roundMoney(receivedSummary.receivedNet - totalExpenses),
-    cashBalance: roundMoney(openingBalance + receivedSummary.receivedNet - paidExpenses),
+    // Comissão paga = maior saída de caixa (repasse). Saldo/resultado refletem o
+    // conceito de CAIXA: recebido − comissões pagas − despesas operacionais.
+    comissoesPagas,
+    operatingResult: roundMoney(
+      receivedSummary.receivedNet - comissoesPagas - totalExpenses
+    ),
+    cashBalance: roundMoney(
+      openingBalance + receivedSummary.receivedNet - comissoesPagas - paidExpenses
+    ),
     futureDeferredBalance,
     companiesCount: selectedClosings.length,
     expensesCount: selectedExpenses.length,
@@ -603,6 +636,7 @@ export async function buildFinancialAnalytics(
       const openingBalance = roundMoney(
         periodOpenings.reduce((sum, row) => sum + toNumber(row.opening_balance), 0)
       );
+      const comissoesPagas = roundMoney(comissaoByPeriod.get(period.key) ?? 0);
 
       return {
         key: period.key,
@@ -611,7 +645,8 @@ export async function buildFinancialAnalytics(
         receivedNet,
         totalExpenses,
         paidExpenses,
-        cashBalance: roundMoney(openingBalance + receivedNet - paidExpenses),
+        comissoesPagas,
+        cashBalance: roundMoney(openingBalance + receivedNet - comissoesPagas - paidExpenses),
       } satisfies FinanceCashTrendPoint;
     });
 

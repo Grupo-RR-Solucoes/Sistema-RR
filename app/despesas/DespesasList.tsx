@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type CSSProperties } from "react";
+import { useRouter } from "next/navigation";
 
 import type { UserRole } from "@/lib/auth/types";
 import { canDeleteExpense } from "@/lib/auth/permissions";
@@ -122,6 +123,10 @@ export default function DespesasList({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(loadError);
   const [isFetching, setIsFetching] = useState(false);
+  // Etapa 8 Fase 3: "Nova categoria" migrada do /financeiro (categoria e da despesa).
+  const router = useRouter();
+  const [newCategory, setNewCategory] = useState("");
+  const [addingCategory, setAddingCategory] = useState(false);
 
   const companyById = useMemo(
     () => new Map(initialCompanies.map((c) => [c.id, c])),
@@ -189,6 +194,30 @@ export default function DespesasList({
       setExpenses((body.expenses ?? []) as ExpenseRow[]);
     } finally {
       setIsFetching(false);
+    }
+  }
+
+  async function handleAddCategory(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newCategory.trim();
+    if (!name) return;
+    setAddingCategory(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/financeiro", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "category", name }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error ?? "Falha ao criar categoria");
+        return;
+      }
+      setNewCategory("");
+      router.refresh(); // re-fetcha as categorias (prop do servidor)
+    } finally {
+      setAddingCategory(false);
     }
   }
 
@@ -265,6 +294,40 @@ export default function DespesasList({
           + Nova despesa
         </button>
       </header>
+
+      {currentUserRole === "socio" ? (
+        <form
+          onSubmit={handleAddCategory}
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "center",
+            flexWrap: "wrap",
+            padding: "12px 14px",
+            border: "1px dashed rgba(13,77,227,0.22)",
+            borderRadius: 14,
+            background: "rgba(255,255,255,0.7)",
+          }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 800, color: "var(--rr-blue)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            Nova categoria de despesa
+          </span>
+          <input
+            value={newCategory}
+            onChange={(event) => setNewCategory(event.target.value)}
+            placeholder="Ex.: Marketing"
+            aria-label="Nome da nova categoria"
+            style={{ flex: "1 1 160px", minWidth: 140, borderRadius: 10, border: "1px solid rgba(13,77,227,0.18)", padding: "9px 12px", fontSize: 14 }}
+          />
+          <button
+            type="submit"
+            disabled={addingCategory}
+            style={{ borderRadius: 10, border: 0, padding: "9px 16px", fontSize: 13, fontWeight: 700, color: "#fff", background: "var(--rr-navy)", cursor: addingCategory ? "default" : "pointer", opacity: addingCategory ? 0.7 : 1 }}
+          >
+            {addingCategory ? "Salvando…" : "Adicionar"}
+          </button>
+        </form>
+      ) : null}
 
       {error ? (
         <div role="alert" style={styles.errorBanner}>

@@ -239,7 +239,7 @@ function Shortcuts() {
         <span className="sc-name">Projeção</span>
         <span className="sc-desc">Meta do mês</span>
       </Link>
-      <Link className="sc" href="/dre">
+      <Link className="sc" href="/financeiro">
         <span className="sc-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="3" width="14" height="18" rx="2" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="9" y1="12" x2="15" y2="12" /><line x1="9" y1="16" x2="13" y2="16" /></svg></span>
         <span className="sc-name">DRE</span>
         <span className="sc-desc">Resultado consolidado</span>
