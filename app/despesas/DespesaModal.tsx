@@ -3,7 +3,6 @@
 import {
   useEffect,
   useState,
-  type CSSProperties,
   type FormEvent,
 } from "react";
 
@@ -12,6 +11,7 @@ import type {
   CompanyOption,
   ExpenseRow,
 } from "./DespesasList";
+import { isGroupExpense } from "./DespesasList";
 
 interface Props {
   mode: "create" | "edit";
@@ -19,25 +19,49 @@ interface Props {
   companies: CompanyOption[];
   categories: CategoryOption[];
   onClose: () => void;
-  onSuccess: () => void | Promise<void>;
+  onSuccess: (message: string) => void | Promise<void>;
 }
 
 const CURRENT_YEAR = new Date().getFullYear();
-const YEAR_OPTIONS = [CURRENT_YEAR - 2, CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1];
-const MONTH_OPTIONS = Array.from({ length: 12 }, (_, i) => i + 1);
+const YEAR_OPTIONS = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1];
+const MONTH_OPTIONS = [
+  { value: 1, label: "Janeiro" },
+  { value: 2, label: "Fevereiro" },
+  { value: 3, label: "Março" },
+  { value: 4, label: "Abril" },
+  { value: 5, label: "Maio" },
+  { value: 6, label: "Junho" },
+  { value: 7, label: "Julho" },
+  { value: 8, label: "Agosto" },
+  { value: 9, label: "Setembro" },
+  { value: 10, label: "Outubro" },
+  { value: 11, label: "Novembro" },
+  { value: 12, label: "Dezembro" },
+];
 
-function parseAmount(input: string): number | null {
-  if (!input) return null;
-  // Aceita "1234.56", "1234,56", "1.234,56"
-  const cleaned = input.replace(/\./g, "").replace(/,/g, ".");
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
+type Scope = "empresa" | "grupo";
+
+// Formata enquanto digita: trabalha sobre os dígitos crus (centavos).
+function fmtBR(raw: string): string {
+  const d = String(raw).replace(/\D/g, "");
+  if (!d) return "";
+  let n = d.replace(/^0+(?=\d)/, "");
+  while (n.length < 3) n = "0" + n;
+  const c = n.slice(-2);
+  const i = n.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return i + "," + c;
 }
 
-function formatAmountForInput(value: number | null | undefined): string {
+function parseBR(str: string): number {
+  if (!str) return 0;
+  const n = parseFloat(String(str).replace(/\./g, "").replace(",", ".")) || 0;
+  return Math.round(n * 100) / 100;
+}
+
+function amountToInput(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(Number(value)))
     return "";
-  return Number(value).toFixed(2).replace(".", ",");
+  return fmtBR(String(Math.round(Number(value) * 100)));
 }
 
 export default function DespesaModal({
@@ -49,20 +73,27 @@ export default function DespesaModal({
   onSuccess,
 }: Props) {
   const today = new Date();
-  const defaultYear = expense?.year ?? today.getFullYear();
-  const defaultMonth = expense?.month ?? today.getMonth() + 1;
+  const isEdit = mode === "edit";
 
-  const [companyId, setCompanyId] = useState<string>(expense?.company_id ?? "");
+  const initialScope: Scope =
+    expense && isGroupExpense(expense) ? "grupo" : "empresa";
+
+  const [scope, setScope] = useState<Scope>(initialScope);
+  const [companyId, setCompanyId] = useState<string>(
+    expense?.company_id ?? companies[0]?.id ?? ""
+  );
   const [categoryId, setCategoryId] = useState<string>(
-    expense?.category_id ?? ""
+    expense?.category_id ?? categories[0]?.id ?? ""
   );
   const [description, setDescription] = useState<string>(
     expense?.description ?? ""
   );
-  const [year, setYear] = useState<number>(defaultYear);
-  const [month, setMonth] = useState<number>(defaultMonth);
+  const [year, setYear] = useState<number>(expense?.year ?? today.getFullYear());
+  const [month, setMonth] = useState<number>(
+    expense?.month ?? today.getMonth() + 1
+  );
   const [amountInput, setAmountInput] = useState<string>(
-    formatAmountForInput(expense?.amount)
+    amountToInput(expense?.amount)
   );
   const [dueDate, setDueDate] = useState<string>(expense?.due_date ?? "");
   const [paymentDate, setPaymentDate] = useState<string>(
@@ -73,7 +104,6 @@ export default function DespesaModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ESC fecha modal
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape" && !submitting) onClose();
@@ -82,16 +112,14 @@ export default function DespesaModal({
     return () => window.removeEventListener("keydown", handleKey);
   }, [onClose, submitting]);
 
-  const isEdit = mode === "edit";
-
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
 
     const trimmedDescription = description.trim();
-    const amount = parseAmount(amountInput);
+    const amount = parseBR(amountInput);
 
-    if (!companyId) {
+    if (scope === "empresa" && !companyId) {
       setError("Selecione a empresa.");
       return;
     }
@@ -100,11 +128,11 @@ export default function DespesaModal({
       return;
     }
     if (!trimmedDescription) {
-      setError("Informe a descricao.");
+      setError("Informe a descrição.");
       return;
     }
-    if (amount === null || amount <= 0) {
-      setError("Informe um valor valido (maior que zero).");
+    if (amount <= 0) {
+      setError("Informe um valor válido (maior que zero).");
       return;
     }
 
@@ -115,6 +143,7 @@ export default function DespesaModal({
     try {
       let res: Response;
       if (isEdit && expense) {
+        // PATCH não altera escopo/empresa/competência (audit-friendly).
         res = await fetch(`/api/financeiro/${expense.id}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
@@ -134,8 +163,8 @@ export default function DespesaModal({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             action: "expense",
-            scope: "COMPANY",
-            companyId,
+            scope: scope === "grupo" ? "GRUPO" : "COMPANY",
+            companyId: scope === "grupo" ? null : companyId,
             categoryId,
             description: trimmedDescription,
             year,
@@ -155,7 +184,7 @@ export default function DespesaModal({
         return;
       }
 
-      await onSuccess();
+      await onSuccess(isEdit ? "Despesa atualizada" : "Despesa lançada");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro inesperado");
     } finally {
@@ -164,185 +193,272 @@ export default function DespesaModal({
   }
 
   return (
-    <div style={styles.overlay} role="dialog" aria-modal="true">
-      <div style={styles.card}>
-        <header style={styles.header}>
-          <h3 style={styles.title}>
-            {isEdit ? "Editar despesa" : "Nova despesa"}
-          </h3>
+    <div
+      className="overlay open"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modalTitle"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !submitting) onClose();
+      }}
+    >
+      <div className="modal" data-screen-label="modal-despesa">
+        <div className="modal-head">
+          <div>
+            <p className="mt">{isEdit ? "EDITAR LANÇAMENTO" : "NOVO LANÇAMENTO"}</p>
+            <h2 id="modalTitle">{isEdit ? "Editar despesa" : "Nova despesa"}</h2>
+          </div>
           <button
             type="button"
-            style={styles.closeBtn}
+            className="modal-close"
             onClick={onClose}
             disabled={submitting}
             aria-label="Fechar"
           >
-            ✕
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
           </button>
-        </header>
+        </div>
 
-        <form onSubmit={handleSubmit} style={styles.form} noValidate>
-          <div style={styles.row2}>
-            <label style={styles.label}>
-              <span style={styles.labelText}>Empresa</span>
-              <select
-                value={companyId}
-                onChange={(e) => setCompanyId(e.target.value)}
-                style={styles.input}
-                disabled={submitting || isEdit}
-                required
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="modal-body">
+            {/* scope toggle */}
+            <div className="scope-toggle">
+              <button
+                type="button"
+                className={`scope-opt${scope === "empresa" ? " on" : ""}`}
+                data-scope="empresa"
+                onClick={() => !isEdit && setScope("empresa")}
+                disabled={isEdit}
+                aria-pressed={scope === "empresa"}
               >
-                <option value="">Selecione uma empresa...</option>
-                {companies.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              {isEdit ? (
-                <span style={styles.helperInfo}>
-                  Empresa nao pode ser alterada. Para mudar, delete e crie de
-                  novo.
+                <span className="radio" />
+                <span>
+                  <span className="t">Empresa específica</span>
+                  <span className="d">Lançada em um CNPJ do grupo</span>
                 </span>
-              ) : null}
-            </label>
-
-            <label style={styles.label}>
-              <span style={styles.labelText}>Categoria</span>
-              <select
-                value={categoryId}
-                onChange={(e) => setCategoryId(e.target.value)}
-                style={styles.input}
-                disabled={submitting}
-                required
+              </button>
+              <button
+                type="button"
+                className={`scope-opt${scope === "grupo" ? " on" : ""}`}
+                data-scope="grupo"
+                onClick={() => !isEdit && setScope("grupo")}
+                disabled={isEdit}
+                aria-pressed={scope === "grupo"}
               >
-                <option value="">Selecione uma categoria...</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <label style={styles.label}>
-            <span style={styles.labelText}>Descricao</span>
-            <input
-              type="text"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              style={styles.input}
-              disabled={submitting}
-              required
-              placeholder="Ex: Aluguel sede, NF fornecedor X, folha CLT"
-            />
-          </label>
-
-          <div style={styles.row3}>
-            <label style={styles.label}>
-              <span style={styles.labelText}>Ano</span>
-              <select
-                value={year}
-                onChange={(e) => setYear(Number(e.target.value))}
-                style={styles.input}
-                disabled={submitting || isEdit}
-              >
-                {YEAR_OPTIONS.map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={styles.label}>
-              <span style={styles.labelText}>Mes</span>
-              <select
-                value={month}
-                onChange={(e) => setMonth(Number(e.target.value))}
-                style={styles.input}
-                disabled={submitting || isEdit}
-              >
-                {MONTH_OPTIONS.map((m) => (
-                  <option key={m} value={m}>
-                    {String(m).padStart(2, "0")}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={styles.label}>
-              <span style={styles.labelText}>Valor (R$)</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={amountInput}
-                onChange={(e) => setAmountInput(e.target.value)}
-                style={styles.input}
-                disabled={submitting}
-                required
-                placeholder="0,00"
-              />
-            </label>
-          </div>
-
-          <div style={styles.row2}>
-            <label style={styles.label}>
-              <span style={styles.labelText}>Vencimento</span>
-              <input
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                style={styles.input}
-                disabled={submitting}
-              />
-            </label>
-            <label style={styles.label}>
-              <span style={styles.labelText}>Data de pagamento</span>
-              <input
-                type="date"
-                value={paymentDate}
-                onChange={(e) => setPaymentDate(e.target.value)}
-                style={styles.input}
-                disabled={submitting}
-              />
-              <span style={styles.helperInfo}>
-                Preencher marca a despesa como PAGA automaticamente.
-              </span>
-            </label>
-          </div>
-
-          <label style={styles.label}>
-            <span style={styles.labelText}>Observacoes</span>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              style={{ ...styles.input, minHeight: 72, resize: "vertical" }}
-              disabled={submitting}
-              placeholder="Detalhes adicionais (opcional)"
-            />
-          </label>
-
-          {error ? (
-            <div role="alert" style={styles.error}>
-              {error}
+                <span className="radio" />
+                <span>
+                  <span className="t">Grupo todo</span>
+                  <span className="d">Despesa rateada · sem CNPJ específico</span>
+                </span>
+              </button>
             </div>
-          ) : null}
+            {isEdit ? (
+              <p className="mhint" style={{ marginBottom: 16 }}>
+                Escopo, empresa e competência não podem ser alterados. Para mudar,
+                exclua e crie de novo.
+              </p>
+            ) : null}
 
-          <div style={styles.actions}>
+            <div className="mgrid">
+              {scope === "empresa" ? (
+                <div className="mfld">
+                  <label htmlFor="mEmp">
+                    Empresa <span className="req">*</span>
+                  </label>
+                  <div className="mctrl">
+                    <select
+                      id="mEmp"
+                      value={companyId}
+                      onChange={(e) => setCompanyId(e.target.value)}
+                      disabled={submitting || isEdit}
+                      required
+                    >
+                      <option value="">Selecione…</option>
+                      {companies.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="chev">▾</span>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="mfld">
+                <label htmlFor="mCat">
+                  Categoria <span className="req">*</span>
+                </label>
+                <div className="mctrl">
+                  <select
+                    id="mCat"
+                    value={categoryId}
+                    onChange={(e) => setCategoryId(e.target.value)}
+                    disabled={submitting}
+                    required
+                  >
+                    <option value="">Selecione…</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="chev">▾</span>
+                </div>
+              </div>
+
+              <div className="mfld full">
+                <label htmlFor="mDesc">
+                  Descrição <span className="req">*</span>
+                </label>
+                <div className="mctrl">
+                  <input
+                    id="mDesc"
+                    type="text"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    disabled={submitting}
+                    required
+                    placeholder="Ex.: aluguel da unidade Maceió centro"
+                  />
+                </div>
+              </div>
+
+              <div className="mfld">
+                <label htmlFor="mYear">
+                  Ano <span className="req">*</span>
+                </label>
+                <div className="mctrl">
+                  <select
+                    id="mYear"
+                    value={year}
+                    onChange={(e) => setYear(Number(e.target.value))}
+                    disabled={submitting || isEdit}
+                  >
+                    {YEAR_OPTIONS.map((y) => (
+                      <option key={y} value={y}>
+                        {y}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="chev">▾</span>
+                </div>
+              </div>
+
+              <div className="mfld">
+                <label htmlFor="mMonth">
+                  Mês <span className="req">*</span>
+                </label>
+                <div className="mctrl">
+                  <select
+                    id="mMonth"
+                    value={month}
+                    onChange={(e) => setMonth(Number(e.target.value))}
+                    disabled={submitting || isEdit}
+                  >
+                    {MONTH_OPTIONS.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="chev">▾</span>
+                </div>
+              </div>
+
+              <div className="mfld">
+                <label htmlFor="mValor">
+                  Valor <span className="req">*</span>
+                </label>
+                <div className="mctrl">
+                  <span className="pre">R$</span>
+                  <input
+                    id="mValor"
+                    type="text"
+                    inputMode="decimal"
+                    className="money"
+                    value={amountInput}
+                    onChange={(e) => setAmountInput(fmtBR(e.target.value))}
+                    disabled={submitting}
+                    required
+                    placeholder="0,00"
+                  />
+                </div>
+              </div>
+
+              <div className="mfld">
+                <label htmlFor="mVenc">Vencimento</label>
+                <div className="mctrl">
+                  <input
+                    id="mVenc"
+                    type="date"
+                    value={dueDate}
+                    onChange={(e) => setDueDate(e.target.value)}
+                    disabled={submitting}
+                  />
+                </div>
+              </div>
+
+              <div className="mfld">
+                <label htmlFor="mPag">Data de pagamento</label>
+                <div className="mctrl">
+                  <input
+                    id="mPag"
+                    type="date"
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                    disabled={submitting}
+                  />
+                </div>
+              </div>
+
+              <div className="mfld" style={{ justifyContent: "flex-end" }}>
+                <p className="mhint">
+                  Se preenchida, a despesa é marcada como{" "}
+                  <b style={{ color: "var(--green)" }}>Paga</b>.
+                </p>
+              </div>
+
+              <div className="mfld full">
+                <label htmlFor="mObs">Observações</label>
+                <div className="mctrl">
+                  <textarea
+                    id="mObs"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    disabled={submitting}
+                    placeholder="Notas internas, nº da nota, condições…"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {error ? (
+              <div role="alert" className="modal-error">
+                {error}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="modal-foot">
             <button
               type="button"
-              style={styles.secondaryBtn}
+              className="btn-ghost"
               onClick={onClose}
               disabled={submitting}
             >
               Cancelar
             </button>
-            <button type="submit" disabled={submitting} style={styles.primaryBtn}>
+            <button type="submit" className="btn-save" disabled={submitting}>
               {submitting
-                ? "Salvando..."
+                ? "Salvando…"
                 : isEdit
-                  ? "Salvar alteracoes"
-                  : "Lancar despesa"}
+                  ? "Salvar alterações"
+                  : "Salvar despesa"}{" "}
+              <span className="ck">✓</span>
             </button>
           </div>
         </form>
@@ -350,119 +466,3 @@ export default function DespesaModal({
     </div>
   );
 }
-
-const styles: Record<string, CSSProperties> = {
-  overlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(7, 19, 63, 0.42)",
-    backdropFilter: "blur(4px)",
-    display: "grid",
-    placeItems: "center",
-    zIndex: 100,
-    padding: 16,
-  },
-  card: {
-    width: "100%",
-    maxWidth: 640,
-    maxHeight: "calc(100vh - 32px)",
-    overflowY: "auto",
-    background: "var(--rr-surface-elevated)",
-    border: "1px solid var(--rr-line)",
-    borderRadius: 20,
-    boxShadow: "var(--rr-shadow)",
-    padding: "20px 22px 22px",
-    display: "grid",
-    gap: 14,
-  },
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 10,
-  },
-  title: { margin: 0, fontSize: 18, fontWeight: 800, color: "var(--rr-ink)" },
-  closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    border: "1px solid var(--rr-line-strong)",
-    background: "#fff",
-    color: "var(--rr-muted)",
-    fontSize: 14,
-    cursor: "pointer",
-  },
-  form: { display: "grid", gap: 12 },
-  row2: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 12,
-  },
-  row3: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-    gap: 12,
-  },
-  label: { display: "grid", gap: 6 },
-  labelText: {
-    fontSize: 12,
-    fontWeight: 700,
-    color: "var(--rr-ink)",
-    letterSpacing: "0.02em",
-  },
-  input: {
-    width: "100%",
-    boxSizing: "border-box",
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid var(--rr-line-strong)",
-    background: "#fff",
-    fontSize: 14,
-    color: "var(--rr-ink)",
-    outline: "none",
-    fontFamily: "inherit",
-  },
-  helperInfo: {
-    fontSize: 12,
-    color: "var(--rr-muted)",
-    fontStyle: "italic",
-  },
-  actions: {
-    display: "flex",
-    justifyContent: "flex-end",
-    gap: 8,
-    marginTop: 6,
-  },
-  primaryBtn: {
-    padding: "11px 18px",
-    borderRadius: 12,
-    border: "none",
-    cursor: "pointer",
-    background: "#0d4de3",
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: 700,
-    letterSpacing: "0.5px",
-    textTransform: "uppercase",
-    boxShadow: "0 4px 12px rgba(13,77,227,0.18)",
-  },
-  secondaryBtn: {
-    padding: "10px 16px",
-    borderRadius: 11,
-    border: "1px solid var(--rr-line-strong)",
-    background: "#fff",
-    color: "var(--rr-ink)",
-    fontSize: 14,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  error: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    background: "rgba(180,30,30,0.08)",
-    border: "1px solid rgba(180,30,30,0.24)",
-    color: "#8a1717",
-    fontSize: 13,
-    fontWeight: 600,
-  },
-};
