@@ -3,11 +3,72 @@
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { IBM_Plex_Sans } from "next/font/google";
 import { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "./BrandLogo";
 import { useUser } from "../lib/auth/useUser";
 import type { UserRole } from "../lib/auth/types";
+
+// Fonte da sidebar (mock Sidebar_Sistema_RR). Escopada via className no <aside>
+// para nao alterar a topbar nem os headers por-tela.
+const ibmPlex = IBM_Plex_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
+// Icones Lucide (stroke 1.8) — paths verbatim do mock aprovado.
+const ICON_PATHS: Record<string, string> = {
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/>',
+  gauge: '<path d="m13 13 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/>',
+  lock: '<rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  trending: '<path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/>',
+  clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>',
+  wallet: '<path d="M3 6a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v2"/><path d="M3 6v12a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3"/><path d="M21 11h-5a2 2 0 0 0 0 4h5a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1z"/>',
+  percent: '<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
+  arrowdown: '<circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="m8 12 4 4 4-4"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  filechart: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><path d="M14 2v6h6"/><path d="M8 18v-3"/><path d="M12 18v-6"/><path d="M16 18v-2"/>',
+  usercog: '<circle cx="18" cy="15" r="3"/><circle cx="9" cy="7" r="4"/><path d="M10 15H6a4 4 0 0 0-4 4v2"/><path d="m21.7 16.4-.9-.3"/><path d="m15.2 13.9-.9-.3"/><path d="m16.6 18.7.3-.9"/><path d="m19.1 12.2.3-.9"/><path d="m19.6 18.7-.4-1"/><path d="m16.8 12.3-.4-1"/><path d="m14.3 16.6 1-.4"/><path d="m20.7 13.8 1-.4"/>',
+};
+
+function NavIcon({ name }: { name: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      dangerouslySetInnerHTML={{ __html: ICON_PATHS[name] ?? "" }}
+    />
+  );
+}
+
+const CHEVRON: Record<"left" | "right", string> = {
+  left: '<path d="m15 18-6-6 6-6"/>',
+  right: '<path d="m9 18 6-6-6-6"/>',
+};
+
+function Chevron({ dir }: { dir: "left" | "right" }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      dangerouslySetInnerHTML={{ __html: CHEVRON[dir] }}
+    />
+  );
+}
 
 type NavItem = {
   href: string;
@@ -27,42 +88,42 @@ const navGroups: NavGroup[] = [
     id: "painel",
     label: "Painel",
     items: [
-      { href: "/", label: "Visão geral", icon: "VG", visibleTo: ["socio"] },
-      { href: "/dashboard", label: "Dashboard", icon: "DB", visibleTo: ["socio"] },
+      { href: "/", label: "Visão geral", icon: "grid", visibleTo: ["socio"] },
+      { href: "/dashboard", label: "Dashboard", icon: "gauge", visibleTo: ["socio"] },
     ],
   },
   {
     id: "operacao",
     label: "Operação",
     items: [
-      { href: "/importacoes", label: "Importações", icon: "IM", visibleTo: ["socio", "funcionario"] },
-      { href: "/fechamento", label: "Fechamento", icon: "FC", visibleTo: ["socio"] },
+      { href: "/importacoes", label: "Importações", icon: "upload", visibleTo: ["socio", "funcionario"] },
+      { href: "/fechamento", label: "Fechamento", icon: "lock", visibleTo: ["socio"] },
     ],
   },
   {
     id: "comercial",
     label: "Comercial",
     items: [
-      { href: "/promotores", label: "Promotores", icon: "PM", visibleTo: ["socio", "funcionario", "promotor"] },
-      { href: "/projecao", label: "Projeção", icon: "PJ", visibleTo: ["socio", "funcionario", "promotor"] },
-      { href: "/cadastros", label: "Cadastros", icon: "CD", visibleTo: ["socio", "funcionario"] },
+      { href: "/promotores", label: "Promotores", icon: "users", visibleTo: ["socio", "funcionario", "promotor"] },
+      { href: "/projecao", label: "Projeção", icon: "trending", visibleTo: ["socio", "funcionario", "promotor"] },
+      { href: "/cadastros", label: "Cadastros", icon: "clipboard", visibleTo: ["socio", "funcionario"] },
     ],
   },
   {
     id: "controle",
     label: "Controle",
     items: [
-      { href: "/financeiro", label: "Financeiro", icon: "FN", visibleTo: ["socio"] },
-      { href: "/receitas", label: "Receita & Simples", icon: "RB", visibleTo: ["socio", "funcionario"] },
-      { href: "/despesas", label: "Despesas", icon: "DE", visibleTo: ["socio", "funcionario"] },
-      { href: "/auditoria", label: "Auditoria", icon: "AU", visibleTo: ["socio"] },
-      { href: "/relatorios", label: "Relatórios", icon: "RL", visibleTo: ["socio", "funcionario"] },
+      { href: "/financeiro", label: "Financeiro", icon: "wallet", visibleTo: ["socio"] },
+      { href: "/receitas", label: "Receita & Simples", icon: "percent", visibleTo: ["socio", "funcionario"] },
+      { href: "/despesas", label: "Despesas", icon: "arrowdown", visibleTo: ["socio", "funcionario"] },
+      { href: "/auditoria", label: "Auditoria", icon: "shield", visibleTo: ["socio"] },
+      { href: "/relatorios", label: "Relatórios", icon: "filechart", visibleTo: ["socio", "funcionario"] },
     ],
   },
   {
     id: "admin",
     label: "Admin",
-    items: [{ href: "/admin/usuarios", label: "Usuários", icon: "US", visibleTo: ["socio", "funcionario"] }],
+    items: [{ href: "/admin/usuarios", label: "Usuários", icon: "usercog", visibleTo: ["socio", "funcionario"] }],
   },
 ];
 
@@ -201,9 +262,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
         onClick={() => setMobileOpen(false)}
       />
 
-      <aside className="rr-sidebar" style={styles.sidebar}>
-        {/* Header do sidebar: logo + toggle */}
-        <div style={styles.sidebarHeader}>
+      <aside className={`rr-sidebar ${ibmPlex.className}`}>
+        {/* Header do sidebar: logo + toggle (fixos no topo) */}
+        <div className="rr-sb-head">
           {collapsed ? (
             <BrandLogo size="sm" tone="dark" />
           ) : (
@@ -212,7 +273,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={toggleSidebar}
-            style={styles.toggleBtn}
+            className="rr-sb-toggle"
             aria-label={
               isMobile
                 ? "Fechar menu"
@@ -228,43 +289,33 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 : "Recolher menu"
             }
           >
-            {collapsed ? "›" : "‹"}
+            <Chevron dir={collapsed ? "right" : "left"} />
           </button>
         </div>
 
-        <div style={styles.sidebarDivider} />
+        <div className="rr-sb-divider" />
 
-        <nav style={styles.nav}>
+        {/* So a nav rola; header + divisor ficam fixos */}
+        <nav className="rr-sb-nav">
           {visibleNavGroups.map((group) => (
-            <section key={group.id} style={styles.groupSection}>
-              {!collapsed ? (
-                <div style={styles.groupLabel}>{group.label}</div>
-              ) : null}
-              <ul style={styles.itemsList}>
+            <section key={group.id} className="rr-sb-group">
+              <div className="rr-sb-sect">{group.label}</div>
+              <ul className="rr-sb-list">
                 {group.items.map((item) => {
                   const active = isItemActive(item);
                   return (
                     <li key={item.href}>
                       <Link
                         href={item.href}
+                        className={`rr-sb-item${active ? " active" : ""}`}
                         title={collapsed ? item.label : undefined}
-                        style={{
-                          ...styles.navItem,
-                          ...(active ? styles.navItemActive : {}),
-                          ...(collapsed ? styles.navItemCollapsed : {}),
-                        }}
+                        aria-label={item.label}
+                        aria-current={active ? "page" : undefined}
                       >
-                        <span
-                          style={{
-                            ...styles.navIcon,
-                            ...(active ? styles.navIconActive : {}),
-                          }}
-                        >
-                          {item.icon}
+                        <span className="rr-sb-ic">
+                          <NavIcon name={item.icon} />
                         </span>
-                        {!collapsed ? (
-                          <span style={styles.navLabel}>{item.label}</span>
-                        ) : null}
+                        <span className="rr-sb-lbl">{item.label}</span>
                       </Link>
                     </li>
                   );
@@ -337,117 +388,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
 }
 
 const styles: Record<string, CSSProperties> = {
-  sidebar: {
-    padding: "16px 12px",
-    color: "rgba(255,255,255,0.88)",
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-  },
-  sidebarHeader: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-    paddingInline: 0,
-    paddingTop: 24,
-    paddingBottom: 20,
-    width: "100%",
-    boxSizing: "border-box",
-    overflow: "visible",
-  },
-  toggleBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(255,255,255,0.04)",
-    color: "rgba(255,255,255,0.85)",
-    fontSize: 16,
-    fontWeight: 700,
-    cursor: "pointer",
-    display: "grid",
-    placeItems: "center",
-    flexShrink: 0,
-  },
-  sidebarDivider: {
-    height: 1,
-    background: "rgba(255,255,255,0.1)",
-    marginInline: 4,
-  },
-  nav: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 14,
-    paddingTop: 12,
-  },
-  groupSection: {
-    display: "grid",
-    gap: 4,
-  },
-  groupLabel: {
-    fontSize: 10,
-    fontWeight: 700,
-    letterSpacing: "1px",
-    textTransform: "uppercase",
-    color: "rgba(255,255,255,0.5)",
-    paddingInline: 12,
-    marginBottom: 4,
-  },
-  itemsList: {
-    listStyle: "none",
-    margin: 0,
-    padding: 0,
-    display: "grid",
-    gap: 2,
-  },
-  navItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: "7px 12px 7px 16px",
-    borderLeft: "4px solid transparent",
-    color: "rgba(255,255,255,0.88)",
-    fontSize: 13,
-    fontWeight: 500,
-    textDecoration: "none",
-    transition: "background 120ms ease, color 120ms ease",
-  },
-  navItemActive: {
-    borderLeft: "4px solid #fff000",
-    background: "rgba(13,77,227,0.45)",
-    color: "#FFFFFF",
-    fontWeight: 700,
-  },
-  navItemCollapsed: {
-    justifyContent: "center",
-    padding: "7px 8px 7px 8px",
-    borderLeft: "4px solid transparent",
-  },
-  navIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: 4,
-    display: "grid",
-    placeItems: "center",
-    color: "rgba(255,255,255,0.65)",
-    fontSize: 9,
-    fontWeight: 700,
-    letterSpacing: "0.04em",
-    flexShrink: 0,
-  },
-  navIconActive: {
-    background: "#fff000",
-    color: "#0F1F4A",
-  },
-  navLabel: {
-    flex: 1,
-    minWidth: 0,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-
   topbar: {
     display: "flex",
     alignItems: "center",

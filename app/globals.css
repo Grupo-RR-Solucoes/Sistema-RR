@@ -12,6 +12,7 @@
   --rr-gold-deep: #9b6a16;
   --rr-gold-soft: #f3dca2;
   --rr-navy: #0F1F4A;            /* NOVO canonical — sidebar, headings, foreground primario */
+  --rr-navy-deep: #0B1838;       /* tooltip da sidebar recolhida */
   --rr-ink: #0F1F4A;              /* alias de --rr-navy para compat com codigo legado */
   --rr-ink-soft: #132147;
   --rr-muted: #5A6B82;
@@ -77,10 +78,187 @@ a {
   position: sticky;
   top: 0;
   height: 100vh;
-  overflow: auto;
+  overflow: hidden; /* header/divisor fixos; so a .rr-sb-nav rola */
   background: var(--rr-navy);
   transition: width 180ms ease;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 12px;
+  color: rgba(255, 255, 255, 0.88);
 }
+
+/* ===== Sidebar redesign (mock Sidebar_Sistema_RR) ===== */
+.rr-sb-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 6px 0;
+}
+.rr-shell[data-sidebar-collapsed="true"] .rr-sb-head {
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0 0;
+}
+.rr-sb-toggle {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #c9d2e6;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.rr-sb-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.rr-sb-divider {
+  flex: none;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 14px 6px 6px;
+}
+.rr-shell[data-sidebar-collapsed="true"] .rr-sb-divider {
+  margin: 14px 4px 6px;
+}
+
+/* area de navegacao — unica que rola */
+.rr-sb-nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.rr-sb-nav::-webkit-scrollbar {
+  width: 6px;
+}
+.rr-sb-nav::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+.rr-sb-nav {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.rr-sb-group {
+  display: flex;
+  flex-direction: column;
+}
+.rr-sb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.rr-sb-sect {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 14px 16px 6px;
+  white-space: nowrap;
+}
+.rr-sb-group:first-child .rr-sb-sect {
+  padding-top: 8px;
+}
+/* recolhido: rotulo de secao vira tracinho */
+.rr-shell[data-sidebar-collapsed="true"] .rr-sb-sect {
+  height: 1px;
+  font-size: 0;
+  padding: 0;
+  margin: 13px 10px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  letter-spacing: 0;
+}
+
+.rr-sb-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border-left: 4px solid transparent;
+  padding: 7px 12px 7px 16px;
+  border-radius: 8px;
+  text-decoration: none;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.14s;
+}
+.rr-sb-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.rr-sb-ic {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.88);
+  transition: background 0.14s, color 0.14s;
+}
+.rr-sb-ic svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+.rr-sb-lbl {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.88);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ativo — mantem o amarelo */
+.rr-sb-item.active {
+  border-left-color: var(--rr-yellow);
+  background: rgba(13, 77, 227, 0.45);
+}
+.rr-sb-item.active:hover {
+  background: rgba(13, 77, 227, 0.45);
+}
+.rr-sb-item.active .rr-sb-lbl {
+  color: #fff;
+  font-weight: 700;
+}
+.rr-sb-item.active .rr-sb-ic {
+  background: var(--rr-yellow);
+  color: var(--rr-navy);
+}
+
+/* recolhido: so o icone, centralizado */
+.rr-shell[data-sidebar-collapsed="true"] .rr-sb-item {
+  justify-content: center;
+  padding: 7px 0;
+  gap: 0;
+}
+.rr-shell[data-sidebar-collapsed="true"] .rr-sb-lbl {
+  opacity: 0;
+  width: 0;
+  overflow: hidden;
+}
+
+/* Tooltip do recolhido: usa o `title` nativo do item (ver AppShell). Um
+   tooltip CSS (::after) seria clipado pela .rr-sb-nav rolavel — por isso o
+   nome do item vem via atributo title, que o navegador renderiza por cima. */
 
 .rr-content {
   min-width: 0;
@@ -108,18 +286,6 @@ a {
   height: 56px;
 }
 
-.rr-sidebar::-webkit-scrollbar {
-  width: 6px;
-}
-
-.rr-sidebar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
-}
-
-.rr-sidebar a:hover {
-  background: rgba(255, 255, 255, 0.05);
-}
 
 .rr-home-card:hover {
   border-color: #0d4de3;
