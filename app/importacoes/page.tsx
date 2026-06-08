@@ -49,6 +49,20 @@ type ImportacoesPayload = {
   monthlyClosingImports: MonthlyClosingImport[];
 };
 
+type DailyAffectedPeriod = { year: number; month: number; companies_count: number };
+
+type DailyResult = {
+  fileName: string;
+  processed: number;
+  inserted: number;
+  updated: number;
+  duplicatesInFile: number;
+  errorsCount: number;
+  affectedPeriods: DailyAffectedPeriod[];
+  recalculated: number;
+  zeroRows: boolean;
+};
+
 const emptyPayload: ImportacoesPayload = {
   summary: {
     dailyImports: 0,
@@ -66,11 +80,21 @@ const MONTHS = [
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ];
 
+const MONTHS_ABBR = [
+  "jan", "fev", "mar", "abr", "mai", "jun",
+  "jul", "ago", "set", "out", "nov", "dez",
+];
+
+function competenceLabel(month: number, year: number) {
+  const abbr = MONTHS_ABBR[month - 1] || String(month).padStart(2, "0");
+  return `${abbr}/${year}`;
+}
+
 export default function ImportacoesPage() {
   const { user } = useUser();
   const isFuncionario = user?.role === "funcionario";
 
-  const [activeSection, setActiveSection] = useState<"base" | "fechamento" | "historico">("base");
+  const [activeSection, setActiveSection] = useState<"base" | "diaria" | "fechamento" | "historico">("base");
   const [data, setData] = useState<ImportacoesPayload>(emptyPayload);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -80,6 +104,15 @@ export default function ImportacoesPage() {
   const [promoterRemunerationFile, setPromoterRemunerationFile] = useState<File | null>(null);
   const [promoterRemunerationSubmitting, setPromoterRemunerationSubmitting] = useState(false);
   const [cancellingImportId, setCancellingImportId] = useState<string | null>(null);
+  // ABA DIARIA — estado proprio, independente das outras abas. A carga diaria
+  // e liberada para socio E funcionario (API usa withSocioOrFuncionarioAdmin),
+  // por isso nao reaproveita o gating de isFuncionario das abas Base/Fechamento.
+  const [dailyFile, setDailyFile] = useState<File | null>(null);
+  const [dailySubmitting, setDailySubmitting] = useState(false);
+  const [dailyResult, setDailyResult] = useState<DailyResult | null>(null);
+  const [dailyError, setDailyError] = useState("");
+  const [dailyPhase, setDailyPhase] = useState<"" | "importing" | "recalculating">("");
+  const [dailyRecalcLabel, setDailyRecalcLabel] = useState("");
   const [form, setForm] = useState({
     year: String(new Date().getFullYear()),
     month: String(new Date().getMonth() + 1),
@@ -103,6 +136,17 @@ export default function ImportacoesPage() {
 
   useEffect(() => {
     loadData();
+  }, []);
+
+  // Abre a aba certa quando chega com ?tab=diaria (ou #diaria) — usado pelo
+  // redirect da tela antiga /importacao-diaria e por links diretos.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const raw = (params.get("tab") || window.location.hash.replace("#", "")).toLowerCase();
+    if (raw === "base" || raw === "diaria" || raw === "fechamento" || raw === "historico") {
+      setActiveSection(raw);
+    }
   }, []);
 
   function fileToBase64(selectedFile: File) {
@@ -196,6 +240,83 @@ export default function ImportacoesPage() {
       setError(err.message || "Erro ao importar tabela mensal de remuneracao.");
     } finally {
       setPromoterRemunerationSubmitting(false);
+    }
+  }
+
+  async function handleDailySubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!dailyFile) {
+      setDailyError("Selecione uma planilha de produção antes de enviar.");
+      return;
+    }
+    try {
+      setDailySubmitting(true);
+      setDailyError("");
+      setDailyResult(null);
+      setDailyPhase("importing");
+      setDailyRecalcLabel("");
+
+      const base64 = await fileToBase64(dailyFile);
+
+      // A API infere competência, empresa e promotor da própria planilha —
+      // por isso NÃO enviamos year/month/company.
+      const response = await fetch("/api/import/daily", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file: base64, fileName: dailyFile.name }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || "Erro ao importar a planilha.");
+
+      // CRÍTICO — recálculo em loop (porte de app/importacao-diaria/page.js):
+      // a importação invalida os snapshots mensais; o dashboard só volta a
+      // bater se recalcularmos cada competência afetada aqui no client.
+      const affectedPeriods: DailyAffectedPeriod[] = Array.isArray(data?.affected_periods)
+        ? data.affected_periods
+        : [];
+      let recalculated = 0;
+      if (affectedPeriods.length > 0) {
+        setDailyPhase("recalculating");
+        for (const period of affectedPeriods) {
+          setDailyRecalcLabel(competenceLabel(period.month, period.year));
+          const calcResponse = await fetch("/api/calculate/monthly", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ year: period.year, month: period.month }),
+          });
+          const calcPayload = await calcResponse.json();
+          if (!calcResponse.ok) {
+            throw new Error(
+              calcPayload?.error ||
+                "A planilha foi importada, mas o recálculo automático falhou."
+            );
+          }
+          recalculated += 1;
+        }
+      }
+
+      const inserted = data.inserted ?? 0;
+      const updated = data.updated ?? 0;
+      setDailyResult({
+        fileName: dailyFile.name,
+        processed: data.processed ?? 0,
+        inserted,
+        updated,
+        duplicatesInFile: data.duplicates_in_file ?? 0,
+        errorsCount: data.errors_count ?? 0,
+        affectedPeriods,
+        recalculated,
+        // Falha silenciosa: API responde 200 mas nada entrou na base.
+        zeroRows: inserted === 0 && updated === 0,
+      });
+      // Atualiza KPIs e histórico de cargas diárias no topo da tela.
+      await loadData();
+    } catch (err: any) {
+      setDailyError(err.message || "Erro inesperado ao importar a planilha.");
+    } finally {
+      setDailyPhase("");
+      setDailyRecalcLabel("");
+      setDailySubmitting(false);
     }
   }
 
@@ -334,11 +455,14 @@ export default function ImportacoesPage() {
           <button className={`tab${activeSection === "base" ? " on" : ""}`} onClick={() => setActiveSection("base")}>
             <span className="tn">1</span>Base operacional
           </button>
+          <button className={`tab${activeSection === "diaria" ? " on" : ""}`} onClick={() => setActiveSection("diaria")}>
+            <span className="tn">2</span>Diária
+          </button>
           <button className={`tab${activeSection === "fechamento" ? " on" : ""}`} onClick={() => setActiveSection("fechamento")}>
-            <span className="tn">2</span>Fechamento mensal
+            <span className="tn">3</span>Fechamento mensal
           </button>
           <button className={`tab${activeSection === "historico" ? " on" : ""}`} onClick={() => setActiveSection("historico")}>
-            <span className="tn">3</span>Histórico
+            <span className="tn">4</span>Histórico
           </button>
         </div>
 
@@ -435,6 +559,219 @@ export default function ImportacoesPage() {
                 </div>
               </div>
             </section>
+          </>
+        ) : null}
+
+        {/* ===================== ABA DIARIA ===================== */}
+        {activeSection === "diaria" ? (
+          <>
+            <div className="viewlabel">
+              <span className="tag">ABA 2</span>
+              <h2>Diária</h2>
+              <span className="who">carga da produção do dia</span>
+              <span className="rule" />
+            </div>
+
+            {/* Diaria NAO e socio-only: liberada para socio E funcionario. */}
+            <div className="openbar">
+              <span className="ic"><IcoUsers /></span>
+              <div className="txt">
+                <b>Rotina operacional aberta.</b> A carga diária pode ser feita por sócio e por funcionário — sem bloqueio.
+              </div>
+              <div className="roles">
+                <span className="rp"><span className="d" />Sócio</span>
+                <span className="rp"><span className="d" />Funcionário</span>
+              </div>
+            </div>
+
+            <div className="two-up dia-two">
+              {/* CARD principal · Producao diaria */}
+              <section className="ucard">
+                <div className="ucard-head">
+                  <div className="tt">
+                    <span className="badge"><IcoGrid /></span>
+                    <div>
+                      <h3>Produção diária (.xlsx)</h3>
+                      <p className="csub">Carga da produção do dia. Competência, empresa e promotor são detectados automaticamente da planilha.</p>
+                    </div>
+                  </div>
+                  <span className="fmt">.xlsx · .xls</span>
+                </div>
+
+                <form onSubmit={handleDailySubmit}>
+                  {/* substitui Ano/Mes/Empresa: deteccao automatica */}
+                  <div className="autobar">
+                    <span className="ic"><IcoSparkleSm /></span>
+                    <div className="t"><b>Sem seleção de ano, mês ou empresa.</b> Tudo é lido do próprio arquivo — pode importar a planilha direto.</div>
+                  </div>
+
+                  <Dropzone
+                    accept=".xlsx,.xls"
+                    file={dailyFile}
+                    onFile={(f) => { setDailyFile(f); setDailyError(""); }}
+                    title="selecione a planilha de produção"
+                    sub="Formato .xlsx ou .xls · uma planilha pode conter vários dias"
+                  />
+
+                  <div className="rules-wrap">
+                    <div className="rules-lab">Como cada linha entra</div>
+                    <div className="rules">
+                      <span className="chip g static"><span className="d" />Só Produção entra no cálculo</span>
+                      <span className="chip a static"><span className="d" />Em aberto aguarda</span>
+                      <span className="chip r"><span className="d" />Cancelado não entra</span>
+                      <span className="chip n"><span className="d" />Mesma proposta atualiza sem duplicar</span>
+                    </div>
+                  </div>
+
+                  <div className="uact">
+                    <span className="uhint"><IcoInfo />Recalcula o dashboard das competências afetadas.</span>
+                    <button type="submit" className="btn-primary" disabled={dailySubmitting}>
+                      {dailySubmitting ? (
+                        <><span className="spinner" />{dailyPhase === "recalculating" ? "Atualizando dashboard…" : "Importando planilha…"}</>
+                      ) : (
+                        <><span className="ck"><IcoUp /></span>Enviar planilha</>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </section>
+
+              {/* Auto-detect explainer */}
+              <section className="dia-note">
+                <div className="nc-head">
+                  <span className="badge"><IcoSearch /></span>
+                  <div><h3>Detecção automática</h3><p className="csub">Lido de cada linha do arquivo</p></div>
+                </div>
+                <div className="detect">
+                  <div className="row">
+                    <span className="dic"><IcoCalSm /></span>
+                    <div className="dm"><div className="dt">Competência <span className="src">data da linha</span></div><div className="ds">Cada linha vai para o mês da sua própria data.</div></div>
+                  </div>
+                  <div className="row">
+                    <span className="dic"><IcoBank /></span>
+                    <div className="dm"><div className="dt">Empresa <span className="src">MCI / Coban</span></div><div className="ds">CNPJ resolvido pelo código da agência.</div></div>
+                  </div>
+                  <div className="row">
+                    <span className="dic"><IcoUser /></span>
+                    <div className="dm"><div className="dt">Promotor <span className="src">Chave J</span></div><div className="ds">Vinculado ao promotor pela chave do operador.</div></div>
+                  </div>
+                </div>
+                <div className="multi">
+                  <IcoCalSm />
+                  <div>Uma planilha pode afetar <b>vários meses</b> — cada competência é recalculada por conta própria.</div>
+                </div>
+              </section>
+            </div>
+
+            {/* estado intermediario: importando / recalculando */}
+            {dailySubmitting ? (
+              <div className="lcard">
+                <div className="recalc">
+                  <span className="spin" />
+                  <div className="rtx">
+                    {dailyPhase === "recalculating" ? (
+                      <>Atualizando valores do dashboard… <span>recalculando {dailyRecalcLabel}</span></>
+                    ) : (
+                      <>Importando planilha… <span>lendo e gravando as propostas</span></>
+                    )}
+                  </div>
+                  <div className="rbar"><div className="rfill" /></div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* erro */}
+            {dailyError && !dailySubmitting ? (
+              <div className="dia-banner err">
+                <span className="bic"><IcoErrCircle /></span>
+                <div><b>Não foi possível importar</b><span>{dailyError}</span></div>
+              </div>
+            ) : null}
+
+            {/* ATENCAO · falha silenciosa (0 linhas) */}
+            {dailyResult && dailyResult.zeroRows && !dailySubmitting ? (
+              <>
+                <div className="viewlabel">
+                  <span className="tag">ATENÇÃO</span>
+                  <h2>Falha silenciosa · 0 linhas</h2>
+                  <span className="who">a API respondeu, mas nada entrou</span>
+                  <span className="rule" />
+                </div>
+                <div className="alert">
+                  <span className="aic"><IcoAlert22 /></span>
+                  <div className="abody">
+                    <div className="ahead">
+                      <span className="at">Atenção: nenhuma linha foi importada.</span>
+                      <span className="chip r lg"><span className="d" />0 inseridas</span>
+                    </div>
+                    <p className="ax">
+                      Verifique se o <b>cabeçalho da planilha está correto</b> (colunas esperadas). O arquivo foi
+                      recebido, mas nenhuma linha pôde ser interpretada — isto <b>não conta como sucesso</b>.
+                    </p>
+                    <div className="checklist">
+                      <div className="ci"><span className="cb"><IcoCheckSm /></span>Colunas esperadas: <code>Data</code> <code>MCI/Coban</code> <code>Chave J</code> <code>Proposta</code> <code>Situação</code> <code>Valor</code></div>
+                      <div className="ci"><span className="cb"><IcoCheckSm /></span>O cabeçalho deve estar na primeira linha, sem linhas em branco acima.</div>
+                    </div>
+                    <div className="afoot">
+                      <span className="api">resposta da API <span className="mono">200 OK · {formatInt(dailyResult.processed)} lidas · rows_imported: 0</span></span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : null}
+
+            {/* RESULTADO · sucesso */}
+            {dailyResult && !dailyResult.zeroRows && !dailySubmitting ? (
+              <>
+                <div className="viewlabel">
+                  <span className="tag">RESULTADO</span>
+                  <h2>Resumo da importação</h2>
+                  <span className="who">após envio bem-sucedido</span>
+                  <span className="rule" />
+                </div>
+                <section className="lcard">
+                  <div className="res-head">
+                    <div className="lt">
+                      <span className="ic"><IcoChart /></span>
+                      <div>
+                        <h3>Resumo da importação</h3>
+                        <p className="csub">
+                          <span className="mono">{dailyResult.fileName}</span>
+                          <span>·</span>
+                          {dailyResult.recalculated} {dailyResult.recalculated === 1 ? "competência recalculada" : "competências recalculadas"}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="chip g static lg"><span className="d" />Importada</span>
+                  </div>
+
+                  <div className="rstats">
+                    <div className="rstat proc"><div className="rl"><span className="di" />Processados</div><div className="rn num">{formatInt(dailyResult.processed)}</div><div className="rs">linhas lidas</div></div>
+                    <div className="rstat ins"><div className="rl"><span className="di" />Inseridos</div><div className="rn num">{formatInt(dailyResult.inserted)}</div><div className="rs">propostas novas</div></div>
+                    <div className="rstat upd"><div className="rl"><span className="di" />Atualizados</div><div className="rn num">{formatInt(dailyResult.updated)}</div><div className="rs">já existiam</div></div>
+                    <div className="rstat comp"><div className="rl"><span className="di" />Competências</div><div className="rn num">{formatInt(dailyResult.recalculated)}</div><div className="rs">recalculadas</div></div>
+                    <div className="rstat err"><div className="rl"><span className="di" />Erros</div><div className="rn num">{formatInt(dailyResult.errorsCount)}</div><div className="rs">linhas ignoradas</div></div>
+                  </div>
+
+                  {dailyResult.affectedPeriods.length > 0 ? (
+                    <div className="comp-sec">
+                      <div className="comp-lab">Competências afetadas</div>
+                      <div className="comp-grid">
+                        {dailyResult.affectedPeriods.map((p) => (
+                          <div className="comp-item" key={`${p.year}-${p.month}`}>
+                            <span className="cm"><IcoCalSm /></span>
+                            <div>
+                              <div className="ct">{competenceLabel(p.month, p.year)}</div>
+                              <div className="cs">{p.companies_count} {p.companies_count === 1 ? "empresa" : "empresas"}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+              </>
+            ) : null}
           </>
         ) : null}
 
@@ -651,6 +988,9 @@ function statusChip(status?: string | null): { cls: string; label: string } {
 function formatCurrency(value?: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
 }
+function formatInt(value?: number) {
+  return new Intl.NumberFormat("pt-BR").format(Number(value || 0));
+}
 function isProcessingStuck(row: MonthlyClosingImport) {
   if (row.status !== "PROCESSING") return false;
   if (!row.created_at) return false;
@@ -684,6 +1024,15 @@ function IcoSparkle() { return <svg width="34" height="34" viewBox="0 0 24 24" f
 function IcoBox() { return <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7Z" /><path d="M4 7l2-3h12l2 3" /><path d="M9 12h6" /></svg>; }
 function IcoFileSm() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3v5h5" /><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /></svg>; }
 function IcoCalSm() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="5" width="16" height="16" rx="2" /><path d="M4 9h16M9 3v4M15 3v4" /></svg>; }
+function IcoUsers() { return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>; }
+function IcoSparkleSm() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" /></svg>; }
+function IcoSearch() { return <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>; }
+function IcoBank() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 21h18" /><path d="M5 21V7l8-4v18" /><path d="M19 21V11l-6-4" /></svg>; }
+function IcoUser() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>; }
+function IcoChart() { return <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="M18 17V9M13 17V5M8 17v-3" /></svg>; }
+function IcoErrCircle() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 8v5" /><path d="M12 16h.01" /></svg>; }
+function IcoAlert22() { return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M10.3 3.3 2 18a1.5 1.5 0 0 0 1.3 2.2h17.4A1.5 1.5 0 0 0 22 18L13.7 3.3a1.5 1.5 0 0 0-2.6 0Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>; }
+function IcoCheckSm() { return <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>; }
 
 const CSS = `
 .rrimp{
@@ -850,10 +1199,122 @@ const CSS = `
 .rrimp .lempty .et{font-size:13.5px;font-weight:600;color:var(--ink);}
 .rrimp .lempty .es{font-size:12px;color:var(--ink-3);margin-top:-8px;max-width:260px;line-height:1.5;}
 
+/* ===================== ABA DIARIA ===================== */
+.rrimp .dia-two{grid-template-columns:1.32fr 1fr;}
+
+.rrimp .viewlabel{display:flex;align-items:center;gap:14px;margin:6px 2px 0;}
+.rrimp .viewlabel .tag{font-size:10.5px;font-weight:700;letter-spacing:.14em;color:var(--gold-deep);background:#fff;border:1px solid var(--bd);padding:5px 11px;border-radius:999px;white-space:nowrap;}
+.rrimp .viewlabel h2{font-size:18px;font-weight:600;letter-spacing:-.01em;margin:0;color:var(--ink);white-space:nowrap;}
+.rrimp .viewlabel .who{font-size:12px;color:var(--ink-3);}
+.rrimp .viewlabel .rule{flex:1;height:1px;background:linear-gradient(90deg,var(--bd),transparent);}
+
+.rrimp .openbar{display:flex;align-items:center;gap:13px;background:rgba(22,163,74,.06);border:1px solid rgba(22,163,74,.22);border-radius:var(--r-md);padding:13px 17px;flex-wrap:wrap;}
+.rrimp .openbar .ic{flex:none;width:30px;height:30px;border-radius:9px;background:#fff;border:1px solid rgba(22,163,74,.28);display:grid;place-items:center;color:var(--green);}
+.rrimp .openbar .txt{font-size:12.5px;color:var(--ink-2);min-width:160px;flex:1;}
+.rrimp .openbar .txt b{color:var(--green-tx);font-weight:700;}
+.rrimp .openbar .roles{display:flex;align-items:center;gap:7px;}
+.rrimp .openbar .rp{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--bd);color:var(--ink-2);font-size:11.5px;font-weight:600;padding:5px 11px;border-radius:999px;white-space:nowrap;}
+.rrimp .openbar .rp .d{width:6px;height:6px;border-radius:50%;background:var(--green);}
+
+.rrimp .autobar{display:flex;align-items:center;gap:11px;background:#EAF0FB;border:1px solid #D5E0F4;border-radius:11px;padding:11px 14px;margin-bottom:15px;}
+.rrimp .autobar .ic{flex:none;width:26px;height:26px;border-radius:8px;background:#fff;border:1px solid #D5E0F4;display:grid;place-items:center;color:var(--navy);}
+.rrimp .autobar .t{font-size:12px;color:var(--ink-2);line-height:1.4;}
+.rrimp .autobar .t b{color:var(--navy);font-weight:700;}
+
+.rrimp .rules-wrap{margin-top:16px;}
+.rrimp .rules-lab{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-bottom:9px;}
+.rrimp .rules{display:flex;flex-wrap:wrap;gap:8px;}
+
+.rrimp .chip.n{background:#F1F3F7;border-color:var(--bd);color:var(--ink-2);}
+.rrimp .chip.n .d{background:var(--ink-3);}
+.rrimp .chip.lg{font-size:12px;padding:6px 13px;}
+.rrimp .chip.a .d{animation:rrimp-pulse 1.3s ease-in-out infinite;}
+.rrimp .chip.a.static .d{animation:none;}
+@keyframes rrimp-pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+
+.rrimp .dia-note{background:#F9FAFC;border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:22px 24px;display:flex;flex-direction:column;}
+.rrimp .dia-note .nc-head{display:flex;align-items:center;gap:11px;margin-bottom:6px;}
+.rrimp .dia-note .nc-head .badge{width:34px;height:34px;border-radius:10px;background:#FBF4E6;color:var(--gold-deep);display:grid;place-items:center;flex:none;}
+.rrimp .dia-note .nc-head h3{font-size:14.5px;font-weight:600;margin:0;color:var(--ink);}
+.rrimp .dia-note .nc-head .csub{font-size:11.5px;color:var(--ink-3);margin:2px 0 0;}
+.rrimp .detect{display:flex;flex-direction:column;}
+.rrimp .detect .row{display:flex;align-items:flex-start;gap:12px;padding:13px 0;border-top:1px solid var(--bd-soft);}
+.rrimp .detect .dic{flex:none;width:30px;height:30px;border-radius:9px;background:#fff;border:1px solid var(--bd);display:grid;place-items:center;color:var(--navy);}
+.rrimp .detect .dm{min-width:0;flex:1;}
+.rrimp .detect .dt{font-size:13px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.rrimp .detect .dt .src{font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;color:var(--gold-deep);background:#FBF4E6;border:1px solid #EBD9B0;padding:2px 7px;border-radius:6px;}
+.rrimp .detect .ds{font-size:11.5px;color:var(--ink-3);margin-top:2px;}
+.rrimp .dia-note .multi{display:flex;align-items:center;gap:9px;margin-top:14px;padding:11px 13px;background:#fff;border:1px dashed var(--bd);border-radius:10px;font-size:11.5px;color:var(--ink-2);}
+.rrimp .dia-note .multi b{color:var(--ink);font-weight:600;}
+.rrimp .dia-note .multi svg{flex:none;color:var(--navy);}
+
+.rrimp .res-head{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px 24px 16px;border-bottom:1px solid var(--bd-soft);flex-wrap:wrap;}
+.rrimp .res-head .lt{display:flex;align-items:center;gap:12px;}
+.rrimp .res-head .lt .ic{width:34px;height:34px;border-radius:10px;background:#EDF0F6;color:var(--navy);display:grid;place-items:center;flex:none;}
+.rrimp .res-head h3{font-size:15px;font-weight:600;margin:0;color:var(--ink);}
+.rrimp .res-head .csub{font-size:12px;color:var(--ink-3);margin-top:2px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+.rrimp .res-head .csub .mono{color:var(--ink-2);}
+
+.rrimp .rstats{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--bd-soft);}
+.rrimp .rstat{background:#fff;padding:18px 20px 17px;display:flex;flex-direction:column;gap:7px;}
+.rrimp .rstat .rl{font-size:11px;font-weight:500;color:var(--ink-3);display:flex;align-items:center;gap:7px;}
+.rrimp .rstat .rl .di{width:7px;height:7px;border-radius:2px;flex:none;}
+.rrimp .rstat .rn{font-size:27px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);}
+.rrimp .rstat .rs{font-size:11px;color:var(--ink-3);}
+.rrimp .rstat.ins .rn{color:var(--green-tx);} .rrimp .rstat.ins .di{background:var(--green);}
+.rrimp .rstat.upd .di{background:var(--navy);}
+.rrimp .rstat.comp .di{background:var(--gold);}
+.rrimp .rstat.err .rn{color:var(--red-tx);} .rrimp .rstat.err .di{background:var(--red);}
+.rrimp .rstat.proc .di{background:var(--ink-3);}
+
+.rrimp .comp-sec{padding:17px 24px 18px;border-top:1px solid var(--bd-soft);}
+.rrimp .comp-lab{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-bottom:11px;}
+.rrimp .comp-grid{display:flex;flex-wrap:wrap;gap:10px;}
+.rrimp .comp-item{display:flex;align-items:center;gap:10px;background:#FAFBFC;border:1px solid var(--bd);border-radius:11px;padding:9px 14px 9px 11px;}
+.rrimp .comp-item .cm{width:30px;height:30px;border-radius:8px;background:#EDF0F6;color:var(--navy);display:grid;place-items:center;flex:none;}
+.rrimp .comp-item .ct{font-size:13px;font-weight:600;color:var(--ink);}
+.rrimp .comp-item .cs{font-size:11px;color:var(--ink-3);margin-top:1px;}
+
+.rrimp .recalc{display:flex;align-items:center;gap:13px;padding:15px 24px;background:#EAF0FB;flex-wrap:wrap;}
+.rrimp .recalc .spin{width:17px;height:17px;border-radius:50%;border:2.4px solid rgba(15,31,74,.18);border-top-color:var(--navy);animation:rrimp-spin .8s linear infinite;flex:none;}
+.rrimp .recalc .rtx{font-size:12.5px;color:var(--navy);font-weight:600;flex:1;min-width:160px;}
+.rrimp .recalc .rtx span{color:var(--ink-3);font-weight:400;}
+.rrimp .recalc .rbar{height:6px;width:160px;border-radius:999px;background:#D9E2F4;overflow:hidden;flex:none;}
+.rrimp .recalc .rbar .rfill{height:100%;width:62%;border-radius:999px;background:linear-gradient(90deg,var(--navy-bar),var(--navy));animation:rrimp-rpulse 1.6s ease-in-out infinite;}
+@keyframes rrimp-rpulse{0%,100%{opacity:.85;}50%{opacity:1;}}
+
+.rrimp .dia-banner{display:flex;align-items:flex-start;gap:11px;border-radius:12px;padding:14px 15px;font-size:13px;line-height:1.45;}
+.rrimp .dia-banner .bic{flex:none;width:28px;height:28px;border-radius:8px;display:grid;place-items:center;margin-top:1px;}
+.rrimp .dia-banner b{font-weight:700;display:block;margin-bottom:3px;}
+.rrimp .dia-banner span{font-weight:400;}
+.rrimp .dia-banner.err{background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.22);color:var(--red-tx);}
+.rrimp .dia-banner.err .bic{background:rgba(220,38,38,.12);color:var(--red);}
+.rrimp .dia-banner.err span{color:var(--ink-2);}
+
+.rrimp .alert{display:flex;align-items:flex-start;gap:15px;background:rgba(245,158,11,.09);border:1px solid rgba(245,158,11,.34);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:20px 22px;}
+.rrimp .alert .aic{flex:none;width:42px;height:42px;border-radius:12px;background:rgba(245,158,11,.16);color:var(--amber);display:grid;place-items:center;}
+.rrimp .alert .abody{flex:1;min-width:0;}
+.rrimp .alert .ahead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.rrimp .alert .at{font-size:15px;font-weight:700;color:var(--amber-tx);}
+.rrimp .alert .ax{font-size:12.5px;color:var(--ink-2);margin-top:7px;line-height:1.5;max-width:68ch;}
+.rrimp .alert .ax b{color:var(--ink);font-weight:600;}
+.rrimp .alert .checklist{display:flex;flex-direction:column;gap:7px;margin-top:13px;}
+.rrimp .alert .checklist .ci{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--ink-2);flex-wrap:wrap;}
+.rrimp .alert .checklist .ci .cb{flex:none;width:18px;height:18px;border-radius:5px;background:#fff;border:1px solid #EBD9B0;display:grid;place-items:center;color:var(--amber);}
+.rrimp .alert .checklist .ci .cb svg{display:block;}
+.rrimp .alert .checklist .ci code{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink);background:#fff;border:1px solid var(--bd);padding:1px 6px;border-radius:5px;}
+.rrimp .alert .afoot{display:flex;align-items:center;gap:10px;margin-top:15px;flex-wrap:wrap;}
+.rrimp .alert .api{font-size:11px;color:var(--ink-3);display:flex;align-items:center;gap:6px;}
+.rrimp .alert .api .mono{color:var(--ink-2);}
+
 @media (max-width:980px){
   .rrimp .scards{grid-template-columns:1fr 1fr;}
   .rrimp .two-up{grid-template-columns:1fr;}
   .rrimp .uhint{max-width:100%;}
+  .rrimp .rstats{grid-template-columns:repeat(3,1fr);}
+}
+@media (max-width:640px){
+  .rrimp .rstats{grid-template-columns:1fr 1fr;}
 }
 @media (max-width:640px){
   .rrimp .wrap{padding:20px 16px 46px;}
