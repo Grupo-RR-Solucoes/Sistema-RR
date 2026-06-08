@@ -1480,9 +1480,9 @@ function PromotoresFullPage() {
                         <th>Comissão PF</th>
                         <th className="l">Restrição SRCC</th>
                         <th>Valor seguro</th>
-                        <th>Comissão seguro base</th>
+                        <th>Comissão seguro</th>
                         <th>% penetração</th>
-                        <th>% repasse promotor</th>
+                        <th>% Promotor</th>
                         <th>Comissão promotor</th>
                         <th>Comissão seguro promotor</th>
                       </tr>
@@ -1532,13 +1532,13 @@ function PromotoresFullPage() {
                           <td className="num" data-l="Valor seguro">
                             {formatCurrency(row.insurance_value)}
                           </td>
-                          <td className="num" data-l="Comissão seguro base">
+                          <td className="num" data-l="Comissão seguro">
                             {formatCurrency(row.company_insurance_commission_amount)}
                           </td>
                           <td className="num" data-l="% penetração">
                             {formatPercent(row.insurance_penetration_percent * 100, 2)}
                           </td>
-                          <td className="num pay" data-l="% repasse promotor">
+                          <td className="num pay" data-l="% Promotor">
                             {formatPercent(clampPromoterPercent(row.promoter_commission_percent), 2)}
                           </td>
                           <td className="num pay" data-l="Comissão promotor">

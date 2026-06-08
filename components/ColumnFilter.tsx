@@ -323,8 +323,8 @@ function FilterIcon({ active }: { active: boolean }) {
     >
       <path
         d="M1 2.5h10L7.5 7v3.5l-3-1.5V7L1 2.5z"
-        fill={active ? "#0d4de3" : "transparent"}
-        stroke={active ? "#0d4de3" : "#0F1F4A"}
+        fill={active ? "#fff" : "transparent"}
+        stroke={active ? "#fff" : "#838B9C"}
         strokeWidth="1.2"
         strokeLinejoin="round"
       />
@@ -332,52 +332,55 @@ function FilterIcon({ active }: { active: boolean }) {
   );
 }
 
+// Redesign (.rredit): popover repaginado no padrao novo (navy/cantos/bd).
+// Renderiza num portal em document.body — fora do escopo .rredit — por isso
+// os estilos sao inline. SOMENTE aparencia mudou; logica intacta.
 const styles: Record<string, CSSProperties> = {
   wrap: {
     position: "relative",
     display: "inline-flex",
     alignItems: "center",
-    marginLeft: 6,
+    marginLeft: 4,
   },
   iconButton: {
-    width: 22,
-    height: 22,
+    width: 18,
+    height: 18,
     padding: 0,
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "transparent",
+    background: "#EEF1F6",
     border: "1px solid transparent",
-    borderRadius: 6,
+    borderRadius: 5,
     cursor: "pointer",
-    color: "#0F1F4A",
+    color: "#838B9C",
   },
   iconButtonActive: {
-    width: 22,
-    height: 22,
+    width: 18,
+    height: 18,
     padding: 0,
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "rgba(13,77,227,0.12)",
-    border: "1px solid rgba(13,77,227,0.35)",
-    borderRadius: 6,
+    background: "#0F1F4A",
+    border: "1px solid #0F1F4A",
+    borderRadius: 5,
     cursor: "pointer",
-    color: "#0d4de3",
+    color: "#fff",
   },
   popover: {
     position: "fixed",
     zIndex: 1000,
     width: POPOVER_WIDTH,
     background: "#fff",
-    border: "1px solid var(--rr-line-strong, #d6dbe4)",
+    border: "1px solid #E4E7EC",
     borderRadius: 12,
-    boxShadow: "0 10px 30px rgba(15, 31, 74, 0.18)",
+    boxShadow: "0 18px 50px rgba(15,31,74,0.20), 0 2px 6px rgba(15,31,74,0.08)",
     padding: 10,
     display: "grid",
     gap: 8,
-    fontSize: 13,
-    color: "var(--rr-ink, #0F1F4A)",
+    fontSize: 12.5,
+    color: "#16203A",
     textAlign: "left",
   },
   alignLeft: { left: 0 },
@@ -387,21 +390,22 @@ const styles: Record<string, CSSProperties> = {
     boxSizing: "border-box",
     padding: "8px 10px",
     borderRadius: 8,
-    border: "1px solid var(--rr-line-strong, #d6dbe4)",
-    fontSize: 13,
+    border: "1px solid #E4E7EC",
+    fontSize: 12.5,
+    color: "#16203A",
     outline: "none",
   },
   selectAllRow: {
     display: "flex",
     alignItems: "center",
-    gap: 8,
-    padding: "6px 6px",
-    borderBottom: "1px solid var(--rr-line, #e6e9f0)",
+    gap: 10,
+    padding: "7px 8px",
+    borderBottom: "1px solid #EEF0F4",
     cursor: "pointer",
   },
   selectAllLabel: {
-    fontWeight: 700,
-    color: "var(--rr-ink, #0F1F4A)",
+    fontWeight: 600,
+    color: "#16203A",
   },
   list: {
     maxHeight: SCROLL_MAX_HEIGHT,
@@ -412,10 +416,11 @@ const styles: Record<string, CSSProperties> = {
   row: {
     display: "flex",
     alignItems: "center",
-    gap: 8,
-    padding: "4px 6px",
+    gap: 10,
+    padding: "7px 8px",
     cursor: "pointer",
-    borderRadius: 6,
+    borderRadius: 7,
+    color: "#4B5468",
   },
   rowLabel: {
     flex: 1,
@@ -426,13 +431,13 @@ const styles: Record<string, CSSProperties> = {
   loadingBox: {
     padding: "16px 8px",
     textAlign: "center",
-    color: "var(--rr-muted, #5A6B82)",
+    color: "#838B9C",
     fontStyle: "italic",
   },
   emptyBox: {
     padding: "16px 8px",
     textAlign: "center",
-    color: "var(--rr-muted, #5A6B82)",
+    color: "#838B9C",
     fontStyle: "italic",
   },
   footer: {
@@ -440,39 +445,38 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     gap: 8,
-    paddingTop: 6,
-    borderTop: "1px solid var(--rr-line, #e6e9f0)",
+    paddingTop: 8,
+    borderTop: "1px solid #EEF0F4",
   },
   footerRight: { display: "flex", gap: 6 },
   clearBtn: {
-    padding: "6px 10px",
+    padding: "7px 12px",
     borderRadius: 8,
-    border: "1px solid var(--rr-line-strong, #d6dbe4)",
+    border: "1px solid #E4E7EC",
     background: "#fff",
-    color: "var(--rr-muted, #5A6B82)",
+    color: "#838B9C",
     fontSize: 12,
     fontWeight: 600,
     cursor: "pointer",
   },
   cancelBtn: {
-    padding: "6px 12px",
+    padding: "7px 14px",
     borderRadius: 8,
-    border: "1px solid var(--rr-line-strong, #d6dbe4)",
+    border: "1px solid #E4E7EC",
     background: "#fff",
-    color: "var(--rr-ink, #0F1F4A)",
+    color: "#4B5468",
     fontSize: 12,
-    fontWeight: 700,
+    fontWeight: 600,
     cursor: "pointer",
   },
   applyBtn: {
-    padding: "6px 14px",
+    padding: "7px 14px",
     borderRadius: 8,
     border: "none",
-    background: "#0d4de3",
+    background: "#0F1F4A",
     color: "#fff",
     fontSize: 12,
-    fontWeight: 700,
+    fontWeight: 600,
     cursor: "pointer",
-    boxShadow: "0 2px 6px rgba(13,77,227,0.22)",
   },
 };
