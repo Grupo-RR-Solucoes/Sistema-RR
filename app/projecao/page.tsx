@@ -45,6 +45,7 @@ type Promotor = {
   tendencia_percent: number | null;
   semaforo: Semaforo;
 };
+type NaoAtribuido = { acumulada: number; projecao: number; count: number };
 type Grupo = {
   company_id: string;
   company_name: string;
@@ -55,6 +56,7 @@ type Grupo = {
   percent_projetado: number | null;
   semaforo: Semaforo;
   promotores: Promotor[];
+  nao_atribuido?: NaoAtribuido | null;
 };
 
 const brl = (n: number) =>
@@ -296,6 +298,12 @@ function EquipeView({ data }: { data: any }) {
           <p className="k">Produção acumulada</p>
           <div className="v num">{brl(cons.producao_acumulada)}</div>
           <div className="s">{jan ? `${jan.dias_uteis_decorridos} de ${jan.dias_uteis_totais} dias úteis` : ""}</div>
+          {cons.nao_atribuido && cons.nao_atribuido.count > 0 ? (
+            <Link className="pend" href="/promotores?tab=migracao">
+              inclui {brl(cons.nao_atribuido.acumulada)} em {cons.nao_atribuido.count} não atribuída
+              {cons.nao_atribuido.count > 1 ? "s" : ""} →
+            </Link>
+          ) : null}
         </div>
         <div className="kpi accent">
           <p className="k">Projeção do grupo</p>
@@ -396,6 +404,20 @@ function EquipeView({ data }: { data: any }) {
                     <td className="c"><Chip s={p.semaforo} /></td>
                   </tr>
                 ))}
+                {g.nao_atribuido && g.nao_atribuido.acumulada > 0 ? (
+                  <tr className="na-row">
+                    <td className="sticky pname">
+                      Não atribuído · chave master
+                      <span className="na-tag">{g.nao_atribuido.count} prop · aguardando Migração</span>
+                    </td>
+                    <td className="r">{brl(g.nao_atribuido.acumulada)}</td>
+                    <td className="r">{brl(g.nao_atribuido.projecao)}</td>
+                    <td className="r">—</td>
+                    <td className="pctcell">—</td>
+                    <td className="c">—</td>
+                    <td className="c">—</td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>
@@ -604,6 +626,11 @@ const CSS = `
 .rrproj .kpi .k{font-size:12px;font-weight:500;color:var(--ink-3);margin:0 0 11px;}
 .rrproj .kpi .v{font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);}
 .rrproj .kpi .s{font-size:12px;margin-top:9px;color:var(--ink-3);display:flex;align-items:center;gap:8px;}
+.rrproj .kpi .pend{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold-deep,#B9842A);text-decoration:none;border-bottom:1px dashed rgba(185,132,42,.4);padding-bottom:1px;transition:color .14s,border-color .14s;}
+.rrproj .kpi .pend:hover{color:var(--ink);border-color:rgba(22,32,58,.5);}
+.rrproj tr.na-row td{background:#FBFAF7;color:var(--ink-2);}
+.rrproj tr.na-row .pname{font-weight:600;color:var(--ink-2);}
+.rrproj tr.na-row .na-tag{display:block;font-size:10.5px;font-weight:500;color:var(--gold-deep,#B9842A);margin-top:2px;}
 .rrproj .kpi.accent{background:var(--navy);border-color:var(--navy);position:relative;overflow:hidden;}
 .rrproj .kpi.accent::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--gold);}
 .rrproj .kpi.accent .k{color:#9DA9C6;}

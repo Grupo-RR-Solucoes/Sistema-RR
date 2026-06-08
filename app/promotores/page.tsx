@@ -229,6 +229,16 @@ function PromotoresFullPage() {
     return params.toString() ? `?${params.toString()}` : "";
   }, [companyId, data.selectedPeriod.key, promoterId, selectedKey]);
 
+  // Abre a aba certa quando chega com ?tab=migracao (ex.: aviso de produção
+  // não atribuída no Dashboard). Aceita as chaves de seção válidas.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (tab === "resumo" || tab === "metas" || tab === "descontos" || tab === "detalhamento" || tab === "migracao") {
+      setActiveSection(tab);
+    }
+  }, []);
+
   useEffect(() => {
     async function load() {
       try {

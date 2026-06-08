@@ -24,6 +24,8 @@ type Payload = {
   periodoLabel: string;
   producaoGrupoMes: number;
   producaoParcial: boolean;
+  producaoNaoAtribuida: number;
+  producaoNaoAtribuidaCount: number;
   comissaoBrutaEmpresa: number;
   comissaoBrutaEmpresaLabel: string;
   comissaoBrutaEmpresaNaoAtribuida: number;
@@ -106,6 +108,12 @@ function Header({ data }: { data: Payload | null }) {
           <p className="label">Produção do grupo · mês</p>
           <div className="value num">{prod}</div>
           <div className="sub">mês corrente · parcial</div>
+          {data && data.producaoNaoAtribuidaCount > 0 ? (
+            <Link className="pending" href="/promotores?tab=migracao">
+              {brl0(data.producaoNaoAtribuida)} em {data.producaoNaoAtribuidaCount} proposta
+              {data.producaoNaoAtribuidaCount > 1 ? "s" : ""} aguardando atribuição →
+            </Link>
+          ) : null}
         </div>
         <div className="stat">
           <p className="label">Comissão bruta (empresa)</p>
@@ -332,6 +340,8 @@ const CSS = `
 .rrdash .stat .sub.amber{color:#E7BE6A;}
 .rrdash .stat .sub.gold{color:var(--gold);}
 .rrdash .stat .sub.green{color:var(--green-soft);}
+.rrdash .stat .pending{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold-soft,#E7BE6A);text-decoration:none;border-bottom:1px dashed rgba(231,190,106,.45);padding-bottom:1px;transition:color .14s,border-color .14s;}
+.rrdash .stat .pending:hover{color:#fff;border-color:rgba(255,255,255,.5);}
 .rrdash .alert{display:flex;align-items:center;gap:14px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r-md);padding:14px 18px;}
 .rrdash .alert .ic{flex:none;width:26px;height:26px;border-radius:7px;background:#F2DCA6;color:#8A6310;display:grid;place-items:center;font-weight:700;font-size:15px;}
 .rrdash .alert .txt{flex:1;min-width:0;font-size:13.5px;color:#5C4A1E;}

@@ -148,6 +148,23 @@ export type ProjecaoPromotor = {
   semaforo: Semaforo;
 };
 
+// Produção em chave MASTER ainda sem promotor (não entra em nenhum promotor
+// individual; só no consolidado do grupo / linha por CNPJ).
+export type NaoAtribuidoTotais = {
+  acumulada: number;
+  projecao: number;
+  count: number;
+};
+export type NaoAtribuidoCnpj = NaoAtribuidoTotais & {
+  company_id: string;
+  company_name: string;
+  company_cnpj: string;
+};
+export type NaoAtribuido = {
+  total: NaoAtribuidoTotais;
+  porCnpj: Record<string, NaoAtribuidoCnpj>;
+};
+
 export type ProjecaoResultado = {
   year: number;
   month: number;
@@ -160,6 +177,7 @@ export type ProjecaoResultado = {
     dias_uteis_decorridos: number;
   };
   promotores: ProjecaoPromotor[];
+  naoAtribuido: NaoAtribuido;
 };
 
 export function semaforoFromPercent(percent: number | null): Semaforo {
@@ -227,6 +245,59 @@ export async function buildProjecaoMetas(
     }
   }
 
+  // Produção em chave MASTER ainda sem promotor (assigned_promoter_id null).
+  // MESMA fonte/criterio do Dashboard (PRODUCAO + valido, janela de vigencia,
+  // recorte por refDate): so o CONSOLIDADO do grupo e a linha do CNPJ a
+  // recebem; NENHUM promotor individual. Mes fechado => vazio (cms ja
+  // atribuiu tudo). Bate ao centavo com a "Producao do grupo" do Dashboard.
+  const masterAcumByCompany = new Map<string, number>();
+  const masterCountByCompany = new Map<string, number>();
+  let masterAcumTotal = 0;
+  let masterCountTotal = 0;
+  if (!closed) {
+    for (const rec of base.recordsForPeriod as any[]) {
+      if (rec.assigned_promoter_id) continue;
+      if (!isEligibleRecord(rec)) continue;
+      if (!rec.company_id) continue;
+      const dk = dateKeyOf(rec);
+      if (dk && dk > refKey) continue;
+      if (dk && dk < startKey) continue;
+      const net = toNumber(rec.net_value);
+      masterAcumByCompany.set(rec.company_id, (masterAcumByCompany.get(rec.company_id) || 0) + net);
+      masterCountByCompany.set(rec.company_id, (masterCountByCompany.get(rec.company_id) || 0) + 1);
+      masterAcumTotal += net;
+      masterCountTotal += 1;
+    }
+  }
+
+  // Projeção do master pela MESMA regra de ritmo linear dos promotores.
+  const projetarMaster = (acum: number) =>
+    periodoCompleto ? acum : diasDecorridos > 0 ? (acum / diasDecorridos) * total : 0;
+
+  const companyInfo = new Map<string, { name: string; cnpj: string }>(
+    ((base.companies as any[]) || []).map((c) => [c.id, { name: c.name, cnpj: c.cnpj }])
+  );
+  const naoAtribuidoPorCnpj: Record<string, NaoAtribuidoCnpj> = {};
+  for (const [cid, acum] of masterAcumByCompany) {
+    const info = companyInfo.get(cid);
+    naoAtribuidoPorCnpj[cid] = {
+      company_id: cid,
+      company_name: info?.name || "—",
+      company_cnpj: info?.cnpj || "",
+      acumulada: acum,
+      projecao: projetarMaster(acum),
+      count: masterCountByCompany.get(cid) || 0,
+    };
+  }
+  const naoAtribuido: NaoAtribuido = {
+    total: {
+      acumulada: masterAcumTotal,
+      projecao: projetarMaster(masterAcumTotal),
+      count: masterCountTotal,
+    },
+    porCnpj: naoAtribuidoPorCnpj,
+  };
+
   const active = base.filteredSummaryRows.filter((row) => row.active);
   const promotores: ProjecaoPromotor[] = active.map((row) => {
     const acumulada = closed
@@ -284,6 +355,7 @@ export async function buildProjecaoMetas(
       dias_uteis_decorridos: diasDecorridos,
     },
     promotores,
+    naoAtribuido,
   };
 }
 
@@ -300,6 +372,14 @@ export type ProjecaoGrupoCnpj = ProjecaoGrupoTotais & {
   company_name: string;
   company_cnpj: string;
   promotores: ProjecaoPromotor[];
+  // Linha "não atribuído (chave master)" do CNPJ. NÃO entra no header
+  // projecao/meta/%/semaforo do grupo (esses ficam = só promotores); é uma
+  // linha visível adicional para o total bater com o consolidado.
+  nao_atribuido?: NaoAtribuidoTotais | null;
+};
+
+export type ProjecaoConsolidadoGrupo = ProjecaoGrupoTotais & {
+  nao_atribuido: NaoAtribuidoTotais;
 };
 
 function totaliza(promotores: ProjecaoPromotor[]): ProjecaoGrupoTotais {
@@ -313,8 +393,31 @@ function totaliza(promotores: ProjecaoPromotor[]): ProjecaoGrupoTotais {
   return { ...acc, percent_projetado: percent, semaforo: semaforoFromPercent(percent) };
 }
 
-export function consolidarGrupo(res: ProjecaoResultado) {
+// Consolidado do grupo SÓ com produção atribuída (promotores). Usado pelo
+// Dashboard (alerta de projeção) — comportamento preservado, NÃO inclui master.
+export function consolidarGrupo(res: ProjecaoResultado): ProjecaoGrupoTotais {
   return totaliza(res.promotores);
+}
+
+// Consolidado do grupo para a VISÃO EQUIPE da /projecao: inclui a produção em
+// chave master (não atribuída) no acumulado E na projeção do grupo (item 2: a
+// projeção recalcula a partir do acumulado maior). Meta inalterada (master não
+// tem meta). Bate ao centavo com a "Produção do grupo" do Dashboard.
+export function consolidarGrupoEquipe(res: ProjecaoResultado): ProjecaoConsolidadoGrupo {
+  const base = totaliza(res.promotores);
+  const na = res.naoAtribuido?.total ?? { acumulada: 0, projecao: 0, count: 0 };
+  const producao_acumulada = base.producao_acumulada + na.acumulada;
+  const projecao = base.projecao + na.projecao;
+  const meta = base.meta;
+  const percent = meta > 0 ? projecao / meta : null;
+  return {
+    producao_acumulada,
+    projecao,
+    meta,
+    percent_projetado: percent,
+    semaforo: semaforoFromPercent(percent),
+    nao_atribuido: na,
+  };
 }
 
 export function agruparPorCnpj(res: ProjecaoResultado): ProjecaoGrupoCnpj[] {
@@ -325,17 +428,39 @@ export function agruparPorCnpj(res: ProjecaoResultado): ProjecaoGrupoCnpj[] {
     arr.push(p);
     map.set(key, arr);
   }
-  const groups = Array.from(map.values()).map((promotores) => {
+  const groups: ProjecaoGrupoCnpj[] = Array.from(map.values()).map((promotores) => {
     const t = totaliza(promotores);
     const ref = promotores[0];
+    // header (projecao/meta/%/semaforo) = SO promotores — inalterado. A linha
+    // "nao atribuido" entra como linha visivel adicional, nao no header.
     return {
       company_id: ref.company_id,
       company_name: ref.company_name,
       company_cnpj: ref.company_cnpj,
       promotores,
+      nao_atribuido: res.naoAtribuido?.porCnpj?.[ref.company_id || ""] ?? null,
       ...t,
     };
   });
+
+  // CNPJ que só tem produção em master (sem promotor ativo) ainda precisa
+  // aparecer para o total do grupo bater com a soma das partes visíveis.
+  const present = new Set(groups.map((g) => g.company_id));
+  for (const na of Object.values(res.naoAtribuido?.porCnpj ?? {})) {
+    if (na.acumulada <= 0 || present.has(na.company_id)) continue;
+    groups.push({
+      company_id: na.company_id,
+      company_name: na.company_name,
+      company_cnpj: na.company_cnpj,
+      promotores: [],
+      nao_atribuido: na,
+      producao_acumulada: 0,
+      projecao: 0,
+      meta: 0,
+      percent_projetado: null,
+      semaforo: "sem_meta",
+    });
+  }
   // grupos com pior % projetado primeiro (puxando o grupo pra baixo no topo da atencao);
   // sem meta vao pro fim.
   groups.sort((a, b) => {

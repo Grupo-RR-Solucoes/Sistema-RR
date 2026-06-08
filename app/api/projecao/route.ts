@@ -2,7 +2,7 @@ import { apiGuardErrorResponse, withAuthenticatedAnon } from "@/lib/auth/guards"
 import {
   agruparPorCnpj,
   buildProjecaoMetas,
-  consolidarGrupo,
+  consolidarGrupoEquipe,
   promotoresEmRisco,
 } from "@/lib/projecaoMetas";
 
@@ -78,7 +78,7 @@ export async function GET(req: Request) {
       janela: res.janela,
       selectedCompanyId: companyId || "",
       companies: companies || [],
-      consolidado: consolidarGrupo(res),
+      consolidado: consolidarGrupoEquipe(res),
       grupos: agruparPorCnpj(res),
       risco: promotoresEmRisco(res),
       total_promotores: res.promotores.length,

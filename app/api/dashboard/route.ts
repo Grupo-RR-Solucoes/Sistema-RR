@@ -6,6 +6,7 @@ import { detectClosedMonth } from "@/lib/cmsMonthly";
 import { calcularRbt12 } from "@/lib/rbt12";
 import { buildProjecaoMetas, consolidarGrupo } from "@/lib/projecaoMetas";
 import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
+import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { fetchAllRows } from "@/lib/queryHelpers";
 
 export const runtime = "nodejs";
@@ -44,6 +45,47 @@ function displayCompany(name: string) {
 
 type PmrRow = { year: number; month: number; production_value: number | null };
 
+type DailyUnassignedRow = {
+  company_id: string | null;
+  status: string | null;
+  is_srcc_restricted: boolean | null;
+  net_value: number | null;
+  movement_date: string | null;
+  cancellation_date: string | null;
+};
+
+// Mesma regra de validade/produção do motor (app/api/calculate/monthly/route.ts):
+// PRODUCAO + não cancelado/pendente/SRCC-restrito. Usada só para somar a
+// produção em chave MASTER ainda não redistribuída (assigned_promoter_id null),
+// que o PMR não contabiliza. SRCC "consulta não realizada" NÃO é
+// is_srcc_restricted, então continua contando (decisão Diego).
+function normStatus(value: unknown) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toUpperCase();
+}
+function isProductionStatus(status: unknown) {
+  const s = normStatus(status);
+  return s === "PRODUCAO" || s === "PRODUCTION";
+}
+function isCancelledStatus(status: unknown) {
+  const s = normStatus(status);
+  return s.includes("CANCEL") || s.includes("ESTORN") || s.includes("RECUS");
+}
+function isPendingStatus(status: unknown) {
+  const s = normStatus(status);
+  return s.includes("PEND") || s.includes("ANALIS") || s.includes("PROCESS");
+}
+function isValidDailyRecord(r: DailyUnassignedRow) {
+  if (r.cancellation_date) return false;
+  if (isCancelledStatus(r.status)) return false;
+  if (isPendingStatus(r.status)) return false;
+  if (r.is_srcc_restricted === true) return false;
+  return true;
+}
+
 export async function GET() {
   try {
     const { supabase } = await withSocioAnon();
@@ -52,8 +94,16 @@ export async function GET() {
     const year = now.getUTCFullYear();
     const month = now.getUTCMonth() + 1;
 
-    const [pmrRows, closingPayload, rbt12, projecaoRes, promoterAnalytics, monthClosed] =
-      await Promise.all([
+    const [
+      pmrRows,
+      closingPayload,
+      rbt12,
+      projecaoRes,
+      promoterAnalytics,
+      monthClosed,
+      activeCompanies,
+      dailyUnassigned,
+    ] = await Promise.all([
         fetchAllRows<PmrRow>(() =>
           supabase.from("promoter_monthly_results").select("year, month, production_value")
         ),
@@ -63,26 +113,78 @@ export async function GET() {
         // motor: comissão bruta da EMPRESA do grupo no mês corrente (aberto).
         buildPromoterAnalytics(supabase, { year, month }),
         detectClosedMonth(supabase, year, month).catch(() => false),
+        // CNPJs do grupo (4 ativas) — para somar só produção do grupo.
+        fetchAllRows<{ id: string }>(() =>
+          supabase.from("companies").select("id").eq("active", true)
+        ),
+        // Produção em chave MASTER ainda sem promotor (assigned_promoter_id
+        // null). Janela ampla por movement_date cobre a vigência de jan..dez
+        // do ano corrente; a competência é resolvida em getProductionPeriodFromValue.
+        fetchAllRows<DailyUnassignedRow>(() =>
+          supabase
+            .from("daily_production_records")
+            .select(
+              "company_id, status, is_srcc_restricted, net_value, movement_date, cancellation_date"
+            )
+            .is("assigned_promoter_id", null)
+            .gte("movement_date", `${year - 1}-12-15`)
+            .lt("movement_date", `${year + 1}-01-10`)
+        ),
       ]);
 
-    // ---- produção mensal do grupo (ano corrente), por promoter_monthly_results ----
+    // ---- produção mensal do grupo (ano corrente) ----
+    // Atribuído (PMR) por mês.
     const byMonth = new Map<number, number>();
     for (const r of pmrRows) {
       if (r.year !== year) continue;
       byMonth.set(r.month, toNumber(byMonth.get(r.month)) + toNumber(r.production_value));
     }
-    const producaoMensal = Array.from(byMonth.keys())
+
+    // Produção em chave MASTER ainda não redistribuída (assigned_promoter_id
+    // null): o PMR/detalhamento por promotor não a contabiliza. Somamos aqui
+    // para o KPI e o gráfico refletirem a produção TOTAL nível-empresa do
+    // grupo, coerente com o portal. Em meses FECHADOS isto é 0 (o cms já
+    // atribuiu tudo); só o mês ABERTO tem master pendente. Cada registro vai
+    // para a competência da sua janela de vigência (mesma do motor).
+    const activeIds = new Set((activeCompanies || []).map((c) => c.id));
+    const unassignedByMonth = new Map<number, number>();
+    const unassignedCountByMonth = new Map<number, number>();
+    for (const r of dailyUnassigned || []) {
+      if (!r.company_id || !activeIds.has(r.company_id)) continue;
+      if (!isProductionStatus(r.status)) continue;
+      if (!isValidDailyRecord(r)) continue;
+      const period = getProductionPeriodFromValue(r.movement_date);
+      if (!period || period.year !== year) continue;
+      unassignedByMonth.set(
+        period.month,
+        toNumber(unassignedByMonth.get(period.month)) + toNumber(r.net_value)
+      );
+      unassignedCountByMonth.set(
+        period.month,
+        (unassignedCountByMonth.get(period.month) || 0) + 1
+      );
+    }
+
+    // total[m] = atribuído (PMR) + master não-atribuído (daily).
+    const monthsSet = new Set<number>([...byMonth.keys(), ...unassignedByMonth.keys()]);
+    const producaoMensal = Array.from(monthsSet)
       .sort((a, b) => a - b)
       .map((m) => ({
         mes: MES[m - 1],
         month: m,
-        valor: roundMoney(toNumber(byMonth.get(m))),
+        valor: roundMoney(toNumber(byMonth.get(m)) + toNumber(unassignedByMonth.get(m))),
         // mês corrente = parcial (em andamento). Os anteriores são realizados.
         parcial: m === month,
       }));
 
-    // KPI "Produção do grupo · mês" = mês corrente (parcial), coerente com o ponto do gráfico.
-    const producaoGrupoMes = roundMoney(toNumber(byMonth.get(month)));
+    // KPI "Produção do grupo · mês" = total do mês corrente (atribuído + master
+    // pendente), coerente com o ponto do gráfico e com o portal.
+    const producaoGrupoMes = roundMoney(
+      toNumber(byMonth.get(month)) + toNumber(unassignedByMonth.get(month))
+    );
+    // Aviso discreto: produção (net) ainda em chave master sem promotor.
+    const producaoNaoAtribuida = roundMoney(toNumber(unassignedByMonth.get(month)));
+    const producaoNaoAtribuidaCount = toNumber(unassignedCountByMonth.get(month));
 
     // ---- previsão de receita (ESTIMADO) ----
     const s = closingPayload.summary;
@@ -159,6 +261,8 @@ export async function GET() {
       periodoLabel: `${MES[month - 1]}/${year}`,
       producaoGrupoMes,
       producaoParcial: true,
+      producaoNaoAtribuida,
+      producaoNaoAtribuidaCount,
       comissaoBrutaEmpresa,
       comissaoBrutaEmpresaLabel,
       comissaoBrutaEmpresaNaoAtribuida,
