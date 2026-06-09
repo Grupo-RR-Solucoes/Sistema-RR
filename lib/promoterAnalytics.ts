@@ -127,6 +127,12 @@ export type PromoterAnalyticsPayload = {
   summary: {
     promoters: number;
     production: number;
+    // Produção TOTAL do grupo = atribuída (production) + master não atribuído.
+    // Bate ao centavo com a "Produção do grupo" do Dashboard/Projeção. Só no
+    // consolidado do grupo; com um promotor selecionado, productionUnassigned=0.
+    productionTotal: number;
+    productionUnassigned: number;
+    productionUnassignedCount: number;
     finalCommission: number;
     payableCommission: number;
     discounts: number;
@@ -580,6 +586,10 @@ export async function loadPromoterAnalyticsBase(
   let companyGrossCommission = 0;
   let unassignedCompanyGrossCommission = 0;
   let unassignedCount = 0;
+  // Produção (net) em chave MASTER ainda sem promotor: mesma fonte/criterio do
+  // Dashboard (registros PRODUCAO válidos do período, assigned_promoter_id null).
+  // Entra só no consolidado do grupo; nenhum promotor individual a recebe.
+  let unassignedProduction = 0;
   for (const record of recordsForPeriod) {
     if (companyId && record.company_id !== companyId) continue;
     if (!isEligibleProductionRecord(record)) continue;
@@ -589,6 +599,7 @@ export async function loadPromoterAnalyticsBase(
     companyGrossCommission += commission;
     if (!record.assigned_promoter_id) {
       unassignedCompanyGrossCommission += commission;
+      unassignedProduction += toNumber(record.net_value);
       unassignedCount += 1;
     }
   }
@@ -698,6 +709,7 @@ export async function loadPromoterAnalyticsBase(
     groupProductionValue,
     companyGrossCommission,
     unassignedCompanyGrossCommission,
+    unassignedProduction,
     unassignedCount,
     agreements,
     discounts,
@@ -725,6 +737,7 @@ export function selectPromoterView(
     groupProductionValue,
     companyGrossCommission,
     unassignedCompanyGrossCommission,
+    unassignedProduction,
     unassignedCount,
     agreements,
     discounts,
@@ -876,6 +889,12 @@ export function selectPromoterView(
     summary: {
       promoters: summary.promoters,
       production: summary.production,
+      // Master só entra no CONSOLIDADO do grupo; com um promotor selecionado o
+      // KPI mostra os números dele, sem master (productionTotal = production).
+      productionUnassigned: selectedPromoterId ? 0 : unassignedProduction,
+      productionUnassignedCount: selectedPromoterId ? 0 : unassignedCount,
+      productionTotal:
+        summary.production + (selectedPromoterId ? 0 : unassignedProduction),
       finalCommission: summary.finalCommission,
       payableCommission: summary.payableCommission,
       discounts: summary.discounts,

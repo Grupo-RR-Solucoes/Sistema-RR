@@ -109,6 +109,9 @@ type PromoterPayload = {
   summary: {
     promoters: number;
     production: number;
+    productionTotal: number;
+    productionUnassigned: number;
+    productionUnassignedCount: number;
     finalCommission: number;
     payableCommission: number;
     discounts: number;
@@ -136,6 +139,9 @@ const emptyPayload: PromoterPayload = {
   summary: {
     promoters: 0,
     production: 0,
+    productionTotal: 0,
+    productionUnassigned: 0,
+    productionUnassignedCount: 0,
     finalCommission: 0,
     payableCommission: 0,
     discounts: 0,
@@ -784,8 +790,21 @@ function PromotoresFullPage() {
             </div>
             <div className="kpi">
               <p className="label">Produção</p>
-              <div className="value num">{formatCurrency(data.summary.production)}</div>
-              <div className="sub">crédito + seguro</div>
+              <div className="value num">{formatCurrency(data.summary.productionTotal)}</div>
+              {data.summary.productionUnassigned > 0 ? (
+                <button
+                  type="button"
+                  className="pend"
+                  onClick={() => setActiveSection("migracao")}
+                  title="Abrir a aba Migração"
+                >
+                  inclui {formatCurrency(data.summary.productionUnassigned)} em{" "}
+                  {data.summary.productionUnassignedCount} não atribuída
+                  {data.summary.productionUnassignedCount > 1 ? "s" : ""} →
+                </button>
+              ) : (
+                <div className="sub">crédito + seguro</div>
+              )}
             </div>
             <div className="kpi">
               <p className="label">Comissão bruta</p>
@@ -1819,6 +1838,8 @@ const CSS = `
 .rrprom .kpi .value{font-size:25px;font-weight:600;letter-spacing:-.02em;line-height:1.05;color:#fff;}
 .rrprom .kpi .sub{font-size:11.5px;margin-top:7px;color:#8C98B6;}
 .rrprom .kpi .sub.gold{color:var(--gold);}
+.rrprom .kpi .pend{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold);background:none;border:none;border-bottom:1px dashed rgba(214,161,63,.45);padding:0 0 1px;cursor:pointer;font-family:inherit;text-align:left;transition:color .14s,border-color .14s;}
+.rrprom .kpi .pend:hover{color:#fff;border-color:rgba(255,255,255,.6);}
 
 .rrprom .banner{border-radius:var(--r-md);padding:12px 16px;font-size:13px;}
 .rrprom .banner.err{background:var(--red-bg);border:1px solid #E9B7B2;color:#8E2F28;}
