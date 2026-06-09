@@ -185,6 +185,23 @@ export async function DELETE(
     const supabase = getSupabaseAdmin();
     const { id } = await params;
 
+    // SEGURANCA (delete restrito): o DELETE fisico so e permitido para a conta
+    // do administrador principal, definida na env server-only SUPER_ADMIN_EMAIL.
+    // Validacao no SERVIDOR (esconder o botao no front nao basta). Fail-safe:
+    // se a env estiver vazia/indefinida, NINGUEM deleta (nem socio). Desativar
+    // (PATCH active=false) continua disponivel normalmente para socio.
+    const superAdmin = (process.env.SUPER_ADMIN_EMAIL ?? "").trim().toLowerCase();
+    const operator = (session.appUser.email ?? "").trim().toLowerCase();
+    if (!superAdmin || operator !== superAdmin) {
+      return NextResponse.json(
+        {
+          error:
+            "Exclusao restrita ao administrador principal. Para cortar o acesso, use Desativar.",
+        },
+        { status: 403 }
+      );
+    }
+
     // 1. Buscar user-alvo (precisa do auth_user_id para deleteUser cascatear)
     const { data: target, error: fetchError } = await supabase
       .from("app_users")

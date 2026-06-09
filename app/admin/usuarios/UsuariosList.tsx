@@ -1,11 +1,23 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useMemo, useState } from "react";
 
 import { canManageUserRole } from "@/lib/auth/permissions";
 
 import CreateUsuarioModal from "./CreateUsuarioModal";
+import EditUsuarioModal from "./EditUsuarioModal";
 import ResetPasswordModal from "./ResetPasswordModal";
+import {
+  RRADMIN_CSS,
+  initials,
+  roleClass,
+  roleLabel,
+} from "./usuariosStyles";
+import {
+  IcoUsers, IcoShield, IcoBriefcase, IcoUser, IcoUserCog, IcoCheckSq, IcoLock,
+  IcoSearch, IcoPlus, IcoPencil, IcoKey, IcoTrash, IcoBan, IcoUndo, IcoX,
+  IcoAlertTri, IcoInfo,
+} from "./icons";
 
 export interface UsuarioRow {
   id: string;
@@ -24,22 +36,44 @@ interface Props {
   initialUsers: UsuarioRow[];
   loadError: string | null;
   currentUserId: string;
-  // Disc.14 Etapa 14.2: propagado do server. Consumo visual (filtros de
-  // dropdown, ocultar botoes para alvos fora do escopo) fica na Etapa 14.3.
   currentUserRole: UsuarioRow["role"];
+  currentUserEmail: string;
+  // Parte C — true apenas para a conta do administrador principal
+  // (SUPER_ADMIN_EMAIL). Computado no server; aqui é só gating de UI. A
+  // trava real do delete físico é validada no backend (DELETE 403).
+  isSuperAdmin: boolean;
 }
+
+type RoleFilter = "todos" | "socio" | "funcionario" | "promotor";
+type StatusFilter = "ativos" | "inativos" | "todos";
 
 export default function UsuariosList({
   initialUsers,
   loadError,
   currentUserId,
   currentUserRole,
+  currentUserEmail,
+  isSuperAdmin,
 }: Props) {
   const [users, setUsers] = useState<UsuarioRow[]>(initialUsers);
   const [showCreate, setShowCreate] = useState(false);
+  const [editTarget, setEditTarget] = useState<UsuarioRow | null>(null);
   const [resetTarget, setResetTarget] = useState<UsuarioRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<UsuarioRow | null>(null);
   const [error, setError] = useState<string | null>(loadError);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [toast, setToast] = useState("");
+
+  // Parte B — filtros client-side.
+  const [query, setQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("todos");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ativos");
+
+  function showToast(msg: string) {
+    setToast(msg);
+    window.setTimeout(() => setToast(""), 2400);
+  }
 
   async function refetch() {
     const res = await fetch("/api/admin/usuarios", { cache: "no-store" });
@@ -61,155 +95,300 @@ export default function UsuariosList({
         body: JSON.stringify({ active: !u.active }),
       });
       if (!res.ok) {
-        const body = await res.json();
-        setError(body.error ?? "Falha ao atualizar status");
+        setError((await res.json()).error ?? "Falha ao atualizar status");
         return;
       }
       await refetch();
+      showToast(u.active ? "Acesso cortado · conta preservada" : "Acesso reativado");
     } finally {
       setBusyId(null);
     }
   }
 
-  async function deleteUser(u: UsuarioRow) {
-    if (u.id === currentUserId) {
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    if (deleteTarget.id === currentUserId) {
       setError("Voce nao pode deletar seu proprio usuario");
+      setDeleteTarget(null);
       return;
     }
-    const ok = window.confirm(
-      `Confirma DELETAR ${u.email} (${u.role})? Esta acao remove o login e nao pode ser desfeita. Considere 'Desativar' em vez de deletar.`
-    );
-    if (!ok) return;
-
-    setBusyId(u.id);
+    setDeleting(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/usuarios/${u.id}`, {
+      const res = await fetch(`/api/admin/usuarios/${deleteTarget.id}`, {
         method: "DELETE",
       });
       if (!res.ok) {
-        const body = await res.json();
-        setError(body.error ?? "Falha ao deletar usuario");
+        setError((await res.json()).error ?? "Falha ao deletar usuario");
         return;
       }
+      setDeleteTarget(null);
       await refetch();
+      showToast("Usuário excluído permanentemente");
     } finally {
-      setBusyId(null);
+      setDeleting(false);
     }
   }
 
+  // ---------- KPIs (sobre a lista completa visível ao operador) ----------
+  const kpi = useMemo(() => {
+    let socios = 0, funcionarios = 0, promotores = 0, ativos = 0;
+    for (const u of users) {
+      if (u.role === "socio") socios += 1;
+      else if (u.role === "funcionario") funcionarios += 1;
+      else promotores += 1;
+      if (u.active) ativos += 1;
+    }
+    return { total: users.length, socios, funcionarios, promotores, ativos, inativos: users.length - ativos };
+  }, [users]);
+
+  // ---------- filtros encadeados ----------
+  const q = query.trim().toLowerCase();
+  const searched = useMemo(
+    () =>
+      users.filter(
+        (u) =>
+          !q ||
+          (u.full_name ?? "").toLowerCase().includes(q) ||
+          u.email.toLowerCase().includes(q)
+      ),
+    [users, q]
+  );
+  const roleCounts = {
+    todos: searched.length,
+    socio: searched.filter((u) => u.role === "socio").length,
+    funcionario: searched.filter((u) => u.role === "funcionario").length,
+    promotor: searched.filter((u) => u.role === "promotor").length,
+  };
+  const afterRole = useMemo(
+    () => (roleFilter === "todos" ? searched : searched.filter((u) => u.role === roleFilter)),
+    [searched, roleFilter]
+  );
+  const statusCounts = {
+    ativos: afterRole.filter((u) => u.active).length,
+    inativos: afterRole.filter((u) => !u.active).length,
+    todos: afterRole.length,
+  };
+  const view = afterRole.filter((u) =>
+    statusFilter === "ativos" ? u.active : statusFilter === "inativos" ? !u.active : true
+  );
+
+  // só socio existe na lista? funcionario vê apenas promotores (server já filtra),
+  // então a pílula de papel some pra funcionário (não há o que filtrar).
+  const showRoleFilter = currentUserRole === "socio";
+
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.headerCopy}>
-          <div style={styles.kicker}>GESTÃO DE ACESSO</div>
-          <h2 style={styles.title}>Usuários do sistema</h2>
-          <p style={styles.subtitle}>
-            Sócios gerenciam todos os usuários do sistema. Funcionários podem
-            cadastrar e gerenciar promotores. Toda criação, edição, reset de
-            senha e remoção é auditada automaticamente.
-          </p>
-        </div>
-        <button
-          type="button"
-          style={styles.primaryBtn}
-          onClick={() => setShowCreate(true)}
-        >
-          + Novo usuário
-        </button>
-      </header>
+    <div className="rradmin">
+      <style dangerouslySetInnerHTML={{ __html: RRADMIN_CSS }} />
+      <div className="wrap">
+        {/* breadcrumb */}
+        <nav className="crumb">
+          <a href="/">Visão geral</a>
+          <span className="sep">/</span>
+          <span>Admin</span>
+          <span className="sep">/</span>
+          <span className="cur">Usuários</span>
+        </nav>
 
-      {error ? (
-        <div role="alert" style={styles.errorBanner}>
-          {error}
-        </div>
-      ) : null}
+        {/* HEADER */}
+        <header className="header">
+          <div className="header-top">
+            <div>
+              <p className="brand">GRUPO RR CRED</p>
+              <h1>Usuários</h1>
+              <p className="sub">
+                <IcoUserCog />
+                Gestão de acesso · contas e papéis
+              </p>
+            </div>
+            <div className="role">
+              <span className={`d ${roleClass(currentUserRole)}`} />
+              {currentUserEmail} · {roleLabel(currentUserRole)}
+            </div>
+          </div>
+        </header>
 
-      <div style={styles.tableWrap}>
-        <table style={styles.table}>
-          <thead>
-            <tr>
-              <th style={styles.th}>Nome</th>
-              <th style={styles.th}>E-mail</th>
-              <th style={styles.th}>Perfil</th>
-              <th style={styles.th}>Status</th>
-              <th style={styles.th}>Criado em</th>
-              <th style={styles.thActions}>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.length === 0 ? (
-              <tr>
-                <td colSpan={6} style={styles.empty}>
-                  Nenhum usuário cadastrado.
-                </td>
-              </tr>
-            ) : (
-              users.map((u) => {
-                const canManage = canManageUserRole(currentUserRole, u.role);
-                const isSelf = u.id === currentUserId;
-                const showActions = canManage && !isSelf;
-                return (
-                  <tr key={u.id} style={u.active ? undefined : styles.rowInactive}>
-                    <td style={styles.td}>{u.full_name ?? "—"}</td>
-                    <td style={styles.td}>{u.email}</td>
-                    <td style={styles.td}>
-                      <span style={roleChip(u.role)}>{u.role.toUpperCase()}</span>
-                    </td>
-                    <td style={styles.td}>
-                      <span style={u.active ? styles.activeChip : styles.inactiveChip}>
-                        {u.active ? (
-                          <>
-                            <span style={styles.activeDot} aria-hidden="true" />
-                            Ativo
-                          </>
-                        ) : (
-                          "Inativo"
-                        )}
-                      </span>
-                    </td>
-                    <td style={styles.td}>{formatDate(u.created_at)}</td>
-                    <td style={styles.tdActions}>
-                      {showActions ? (
-                        <>
-                          <button
-                            type="button"
-                            style={styles.actionBtn}
-                            disabled={busyId === u.id}
-                            onClick={() => setResetTarget(u)}
-                            title="Gerar nova senha provisória"
-                          >
-                            Resetar senha
-                          </button>
-                          <button
-                            type="button"
-                            style={styles.actionBtn}
-                            disabled={busyId === u.id}
-                            onClick={() => toggleActive(u)}
-                            title={u.active ? "Desativar usuário" : "Ativar usuário"}
-                          >
-                            {u.active ? "Desativar" : "Ativar"}
-                          </button>
-                          <button
-                            type="button"
-                            style={styles.dangerBtn}
-                            disabled={busyId === u.id}
-                            onClick={() => deleteUser(u)}
-                            title="Deletar usuário"
-                          >
-                            Deletar
-                          </button>
-                        </>
-                      ) : (
-                        <span style={styles.actionsEmpty}>—</span>
-                      )}
+        {/* REGRAS */}
+        <div className="rules">
+          <span className="rlab">Regras desta tela</span>
+          <span className="rchip"><IcoUsers />Funcionário só gerencia <b>promotores</b></span>
+          <span className="rchip"><IcoLock />Senha exibida <b>uma vez</b></span>
+          <span className="rchip"><IcoCheckSq />Toda ação é <b>auditável</b></span>
+        </div>
+
+        {/* KPIs */}
+        <div className="kpis">
+          <div className="scard accent">
+            <p className="k"><span className="ki"><IcoUsers /></span>Total de usuários</p>
+            <div className="v num">{kpi.total}</div>
+            <div className="s">{kpi.ativos} ativos · {kpi.inativos} inativo{kpi.inativos === 1 ? "" : "s"}</div>
+          </div>
+          <div className="scard">
+            <span className="dotmark" style={{ background: "var(--blue)" }} />
+            <p className="k"><span className="ki"><IcoShield /></span>Sócios</p>
+            <div className="v num">{kpi.socios}</div>
+            <div className="s">acesso completo</div>
+          </div>
+          <div className="scard">
+            <span className="dotmark" style={{ background: "var(--gold)" }} />
+            <p className="k"><span className="ki"><IcoBriefcase /></span>Funcionários</p>
+            <div className="v num">{kpi.funcionarios}</div>
+            <div className="s">operacional</div>
+          </div>
+          <div className="scard">
+            <span className="dotmark" style={{ background: "var(--green)" }} />
+            <p className="k"><span className="ki"><IcoUser /></span>Promotores</p>
+            <div className="v num">{kpi.promotores}</div>
+            <div className="s">acesso aos próprios dados</div>
+          </div>
+        </div>
+
+        {error ? (
+          <div className="errbar" role="alert">
+            <span className="bic"><IcoAlertTri /></span>
+            <div>{error}</div>
+          </div>
+        ) : null}
+
+        {/* ACTION BAR */}
+        <div className="actionbar">
+          <div className="search">
+            <IcoSearch />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Buscar por nome ou e-mail…"
+              aria-label="Buscar usuário"
+            />
+          </div>
+
+          {showRoleFilter ? (
+            <div className="seg" aria-label="Filtro por papel">
+              {(["todos", "socio", "funcionario", "promotor"] as RoleFilter[]).map((r) => (
+                <button key={r} className={roleFilter === r ? "on" : ""} onClick={() => setRoleFilter(r)}>
+                  {r !== "todos" ? (
+                    <span className="dt" style={{ background: r === "socio" ? "var(--blue)" : r === "funcionario" ? "var(--gold)" : "var(--green)" }} />
+                  ) : null}
+                  {r === "todos" ? "Todos" : roleLabel(r as UsuarioRow["role"])}
+                  <span className="cnt">{roleCounts[r]}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="seg" aria-label="Filtro por status">
+            {(["ativos", "inativos", "todos"] as StatusFilter[]).map((s) => (
+              <button key={s} className={statusFilter === s ? "on" : ""} onClick={() => setStatusFilter(s)}>
+                {s === "ativos" ? "Ativos" : s === "inativos" ? "Inativos" : "Todos"}
+                <span className="cnt">{statusCounts[s]}</span>
+              </button>
+            ))}
+          </div>
+
+          <button className="newbtn" onClick={() => setShowCreate(true)}>
+            <span className="ic"><IcoPlus /></span>
+            Novo usuário
+          </button>
+        </div>
+
+        {/* TABLE */}
+        <div className="tcard">
+          <div className="tcard-head">
+            <div>
+              <h2>Contas de acesso</h2>
+              <p className="csub">{view.length} de {users.length} {users.length === 1 ? "usuário" : "usuários"}</p>
+            </div>
+            <div className="leg">
+              <span className="lg"><span className="sw" style={{ background: "var(--blue)" }} />Sócio</span>
+              <span className="lg"><span className="sw" style={{ background: "var(--gold)" }} />Funcionário</span>
+              <span className="lg"><span className="sw" style={{ background: "var(--green)" }} />Promotor</span>
+            </div>
+          </div>
+          <div className="tscroll">
+            <table className="dt">
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>E-mail</th>
+                  <th>Perfil</th>
+                  <th>Status</th>
+                  <th>Criado em</th>
+                  <th className="r">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {view.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="emptyrow">
+                      {query || roleFilter !== "todos" || statusFilter !== "ativos"
+                        ? "Nenhum usuário para os filtros atuais."
+                        : "Nenhum usuário cadastrado."}
                     </td>
                   </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                ) : (
+                  view.map((u) => {
+                    const canManage = canManageUserRole(currentUserRole, u.role);
+                    const isSelf = u.id === currentUserId;
+                    const showActions = canManage && !isSelf;
+                    return (
+                      <tr key={u.id} className={u.active ? undefined : "inactive"}>
+                        <td>
+                          <div className="nm">
+                            <span className="av">{initials(u.full_name, u.email)}</span>
+                            {u.full_name ?? "—"}
+                            {isSelf ? <span className="self">Você</span> : null}
+                          </div>
+                        </td>
+                        <td><span className="em">{u.email}</span></td>
+                        <td><span className={`rolechip ${roleClass(u.role)}`}><span className="d" />{u.role.toUpperCase()}</span></td>
+                        <td>
+                          <span className={`chip ${u.active ? "on" : "off"}`}>
+                            <span className="d" />{u.active ? "Ativo" : "Inativo"}
+                          </span>
+                        </td>
+                        <td className="num">{formatDate(u.created_at)}</td>
+                        <td className="actcell">
+                          {showActions ? (
+                            <div className="acts">
+                              <button className="iconact" title="Editar nome e papel" disabled={busyId === u.id} onClick={() => setEditTarget(u)}><IcoPencil /></button>
+                              <button className="iconact" title="Resetar senha" disabled={busyId === u.id} onClick={() => setResetTarget(u)}><IcoKey /></button>
+                              {u.active ? (
+                                <button className="txtact warn" title="Desativar (cortar acesso)" disabled={busyId === u.id} onClick={() => toggleActive(u)}><IcoBan />Desativar</button>
+                              ) : (
+                                <button className="txtact go" title="Reativar (restaurar acesso)" disabled={busyId === u.id} onClick={() => toggleActive(u)}><IcoUndo />Reativar</button>
+                              )}
+                              <span className="actsep" />
+                              {/* Parte C — Excluir só habilitado para o admin
+                                  principal (SUPER_ADMIN_EMAIL). Para os demais
+                                  fica desabilitado com tooltip; a trava real é
+                                  validada no servidor (DELETE 403). */}
+                              <button
+                                className="iconact danger"
+                                title={isSuperAdmin ? "Excluir permanentemente" : "Exclusão restrita ao administrador principal"}
+                                disabled={busyId === u.id || !isSuperAdmin}
+                                onClick={() => setDeleteTarget(u)}
+                              ><IcoTrash /></button>
+                            </div>
+                          ) : (
+                            <span className="dash">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* nota Desativar x Excluir */}
+        <div className="rules">
+          <span className="rlab">Desativar × Excluir</span>
+          <span className="rchip"><IcoBan /><b>Desativar</b> corta o acesso (demissão) — reversível</span>
+          <span className="rchip"><IcoTrash /><b>Excluir</b> apaga a conta de vez — permanente</span>
+        </div>
       </div>
 
       {showCreate ? (
@@ -218,211 +397,84 @@ export default function UsuariosList({
           onCreated={async () => {
             setShowCreate(false);
             await refetch();
+            showToast("Usuário criado");
           }}
           currentUserRole={currentUserRole}
         />
       ) : null}
 
-      {resetTarget ? (
-        <ResetPasswordModal
-          target={resetTarget}
-          onClose={() => setResetTarget(null)}
+      {editTarget ? (
+        <EditUsuarioModal
+          target={editTarget}
+          currentUserRole={currentUserRole}
+          onClose={() => setEditTarget(null)}
+          onSaved={async () => {
+            setEditTarget(null);
+            await refetch();
+            showToast("Usuário atualizado");
+          }}
         />
       ) : null}
+
+      {resetTarget ? (
+        <ResetPasswordModal target={resetTarget} onClose={() => setResetTarget(null)} />
+      ) : null}
+
+      {deleteTarget ? (
+        <div className="rradmin">
+          <div className="overlay" role="dialog" aria-modal="true" onClick={() => !deleting && setDeleteTarget(null)}>
+            <div className="dialog" onClick={(e) => e.stopPropagation()}>
+              <div className="dialog-head red">
+                <div className="dt2">
+                  <span className="di red"><IcoTrash /></span>
+                  <div>
+                    <h3 className="red">Excluir usuário</h3>
+                    <p className="dsub">Ação permanente</p>
+                  </div>
+                </div>
+                <button className="x" onClick={() => !deleting && setDeleteTarget(null)} aria-label="Fechar"><IcoX /></button>
+              </div>
+              <div className="dialog-body">
+                <div className="dangerbanner">
+                  <span className="di"><IcoAlertTri /></span>
+                  <div className="dx">
+                    <b>Esta ação é permanente e apaga a conta.</b> Para apenas cortar o acesso,
+                    use <b>Desativar</b> — é reversível. Exclusão é restrita ao administrador principal.
+                  </div>
+                </div>
+                <p className="cfm">Confirma excluir definitivamente este usuário?</p>
+                <div className="userbox">
+                  <span className="av">{initials(deleteTarget.full_name, deleteTarget.email)}</span>
+                  <div>
+                    <div className="ub-n">{deleteTarget.full_name ?? deleteTarget.email} · {roleLabel(deleteTarget.role)}</div>
+                    <div className="ub-e">{deleteTarget.email}</div>
+                  </div>
+                </div>
+                {error ? <div className="errbox">{error}</div> : null}
+              </div>
+              <div className="dialog-foot">
+                <button className="btn-primary danger" disabled={deleting} onClick={confirmDelete}>
+                  {deleting ? <><span className="spinner" />Excluindo…</> : <><IcoTrash />Excluir permanentemente</>}
+                </button>
+                <button className="btn-ghost" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancelar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className={`toast${toast ? " show" : ""}`}>
+        <span className="ck-i"><IcoInfo /></span>
+        <span>{toast}</span>
+      </div>
     </div>
   );
 }
 
 function formatDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleString("pt-BR");
+    return new Date(iso).toLocaleDateString("pt-BR");
   } catch {
     return iso;
   }
 }
-
-function roleChip(role: UsuarioRow["role"]): CSSProperties {
-  const base: CSSProperties = {
-    display: "inline-block",
-    padding: "4px 12px",
-    borderRadius: 999,
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: "0.3px",
-  };
-  if (role === "socio")
-    return { ...base, background: "#0d4de3", color: "#FFFFFF" };
-  if (role === "funcionario")
-    return { ...base, background: "#d6a13f", color: "#FFFFFF" };
-  return { ...base, background: "rgba(40,140,80,0.14)", color: "#185a36" };
-}
-
-const styles: Record<string, CSSProperties> = {
-  page: { display: "grid", gap: 24 },
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 20,
-    flexWrap: "wrap",
-    marginBottom: 4,
-  },
-  headerCopy: {
-    display: "grid",
-    gap: 8,
-    maxWidth: 760,
-  },
-  kicker: {
-    fontSize: 13,
-    fontWeight: 700,
-    letterSpacing: "2.5px",
-    textTransform: "uppercase",
-    color: "#0d4de3",
-  },
-  title: {
-    margin: 0,
-    fontSize: "clamp(2rem, 3.5vw, 2.4rem)",
-    fontWeight: 700,
-    color: "#0F1F4A",
-    lineHeight: 1.1,
-  },
-  subtitle: {
-    margin: 0,
-    fontSize: 15,
-    color: "#5A6B82",
-    maxWidth: 720,
-    lineHeight: 1.6,
-  },
-  primaryBtn: {
-    padding: "12px 20px",
-    borderRadius: 12,
-    border: "none",
-    cursor: "pointer",
-    background: "#0d4de3",
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: 700,
-    letterSpacing: "0.5px",
-    textTransform: "uppercase",
-    boxShadow: "0 4px 12px rgba(13,77,227,0.18)",
-    alignSelf: "flex-start",
-  },
-  errorBanner: {
-    padding: "10px 14px",
-    borderRadius: 10,
-    background: "rgba(180,30,30,0.08)",
-    border: "1px solid rgba(180,30,30,0.24)",
-    color: "#8a1717",
-    fontSize: 13,
-    fontWeight: 600,
-  },
-  tableWrap: {
-    overflowX: "auto",
-    background: "var(--rr-surface-elevated)",
-    border: "1px solid var(--rr-line)",
-    borderRadius: 16,
-    boxShadow: "var(--rr-shadow-soft)",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "collapse",
-    fontSize: 14,
-  },
-  th: {
-    textAlign: "left",
-    padding: "12px 14px",
-    fontSize: 11,
-    fontWeight: 800,
-    letterSpacing: "0.1em",
-    textTransform: "uppercase",
-    color: "#0F1F4A",
-    borderBottom: "1px solid var(--rr-line)",
-    background: "#E8EDF5",
-  },
-  thActions: {
-    textAlign: "right",
-    padding: "12px 14px",
-    fontSize: 11,
-    fontWeight: 800,
-    letterSpacing: "0.1em",
-    textTransform: "uppercase",
-    color: "#0F1F4A",
-    borderBottom: "1px solid var(--rr-line)",
-    background: "#E8EDF5",
-  },
-  td: {
-    padding: "12px 14px",
-    borderBottom: "1px solid var(--rr-line)",
-    color: "var(--rr-ink)",
-    verticalAlign: "middle",
-  },
-  tdActions: {
-    padding: "10px 14px",
-    borderBottom: "1px solid var(--rr-line)",
-    textAlign: "right",
-    whiteSpace: "nowrap",
-  },
-  rowInactive: {
-    opacity: 0.55,
-  },
-  empty: {
-    padding: "28px 14px",
-    textAlign: "center",
-    color: "var(--rr-muted)",
-    fontStyle: "italic",
-  },
-  activeChip: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    padding: "4px 12px",
-    borderRadius: 999,
-    fontSize: 11,
-    fontWeight: 700,
-    background: "#fff000",
-    color: "#0F1F4A",
-    letterSpacing: "0.3px",
-  },
-  activeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: "50%",
-    background: "#1f9d55",
-  },
-  inactiveChip: {
-    display: "inline-block",
-    padding: "4px 12px",
-    borderRadius: 999,
-    fontSize: 11,
-    fontWeight: 700,
-    background: "#E8EDF5",
-    color: "#5A6B82",
-    letterSpacing: "0.3px",
-  },
-  actionBtn: {
-    marginLeft: 8,
-    padding: "8px 14px",
-    borderRadius: 10,
-    border: "1px solid var(--rr-line-strong)",
-    background: "#fff",
-    color: "var(--rr-blue-deep)",
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  dangerBtn: {
-    marginLeft: 8,
-    padding: "8px 14px",
-    borderRadius: 10,
-    border: "1px solid rgba(180,30,30,0.32)",
-    background: "rgba(180,30,30,0.06)",
-    color: "#8a1717",
-    fontSize: 12,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  actionsEmpty: {
-    color: "var(--rr-muted)",
-    fontSize: 13,
-  },
-};
