@@ -7,6 +7,22 @@ export interface BulkSelectedItem {
   commissionRuleId: string | null;
   // Snapshot do valor exibido para narrar o preview "X% -> Y%".
   currentPercent: number | null;
+  // Origem do share resolvido pelo servidor (mesma cascata do motor). Quando
+  // comeca com "FRENTE_C", a escala por meta VENCE o override manual no
+  // calculo — usado para o aviso de Frente C. NAO recalcula nada aqui.
+  sharePercentSource?: string | null;
+  // Inputs da formula viva (= a da tela): comissao_empresa x share.
+  netValue?: number | null;
+  aVistaPercent?: number | null;
+  // Share atual efetivo em escala 0..1 (share_percent_effective do servidor).
+  currentShareEffective?: number | null;
+}
+
+function formatBRL(value: number): string {
+  return value.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
 
 interface BulkActionBarProps {
@@ -67,12 +83,59 @@ export default function BulkActionBar({
     return { withOverride, withoutOverride, total: selectedItems.length };
   }, [selectedItems]);
 
+  // Item 1 — AVISO FRENTE C. Conta as selecionadas onde o servidor ja
+  // resolveu a origem do share como FRENTE_C_* (escala por meta na faixa
+  // 5,80% / Aldalene INSS). Nessas, o motor IGNORA o share manual. Apenas
+  // detecta e avisa; nao bloqueia. Reusa share_percent_source — sem regra nova.
+  const frenteCCount = useMemo(
+    () =>
+      selectedItems.filter((i) =>
+        String(i.sharePercentSource ?? "").startsWith("FRENTE_C")
+      ).length,
+    [selectedItems]
+  );
+
   const parsedValue = parseValue(valueInput);
   const valueValid =
     parsedValue !== null &&
     (mode === "absolute"
       ? parsedValue >= 0 && parsedValue <= 100
       : parsedValue >= -100 && parsedValue <= 100);
+
+  // Item 2 — PREVIEW DE R$. Mesma formula viva da tela:
+  //   comissao_empresa = net_value x min(a_vista, 5,80) / 100
+  //   comissao_promotor = comissao_empresa x share
+  // Soma sobre as propostas AFETADAS (absolute: todas; relative: so com
+  // override). Linhas FRENTE_C nao mudam de fato (motor ignora o share),
+  // entao no projetado elas mantem o valor atual — preview honesto.
+  const moneyPreview = useMemo(() => {
+    if (parsedValue === null || !valueValid) return null;
+    let current = 0;
+    let projected = 0;
+    for (const item of selectedItems) {
+      const affected =
+        mode === "absolute" ? true : Boolean(item.commissionRuleId);
+      if (!affected) continue;
+      const net = Number(item.netValue ?? 0);
+      const aVista = Math.min(Math.max(Number(item.aVistaPercent ?? 0), 0), 5.8);
+      const companyCommission = (net * aVista) / 100;
+      const curShare = Number(item.currentShareEffective ?? 0);
+      const curValue = companyCommission * curShare;
+      const isFrenteC = String(item.sharePercentSource ?? "").startsWith(
+        "FRENTE_C"
+      );
+      const newShare =
+        mode === "absolute"
+          ? parsedValue / 100
+          : curShare + parsedValue / 100;
+      const projValue = isFrenteC
+        ? curValue
+        : companyCommission * Math.max(newShare, 0);
+      current += curValue;
+      projected += projValue;
+    }
+    return { current, projected, delta: projected - current };
+  }, [selectedItems, parsedValue, valueValid, mode]);
 
   const willCreateCount =
     mode === "absolute" ? counts.withoutOverride : 0;
@@ -226,6 +289,17 @@ export default function BulkActionBar({
           </div>
         </div>
 
+        {frenteCCount > 0 ? (
+          <div role="alert" style={styles.warningBox}>
+            <strong>Atenção:</strong> {frenteCCount} proposta
+            {frenteCCount === 1 ? "" : "s"} de promotor
+            {frenteCCount === 1 ? "" : "es"} com meta ativa (Frente C) na faixa
+            5,80% — nela{frenteCCount === 1 ? "" : "s"} o repasse manual será{" "}
+            <strong>ignorado pelo cálculo</strong> (a escala por meta
+            prevalece). As demais serão aplicadas normalmente.
+          </div>
+        ) : null}
+
         {mode === "relative" && counts.withoutOverride > 0 ? (
           <div role="alert" style={styles.warningBox}>
             <strong>Atenção:</strong> ajuste relativo não funciona em
@@ -258,6 +332,17 @@ export default function BulkActionBar({
             <span style={styles.skipText}>
               ↳ <strong>{willSkipCount}</strong> sem override (ignoradas no
               modo relativo)
+            </span>
+          ) : null}
+          {moneyPreview ? (
+            <span style={styles.moneyLine}>
+              💰 Comissão promotor afetada: de{" "}
+              <strong>{formatBRL(moneyPreview.current)}</strong> para{" "}
+              <strong>{formatBRL(moneyPreview.projected)}</strong>{" "}
+              <span style={styles.moneyDelta}>
+                ({moneyPreview.delta >= 0 ? "+" : "−"}
+                {formatBRL(Math.abs(moneyPreview.delta))})
+              </span>
             </span>
           ) : null}
         </div>
@@ -431,6 +516,17 @@ const styles: Record<string, CSSProperties> = {
   },
   skipText: {
     color: MUTED,
+  },
+  moneyLine: {
+    marginTop: 4,
+    paddingTop: 6,
+    borderTop: "1px solid rgba(255,255,255,0.12)",
+    color: "#EAF0FB",
+    fontWeight: 500,
+  },
+  moneyDelta: {
+    color: YELLOW,
+    fontWeight: 700,
   },
   errorBox: {
     padding: "9px 13px",

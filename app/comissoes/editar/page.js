@@ -93,6 +93,9 @@ export default function EditarComissoesPage() {
   // Mês FECHADO por cms -> tela READ-ONLY (vê os valores finais da Promotiva,
   // não edita). Definido pelo flag `closed` da /api/commissions/proposals.
   const [readOnly, setReadOnly] = useState(false);
+  // Recalculo consolidado disparado apos o bulk (item 3): mostra estado
+  // "Atualizando valores..." enquanto o motor reprocessa a competencia.
+  const [recalcing, setRecalcing] = useState(false);
   // `searched` = já houve uma busca para os filtros ATUAIS. Trocar
   // competência/empresa/promotor limpa a tabela (evita mostrar dado de um mês
   // sob outro selecionado). A busca continua manual (botão "Buscar propostas").
@@ -458,6 +461,38 @@ export default function EditarComissoesPage() {
     setSelectedIds(new Set());
   }
 
+  // Item 3 — DISPARO DE RECALCULO. Apos o bulk aplicar com sucesso, alem de
+  // recarregar a tabela, dispara o recalculo consolidado da competencia em
+  // edicao (mesmo padrao da aba Diaria pos-import), para dashboard/fechamento
+  // refletirem o novo repasse. So competencia aberta (a barra de bulk so
+  // aparece quando !readOnly). Falha de recalculo nao derruba o fluxo.
+  async function handleBulkApplied() {
+    clearSelection();
+    try {
+      setRecalcing(true);
+      setError("");
+      setMessage("Atualizando valores...");
+      const calc = await fetch("/api/calculate/monthly", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year, month }),
+      });
+      if (!calc.ok) {
+        const payload = await calc.json().catch(() => ({}));
+        throw new Error(
+          payload?.error || "Bulk aplicado, mas o recálculo da competência falhou."
+        );
+      }
+      await loadRows();
+      setMessage("Valores atualizados após aplicação em lote.");
+    } catch (err) {
+      setError(err.message || "Falha ao recalcular a competência.");
+      await loadRows();
+    } finally {
+      setRecalcing(false);
+    }
+  }
+
   // Estado do checkbox header (tri-state sobre VISIVEIS).
   const visibleSelectedCount = useMemo(() => {
     let count = 0;
@@ -490,6 +525,16 @@ export default function EditarComissoesPage() {
           row.promoter_commission_percent == null
             ? null
             : Number(row.promoter_commission_percent),
+        // Turbinar bulk: origem do share (aviso Frente C) + inputs da
+        // formula viva (preview de R$). Todos ja vem do servidor por linha.
+        sharePercentSource: row.share_percent_source ?? null,
+        netValue: row.net_value == null ? null : Number(row.net_value),
+        aVistaPercent:
+          row.a_vista_percent == null ? null : Number(row.a_vista_percent),
+        currentShareEffective:
+          row.share_percent_effective == null
+            ? null
+            : Number(row.share_percent_effective),
       });
     }
     return out;
@@ -1296,10 +1341,7 @@ export default function EditarComissoesPage() {
         <BulkActionBar
           selectedItems={selectedItems}
           onClearSelection={clearSelection}
-          onApplied={async () => {
-            clearSelection();
-            await loadRows();
-          }}
+          onApplied={handleBulkApplied}
         />
       ) : null}
     </div>
