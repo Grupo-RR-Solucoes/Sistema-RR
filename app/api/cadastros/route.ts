@@ -305,6 +305,9 @@ export async function POST(req: Request) {
         name,
         status,
         active: body.active !== false,
+        // Disc.16 — expoe is_master no upsert (a UI agora tem o toggle Master).
+        // Default false; o KPI "Promotores ativos" continua excluindo master.
+        is_master: body.isMaster === true,
         hired_at: body.hiredAt || null,
         dismissed_at: body.dismissedAt || null,
         notes: body.notes || null,
