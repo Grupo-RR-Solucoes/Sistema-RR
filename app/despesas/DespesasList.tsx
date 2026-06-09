@@ -338,7 +338,7 @@ export default function DespesasList({
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
-          <Link href="/dashboard">Visão geral</Link>
+          <Link href="/dashboard">Dashboard</Link>
           <span className="sep">/</span>
           <Link href="/financeiro">Financeiro</Link>
           <span className="sep">/</span>

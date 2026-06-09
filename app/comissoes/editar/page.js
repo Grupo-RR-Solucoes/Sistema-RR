@@ -563,7 +563,7 @@ export default function EditarComissoesPage() {
       <div className="wrap">
         {/* ===================== breadcrumb ===================== */}
         <nav className="crumb">
-          <a href="/">Visão geral</a>
+          <a href="/dashboard">Dashboard</a>
           <span className="sep">/</span>
           <a href="/promotores">Promotores</a>
           <span className="sep">/</span>

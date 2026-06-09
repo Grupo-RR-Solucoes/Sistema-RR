@@ -88,7 +88,6 @@ const navGroups: NavGroup[] = [
     id: "painel",
     label: "Painel",
     items: [
-      { href: "/", label: "Visão geral", icon: "grid", visibleTo: ["socio"] },
       { href: "/dashboard", label: "Dashboard", icon: "gauge", visibleTo: ["socio"] },
     ],
   },
@@ -204,7 +203,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }, [pathname, isMobile]);
 
   const isItemActive = (item: NavItem) => {
-    if (item.href === "/") return pathname === "/";
     return pathname === item.href || pathname.startsWith(`${item.href}/`);
   };
 

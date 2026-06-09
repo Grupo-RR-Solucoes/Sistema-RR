@@ -199,7 +199,7 @@ export default function FinanceiroPage() {
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
-          <Link href="/dashboard">Visão geral</Link>
+          <Link href="/dashboard">Dashboard</Link>
           <span className="sep">/</span>
           <span>Financeiro</span>
         </nav>

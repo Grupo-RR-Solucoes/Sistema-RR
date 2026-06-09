@@ -183,7 +183,7 @@ export default function ProjecaoPage() {
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
-          <Link href="/dashboard">Visão geral</Link>
+          <Link href="/dashboard">Dashboard</Link>
           <span className="sep">/</span>
           <span>Comercial</span>
           <span className="sep">/</span>

@@ -357,7 +357,7 @@ export default function ImportacoesPage() {
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
-          <span>Visão geral</span>
+          <span>Dashboard</span>
           <span className="sep">/</span>
           <span>Operação</span>
           <span className="sep">/</span>

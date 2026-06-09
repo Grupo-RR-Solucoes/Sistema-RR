@@ -99,7 +99,7 @@ function Header({ data }: { data: Payload | null }) {
       <div className="header-top">
         <div>
           <p className="brand">GRUPO RR CRED</p>
-          <h1>Visão geral</h1>
+          <h1>Dashboard</h1>
         </div>
         <span className="badge"><span className="dot" />{data?.periodoLabel ?? "—"} · produção corrente</span>
       </div>

@@ -259,7 +259,7 @@ export default function RelatoriosPage() {
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
-          <a href="/dashboard">Visão geral</a>
+          <a href="/dashboard">Dashboard</a>
           <span className="sep">/</span>
           <span>Relatórios</span>
         </nav>

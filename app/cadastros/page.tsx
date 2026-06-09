@@ -449,7 +449,7 @@ export default function CadastrosPage() {
       <div className="wrap">
         {/* breadcrumb */}
         <nav className="crumb">
-          <a href="/">Visão geral</a>
+          <a href="/dashboard">Dashboard</a>
           <span className="sep">/</span>
           <span>Comercial</span>
           <span className="sep">/</span>
