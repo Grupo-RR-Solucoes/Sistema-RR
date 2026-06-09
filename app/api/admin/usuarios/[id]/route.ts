@@ -39,7 +39,7 @@ export async function PATCH(
 
     const { data: target, error: targetError } = await supabase
       .from("app_users")
-      .select("id, role, email")
+      .select("id, role, email, auth_user_id, active")
       .eq("id", id)
       .single();
 
@@ -133,6 +133,29 @@ export async function PATCH(
         { error: error?.message ?? "Usuario nao encontrado" },
         { status: 404 }
       );
+    }
+
+    // SEGURANCA — Desativar corta o acesso de verdade: ao mudar active para
+    // FALSE, banimos a conta no Auth (login falha na hora + sessao ativa cai);
+    // ao reativar (TRUE) removemos o ban. So agimos quando `active` REALMENTE
+    // muda (evita chamadas desnecessarias). Falha aqui nao reverte o UPDATE do
+    // DB — a checagem de active no login (Parte B) e no getCurrentUser ja barra
+    // como defesa em profundidade.
+    if (
+      typeof body.active === "boolean" &&
+      body.active !== target.active &&
+      target.auth_user_id
+    ) {
+      try {
+        await supabase.auth.admin.updateUserById(target.auth_user_id, {
+          ban_duration: body.active ? "none" : "876000h",
+        });
+      } catch (banErr) {
+        console.error(
+          "Falha ao (des)banir no Auth em PATCH /api/admin/usuarios",
+          banErr
+        );
+      }
     }
 
     // Disc.15 (incorporada na Disc.14 Etapa 14.3.D): audit em PATCH.
