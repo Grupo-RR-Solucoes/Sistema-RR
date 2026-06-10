@@ -67,6 +67,7 @@ import TRP32_2026_01 from "../regras_promotiva/json/TRP32_2026-01.json";
 import TRP33_2026_02 from "../regras_promotiva/json/TRP33_2026-02.json";
 import TRP34_2026_03 from "../regras_promotiva/json/TRP34_2026-03.json";
 import TRP35_2026_04 from "../regras_promotiva/json/TRP35_2026-04.json";
+import TRP37_2026_06 from "../regras_promotiva/json/TRP37_2026-06.json";
 import convenios_oficiais from "../regras_promotiva/json/convenios_oficiais.json";
 
 /**
@@ -91,6 +92,13 @@ export interface RegraMes {
     categorias_logicas?: string[];
     categorias?: string[]; // VOLUME usa este nome
     limites_categoria?: Record<string, { meta_min?: number; meta_max?: number; prod_min?: number; teto_avista: number }>;
+    // Vigencia da competencia (regra RR, holiday-aware): valid_from = ultimo dia
+    // util do mes anterior; valid_until = penultimo dia util do mes nominal.
+    // Indexada a partir de Frente 2 (TRP por PDF). Opcional: meses antigos nao a
+    // declaram.
+    vigencia_inicio?: string; // 'YYYY-MM-DD'
+    vigencia_fim?: string; // 'YYYY-MM-DD'
+    vigencia_regra?: string;
     obs?: string | string[];
     observacoes?: string[];
     bonus_observacao?: string;
@@ -230,6 +238,12 @@ export const MAPA_MES_REGRA: Record<
   // 187) e a OPP é a mesma (PR2026/023). Reusa a MESMA matriz validada (sem copia
   // que possa divergir). regraInferida=false: nao é inferencia, é igualdade documentada.
   "2026-05": { regra: TRP35_2026_04 as RegraMes, jsonRegra: "TRP35_2026-04.json (TRP 2026/194 ≡ 2026/187)", regraInferida: false },
+
+  // === 2026-06 — VOLUME 5 faixas (TRP37 = TRP Nº 2026/201) ===
+  // Frente 2 (TRP por PDF) Etapa 3: extraido do PDF oficial, validado celula a
+  // celula (Etapas 1-2) e batido contra o seed de trp_credit_rules (195 linhas).
+  // Vigencia no _meta: 2026-05-29 -> 2026-06-29 (regra RR holiday-aware).
+  "2026-06": { regra: TRP37_2026_06 as RegraMes, jsonRegra: "TRP37_2026-06.json", regraInferida: false },
 };
 
 /**
@@ -279,12 +293,13 @@ export const JSONS_SUBSTITUIDOS_POR_ERRATA: Record<string, RegraMes> = {
  * - 8 TRP24-31 (Jul-Dez/2025 VOLUME 6 perfis)
  * - 2 erratas Set/Out/2025 (TRP27, TRP29)
  * - 4 TRP32-35 (Jan-Abr/2026)
+ * - 1 TRP37_2026-06 (Jun/2026 — Frente 2 TRP por PDF, Etapa 3)
  * - 1 convenios_oficiais
- * TOTAL = 41 ✓
+ * TOTAL = 42 ✓
  *
  * Cobertura mensal MAPA_MES_REGRA:
- * - 40 meses com JSON nativo (regraInferida=false)
+ * - 42 meses com JSON nativo (regraInferida=false); Mai/2026 reusa TRP35 (≡2026/194)
  * - 1 mês com fallback (regraInferida=true): Mai/2024
- * - Total: 41 meses (Dez/2022 a Abr/2026)
+ * - Total: 43 meses (Dez/2022 a Jun/2026)
  */
-export const TOTAL_JSONS_IMPORTADOS = 41;
+export const TOTAL_JSONS_IMPORTADOS = 42;

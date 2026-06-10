@@ -1,11 +1,18 @@
 {
   "_meta": {
     "fonte": "TRP23 (jun/2025) páginas 7-8",
-    "linhas": ["INSS", "MPDG", "EXÉRCITO", "SP", "MG"]
+    "linhas": ["INSS", "MPDG", "SP", "MG"],
+    "_aposentados": {
+      "EXERCITO": {
+        "codigos": ["14661"],
+        "desde": "2026-06",
+        "motivo": "Grupo RR nao opera mais EXERCITO (Frente 2 / TRP por PDF, Etapa 3 - decisao Diego). Codigo mantido aqui apenas como registro de auditoria; removido da lista ativa EXERCITO (agora vazia). A classificacao historica de contratos EXERCITO continua funcionando via nome de produto / fallback cv=14661 em lib/regrasLoader.ts (intacto), entao meses anteriores nao quebram."
+      }
+    }
   },
   "INSS": ["1640"],
   "MPDG": ["1078"],
-  "EXERCITO": ["14661"],
+  "EXERCITO": [],
   "SP": [
     "214598", "215298", "215305", "215406", "215407", "215408", "215409",
     "215410", "215411", "215412", "215413", "215416", "215417", "215418",
