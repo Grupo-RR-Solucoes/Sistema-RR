@@ -1,6 +1,7 @@
 ﻿node_modules/
 .next/
-.env*.local
+.env*
+!.env.example
 runtime/outputs/
 # backup_*/ ja cobre backup_etapa7, backup_correcao_A, backup_fix*, etc.
 backup_*/
