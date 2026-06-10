@@ -67,6 +67,7 @@ import TRP32_2026_01 from "../regras_promotiva/json/TRP32_2026-01.json";
 import TRP33_2026_02 from "../regras_promotiva/json/TRP33_2026-02.json";
 import TRP34_2026_03 from "../regras_promotiva/json/TRP34_2026-03.json";
 import TRP35_2026_04 from "../regras_promotiva/json/TRP35_2026-04.json";
+import TRP36_2026_05 from "../regras_promotiva/json/TRP36_2026-05.json";
 import TRP37_2026_06 from "../regras_promotiva/json/TRP37_2026-06.json";
 import convenios_oficiais from "../regras_promotiva/json/convenios_oficiais.json";
 
@@ -233,11 +234,14 @@ export const MAPA_MES_REGRA: Record<
   "2026-04": { regra: TRP35_2026_04 as RegraMes, jsonRegra: "TRP35_2026-04.json", regraInferida: false },
 
   // === 2026-05 — VOLUME 5 faixas (TRP36 = TRP Nº 2026/194) ===
-  // TRP_DIFF_2026.md / TRP_REFERENCIA_2026-05.md: tabelas de credito IDENTICAS a
-  // abr/2026 (TRP 2026/187), celula a celula — so muda o numero da TRP (194 vs
-  // 187) e a OPP é a mesma (PR2026/023). Reusa a MESMA matriz validada (sem copia
-  // que possa divergir). regraInferida=false: nao é inferencia, é igualdade documentada.
-  "2026-05": { regra: TRP35_2026_04 as RegraMes, jsonRegra: "TRP35_2026-04.json (TRP 2026/194 ≡ 2026/187)", regraInferida: false },
+  // Frente 2 (TRP por PDF): competencia REAL extraida do PDF oficial (TRP36),
+  // substituindo o reuso da matriz de TRP35. Cross-check: TRP36 PDF == TRP37
+  // aprovado nos 11 produtos (205/205 celulas) e == TRP36 PDF byte-a-byte exceto
+  // rotulo/numero do TRP (2026/194 vs 2026/201). Vigencia propria no _meta:
+  // 2026-04-30 -> 2026-05-28 (ultimo dia util de abril -> penultimo de maio,
+  // holiday-aware). Antes o reuso de TRP35 carregava a vigencia de ABRIL — agora
+  // correta. regraInferida=false: competencia documentada e extraida, nao inferida.
+  "2026-05": { regra: TRP36_2026_05 as RegraMes, jsonRegra: "TRP36_2026-05.json", regraInferida: false },
 
   // === 2026-06 — VOLUME 5 faixas (TRP37 = TRP Nº 2026/201) ===
   // Frente 2 (TRP por PDF) Etapa 3: extraido do PDF oficial, validado celula a
@@ -293,13 +297,14 @@ export const JSONS_SUBSTITUIDOS_POR_ERRATA: Record<string, RegraMes> = {
  * - 8 TRP24-31 (Jul-Dez/2025 VOLUME 6 perfis)
  * - 2 erratas Set/Out/2025 (TRP27, TRP29)
  * - 4 TRP32-35 (Jan-Abr/2026)
+ * - 1 TRP36_2026-05 (Mai/2026 — Frente 2 TRP por PDF, competência real)
  * - 1 TRP37_2026-06 (Jun/2026 — Frente 2 TRP por PDF, Etapa 3)
  * - 1 convenios_oficiais
- * TOTAL = 42 ✓
+ * TOTAL = 43 ✓
  *
  * Cobertura mensal MAPA_MES_REGRA:
- * - 42 meses com JSON nativo (regraInferida=false); Mai/2026 reusa TRP35 (≡2026/194)
+ * - 42 meses com JSON nativo (regraInferida=false); Mai/2026 = TRP36 (competência própria)
  * - 1 mês com fallback (regraInferida=true): Mai/2024
  * - Total: 43 meses (Dez/2022 a Jun/2026)
  */
-export const TOTAL_JSONS_IMPORTADOS = 42;
+export const TOTAL_JSONS_IMPORTADOS = 43;

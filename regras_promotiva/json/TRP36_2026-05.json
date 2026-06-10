@@ -1,0 +1,508 @@
+{
+ "_meta": {
+  "trp": "TRP Nº 2026/194",
+  "opp_referencia": "OPP PR2026/023",
+  "competencia": "2026-05",
+  "regime": "VOLUME_5_FAIXAS",
+  "fonte_pdf": "C:\\Users\\diego\\Documents\\Codex\\2026-04-20-files-mentioned-by-the-user-sistema\\repo\\Sistema-RR-main\\TRP36 - PROMOTIVA 052026.pdf",
+  "vigencia_inicio": "2026-04-30",
+  "vigencia_fim": "2026-05-28",
+  "vigencia_regra": "último dia útil do mês anterior → penúltimo dia útil do mês nominal (holiday-aware)",
+  "categorias": [
+   "Faixa 1",
+   "Faixa 2",
+   "Faixa 3",
+   "Faixa 4",
+   "Faixa 5"
+  ],
+  "limites_categoria": {
+   "Faixa 1": {
+    "prod_min": 0,
+    "teto_avista": 0.06
+   },
+   "Faixa 2": {
+    "prod_min": 1000000,
+    "teto_avista": 0.06
+   },
+   "Faixa 3": {
+    "prod_min": 3000000,
+    "teto_avista": 0.06
+   },
+   "Faixa 4": {
+    "prod_min": 7000000,
+    "teto_avista": 0.06
+   },
+   "Faixa 5": {
+    "prod_min": 20000000,
+    "teto_avista": 0.06
+   }
+  },
+  "observacoes": [
+   "Gerado a partir de trp36_extracted.json (Etapa 1 — parser pdfplumber ancora-rotulo).",
+   "Matriz cross-checada: TRP36 PDF == TRP37_2026-06.json APROVADO nos 11 produtos (205/205 celulas); TRP36 PDF == TRP37 PDF exceto rotulo do mes e numero do TRP (2026/194 vs 2026/201).",
+   "Limite aberto ('A partir de'/'Acima de') = 999 neste JSON (convenção do motor).",
+   "1.7 (CONSIG_PRIVADO) populado com prazo por célula.",
+   "Vigencia holiday-aware: ultimo dia util de abril (2026-04-30) -> penultimo dia util de maio (2026-05-28); a mesma regra reproduz as datas oficiais de junho (2026-05-29 -> 2026-06-29)."
+  ]
+ },
+ "INSS_NOVO": {
+  "_titulo": "1.2 - Crédito Consignado INSS Novo",
+  "tx_juros_fixa": 0.0185,
+  "tiquete_min": 100,
+  "custo_processamento": 2.03,
+  "celulas_prazo": [
+   {
+    "prazo_min": 48,
+    "prazo_max": 60,
+    "Faixa 1": 0.0196,
+    "Faixa 2": 0.0197,
+    "Faixa 3": 0.0203,
+    "Faixa 4": 0.0212,
+    "Faixa 5": 0.0215
+   },
+   {
+    "prazo_min": 61,
+    "prazo_max": 84,
+    "Faixa 1": 0.0235,
+    "Faixa 2": 0.0237,
+    "Faixa 3": 0.0244,
+    "Faixa 4": 0.0255,
+    "Faixa 5": 0.0258
+   },
+   {
+    "prazo_min": 85,
+    "prazo_max": 999,
+    "Faixa 1": 0.0321,
+    "Faixa 2": 0.0323,
+    "Faixa 3": 0.0334,
+    "Faixa 4": 0.0348,
+    "Faixa 5": 0.0352
+   }
+  ]
+ },
+ "INSS_RENOV": {
+  "_titulo": "1.3 - Crédito Consignado INSS Renovação",
+  "tx_juros_min": 0.01,
+  "tiquete_min": 100,
+  "custo_processamento": 2.03,
+  "celulas_prazo": [
+   {
+    "prazo_min": 48,
+    "prazo_max": 60,
+    "Faixa 1": 0.0196,
+    "Faixa 2": 0.0197,
+    "Faixa 3": 0.0203,
+    "Faixa 4": 0.0212,
+    "Faixa 5": 0.0215
+   },
+   {
+    "prazo_min": 61,
+    "prazo_max": 84,
+    "Faixa 1": 0.0235,
+    "Faixa 2": 0.0237,
+    "Faixa 3": 0.0244,
+    "Faixa 4": 0.0255,
+    "Faixa 5": 0.0258
+   },
+   {
+    "prazo_min": 85,
+    "prazo_max": 999,
+    "Faixa 1": 0.0321,
+    "Faixa 2": 0.0323,
+    "Faixa 3": 0.0334,
+    "Faixa 4": 0.0348,
+    "Faixa 5": 0.0352
+   }
+  ]
+ },
+ "CONSIG_PUBLICO": {
+  "_titulo": "1.4 - Crédito Consignado Geral – Público",
+  "prazo_min": 36,
+  "tiquete_min": 100,
+  "custo_processamento": "2,5% ou R$ 5,00",
+  "celulas_taxa": [
+   {
+    "tx_min": 0.0175,
+    "tx_max": 0.0177,
+    "Faixa 1": 0.0078,
+    "Faixa 2": 0.0079,
+    "Faixa 3": 0.0081,
+    "Faixa 4": 0.0085,
+    "Faixa 5": 0.0086
+   },
+   {
+    "tx_min": 0.0178,
+    "tx_max": 0.0187,
+    "Faixa 1": 0.0235,
+    "Faixa 2": 0.0237,
+    "Faixa 3": 0.0244,
+    "Faixa 4": 0.0255,
+    "Faixa 5": 0.0258
+   },
+   {
+    "tx_min": 0.0188,
+    "tx_max": 0.0197,
+    "Faixa 1": 0.0353,
+    "Faixa 2": 0.0355,
+    "Faixa 3": 0.0366,
+    "Faixa 4": 0.0382,
+    "Faixa 5": 0.0387
+   },
+   {
+    "tx_min": 0.0198,
+    "tx_max": 0.0207,
+    "Faixa 1": 0.0431,
+    "Faixa 2": 0.0434,
+    "Faixa 3": 0.0448,
+    "Faixa 4": 0.0467,
+    "Faixa 5": 0.0473
+   },
+   {
+    "tx_min": 0.0208,
+    "tx_max": 0.0217,
+    "Faixa 1": 0.0471,
+    "Faixa 2": 0.0474,
+    "Faixa 3": 0.0489,
+    "Faixa 4": 0.051,
+    "Faixa 5": 0.0516
+   },
+   {
+    "tx_min": 0.0218,
+    "tx_max": 0.0227,
+    "Faixa 1": 0.0588,
+    "Faixa 2": 0.0592,
+    "Faixa 3": 0.0611,
+    "Faixa 4": 0.0637,
+    "Faixa 5": 0.0645
+   },
+   {
+    "tx_min": 0.0228,
+    "tx_max": 0.0237,
+    "Faixa 1": 0.0667,
+    "Faixa 2": 0.0671,
+    "Faixa 3": 0.0692,
+    "Faixa 4": 0.0722,
+    "Faixa 5": 0.0731
+   },
+   {
+    "tx_min": 0.0238,
+    "tx_max": 0.0247,
+    "Faixa 1": 0.0785,
+    "Faixa 2": 0.079,
+    "Faixa 3": 0.0815,
+    "Faixa 4": 0.085,
+    "Faixa 5": 0.086
+   },
+   {
+    "tx_min": 0.0248,
+    "tx_max": 999,
+    "Faixa 1": 0.0902,
+    "Faixa 2": 0.0908,
+    "Faixa 3": 0.0937,
+    "Faixa 4": 0.0977,
+    "Faixa 5": 0.0989
+   }
+  ]
+ },
+ "SIAPE": {
+  "_titulo": "1.5 - Crédito Consignado – Convênio SIAPE",
+  "convenio": "1078",
+  "prazo_min": 48,
+  "tiquete_min": 100,
+  "custo_processamento": 3.08,
+  "celulas_taxa": [
+   {
+    "tx_min": 0.0164,
+    "tx_max": 0.0167,
+    "Faixa 1": 0.0094,
+    "Faixa 2": 0.0095,
+    "Faixa 3": 0.0097,
+    "Faixa 4": 0.0102,
+    "Faixa 5": 0.0103
+   },
+   {
+    "tx_min": 0.0168,
+    "tx_max": 0.0179,
+    "Faixa 1": 0.0235,
+    "Faixa 2": 0.0237,
+    "Faixa 3": 0.0244,
+    "Faixa 4": 0.0255,
+    "Faixa 5": 0.0258
+   },
+   {
+    "tx_min": 0.018,
+    "tx_max": 0.018,
+    "Faixa 1": 0.0321,
+    "Faixa 2": 0.0323,
+    "Faixa 3": 0.0334,
+    "Faixa 4": 0.0348,
+    "Faixa 5": 0.0352
+   }
+  ]
+ },
+ "CONSIG_SP_MG": {
+  "_titulo": "1.6 - Crédito Consignado – Convênio SP e MG",
+  "prazo_min": 36,
+  "tiquete_min": 100,
+  "custo_processamento": "2,5% ou R$ 5,00",
+  "celulas_taxa": [
+   {
+    "tx_min": 0.0172,
+    "tx_max": 0.0179,
+    "Faixa 1": 0.0125,
+    "Faixa 2": 0.0126,
+    "Faixa 3": 0.013,
+    "Faixa 4": 0.0136,
+    "Faixa 5": 0.0137
+   },
+   {
+    "tx_min": 0.018,
+    "tx_max": 0.0189,
+    "Faixa 1": 0.0243,
+    "Faixa 2": 0.0244,
+    "Faixa 3": 0.0252,
+    "Faixa 4": 0.0263,
+    "Faixa 5": 0.0266
+   },
+   {
+    "tx_min": 0.019,
+    "tx_max": 0.0199,
+    "Faixa 1": 0.0353,
+    "Faixa 2": 0.0355,
+    "Faixa 3": 0.0366,
+    "Faixa 4": 0.0382,
+    "Faixa 5": 0.0387
+   },
+   {
+    "tx_min": 0.02,
+    "tx_max": 0.0209,
+    "Faixa 1": 0.0431,
+    "Faixa 2": 0.0434,
+    "Faixa 3": 0.0448,
+    "Faixa 4": 0.0467,
+    "Faixa 5": 0.0473
+   },
+   {
+    "tx_min": 0.021,
+    "tx_max": 0.0219,
+    "Faixa 1": 0.051,
+    "Faixa 2": 0.0513,
+    "Faixa 3": 0.0529,
+    "Faixa 4": 0.0552,
+    "Faixa 5": 0.0559
+   },
+   {
+    "tx_min": 0.022,
+    "tx_max": 0.0229,
+    "Faixa 1": 0.0588,
+    "Faixa 2": 0.0592,
+    "Faixa 3": 0.0611,
+    "Faixa 4": 0.0637,
+    "Faixa 5": 0.0645
+   },
+   {
+    "tx_min": 0.023,
+    "tx_max": 0.0239,
+    "Faixa 1": 0.0667,
+    "Faixa 2": 0.0671,
+    "Faixa 3": 0.0692,
+    "Faixa 4": 0.0722,
+    "Faixa 5": 0.0731
+   },
+   {
+    "tx_min": 0.024,
+    "tx_max": 0.0249,
+    "Faixa 1": 0.0785,
+    "Faixa 2": 0.079,
+    "Faixa 3": 0.0815,
+    "Faixa 4": 0.085,
+    "Faixa 5": 0.086
+   },
+   {
+    "tx_min": 0.025,
+    "tx_max": 999,
+    "Faixa 1": 0.0902,
+    "Faixa 2": 0.0908,
+    "Faixa 3": 0.0937,
+    "Faixa 4": 0.0977,
+    "Faixa 5": 0.0989
+   }
+  ]
+ },
+ "CONSIG_PRIVADO": {
+  "_titulo": "1.7 - Crédito Consignado – Convênio Privado",
+  "_observacao": "Linha 1 cobre prazo 18-35 (taxa A partir de 2,54%). Linhas 2-4 cobrem prazo >=36 segmentadas por taxa.",
+  "tiquete_min": 2000,
+  "celulas_taxa_prazo": [
+   {
+    "tx_min": 0.0254,
+    "tx_max": 999,
+    "prazo_min": 18,
+    "prazo_max": 35,
+    "Faixa 1": 0.0078,
+    "Faixa 2": 0.0079,
+    "Faixa 3": 0.0081,
+    "Faixa 4": 0.0085,
+    "Faixa 5": 0.0086
+   },
+   {
+    "tx_min": 0.0254,
+    "tx_max": 0.0299,
+    "prazo_min": 36,
+    "prazo_max": 999,
+    "Faixa 1": 0.0235,
+    "Faixa 2": 0.0237,
+    "Faixa 3": 0.0244,
+    "Faixa 4": 0.0255,
+    "Faixa 5": 0.0258
+   },
+   {
+    "tx_min": 0.03,
+    "tx_max": 0.035,
+    "prazo_min": 36,
+    "prazo_max": 999,
+    "Faixa 1": 0.0314,
+    "Faixa 2": 0.0316,
+    "Faixa 3": 0.0326,
+    "Faixa 4": 0.034,
+    "Faixa 5": 0.0344
+   },
+   {
+    "tx_min": 0.0351,
+    "tx_max": 999,
+    "prazo_min": 36,
+    "prazo_max": 999,
+    "Faixa 1": 0.0392,
+    "Faixa 2": 0.0395,
+    "Faixa 3": 0.0407,
+    "Faixa 4": 0.0425,
+    "Faixa 5": 0.043
+   }
+  ]
+ },
+ "PORTAB_PUBLICO": {
+  "_titulo": "2.2 - Portabilidade Convênio Público",
+  "_observacao": "Sem variação por Faixa — pct é Geral",
+  "prazo_min": 48,
+  "tiquete_min": 2500,
+  "custo_processamento": "2,5% ou R$ 5,00",
+  "celulas_taxa": [
+   {
+    "tx_min": 0.0173,
+    "tx_max": 0.0189,
+    "pct_geral": 0.0072
+   },
+   {
+    "tx_min": 0.019,
+    "tx_max": 999,
+    "pct_geral": 0.0225
+   }
+  ]
+ },
+ "PORTAB_PRIVADO": {
+  "_titulo": "2.3 - Portabilidade Convênio Privado",
+  "_observacao": "Sem variação por Faixa — pct é Geral",
+  "prazo_min": 36,
+  "tiquete_min": 2500,
+  "custo_processamento": "2,5% ou R$ 5,00",
+  "celulas_taxa": [
+   {
+    "tx_min": 0.0254,
+    "tx_max": 0.0299,
+    "pct_geral": 0.0045
+   },
+   {
+    "tx_min": 0.03,
+    "tx_max": 999,
+    "pct_geral": 0.018
+   }
+  ]
+ },
+ "NAO_CONSIGNADO": {
+  "_titulo": "3.2 - Crédito Não Consignado (Automático, Salário e Benefício)",
+  "prazo_min": 13,
+  "tiquete_min": 100,
+  "celulas_taxa": [
+   {
+    "tx_min": 0.0292,
+    "tx_max": 0.0337,
+    "Faixa 1": 0.0196,
+    "Faixa 2": 0.0197,
+    "Faixa 3": 0.0203,
+    "Faixa 4": 0.0212,
+    "Faixa 5": 0.0215
+   },
+   {
+    "tx_min": 0.0338,
+    "tx_max": 0.0383,
+    "Faixa 1": 0.0274,
+    "Faixa 2": 0.0276,
+    "Faixa 3": 0.0285,
+    "Faixa 4": 0.0297,
+    "Faixa 5": 0.0301
+   },
+   {
+    "tx_min": 0.0384,
+    "tx_max": 0.0429,
+    "Faixa 1": 0.0353,
+    "Faixa 2": 0.0355,
+    "Faixa 3": 0.0366,
+    "Faixa 4": 0.0382,
+    "Faixa 5": 0.0387
+   },
+   {
+    "tx_min": 0.043,
+    "tx_max": 0.0475,
+    "Faixa 1": 0.0431,
+    "Faixa 2": 0.0434,
+    "Faixa 3": 0.0448,
+    "Faixa 4": 0.0467,
+    "Faixa 5": 0.0473
+   },
+   {
+    "tx_min": 0.0476,
+    "tx_max": 0.0538,
+    "Faixa 1": 0.0549,
+    "Faixa 2": 0.0553,
+    "Faixa 3": 0.057,
+    "Faixa 4": 0.0595,
+    "Faixa 5": 0.0602
+   },
+   {
+    "tx_min": 0.0539,
+    "tx_max": 999,
+    "Faixa 1": 0.0824,
+    "Faixa 2": 0.0829,
+    "Faixa 3": 0.0855,
+    "Faixa 4": 0.0892,
+    "Faixa 5": 0.0903
+   }
+  ]
+ },
+ "ADIANTAMENTO_13": {
+  "_titulo": "3.3 - Adiantamento 13º Salário",
+  "tx_juros_min": 0.0325,
+  "prazo_min": 5,
+  "tiquete_min": 100,
+  "celulas": [
+   {
+    "prazo_min": 5,
+    "prazo_max": 999,
+    "Faixa 1": 0.0235,
+    "Faixa 2": 0.0237,
+    "Faixa 3": 0.0244,
+    "Faixa 4": 0.0255,
+    "Faixa 5": 0.0258
+   }
+  ]
+ },
+ "FGTS": {
+  "_titulo": "3.4 - CDC FGTS Saque Aniversário",
+  "_observacao": "Sem variação por Faixa — % é Geral",
+  "tx_juros_fixa": 0.0179,
+  "prazo_min": 36,
+  "prazo_max": 84,
+  "tiquete_min": 1000,
+  "pct_geral": 0.042
+ }
+}
