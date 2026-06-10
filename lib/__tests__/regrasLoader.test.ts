@@ -9,7 +9,7 @@
  *   este arquivo já está pronto.
  *
  * Cobertura (8 cenários — espelhados no script CJS):
- * 1. resumoCobertura → 41 meses, 35 diretos, 6 inferidos.
+ * 1. resumoCobertura → 43 meses, 42 diretos, 1 inferido.
  * 2. getRegra("2024-07") → TRP09, regraInferida=false.
  * 3. getRegra("2023-09") → TRP01, regraInferida=true (fallback).
  * 4. getRegra("2024-04") → TRP05_2024-04b (errata sobre TRP04), regraInferida=false.
@@ -30,13 +30,13 @@ import {
 } from "../regrasLoader.ts";
 import type { RegraMes } from "../regrasData.ts";
 
-test("resumoCobertura: 41 meses (35 diretos + 6 inferidos)", () => {
+test("resumoCobertura: 43 meses (42 diretos + 1 inferido)", () => {
   const r = resumoCobertura();
-  assert.equal(r.total, 41);
-  assert.equal(r.diretos, 35);
-  assert.equal(r.inferidos, 6);
+  assert.equal(r.total, 43);
+  assert.equal(r.diretos, 42);
+  assert.equal(r.inferidos, 1);
   assert.equal(r.primeiroMes, "2022-12");
-  assert.equal(r.ultimoMes, "2026-04");
+  assert.equal(r.ultimoMes, "2026-06");
 });
 
 test("getRegra('2024-07') retorna TRP09 (direto)", () => {
