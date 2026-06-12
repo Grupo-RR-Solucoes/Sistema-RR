@@ -258,7 +258,10 @@ async function fetchAllRest({ table, select, filters = [], pageSize = 250 }) {
         response = await fetch(url, {
           headers: {
             apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-            Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+            // D27: legacy=Bearer+apikey, sb_secret=apikey
+            ...(process.env.SUPABASE_SERVICE_ROLE_KEY?.startsWith("sb_")
+              ? {}
+              : { Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}` }),
             Range: `${from}-${from + pageSize - 1}`,
             Prefer: "count=exact",
           },
