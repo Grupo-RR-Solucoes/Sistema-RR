@@ -1,4 +1,9 @@
 import { resolvePromotivaCashPolicy } from "./promotivaCashPolicy.ts";
+import { getRegime, getRegra, lookupPctInRegra } from "./regrasLoader.ts";
+import {
+  getProductionPeriodFromValue,
+  getProductionPeriodKey,
+} from "./productionPeriod.ts";
 
 type Operation = {
   valor_liquido: number;
@@ -402,13 +407,85 @@ function getMinimumTicket(tableKey: string) {
   return 100;
 }
 
+// ===========================================================================
+// NOVO — fonte da matriz de crédito: TRP versionada por competência.
+//
+// Substitui CREDIT_RULES (hardcoded) por lookupPctInRegra (regrasLoader) quando o
+// regime da competência é VOLUME_5_FAIXAS. Comportamento-idêntico provado por
+// scripts/frente2_paridade_cirurgico.cjs (paridade 0 em abr+jun/2026; 4290
+// comparações × 5 faixas). CREDIT_RULES é MANTIDO como fallback (regimes !=
+// VOLUME_5 e drift inesperado). NÃO re-roteia: tableKey vem de inferCreditTable.
+// ===========================================================================
+
+/** Mapa 1:1 validado: tableKey (inferCreditTable) -> categoria do JSON da TRP.
+ *  Ausente = mesmo nome (INSS_NOVO 1.2, SIAPE 1.5, ADIANTAMENTO_13 3.3, FGTS 3.4). */
+const MAP_TABLEKEY_TO_CATEGORIA: Record<string, string> = {
+  PUBLICO_GERAL: "CONSIG_PUBLICO",                 // TRP 1.4
+  SP_MG: "CONSIG_SP_MG",                           // TRP 1.6
+  PRIVADO: "CONSIG_PRIVADO",                       // TRP 1.7
+  PORTABILIDADE_PUBLICO: "PORTAB_PUBLICO",         // TRP 2.2
+  PORTABILIDADE_PRIVADO: "PORTAB_PRIVADO",         // TRP 2.3
+  AUTOMATICO_SALARIO_BENEFICIO: "NAO_CONSIGNADO",  // TRP 3.2
+  INSS_RENOVACAO: "INSS_RENOV",                    // TRP 1.3
+};
+
+/** Categorias do JSON sem variação por faixa (só "pct_geral"). */
+const CATEGORIAS_PCT_GERAL = new Set(["PORTAB_PUBLICO", "PORTAB_PRIVADO", "FGTS"]);
+
+/** Mesma tolerância de range do regrasLoader (EPS), p/ o gate B. */
+const LOOKUP_EPS = 1e-7;
+
+/** Competência (YYYY-MM) do contrato por VIGÊNCIA (holiday-aware), reusando a
+ *  função canônica de lib/productionPeriod.ts — NÃO reimplementada aqui. */
+function competenciaDoContrato(op: Operation): string | null {
+  const periodo = getProductionPeriodFromValue(op.contract_date);
+  return periodo ? getProductionPeriodKey(periodo.year, periodo.month) : null;
+}
+
+/** Lookup do pct CRU na TRP da competência (caminho VOLUME_5). Replica EXATAMENTE
+ *  o getCreditPercentNovo do harness frente2_paridade_cirurgico.cjs (paridade 0).
+ *  percent=null => regra do mês ausente ou lookup sem match (caller faz fallback). */
+function lookupCreditPercentTrp(
+  band: BandKey,
+  mes: string,
+  tableKey: string,
+  rate: number,
+  term: number
+): { percent: number | null; motivo?: string } {
+  const categoria = MAP_TABLEKEY_TO_CATEGORIA[tableKey] || tableKey;
+  const tabLabel = CATEGORIAS_PCT_GERAL.has(categoria)
+    ? "pct_geral"
+    : `Faixa ${BAND_INDEX[band] + 1}`;
+  const taxaDec = rate > 1 ? rate / 100 : rate;
+
+  const r = getRegra(mes);
+  if (!r) return { percent: null, motivo: `getRegra(${mes})=null` };
+
+  // GATE B — ADIANTAMENTO_13: o motor exige tx_juros_min (via minRate); o loader
+  // o IGNORA de propósito só p/ ADIANTAMENTO_13 (skipTxJurosMin). Replicamos o
+  // motor lendo tx_juros_min DO DADO (cat.tx_juros_min da regra do mês — não
+  // hardcoded), forçando FORA_DA_TABELA (pct 0) quando taxa < tx_juros_min.
+  if (categoria === "ADIANTAMENTO_13") {
+    const cat = (r.regra as Record<string, { tx_juros_min?: number } | undefined>)[categoria];
+    const txMin = cat && typeof cat.tx_juros_min === "number" ? cat.tx_juros_min : null;
+    if (txMin != null && taxaDec < txMin - LOOKUP_EPS) {
+      return { percent: 0, motivo: "ADIANTAMENTO_13 FORA_DA_TABELA (gate B)" };
+    }
+  }
+
+  const out = lookupPctInRegra(
+    r.regra, categoria, taxaDec, term, tabLabel, r.jsonRegra, r.regraInferida
+  );
+  return { percent: out.pct, motivo: out.celula ?? undefined };
+}
+
 function getCreditPercent(op: Operation, band: BandKey) {
   const tableKey = inferCreditTable(op);
   const ticket = toNumber(op.valor_liquido);
   const rate = toNumber(op.taxa_juros);
   const term = Math.trunc(toNumber(op.prazo));
-  const rules = CREDIT_RULES[tableKey] || [];
 
+  // Gates preservados idênticos ao motor original. Zera antes de qualquer lookup.
   if (ticket < getMinimumTicket(tableKey) || rate <= 0 || term <= 0) {
     return {
       tableKey,
@@ -416,13 +493,43 @@ function getCreditPercent(op: Operation, band: BandKey) {
     };
   }
 
+  // NOVO — fonte da matriz = TRP por competência quando regime == VOLUME_5_FAIXAS.
+  // Fora disso (ou TRP sem célula), fallback p/ CREDIT_RULES (preservado).
+  const mes = competenciaDoContrato(op);
+  let entrouTrp = false;
+  if (mes && getRegime(mes) === "VOLUME_5_FAIXAS") {
+    entrouTrp = true;
+    const trp = lookupCreditPercentTrp(band, mes, tableKey, rate, term);
+    if (trp.percent !== null) {
+      return { tableKey, percent: trp.percent };
+    }
+    // TRP null → cai no fallback abaixo. O warning de drift é decidido DEPOIS de
+    // calcular o fallback (só loga se for drift REAL — vide abaixo).
+  }
+
+  // FALLBACK — CREDIT_RULES hardcoded (regime != VOLUME_5, sem competência, ou
+  // TRP sem célula). Lógica original preservada na íntegra.
+  const rules = CREDIT_RULES[tableKey] || [];
   const matchedRule = rules.find(
     (rule) => matchesRate(rule, rate) && matchesTerm(rule, term)
   );
+  const fallbackPercent = matchedRule ? getBandPercent(matchedRule, band) : 0;
+
+  // DRIFT REAL — só avisa quando o TRP retornou null MAS o CREDIT_RULES paga
+  // (fallbackPercent != 0): o lookup TRP perdeu um contrato que o motor original
+  // remunerava (sintoma de mapa/tabLabel/regra divergente). Quando ambos dão 0
+  // (FORA_DA_TABELA normal), é esperado — silencia. NÃO altera o resultado, só o log.
+  if (entrouTrp && fallbackPercent !== 0) {
+    console.warn(
+      `[motor] getCreditPercent: DRIFT — lookup TRP null mas CREDIT_RULES paga ` +
+        `${fallbackPercent} (mes=${mes}, tableKey=${tableKey}, ` +
+        `categoria=${MAP_TABLEKEY_TO_CATEGORIA[tableKey] || tableKey}). Usando fallback.`
+    );
+  }
 
   return {
     tableKey,
-    percent: matchedRule ? getBandPercent(matchedRule, band) : 0,
+    percent: fallbackPercent,
   };
 }
 
