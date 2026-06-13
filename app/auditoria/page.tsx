@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { UiStyles, HeaderNavy, KpiHero } from "@/components/ui";
 import HistoricalFindingsSection from "../../components/auditoria/HistoricalFindingsSection";
 
 // ============================================================
@@ -55,30 +56,32 @@ export default function AuditoriaPage() {
 
   return (
     <div className="rraud">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb"><Link href="/dashboard">Dashboard</Link><span className="sep">/</span><span>Auditoria</span></nav>
 
-        <header className="header">
-          <div className="header-top">
-            <div><p className="brand">GRUPO RR CRED</p><h1>Auditoria de divergências</h1></div>
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title="Auditoria de divergências"
+          actions={
             <div className="comp">
               <select aria-label="Competência" value={periodValue} onChange={(e) => setSelectedKey(e.target.value)}>
                 {(data?.periods ?? []).filter((p) => p.fechado).map((p) => (<option key={p.key} value={p.key}>{p.label}</option>))}
               </select>
               <span className="chev">▾</span>
             </div>
-          </div>
-
-          <div className="hero">
-            <div>
-              <p className="lbl"><span className="tag">A recuperar</span> Recuperável novo</p>
-              <div className="big num">{brl2(rec?.total)}</div>
-              <div className="sub">{nada ? `nada novo a recuperar — tudo até ${data?.curadoAteLabel ?? "abril"} já cobrado` : `${rec?.contratos} contratos curados não cobrados`}</div>
-            </div>
-            <p className="aside">Recuperável = auditoria curada (v9) que ainda <b>não</b> entrou em nenhuma cobrança emitida. Exclui por contrato o que já foi cobrado.</p>
-          </div>
-        </header>
+          }
+        >
+          <KpiHero
+            valueTone="gold"
+            valueSize={52}
+            label={<><span className="tag">A recuperar</span> Recuperável novo</>}
+            value={brl2(rec?.total)}
+            sub={nada ? `nada novo a recuperar — tudo até ${data?.curadoAteLabel ?? "abril"} já cobrado` : `${rec?.contratos} contratos curados não cobrados`}
+            aside={<>Recuperável = auditoria curada (v9) que ainda <b>não</b> entrou em nenhuma cobrança emitida. Exclui por contrato o que já foi cobrado.</>}
+          />
+        </HeaderNavy>
 
         {error ? <div className="aguard">{error}</div> : null}
 
@@ -152,22 +155,13 @@ const CSS = `
 .rraud .crumb a{color:var(--ink-2);text-decoration:none;font-weight:500;}
 .rraud .crumb a:hover{color:var(--navy);}
 .rraud .crumb .sep{color:#C2C8D2;}
-.rraud .header{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 34px;color:#fff;position:relative;overflow:hidden;}
-.rraud .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.6;}
-.rraud .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
-.rraud .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rraud .header h1{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
+/* bloco navy + marca + h1 agora vêm do <HeaderNavy> do kit; .comp (select) fica */
 .rraud .comp{position:relative;}
 .rraud .comp select{appearance:none;-webkit-appearance:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);color:#E4E9F4;padding:8px 36px 8px 14px;border-radius:999px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
 .rraud .comp select:focus{outline:none;border-color:rgba(255,255,255,.35);}
 .rraud .comp .chev{position:absolute;right:14px;top:50%;transform:translateY(-50%);pointer-events:none;color:#9DA9C6;font-size:11px;}
-.rraud .hero{margin-top:28px;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;}
-.rraud .hero .lbl{display:flex;align-items:center;gap:9px;font-size:12px;font-weight:500;color:#9DA9C6;margin:0 0 12px;}
-.rraud .hero .lbl .tag{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--gold);background:rgba(214,161,63,.14);border:1px solid rgba(214,161,63,.32);padding:2px 8px;border-radius:999px;}
-.rraud .hero .big{font-size:52px;font-weight:700;letter-spacing:-.025em;line-height:.95;color:var(--gold);}
-.rraud .hero .sub{font-size:13px;color:#A6B0CB;margin-top:11px;}
-.rraud .hero .aside{font-size:12.5px;color:#8C98B6;max-width:260px;text-align:right;line-height:1.5;}
-.rraud .hero .aside b{color:#C9D2E8;font-weight:600;}
+/* hero agora vem do <KpiHero valueTone="gold" valueSize={52} aside=…> do kit; só a pill .tag (no label via ReactNode) fica */
+.rraud .tag{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--gold);background:rgba(214,161,63,.14);border:1px solid rgba(214,161,63,.32);padding:2px 8px;border-radius:999px;}
 .rraud .aguard{background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r-md);padding:16px 18px;font-size:13.5px;line-height:1.55;color:#5C4A1E;}
 .rraud .card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:26px 28px;}
 .rraud .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;}
@@ -199,11 +193,6 @@ const CSS = `
 .rraud .btn[disabled]{opacity:.5;cursor:default;}
 .rraud .btn .ar{color:var(--yellow);font-size:13px;}
 @media (max-width:720px){
-  .rraud .header{padding:22px 20px 24px;}
-  .rraud .header h1{font-size:22px;}
-  .rraud .hero{padding-top:18px;margin-top:20px;}
-  .rraud .hero .big{font-size:42px;}
-  .rraud .hero .aside{text-align:left;max-width:none;}
   .rraud .card{padding:20px 18px;}
   .rraud .prt{grid-template-columns:1fr;}
   .rraud .prt .cell{padding:16px 0;border-top:1px solid var(--bd-soft);}

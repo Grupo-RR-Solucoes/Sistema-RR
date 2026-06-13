@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { UiStyles, HeaderNavy, KpiHero } from "@/components/ui";
+
 // Etapa 8 (enxugar menu) Fase 3 — Tela B "Receita & Simples" (socio + funcionario):
 // RBT12/Simples por CNPJ + entrada de RECEITA COMPLEMENTAR. Reusa /api/rbt12 e
 // /api/receita-lancamentos verbatim (zero religação). Sai do conjunto financeiro
@@ -60,6 +62,8 @@ function sem(sinal: string) {
   return "g";
 }
 const ZONE: Record<string, string> = { g: "Saudável", a: "Atenção", r: "Crítico" };
+// mapeia o semáforo local (g/a/r) para o tone do kit (ok/warn/risk)
+const SEM_TONE: Record<string, "ok" | "warn" | "risk"> = { g: "ok", a: "warn", r: "risk" };
 const CAT_LABEL: Record<string, string> = { CONSORCIO: "Consórcio", AJUSTE_CONTADOR: "Ajuste contador", OUTRO: "Outro" };
 
 export default function ReceitasPage() {
@@ -180,6 +184,7 @@ export default function ReceitasPage() {
 
   return (
     <div className="rrrec">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
@@ -188,12 +193,10 @@ export default function ReceitasPage() {
           <span>Receita &amp; Simples</span>
         </nav>
 
-        <header className="header">
-          <div className="header-top">
-            <div>
-              <p className="brand">GRUPO RR CRED</p>
-              <h1>Receita &amp; Simples</h1>
-            </div>
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title="Receita & Simples"
+          actions={
             <div className="hr-right">
               <div className="comp">
                 <select aria-label="Competência" value={periodKey} onChange={(e) => setSelectedKey(e.target.value)}>
@@ -207,27 +210,34 @@ export default function ReceitasPage() {
               </div>
               <span className="access">Sócios + equipe fiscal</span>
             </div>
-          </div>
-
+          }
+        >
           {rbt ? (
-            <>
-              <div className="gstat">
-                <div>
-                  <p className="lbl"><span className={`sem ${sem(rbt.grupo.sinal)}`} />RBT12 consolidado do grupo · ref. {period.label}</p>
-                  <div className="big num">{brl(rbt.grupo.rbt12)}<small>/ {mm(teto)}</small></div>
-                </div>
-                <div className="right">
-                  <div className={`pct num ${sem(rbt.grupo.sinal)}`}>{(rbt.grupo.pctLimite * 100).toFixed(1).replace(".", ",")}%</div>
-                  <div className="pct-k">do teto · {ZONE[sem(rbt.grupo.sinal)].toLowerCase()}</div>
-                </div>
-              </div>
-              <div className="gbar">
-                <div className="track"><div className={`fill ${sem(rbt.grupo.sinal)}`} style={{ width: `${Math.min(100, rbt.grupo.pctLimite * 100)}%` }} /></div>
-                <div className="scale"><span>R$ 0</span><span className="mid">atenção a partir de 60%</span><span>teto {mm(teto)}</span></div>
-              </div>
-            </>
+            <KpiHero
+              valueSize={42}
+              labelDot={SEM_TONE[sem(rbt.grupo.sinal)]}
+              label={`RBT12 consolidado do grupo · ref. ${period.label}`}
+              value={brl(rbt.grupo.rbt12)}
+              valueSuffix={`/ ${mm(teto)}`}
+              secondary={{
+                value: `${(rbt.grupo.pctLimite * 100).toFixed(1).replace(".", ",")}%`,
+                tone: SEM_TONE[sem(rbt.grupo.sinal)],
+                label: `do teto · ${ZONE[sem(rbt.grupo.sinal)].toLowerCase()}`,
+              }}
+              meter={{
+                percent: rbt.grupo.pctLimite,
+                semaforo: SEM_TONE[sem(rbt.grupo.sinal)],
+                caption: (
+                  <>
+                    <span>R$ 0</span>
+                    <span className="mid">atenção a partir de 60%</span>
+                    <span>teto {mm(teto)}</span>
+                  </>
+                ),
+              }}
+            />
           ) : null}
-        </header>
+        </HeaderNavy>
 
         {error ? <div className="banner err">{error}</div> : null}
         {loading ? <div className="state">Carregando RBT12…</div> : null}
@@ -390,11 +400,7 @@ const CSS = `
 .rrrec .crumb a{color:var(--ink-2);text-decoration:none;font-weight:500;}
 .rrrec .crumb a:hover{color:var(--navy);}
 .rrrec .crumb .sep{color:#C2C8D2;}
-.rrrec .header{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 34px;color:#fff;position:relative;overflow:hidden;}
-.rrrec .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rrrec .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
-.rrrec .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rrrec .header h1{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
+/* bloco navy + marca + h1 agora vêm do <HeaderNavy> do kit; .hr-right/.comp/.access (actions) ficam */
 .rrrec .hr-right{display:flex;flex-direction:column;align-items:flex-end;gap:10px;}
 .rrrec .comp{position:relative;}
 .rrrec .comp select{appearance:none;-webkit-appearance:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);color:#E4E9F4;padding:8px 36px 8px 14px;border-radius:999px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
@@ -402,28 +408,9 @@ const CSS = `
 .rrrec .comp select:focus{outline:none;border-color:rgba(255,255,255,.35);}
 .rrrec .comp .chev{position:absolute;right:14px;top:50%;transform:translateY(-50%);pointer-events:none;color:#9DA9C6;font-size:11px;}
 .rrrec .access{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:500;color:#9DA9C6;}
-.rrrec .gstat{margin-top:28px;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;}
-.rrrec .gstat .lbl{font-size:12px;font-weight:500;color:#9DA9C6;margin:0 0 11px;display:flex;align-items:center;gap:9px;}
-.rrrec .gstat .lbl .sem{width:10px;height:10px;border-radius:50%;}
-.rrrec .gstat .big{font-size:42px;font-weight:700;letter-spacing:-.025em;line-height:.95;color:#fff;}
-.rrrec .gstat .big small{font-size:19px;font-weight:600;color:#A6B0CB;margin-left:8px;letter-spacing:0;}
-.rrrec .gstat .right{text-align:right;}
-.rrrec .gstat .pct{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1;}
-.rrrec .gstat .pct.g{color:var(--green-soft);}
-.rrrec .gstat .pct.a{color:var(--warn-soft);}
-.rrrec .gstat .pct.r{color:var(--red-soft);}
-.rrrec .gstat .pct-k{font-size:12px;color:#9DA9C6;margin-top:8px;}
-.rrrec .sem.g{background:var(--green);box-shadow:0 0 0 4px rgba(60,157,107,.18);}
-.rrrec .sem.a{background:var(--warn);box-shadow:0 0 0 4px rgba(214,154,30,.20);}
-.rrrec .sem.r{background:var(--red);box-shadow:0 0 0 4px rgba(192,68,60,.18);}
-.rrrec .gbar{margin-top:20px;}
-.rrrec .gbar .track{height:9px;border-radius:6px;background:rgba(255,255,255,.10);overflow:hidden;}
-.rrrec .gbar .fill{height:100%;border-radius:6px;}
-.rrrec .gbar .fill.g{background:linear-gradient(90deg,var(--green),var(--green-soft));}
-.rrrec .gbar .fill.a{background:linear-gradient(90deg,var(--warn),var(--warn-soft));}
-.rrrec .gbar .fill.r{background:linear-gradient(90deg,var(--red),var(--red-soft));}
-.rrrec .gbar .scale{display:flex;justify-content:space-between;margin-top:8px;font-size:11px;color:#7C88A8;}
-.rrrec .gbar .scale .mid{color:#9DA9C6;}
+/* gstat/gbar (hero + barra) agora vêm do <KpiHero labelDot valueSuffix secondary meter> do kit;
+   só o span .mid (legenda do meio na meter.caption) fica, mais claro */
+.rrrec .mid{color:#9DA9C6;}
 .rrrec .banner{border-radius:var(--r-md);padding:12px 16px;font-size:13px;background:var(--red-bg);border:1px solid #E9B7B2;color:#8E2F28;}
 .rrrec .state{padding:24px 4px;font-size:13.5px;color:var(--ink-3);}
 .rrrec .state.sm{padding:14px 2px;}
@@ -512,10 +499,7 @@ const CSS = `
 }
 @media (max-width:680px){
   .rrrec .wrap{padding:18px 16px 40px;gap:16px;}
-  .rrrec .header{padding:22px 20px 24px;}
-  .rrrec .header h1{font-size:22px;}
   .rrrec .hr-right{align-items:flex-start;}
-  .rrrec .gstat .big{font-size:34px;}
   .rrrec .cgrid{grid-template-columns:1fr;}
   .rrrec .ccard,.rrrec .card{padding:20px 18px;}
   .rrrec .form-grid{grid-template-columns:1fr;}
