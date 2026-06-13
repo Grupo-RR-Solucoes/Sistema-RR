@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { UiStyles, Banner, Table, Num, Chip } from "@/components/ui";
+import { UiStyles, HeaderNavy, KpiBand, Banner, Table, Num, Chip } from "@/components/ui";
 import type { ChipVariant } from "@/components/ui";
 
 // ============================================================
@@ -100,44 +100,40 @@ function Header({ data }: { data: Payload | null }) {
   const prev = data ? brl0(data.previsaoReceita) : "—";
   const lim = data ? pct1(data.limiteSimples.pct) : "—";
   const limSub = data ? `${mm2(data.limiteSimples.rbt12)} / ${mm2(data.limiteSimples.teto)}` : "";
+  const prodSub = (
+    <>
+      mês corrente · parcial
+      {data && data.producaoNaoAtribuidaCount > 0 ? (
+        <>
+          <br />
+          <Link className="pending" href="/promotores?tab=migracao">
+            {brl0(data.producaoNaoAtribuida)} em {data.producaoNaoAtribuidaCount} proposta
+            {data.producaoNaoAtribuidaCount > 1 ? "s" : ""} aguardando atribuição →
+          </Link>
+        </>
+      ) : null}
+    </>
+  );
   return (
-    <header className="header">
-      <div className="header-top">
-        <div>
-          <p className="brand">GRUPO RR CRED</p>
-          <h1>Dashboard</h1>
-        </div>
-        <span className="badge"><span className="dot" />{data?.periodoLabel ?? "—"} · produção corrente</span>
-      </div>
-      <div className="stats">
-        <div className="stat">
-          <p className="label">Produção do grupo · mês</p>
-          <div className="value num">{prod}</div>
-          <div className="sub">mês corrente · parcial</div>
-          {data && data.producaoNaoAtribuidaCount > 0 ? (
-            <Link className="pending" href="/promotores?tab=migracao">
-              {brl0(data.producaoNaoAtribuida)} em {data.producaoNaoAtribuidaCount} proposta
-              {data.producaoNaoAtribuidaCount > 1 ? "s" : ""} aguardando atribuição →
-            </Link>
-          ) : null}
-        </div>
-        <div className="stat">
-          <p className="label">Comissão bruta (empresa)</p>
-          <div className="value num">{brutaEmpresa}</div>
-          <div className="sub gold">{brutaSub}</div>
-        </div>
-        <div className="stat">
-          <p className="label">Previsão de receita</p>
-          <div className="value num">{prev}</div>
-          <div className="sub amber">estimado</div>
-        </div>
-        <div className="stat">
-          <p className="label">Limite Simples</p>
-          <div className="value num">{lim}</div>
-          <div className="sub green num">{limSub}</div>
-        </div>
-      </div>
-    </header>
+    <HeaderNavy
+      brand="GRUPO RR CRED"
+      title="Dashboard"
+      badge={
+        <span className="badge">
+          <span className="dot" />
+          {data?.periodoLabel ?? "—"} · produção corrente
+        </span>
+      }
+    >
+      <KpiBand
+        items={[
+          { label: "Produção do grupo · mês", value: prod, sub: prodSub, accent: true },
+          { label: "Comissão bruta (empresa)", value: brutaEmpresa, sub: brutaSub, subTone: "gold" },
+          { label: "Previsão de receita", value: prev, sub: "estimado", subTone: "amber" },
+          { label: "Limite Simples", value: lim, sub: limSub, subTone: "ok" },
+        ]}
+      />
+    </HeaderNavy>
   );
 }
 
@@ -343,25 +339,12 @@ const CSS = `
 .rrdash .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
 .rrdash .mono{font-variant-numeric:tabular-nums;}
 .rrdash .wrap{max-width:1080px;margin:0 auto;padding:6px 0 24px;display:flex;flex-direction:column;gap:22px;}
-.rrdash .header{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 34px;color:#fff;position:relative;overflow:hidden;}
-.rrdash .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rrdash .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
-.rrdash .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rrdash .header h1{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
+/* bloco navy + marca + h1 agora vêm do <HeaderNavy> do kit */
 .rrdash .badge{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:500;color:#C9D2E8;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);padding:7px 13px;border-radius:999px;white-space:nowrap;}
 .rrdash .badge .dot{width:6px;height:6px;border-radius:50%;background:var(--green-soft);}
-.rrdash .stats{margin-top:28px;display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}
-.rrdash .stat{padding:0 26px;position:relative;}
-.rrdash .stat:first-child{padding-left:0;}
-.rrdash .stat + .stat::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:1px;background:rgba(255,255,255,.10);}
-.rrdash .stat .label{font-size:12px;font-weight:500;letter-spacing:.01em;color:#9DA9C6;margin:0 0 10px;}
-.rrdash .stat .value{font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1;color:#fff;}
-.rrdash .stat .sub{font-size:12.5px;margin-top:9px;color:#8C98B6;}
-.rrdash .stat .sub.amber{color:#E7BE6A;}
-.rrdash .stat .sub.gold{color:var(--gold);}
-.rrdash .stat .sub.green{color:var(--green-soft);}
-.rrdash .stat .pending{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold-soft,#E7BE6A);text-decoration:none;border-bottom:1px dashed rgba(231,190,106,.45);padding-bottom:1px;transition:color .14s,border-color .14s;}
-.rrdash .stat .pending:hover{color:#fff;border-color:rgba(255,255,255,.5);}
+/* faixa de stats agora vem do <KpiBand> do kit; .pending (link custom no sub) fica */
+.rrdash .pending{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold-soft,#E7BE6A);text-decoration:none;border-bottom:1px dashed rgba(231,190,106,.45);padding-bottom:1px;transition:color .14s,border-color .14s;}
+.rrdash .pending:hover{color:#fff;border-color:rgba(255,255,255,.5);}
 /* alerta de projeção agora é <Banner variant="warn"> do kit; só o link da ação fica aqui */
 .rrdash .banner-link{font-size:13px;font-weight:600;color:var(--warn);text-decoration:none;white-space:nowrap;}
 .rrdash .banner-link:hover{text-decoration:underline;}
@@ -387,20 +370,8 @@ const CSS = `
 .rrdash .sc .sc-name{font-size:14.5px;font-weight:600;}
 .rrdash .sc .sc-desc{font-size:12px;color:var(--ink-3);margin-top:-6px;}
 .rrdash .sc-ic svg{display:block;}
-@media (max-width:920px){
-  .rrdash .stats{grid-template-columns:repeat(2,1fr);row-gap:22px;}
-  .rrdash .stat:nth-child(1)::before,.rrdash .stat:nth-child(3)::before{display:none;}
-  .rrdash .stat:nth-child(3),.rrdash .stat:nth-child(4){padding-left:0;}
-}
+/* responsivo dos KPIs agora vem do KpiBand (920→2 col, 560→1 col) */
 @media (max-width:720px){
-  .rrdash .header{padding:22px 20px 24px;}
-  .rrdash .header h1{font-size:23px;}
-  .rrdash .stats{grid-template-columns:1fr;gap:0;padding-top:18px;margin-top:20px;}
-  .rrdash .stat{padding:18px 0;}
-  .rrdash .stat:first-child{padding-top:0;}
-  .rrdash .stat + .stat::before{display:none;}
-  .rrdash .stat + .stat{border-top:1px solid rgba(255,255,255,.10);}
-  .rrdash .stat .value{font-size:33px;}
   .rrdash .card{padding:20px 18px;}
   .rrdash .shortcuts{grid-template-columns:repeat(2,1fr);}
 }
