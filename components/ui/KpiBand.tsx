@@ -22,6 +22,8 @@ export interface KpiBandProps {
   items: KpiStat[];
   /** Nº de colunas (default = items.length). Colapsa 4→2→1 no responsivo. */
   columns?: number;
+  /** Tamanho do valor em px (default 30). Mantém o tamanho original de cada tela. */
+  valueSize?: number;
 }
 
 /**
@@ -29,9 +31,12 @@ export interface KpiBandProps {
  * em Mono + sub) separados por divisórias verticais. Use DENTRO de <HeaderNavy>.
  * Escopo `.rrui-kpiband`.
  */
-export default function KpiBand({ items, columns }: KpiBandProps) {
+export default function KpiBand({ items, columns, valueSize }: KpiBandProps) {
   const cols = columns ?? items.length;
-  const style = { ["--kpi-cols"]: String(cols) } as CSSProperties;
+  const style = {
+    ["--kpi-cols"]: String(cols),
+    ...(valueSize != null ? { ["--kpi-value"]: `${valueSize}px` } : {}),
+  } as CSSProperties;
   return (
     <div className="rrui-kpiband" style={style}>
       {items.map((s, i) => (

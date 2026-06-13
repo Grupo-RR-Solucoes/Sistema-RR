@@ -35,7 +35,7 @@ export const UI_CSS = `
 .rrui-kpiband__stat--accent::after{content:"";position:absolute;top:-12px;left:26px;width:28px;height:3px;border-radius:2px;background:var(--accent);}
 .rrui-kpiband__stat--accent:first-child::after{left:0;}
 .rrui-kpiband__label{font-size:11.5px;font-weight:500;letter-spacing:.01em;color:rgba(255,255,255,.62);margin:0 0 10px;}
-.rrui-kpiband__value{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1;color:#fff;font-variant-numeric:tabular-nums;}
+.rrui-kpiband__value{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-size:var(--kpi-value,30px);font-weight:600;letter-spacing:-.02em;line-height:1;color:#fff;font-variant-numeric:tabular-nums;}
 .rrui-kpiband__sub{font-size:12px;margin-top:9px;color:rgba(255,255,255,.55);}
 .rrui-kpiband__sub--gold{color:var(--gold);}
 .rrui-kpiband__sub--amber{color:var(--gold-soft);}
