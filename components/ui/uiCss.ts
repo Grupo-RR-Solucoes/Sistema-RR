@@ -4,8 +4,9 @@
  * Convenção: igual às páginas (string CSS injetada via <style dangerouslySetInnerHTML>),
  * porém definida UMA vez aqui e montada por <UiStyles/> (uma vez por página na
  * Etapa 3). Consome SÓ os tokens canônicos do globals.css (var(--navy) etc.) —
- * nenhum hex hardcoded. O acento var(--accent) (#FFF000) aparece apenas no
- * KpiCard "destaque" (barra 4px à esquerda) e no total da Table (barra 4px no topo).
+ * tokens canônicos. O acento var(--accent) (#FFF000) aparece no stat accent do
+ * KpiBand e no total da Table (barra 4px). Cores sobre-navy (branco e cinzas)
+ * usam #fff / rgba(255,255,255,α) — não há token de "on-navy" na Etapa 1.
  */
 export const UI_CSS = `
 /* ===== Card ===== */
@@ -16,15 +17,42 @@ export const UI_CSS = `
 .rrui-card--navy .rrui-card__title{color:rgba(255,255,255,.66);}
 .rrui-card--gold{border-left:4px solid var(--gold);}
 
-/* ===== KpiCard ===== */
-.rrui-kpi{background:var(--paper);border:1px solid var(--bd);border-radius:var(--r-card);box-shadow:var(--sh-2);padding:14px 16px;display:flex;flex-direction:column;gap:4px;}
-.rrui-kpi__label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);}
-.rrui-kpi__value{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-size:22px;font-weight:600;color:var(--ink);line-height:1.1;font-variant-numeric:tabular-nums;}
-.rrui-kpi__sub{font-size:12px;color:var(--ink-2);}
-.rrui-kpi--destaque{border-left:4px solid var(--accent);}
-.rrui-kpi--destaque .rrui-kpi__value{font-size:26px;color:var(--navy);}
-.rrui-kpi--alerta{background:var(--warn-bg);border-color:var(--warn-bd);}
-.rrui-kpi--alerta .rrui-kpi__value{color:var(--warn);}
+/* ===== HeaderNavy — bloco navy do topo (marca + título + badge/ações) ===== */
+.rrui-hnavy{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 34px;color:#fff;position:relative;overflow:hidden;}
+.rrui-hnavy::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),transparent);opacity:.55;}
+.rrui-hnavy--noline::after{display:none;}
+.rrui-hnavy__top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
+.rrui-hnavy__brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--accent);margin:0 0 7px;}
+.rrui-hnavy__title{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
+.rrui-hnavy__subtitle{font-size:13px;color:rgba(255,255,255,.62);margin:8px 0 0;}
+.rrui-hnavy__aside{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+
+/* ===== KpiBand — faixa multi-stat embutida no navy ===== */
+.rrui-kpiband{margin-top:28px;display:grid;grid-template-columns:repeat(var(--kpi-cols,1),1fr);border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}
+.rrui-kpiband__stat{padding:0 26px;position:relative;}
+.rrui-kpiband__stat:first-child{padding-left:0;}
+.rrui-kpiband__stat + .rrui-kpiband__stat::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:1px;background:rgba(255,255,255,.10);}
+.rrui-kpiband__stat--accent::after{content:"";position:absolute;top:-12px;left:26px;width:28px;height:3px;border-radius:2px;background:var(--accent);}
+.rrui-kpiband__stat--accent:first-child::after{left:0;}
+.rrui-kpiband__label{font-size:11.5px;font-weight:500;letter-spacing:.01em;color:rgba(255,255,255,.62);margin:0 0 10px;}
+.rrui-kpiband__value{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1;color:#fff;font-variant-numeric:tabular-nums;}
+.rrui-kpiband__sub{font-size:12px;margin-top:9px;color:rgba(255,255,255,.55);}
+@media (max-width:920px){ .rrui-kpiband{--kpi-cols:2;row-gap:22px;} .rrui-kpiband__stat{padding-left:0;} .rrui-kpiband__stat + .rrui-kpiband__stat::before{display:none;} }
+@media (max-width:560px){ .rrui-kpiband{--kpi-cols:1;} }
+
+/* ===== KpiHero — indicador único grande embutido no navy ===== */
+.rrui-kpihero{margin-top:28px;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}
+.rrui-kpihero__label{font-size:12px;font-weight:500;color:rgba(255,255,255,.62);margin:0 0 11px;display:flex;align-items:center;gap:9px;}
+.rrui-kpihero__value{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-size:42px;font-weight:700;letter-spacing:-.025em;line-height:.95;font-variant-numeric:tabular-nums;}
+.rrui-kpihero--white .rrui-kpihero__value{color:#fff;}
+.rrui-kpihero--gold .rrui-kpihero__value{color:var(--gold);}
+.rrui-kpihero__sub{font-size:13px;color:rgba(255,255,255,.6);margin-top:8px;}
+.rrui-kpihero__meter{margin-top:16px;height:8px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;}
+.rrui-kpihero__meter-fill{height:100%;border-radius:999px;}
+.rrui-kpihero__meter--ok .rrui-kpihero__meter-fill{background:var(--ok);}
+.rrui-kpihero__meter--warn .rrui-kpihero__meter-fill{background:var(--warn);}
+.rrui-kpihero__meter--risk .rrui-kpihero__meter-fill{background:var(--risk);}
+.rrui-kpihero__meter-cap{font-size:12px;color:rgba(255,255,255,.6);margin-top:8px;}
 
 /* ===== Button ===== */
 .rrui-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:var(--r-btn);font-family:inherit;font-size:13px;font-weight:600;line-height:1;cursor:pointer;border:1px solid transparent;transition:background .14s,border-color .14s,color .14s,opacity .14s,filter .14s;white-space:nowrap;}

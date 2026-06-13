@@ -46,7 +46,7 @@
   --risk: #C0392B;   --risk-bg: #FBEAE7;    --risk-bd: #F1C9C0;
 
   /* raios + sombras */
-  --r-btn: 8px;      --r-card: 12px;
+  --r-btn: 8px;      --r-card: 12px;     --r-lg: 20px;   /* --r-lg: bloco navy (HeaderNavy) */
   --sh-1: 0 8px 24px rgba(15, 31, 74, 0.08);
   --sh-2: 0 4px 12px rgba(15, 31, 74, 0.05);
 }

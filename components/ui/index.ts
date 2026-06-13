@@ -1,16 +1,22 @@
 /**
- * RR UI Kit — primitivos do Sistema de Design RR (Etapa 2).
- * Import: `import { Card, KpiCard, Button, Table, Num, Chip, Banner, EmptyState, UiStyles } from "@/components/ui";`
- * Monte <UiStyles/> uma vez por página que adotar o kit (Etapa 3).
+ * RR UI Kit — primitivos do Sistema de Design RR.
+ * Import: `import { HeaderNavy, KpiBand, KpiHero, Card, Button, Table, Num, Chip, Banner, EmptyState, UiStyles } from "@/components/ui";`
+ * Monte <UiStyles/> uma vez por página que adotar o kit.
  */
 export { default as UiStyles } from "./UiStyles";
 export { UI_CSS } from "./uiCss";
 
+export { default as HeaderNavy } from "./HeaderNavy";
+export type { HeaderNavyProps } from "./HeaderNavy";
+
+export { default as KpiBand } from "./KpiBand";
+export type { KpiBandProps, KpiStat } from "./KpiBand";
+
+export { default as KpiHero } from "./KpiHero";
+export type { KpiHeroProps, KpiHeroMeter, KpiHeroTone, Semaforo } from "./KpiHero";
+
 export { default as Card } from "./Card";
 export type { CardProps, CardVariant } from "./Card";
-
-export { default as KpiCard } from "./KpiCard";
-export type { KpiCardProps, KpiVariant } from "./KpiCard";
 
 export { default as Button } from "./Button";
 export type { ButtonProps, ButtonVariant } from "./Button";
