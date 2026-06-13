@@ -41,7 +41,7 @@
   --paper: #FFFFFF;  --bg: #F4F6FB;
 
   /* semânticos canônicos */
-  --ok: #1F8A5B;     --ok-bg: #E7F4EE;      --ok-bd: #C2E4D2;
+  --ok: #1F8A5B;     --ok-bg: #E7F4EE;      --ok-bd: #C2E4D2;   --ok-soft: #5FB98A;  /* verde claro p/ texto sobre navy */
   --warn: #B07A12;   --warn-bg: #FBF1DC;    --warn-bd: #EAD7A6;
   --risk: #C0392B;   --risk-bg: #FBEAE7;    --risk-bd: #F1C9C0;
 

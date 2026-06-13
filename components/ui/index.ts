@@ -10,7 +10,7 @@ export { default as HeaderNavy } from "./HeaderNavy";
 export type { HeaderNavyProps } from "./HeaderNavy";
 
 export { default as KpiBand } from "./KpiBand";
-export type { KpiBandProps, KpiStat } from "./KpiBand";
+export type { KpiBandProps, KpiStat, KpiSubTone } from "./KpiBand";
 
 export { default as KpiHero } from "./KpiHero";
 export type { KpiHeroProps, KpiHeroMeter, KpiHeroTone, Semaforo } from "./KpiHero";
