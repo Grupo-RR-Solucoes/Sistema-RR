@@ -43,7 +43,10 @@
   /* semânticos canônicos */
   --ok: #1F8A5B;     --ok-bg: #E7F4EE;      --ok-bd: #C2E4D2;   --ok-soft: #5FB98A;  /* verde claro p/ texto sobre navy */
   --warn: #B07A12;   --warn-bg: #FBF1DC;    --warn-bd: #EAD7A6;
-  --risk: #C0392B;   --risk-bg: #FBEAE7;    --risk-bd: #F1C9C0;
+  --risk: #C0392B;   --risk-bg: #FBEAE7;    --risk-bd: #F1C9C0;   --risk-soft: #E07A72;  /* vermelho claro p/ texto sobre navy */
+
+  /* semáforo saturado (dot + barra sobre navy) — família distinta dos soft (texto) e dos escuros do kit (texto sobre branco) */
+  --sem-ok: #3C9D6B;   --sem-warn: #D69A1E;   --sem-risk: #C0443C;
 
   /* raios + sombras */
   --r-btn: 8px;      --r-card: 12px;     --r-lg: 20px;   /* --r-lg: bloco navy (HeaderNavy) */

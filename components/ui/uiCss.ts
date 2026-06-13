@@ -43,19 +43,34 @@ export const UI_CSS = `
 @media (max-width:920px){ .rrui-kpiband{--kpi-cols:2;row-gap:22px;} .rrui-kpiband__stat{padding-left:0;} .rrui-kpiband__stat + .rrui-kpiband__stat::before{display:none;} }
 @media (max-width:560px){ .rrui-kpiband{--kpi-cols:1;} }
 
-/* ===== KpiHero — indicador único grande embutido no navy ===== */
+/* ===== KpiHero — indicador grande embutido no navy (vertical ou two-column) ===== */
 .rrui-kpihero{margin-top:28px;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}
+.rrui-kpihero__row{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;}
+.rrui-kpihero__main{min-width:0;}
 .rrui-kpihero__label{font-size:12px;font-weight:500;color:rgba(255,255,255,.62);margin:0 0 11px;display:flex;align-items:center;gap:9px;}
-.rrui-kpihero__value{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-size:42px;font-weight:700;letter-spacing:-.025em;line-height:.95;font-variant-numeric:tabular-nums;}
+.rrui-kpihero__dot{width:10px;height:10px;border-radius:50%;flex:none;}
+.rrui-kpihero__dot--ok{background:var(--sem-ok);box-shadow:0 0 0 4px color-mix(in srgb,var(--sem-ok) 18%,transparent);}
+.rrui-kpihero__dot--warn{background:var(--sem-warn);box-shadow:0 0 0 4px color-mix(in srgb,var(--sem-warn) 20%,transparent);}
+.rrui-kpihero__dot--risk{background:var(--sem-risk);box-shadow:0 0 0 4px color-mix(in srgb,var(--sem-risk) 18%,transparent);}
+.rrui-kpihero__value{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-size:var(--hero-value,42px);font-weight:700;letter-spacing:-.025em;line-height:.95;font-variant-numeric:tabular-nums;}
 .rrui-kpihero--white .rrui-kpihero__value{color:#fff;}
 .rrui-kpihero--gold .rrui-kpihero__value{color:var(--gold);}
+.rrui-kpihero__suffix{font-size:19px;font-weight:600;color:rgba(255,255,255,.65);margin-left:8px;letter-spacing:0;}
 .rrui-kpihero__sub{font-size:13px;color:rgba(255,255,255,.6);margin-top:8px;}
-.rrui-kpihero__meter{margin-top:16px;height:8px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;}
-.rrui-kpihero__meter-fill{height:100%;border-radius:999px;}
-.rrui-kpihero__meter--ok .rrui-kpihero__meter-fill{background:var(--ok);}
-.rrui-kpihero__meter--warn .rrui-kpihero__meter-fill{background:var(--warn);}
-.rrui-kpihero__meter--risk .rrui-kpihero__meter-fill{background:var(--risk);}
-.rrui-kpihero__meter-cap{font-size:12px;color:rgba(255,255,255,.6);margin-top:8px;}
+.rrui-kpihero__side{flex:none;text-align:right;}
+.rrui-kpihero__secondary-value{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1;font-variant-numeric:tabular-nums;color:#fff;}
+.rrui-kpihero__secondary-value--ok{color:var(--ok-soft);}
+.rrui-kpihero__secondary-value--warn{color:var(--gold-soft);}
+.rrui-kpihero__secondary-value--risk{color:var(--risk-soft);}
+.rrui-kpihero__secondary-label{font-size:12px;color:rgba(255,255,255,.6);margin-top:8px;}
+.rrui-kpihero__aside{font-size:12.5px;color:rgba(255,255,255,.55);max-width:260px;line-height:1.5;margin:0;}
+.rrui-kpihero__aside b{color:rgba(255,255,255,.78);font-weight:600;}
+.rrui-kpihero__meter{margin-top:16px;height:9px;border-radius:6px;background:rgba(255,255,255,.10);overflow:hidden;}
+.rrui-kpihero__meter-fill{height:100%;border-radius:6px;}
+.rrui-kpihero__meter--ok .rrui-kpihero__meter-fill{background:linear-gradient(90deg,var(--sem-ok),var(--ok-soft));}
+.rrui-kpihero__meter--warn .rrui-kpihero__meter-fill{background:linear-gradient(90deg,var(--sem-warn),var(--gold-soft));}
+.rrui-kpihero__meter--risk .rrui-kpihero__meter-fill{background:linear-gradient(90deg,var(--sem-risk),var(--risk-soft));}
+.rrui-kpihero__meter-cap{display:flex;justify-content:space-between;gap:12px;font-size:11px;color:rgba(255,255,255,.5);margin-top:8px;}
 
 /* ===== Button ===== */
 .rrui-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:var(--r-btn);font-family:inherit;font-size:13px;font-weight:600;line-height:1;cursor:pointer;border:1px solid transparent;transition:background .14s,border-color .14s,color .14s,opacity .14s,filter .14s;white-space:nowrap;}

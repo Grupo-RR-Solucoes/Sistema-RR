@@ -13,7 +13,7 @@ export { default as KpiBand } from "./KpiBand";
 export type { KpiBandProps, KpiStat, KpiSubTone } from "./KpiBand";
 
 export { default as KpiHero } from "./KpiHero";
-export type { KpiHeroProps, KpiHeroMeter, KpiHeroTone, Semaforo } from "./KpiHero";
+export type { KpiHeroProps, KpiHeroMeter, KpiHeroSecondary, KpiHeroTone, Semaforo } from "./KpiHero";
 
 export { default as Card } from "./Card";
 export type { CardProps, CardVariant } from "./Card";
