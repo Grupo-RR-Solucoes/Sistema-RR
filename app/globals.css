@@ -27,6 +27,28 @@
 
   --rr-sidebar-width: 220px;
   --rr-sidebar-collapsed-width: 64px;
+
+  /* === Design System RR — tokens canônicos (Sistema_de_Design_RR) — Etapa 1 ===
+     Aditivos. Os --rr-* acima e os tokens redeclarados nas páginas seguem
+     intactos; dedup/migração para estes é a Etapa 3. */
+  --accent: #FFF000;                                       /* acento AMARELO aprovado */
+
+  --navy: #0F1F4A;   --navy-deep: #0B1838;  --navy-bar: #1E3066;
+  --blue: #0d4de3;   --blue-bg: #EAF0FB;    --blue-bd: #D5E0F4;
+  --gold: #D6A13F;   --gold-deep: #B9842A;  --gold-soft: #E7BE6A;
+  --ink: #16203A;    --ink-2: #4B5468;      --ink-3: #838B9C;
+  --bd: #E4E7EC;     --bd-soft: #EEF0F4;    --neu: #F1F3F7;
+  --paper: #FFFFFF;  --bg: #F4F6FB;
+
+  /* semânticos canônicos */
+  --ok: #1F8A5B;     --ok-bg: #E7F4EE;      --ok-bd: #C2E4D2;
+  --warn: #B07A12;   --warn-bg: #FBF1DC;    --warn-bd: #EAD7A6;
+  --risk: #C0392B;   --risk-bg: #FBEAE7;    --risk-bd: #F1C9C0;
+
+  /* raios + sombras */
+  --r-btn: 8px;      --r-card: 12px;
+  --sh-1: 0 8px 24px rgba(15, 31, 74, 0.08);
+  --sh-2: 0 4px 12px rgba(15, 31, 74, 0.05);
 }
 
 * {
@@ -40,7 +62,7 @@ html {
 body {
   margin: 0;
   color: var(--rr-navy);
-  font-family: var(--font-body), sans-serif;
+  font-family: var(--font-sans), "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   background: #F4F6FB;
 }
 
@@ -50,7 +72,7 @@ h3,
 h4,
 h5,
 h6 {
-  font-family: var(--font-heading), sans-serif;
+  font-family: var(--font-sans), "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   letter-spacing: -0.02em;
 }
 
