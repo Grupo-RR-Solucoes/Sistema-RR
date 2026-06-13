@@ -66,6 +66,8 @@ export const UI_CSS = `
 .rrui-banner--info .rrui-banner__icon{color:var(--blue);}
 .rrui-banner--ok{background:var(--ok-bg);border-color:var(--ok-bd);}
 .rrui-banner--ok .rrui-banner__icon{color:var(--ok);}
+.rrui-banner--warn{background:var(--warn-bg);border-color:var(--warn-bd);}
+.rrui-banner--warn .rrui-banner__icon{color:var(--warn);}
 
 /* ===== EmptyState ===== */
 .rrui-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;padding:40px 24px;}

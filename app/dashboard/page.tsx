@@ -3,10 +3,15 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { UiStyles, Banner, Table, Num, Chip } from "@/components/ui";
+import type { ChipVariant } from "@/components/ui";
+
 // ============================================================
-// DASHBOARD (Visão geral) — REDESENHO Etapa 8, fiel ao HTML de referência
-// (Dashboard_RR_Cred_referencia.html). CSS do design escopado em .rrdash.
-// Dados ao vivo de /api/dashboard. Gráfico = produção REALIZADA do grupo
+// DASHBOARD (Visão geral). Header = bloco navy com os 4 stats embutidos
+// (formato original — KPI-sobre-navy, decisão do Diego). Piloto Etapa 3 parcial:
+// alerta de projeção → <Banner variant="warn"> e "Simples por CNPJ" →
+// <Table>/<Num>/<Chip> do kit; <UiStyles/> injeta a CSS dos primitivos. LÓGICA,
+// FETCH e CÁLCULOS INALTERADOS. Gráfico = produção REALIZADA do grupo
 // (promoter_monthly_results); jun = mês corrente PARCIAL, marcado.
 // ============================================================
 
@@ -64,6 +69,7 @@ export default function DashboardPage() {
 
   return (
     <div className="rrdash">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <Header data={data} />
@@ -138,15 +144,14 @@ function Header({ data }: { data: Payload | null }) {
 function AlertProjecao({ p }: { p: Projecao }) {
   const ritmo = p.semaforo === "vermelho" ? "ritmo abaixo da meta" : "atenção ao ritmo da meta";
   return (
-    <div className="alert" role="status">
-      <span className="ic">!</span>
-      <span className="txt">
-        <b>Projeção do grupo em {pct1(p.percent)} da meta</b>
-        <span className="sep">·</span>
-        {p.diasDecorridos}º dia útil de {p.diasTotais} · {ritmo} de {p.mesLabel.split("/")[0]}
-      </span>
-      <Link href="/projecao">Ver projeção →</Link>
-    </div>
+    <Banner
+      variant="warn"
+      action={<Link className="banner-link" href="/projecao">Ver projeção →</Link>}
+    >
+      <b>Projeção do grupo em {pct1(p.percent)} da meta</b>
+      <span className="sep"> · </span>
+      {p.diasDecorridos}º dia útil de {p.diasTotais} · {ritmo} de {p.mesLabel.split("/")[0]}
+    </Banner>
   );
 }
 
@@ -212,24 +217,39 @@ function ChartCard({ data, error }: { data: Payload | null; error: string }) {
 }
 
 function CnpjCard({ rows }: { rows: CnpjRow[] }) {
-  const stColor = (s: string) => (s === "acima" ? "#cc2b49" : s === "amarelo" ? "#D6A13F" : "#3C9D6B");
+  const chipFor = (s: CnpjRow["sinal"]): ChipVariant =>
+    s === "acima" ? "risk" : s === "amarelo" ? "warn" : "ok";
+  const chipLabel = (s: CnpjRow["sinal"]) =>
+    s === "acima" ? "Acima" : s === "amarelo" ? "Atenção" : "OK";
   return (
     <section className="card">
       <div className="card-head">
         <div><h2>Simples por CNPJ</h2></div>
         <Link className="card-link" href="/receitas">Receita / RBT12 <span className="arr">→</span></Link>
       </div>
-      <div className="cnpj-list">
-        {rows.map((r) => (
-          <div className="cnpj-row" key={r.nome}>
-            <span className="st" style={{ background: stColor(r.sinal), boxShadow: `0 0 0 3px ${stColor(r.sinal)}22` }} />
-            <span className="name">{r.nome}</span>
-            <span className="faixa">{r.faixa}</span>
-            <span className="amt num">{brl0(r.rbt12)}</span>
-          </div>
-        ))}
-        {rows.length === 0 ? <div className="cnpj-row"><span className="name">Carregando…</span></div> : null}
-      </div>
+      <Table className="cnpj-table">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Empresa</th>
+            <th>Faixa</th>
+            <th style={{ textAlign: "right" }}>RBT12</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.nome}>
+              <td><Chip variant={chipFor(r.sinal)}>{chipLabel(r.sinal)}</Chip></td>
+              <td>{r.nome}</td>
+              <td><Chip variant="neutral" dot={false}>{r.faixa}</Chip></td>
+              <Num>{brl0(r.rbt12)}</Num>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr><td colSpan={4}>Carregando…</td></tr>
+          ) : null}
+        </tbody>
+      </Table>
     </section>
   );
 }
@@ -342,13 +362,9 @@ const CSS = `
 .rrdash .stat .sub.green{color:var(--green-soft);}
 .rrdash .stat .pending{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold-soft,#E7BE6A);text-decoration:none;border-bottom:1px dashed rgba(231,190,106,.45);padding-bottom:1px;transition:color .14s,border-color .14s;}
 .rrdash .stat .pending:hover{color:#fff;border-color:rgba(255,255,255,.5);}
-.rrdash .alert{display:flex;align-items:center;gap:14px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r-md);padding:14px 18px;}
-.rrdash .alert .ic{flex:none;width:26px;height:26px;border-radius:7px;background:#F2DCA6;color:#8A6310;display:grid;place-items:center;font-weight:700;font-size:15px;}
-.rrdash .alert .txt{flex:1;min-width:0;font-size:13.5px;color:#5C4A1E;}
-.rrdash .alert .txt b{color:#3F3209;font-weight:600;}
-.rrdash .alert .txt .sep{color:#B79A55;margin:0 8px;}
-.rrdash .alert a{flex:none;font-size:13px;font-weight:600;color:var(--amber);text-decoration:none;white-space:nowrap;}
-.rrdash .alert a:hover{text-decoration:underline;}
+/* alerta de projeção agora é <Banner variant="warn"> do kit; só o link da ação fica aqui */
+.rrdash .banner-link{font-size:13px;font-weight:600;color:var(--warn);text-decoration:none;white-space:nowrap;}
+.rrdash .banner-link:hover{text-decoration:underline;}
 .rrdash .card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:26px 28px;}
 .rrdash .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:6px;}
 .rrdash .card-head h2{font-size:16.5px;font-weight:600;letter-spacing:-.01em;margin:0;color:var(--ink);}
@@ -361,13 +377,8 @@ const CSS = `
 .rrdash .chart-empty{padding:48px 0;text-align:center;color:var(--ink-3);font-size:13.5px;}
 .rrdash .chart-foot{margin-top:14px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:12.5px;color:var(--ink-3);}
 .rrdash .chart-foot b{color:var(--ink);font-weight:600;}
-.rrdash .cnpj-list{margin-top:18px;display:flex;flex-direction:column;}
-.rrdash .cnpj-row{display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;gap:16px;padding:15px 2px;border-top:1px solid var(--bd-soft);}
-.rrdash .cnpj-row:first-child{border-top:none;}
-.rrdash .cnpj-row .st{width:9px;height:9px;border-radius:50%;background:var(--green);flex:none;}
-.rrdash .cnpj-row .name{font-size:14.5px;font-weight:600;color:var(--ink);}
-.rrdash .cnpj-row .faixa{font-size:11.5px;font-weight:600;letter-spacing:.02em;color:var(--ink-2);background:#F3F5F8;border:1px solid var(--bd);padding:4px 9px;border-radius:7px;white-space:nowrap;}
-.rrdash .cnpj-row .amt{font-size:15px;font-weight:600;color:var(--ink);text-align:right;min-width:118px;}
+/* lista "Simples por CNPJ" agora é <Table> do kit; só o espaçamento dentro do card */
+.rrdash .cnpj-table{margin-top:14px;}
 .rrdash .shortcuts{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
 .rrdash .sc{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);padding:18px;text-decoration:none;color:var(--ink);display:flex;flex-direction:column;gap:12px;transition:border-color .15s, box-shadow .15s, transform .15s;}
 .rrdash .sc:hover{border-color:#C7CEDA;box-shadow:var(--shadow);transform:translateY(-1px);}
@@ -390,14 +401,7 @@ const CSS = `
   .rrdash .stat + .stat::before{display:none;}
   .rrdash .stat + .stat{border-top:1px solid rgba(255,255,255,.10);}
   .rrdash .stat .value{font-size:33px;}
-  .rrdash .alert{flex-wrap:wrap;}
-  .rrdash .alert a{margin-left:40px;}
   .rrdash .card{padding:20px 18px;}
-  .rrdash .cnpj-row{grid-template-columns:auto 1fr auto;grid-template-areas:"st name amt" "st faixa amt";row-gap:4px;column-gap:12px;}
-  .rrdash .cnpj-row .st{grid-area:st;}
-  .rrdash .cnpj-row .name{grid-area:name;}
-  .rrdash .cnpj-row .faixa{grid-area:faixa;justify-self:start;}
-  .rrdash .cnpj-row .amt{grid-area:amt;min-width:0;}
   .rrdash .shortcuts{grid-template-columns:repeat(2,1fr);}
 }
 `;
