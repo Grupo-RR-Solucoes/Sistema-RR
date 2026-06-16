@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
 
 // Redesign (.rrcad): camada visual reescrita para o padrao scoped novo
 // (header navy, chips, KPIs .scard, abas pill, tabelas claras, form aside).
@@ -445,6 +446,7 @@ export default function CadastrosPage() {
 
   return (
     <div className="rrcad">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <div className="wrap">
         {/* breadcrumb */}
@@ -457,47 +459,27 @@ export default function CadastrosPage() {
         </nav>
 
         {/* HEADER */}
-        <header className="header">
-          <div className="header-top">
-            <div>
-              <p className="brand">GRUPO RR CRED</p>
-              <h1>Cadastros</h1>
-              <p className="sub">
-                <IcoClipboard />
-                Base mestra · inclusão manual
-              </p>
-            </div>
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title="Cadastros"
+          subtitle="Base mestra · inclusão manual"
+          actions={
             <div className="role">
               <span className="d" />
               Sócio &amp; funcionário · sem trava de mês
             </div>
-          </div>
-        </header>
-
-        {/* REGRAS */}
-        <div className="rules">
-          <span className="rlab">Regras desta tela</span>
-          <span className="rchip">
-            <IcoArchive />
-            Inativar <b>preserva o histórico</b>
-          </span>
-          <span className="rchip">
-            <IcoLayers />
-            Master <b>≠</b> individual
-          </span>
-          <span className="rchip">
-            <IcoCheckSq />
-            Toda alteração é <b>auditável</b>
-          </span>
-        </div>
-
-        {/* KPIs */}
-        <div className="kpis">
-          <Kpi accent label="Empresas" value={data.summary.companies} sub={`grupo RR · ${data.summary.activeCompanies} ativas`} icon={<IcoBuilding />} />
-          <Kpi label="Promotores ativos" value={data.summary.activePromoters} sub={`de ${data.summary.promoters} cadastrados`} icon={<IcoUser />} />
-          <Kpi label="Chaves J ativas" value={data.summary.activeJKeys} sub="vinculadas a promotor" icon={<IcoKey />} />
-          <Kpi label="Chaves master" value={data.summary.masterKeys} sub="recebem p/ redistribuir" icon={<IcoShield />} />
-        </div>
+          }
+        >
+          <KpiBand
+            valueSize={28}
+            items={[
+              { label: "Empresas", value: data.summary.companies, sub: `grupo RR · ${data.summary.activeCompanies} ativas`, accent: true },
+              { label: "Promotores ativos", value: data.summary.activePromoters, sub: `de ${data.summary.promoters} cadastrados` },
+              { label: "Chaves J ativas", value: data.summary.activeJKeys, sub: "vinculadas a promotor" },
+              { label: "Chaves master", value: data.summary.masterKeys, sub: "recebem p/ redistribuir" },
+            ]}
+          />
+        </HeaderNavy>
 
         {/* banners de erro / sucesso */}
         {error ? (
@@ -963,16 +945,6 @@ export default function CadastrosPage() {
 
 /* ====================== small components ====================== */
 
-function Kpi({ accent, label, value, sub, icon }: { accent?: boolean; label: string; value: number; sub: string; icon: ReactNode }) {
-  return (
-    <div className={`scard${accent ? " accent" : ""}`}>
-      <p className="k"><span className="ki">{icon}</span>{label}</p>
-      <div className="v num">{value}</div>
-      <div className="s">{sub}</div>
-    </div>
-  );
-}
-
 function TabBtn({ on, onClick, label, count }: { on: boolean; onClick: () => void; label: string; count: number }) {
   return (
     <button className={`tab${on ? " on" : ""}`} role="tab" onClick={onClick}>
@@ -1039,13 +1011,8 @@ function TableState({ colSpan, loading, empty, query }: { colSpan: number; loadi
 /* ====================== icons ====================== */
 const S = (p: any) => <svg fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...p} />;
 const IcoClipboard = () => <S width="13" height="13" viewBox="0 0 24 24"><path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7L9 4H5a2 2 0 0 0-2 2Z" /></S>;
-const IcoArchive = () => <S width="13" height="13" viewBox="0 0 24 24" strokeWidth={2.2}><path d="M21 8v13H3V8" /><path d="M1 3h22v5H1zM10 12h4" /></S>;
-const IcoLayers = () => <S width="13" height="13" viewBox="0 0 24 24" strokeWidth={2.2}><path d="M12 3 4 7l8 4 8-4-8-4Z" /><path d="M4 7v6l8 4 8-4V7" /></S>;
-const IcoCheckSq = () => <S width="13" height="13" viewBox="0 0 24 24" strokeWidth={2.2}><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></S>;
 const IcoBuilding = () => <S width="13" height="13" viewBox="0 0 24 24"><path d="M3 21h18" /><path d="M5 21V7l8-4v18" /><path d="M19 21V11l-6-4" /></S>;
-const IcoUser = () => <S width="13" height="13" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></S>;
 const IcoKey = () => <S width="13" height="13" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5" /><path d="m10.5 12.5 8-8M16 4h4v4" /></S>;
-const IcoShield = () => <S width="13" height="13" viewBox="0 0 24 24"><path d="M12 2 4 5v6c0 5 3.5 8 8 11 4.5-3 8-6 8-11V5l-8-3Z" /></S>;
 const IcoShieldSmall = () => <S width="11" height="11" viewBox="0 0 24 24" strokeWidth={2.4}><path d="M12 2 4 5v6c0 5 3.5 8 8 11 4.5-3 8-6 8-11V5l-8-3Z" /></S>;
 const IcoSearch = () => <S width="16" height="16" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><line x1="16.5" y1="16.5" x2="21" y2="21" /></S>;
 const IcoPlus = () => <S width="14" height="14" viewBox="0 0 24 24" strokeWidth={2.4}><path d="M12 5v14M5 12h14" /></S>;
@@ -1082,33 +1049,8 @@ const CSS = `
 .rrcad .crumb .sep{color:#C2C8D2;}
 .rrcad .crumb .cur{color:var(--ink);font-weight:600;}
 
-.rrcad .header{background:var(--navy);border-radius:var(--r-lg);padding:26px 30px 28px;color:#fff;position:relative;overflow:hidden;}
-.rrcad .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rrcad .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:22px;flex-wrap:wrap;}
-.rrcad .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rrcad .header h1{font-size:26px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
-.rrcad .header .sub{font-size:12.5px;color:#9DA9C6;margin:9px 0 0;display:flex;align-items:center;gap:8px;}
-.rrcad .header .sub svg{display:block;}
-.rrcad .header .role{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);color:#E4E9F4;padding:8px 14px;border-radius:999px;font-size:12px;font-weight:600;}
-.rrcad .header .role .d{width:7px;height:7px;border-radius:50%;background:var(--yellow);}
-
-.rrcad .rules{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 4px;margin:-2px 0;}
-.rrcad .rules .rlab{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
-.rrcad .rchip{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:500;color:var(--ink-2);background:#fff;border:1px solid var(--bd);padding:7px 13px;border-radius:999px;white-space:nowrap;}
-.rrcad .rchip svg{color:var(--gold-deep);flex:none;}
-.rrcad .rchip b{color:var(--ink);font-weight:600;}
-
-.rrcad .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
-.rrcad .scard{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--shadow);padding:18px 20px;position:relative;overflow:hidden;}
-.rrcad .scard .k{font-size:11.5px;font-weight:500;color:var(--ink-3);margin:0 0 10px;display:flex;align-items:center;gap:8px;}
-.rrcad .scard .k .ki{width:24px;height:24px;border-radius:7px;background:var(--neu);color:var(--ink-2);display:grid;place-items:center;flex:none;}
-.rrcad .scard .v{font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);}
-.rrcad .scard .s{font-size:11.5px;color:var(--ink-3);margin-top:7px;}
-.rrcad .scard.accent{background:var(--navy);border-color:var(--navy);}
-.rrcad .scard.accent .k{color:#9DA9C6;}
-.rrcad .scard.accent .k .ki{background:rgba(255,255,255,.10);color:var(--yellow);}
-.rrcad .scard.accent .v{color:#fff;}
-.rrcad .scard.accent .s{color:#8C98B6;}
+.rrcad .role{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);color:#E4E9F4;padding:8px 14px;border-radius:999px;font-size:12px;font-weight:600;}
+.rrcad .role .d{width:7px;height:7px;border-radius:50%;background:var(--yellow);}
 
 .rrcad .tabbar{display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--bd);border-radius:999px;box-shadow:var(--shadow);padding:6px;width:fit-content;max-width:100%;flex-wrap:wrap;}
 .rrcad .tab{display:inline-flex;align-items:center;gap:9px;border:none;background:none;font-family:inherit;font-size:13px;font-weight:600;color:var(--ink-2);padding:9px 18px;border-radius:999px;cursor:pointer;transition:background .14s,color .14s;white-space:nowrap;}
@@ -1269,7 +1211,6 @@ const CSS = `
 @media (max-width:1040px){
   .rrcad .cgrid{grid-template-columns:1fr;}
   .rrcad .form{position:static;}
-  .rrcad .kpis{grid-template-columns:repeat(2,1fr);}
 }
 @media (max-width:640px){
   .rrcad .search{max-width:100%;}
