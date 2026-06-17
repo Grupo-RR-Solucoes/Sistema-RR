@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useUser } from "../../lib/auth/useUser";
+import { UiStyles, HeaderNavy } from "@/components/ui";
 
 type ReportType = "financeiro" | "fechamento" | "auditoria" | "promotores";
 type Visao = "geral" | "individual" | "lote";
@@ -256,6 +257,7 @@ export default function RelatoriosPage() {
 
   return (
     <div className="rrrel">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
@@ -264,13 +266,12 @@ export default function RelatoriosPage() {
           <span>Relatórios</span>
         </nav>
 
-        <header className="header">
-          <p className="brand">GRUPO RR CRED</p>
-          <h1>Relatórios</h1>
-          <p className="lead">
-            Central de geração. Monte o relatório, confira o que vai sair e baixe o arquivo certo.
-          </p>
-        </header>
+        {/* HEADER navy (kit) — sem KPI (wizard); só marca + título + lead */}
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title="Relatórios"
+          subtitle="Central de geração. Monte o relatório, confira o que vai sair e baixe o arquivo certo."
+        />
 
         {error ? <div className="banner err">{error}</div> : null}
 
@@ -558,11 +559,6 @@ const CSS = `
 .rrrel .crumb a:hover{color:var(--navy);}
 .rrrel .crumb .sep{color:#C2C8D2;}
 
-.rrrel .header{background:var(--navy);border-radius:var(--r-lg);padding:28px 34px 30px;color:#fff;position:relative;overflow:hidden;}
-.rrrel .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rrrel .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rrrel .header h1{font-size:26px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
-.rrrel .header p.lead{font-size:13.5px;color:#9DA9C6;margin:8px 0 0;max-width:520px;}
 
 .rrrel .banner{border-radius:var(--r-md);padding:12px 16px;font-size:13px;background:var(--red-bg);border:1px solid #E9B7B2;color:#8E2F28;}
 
@@ -643,8 +639,6 @@ const CSS = `
 }
 @media (max-width:620px){
   .rrrel .wrap{padding:18px 14px 40px;gap:16px;}
-  .rrrel .header{padding:22px 18px 22px;}
-  .rrrel .header h1{font-size:21px;}
   .rrrel .step{padding:20px 18px;}
   .rrrel .secs{grid-template-columns:1fr;}
   .rrrel .fld{min-width:0;width:100%;}
