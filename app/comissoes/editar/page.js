@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import ColumnFilter from "@/components/ColumnFilter";
 
 import BulkActionBar from "./BulkActionBar";
+import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
 
 // Dia 4.4 Etapa 4.4.2 — Filtros estilo Excel por coluna.
 // 4.4.3: estendido com commission_rule_source (Origem MANUAL/DEFAULT).
@@ -559,6 +560,7 @@ export default function EditarComissoesPage() {
 
   return (
     <div className="rredit">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <div className="wrap">
         {/* ===================== breadcrumb ===================== */}
@@ -570,18 +572,15 @@ export default function EditarComissoesPage() {
           <span className="cur">Editar comissões</span>
         </nav>
 
-        {/* ===================== HEADER navy ===================== */}
-        <header className="header">
-          <div className="header-top">
-            <div>
-              <p className="brand">GRUPO RR CRED</p>
-              <h1>Editar comissões</h1>
-              <p className="sub">
-                <IcoPencil />
-                Exceção manual por proposta
-              </p>
-            </div>
-
+        {/* ===================== HEADER navy (kit) ===================== */}
+        {/* hfilters (Ano/Mês/Empresa/Promotor + Buscar) no slot actions; 3 KPIs
+            fixos como children. Os 2 KPIs de seguro (condicionais) ficam num bloco
+            navy à parte, logo abaixo. */}
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title="Editar comissões"
+          subtitle="Exceção manual por proposta"
+          actions={
             <div className="hfilters">
               <div className="hf">
                 <label>Ano</label>
@@ -653,8 +652,17 @@ export default function EditarComissoesPage() {
                 {loadingRows ? "Carregando..." : "Buscar propostas"}
               </button>
             </div>
-          </div>
-        </header>
+          }
+        >
+          <KpiBand
+            valueSize={20}
+            items={[
+              { label: "Propostas", value: String(rows.length), sub: "no período" },
+              { label: "Base total", value: formatCurrency(totals.gross), sub: "valor base contratado" },
+              { label: "Comissão promotor", value: formatCurrency(totals.promoterAmount), sub: "repasse calculado", accent: true },
+            ]}
+          />
+        </HeaderNavy>
 
         {/* ===================== REGRAS desta tela ===================== */}
         <div className="rules">
@@ -697,105 +705,61 @@ export default function EditarComissoesPage() {
           </div>
         ) : null}
 
-        {/* ===================== KPIs ===================== */}
-        <div className="scards">
-          <div className="scard">
-            <p className="k">
-              <span className="ic">
-                <IcoDoc />
-              </span>
-              Propostas
-            </p>
-            <div className="v num">{String(rows.length)}</div>
-            <div className="s">no período</div>
-          </div>
+        {/* ===================== KPIs de seguro (condicionais) ===================== */}
+        {/* Os 3 KPIs fixos (Propostas/Base/Comissão promotor) migraram pro KpiBand
+            dentro do HeaderNavy. Aqui ficam só os 2 agregados de seguro Modelo B,
+            exibidos quando um promotor é filtrado, num bloco navy próprio. Mantém a
+            lógica de elegibilidade/valor intacta. segtag "PROMOTOR" dobrada no label;
+            projbadge em variante on-navy (âmbar claro legível). */}
+        {(() => {
+          if (!promoterId) return null;
+          const summary = promoterInsuranceSummaries.find(
+            (s) =>
+              s.promoter_id === promoterId &&
+              (!companyId || s.company_id === companyId)
+          );
+          if (!summary) return null;
 
-          <div className="scard">
-            <p className="k">
-              <span className="ic">
-                <IcoBars />
-              </span>
-              Base total
-            </p>
-            <div className="v num">{formatCurrency(totals.gross)}</div>
-            <div className="s">valor base contratado</div>
-          </div>
+          const penetracaoTxt = formatPercentSuffix(
+            summary.insurance_penetration_percent
+          );
+          const bandTxt = summary.insurance_share_band_label || "—";
 
-          <div className="scard accent">
-            <p className="k">
-              <span className="ic">
-                <IcoMoney />
-              </span>
-              Comissão promotor
-            </p>
-            <div className="v num">{formatCurrency(totals.promoterAmount)}</div>
-            <div className="s">repasse calculado</div>
-          </div>
+          // Valor principal Modelo B: maio/2026+ usa o que foi gravado;
+          // abril/2026 usa a projecao calculada (gate=false → banco ainda
+          // tem Promotiva total, projecao mostra o repasse real esperado).
+          const projetado = summary.insurance_projected_promoter_value;
+          const persistido = summary.insurance_commission_value;
+          const ativo = summary.insurance_share_scale_active;
+          const mainValue = ativo ? persistido ?? 0 : projetado ?? 0;
 
-          {/* FIX-1.E.6.F — cards de seguro Modelo B. So aparecem quando
-              um promotor especifico esta filtrado, porque os agregados
-              mensais sao por (promoter, company). Em "Todos" nao faz
-              sentido somar penetracoes de promotores diferentes. */}
-          {(() => {
-            if (!promoterId) return null;
-            const summary = promoterInsuranceSummaries.find(
-              (s) =>
-                s.promoter_id === promoterId &&
-                (!companyId || s.company_id === companyId)
-            );
-            if (!summary) return null;
-
-            const penetracaoTxt = formatPercentSuffix(
-              summary.insurance_penetration_percent
-            );
-            const bandTxt = summary.insurance_share_band_label || "—";
-
-            // Valor principal Modelo B: maio/2026+ usa o que foi gravado;
-            // abril/2026 usa a projecao calculada (gate=false → banco ainda
-            // tem Promotiva total, projecao mostra o repasse real esperado).
-            const projetado = summary.insurance_projected_promoter_value;
-            const persistido = summary.insurance_commission_value;
-            const ativo = summary.insurance_share_scale_active;
-            const mainValue = ativo ? persistido ?? 0 : projetado ?? 0;
-
-            return (
-              <>
-                <div className="scard seg">
-                  <span className="segtag">PROMOTOR</span>
-                  <p className="k">
-                    <span className="ic">
-                      <IcoChart />
-                    </span>
-                    % Penetração
-                  </p>
-                  <div className="v num">{penetracaoTxt}</div>
-                  <div className="s">Faixa: {bandTxt}</div>
-                </div>
-
-                <div className="scard seg">
-                  <span className="segtag">PROMOTOR</span>
-                  <p className="k">
-                    <span className="ic">
-                      <IcoShield />
-                    </span>
-                    Comissão seguro promotor
-                  </p>
-                  <div className="v num">{formatCurrency(mainValue)}</div>
-                  {!ativo ? (
-                    <div className="s">
-                      Gravado atual: {formatCurrency(persistido ?? 0)}
-                    </div>
-                  ) : null}
-                  {!ativo ? (
-                    <span className="projbadge">
-                      Projetado — abril não recalculado
-                    </span>
-                  ) : null}
-                </div>
-              </>
-            );
-          })()}
-        </div>
+          return (
+            <div className="segwrap-navy">
+              <KpiBand
+                valueSize={20}
+                items={[
+                  {
+                    label: "Seguro · % Penetração",
+                    value: penetracaoTxt,
+                    sub: `Faixa: ${bandTxt}`,
+                  },
+                  {
+                    label: "Seguro · Comissão promotor",
+                    value: formatCurrency(mainValue),
+                    sub: !ativo ? (
+                      <>
+                        Gravado atual: {formatCurrency(persistido ?? 0)}
+                        <span className="projbadge">
+                          Projetado — abril não recalculado
+                        </span>
+                      </>
+                    ) : undefined,
+                  },
+                ]}
+              />
+            </div>
+          );
+        })()}
 
         {/* ===================== ACTIVE FILTER BANNER ===================== */}
         {filtersActive > 0 ? (
@@ -1629,16 +1593,7 @@ const CSS = `
 .rredit .crumb .sep{color:#C2C8D2;}
 .rredit .crumb .cur{color:var(--ink);font-weight:600;}
 
-/* HEADER navy scoped */
-.rredit .header{background:var(--navy);border-radius:var(--r-lg);padding:26px 30px 28px;color:#fff;position:relative;overflow:hidden;}
-.rredit .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rredit .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:26px;flex-wrap:wrap;}
-.rredit .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rredit .header h1{font-size:26px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
-.rredit .header .sub{font-size:12.5px;color:#9DA9C6;margin:9px 0 0;display:flex;align-items:center;gap:8px;}
-.rredit .header .sub svg{display:block;}
-
-/* header filters (translucent pills) */
+/* header filters (translucent pills) — agora no slot actions do HeaderNavy */
 .rredit .hfilters{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;}
 .rredit .hf{display:flex;flex-direction:column;gap:6px;}
 .rredit .hf label{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#8C98B6;padding-left:2px;}
@@ -1662,23 +1617,14 @@ const CSS = `
 .rredit .rchip svg{color:var(--gold-deep);flex:none;}
 .rredit .rchip b{color:var(--ink);font-weight:600;}
 
-/* KPIs */
-.rredit .scards{display:grid;grid-template-columns:repeat(5,1fr);gap:13px;}
-.rredit .scard{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--shadow);padding:17px 19px 18px;display:flex;flex-direction:column;position:relative;overflow:hidden;}
-.rredit .scard .k{font-size:11.5px;font-weight:500;color:var(--ink-3);margin:0 0 10px;display:flex;align-items:center;gap:8px;}
-.rredit .scard .k .ic{width:22px;height:22px;border-radius:6px;background:var(--neu);color:var(--navy);display:grid;place-items:center;flex:none;}
-.rredit .scard .v{font-size:24px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);}
-.rredit .scard .s{font-size:11.5px;margin-top:8px;color:var(--ink-3);}
-.rredit .scard.accent{background:var(--navy);border-color:var(--navy);}
-.rredit .scard.accent::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--gold);}
-.rredit .scard.accent .k{color:#9DA9C6;}
-.rredit .scard.accent .k .ic{background:rgba(255,255,255,.08);color:var(--yellow);}
-.rredit .scard.accent .v{color:#fff;}
-.rredit .scard.accent .s{color:#8C98B6;}
-.rredit .scard.seg{border-style:dashed;border-color:#C9D4E8;background:#FBFCFE;}
-.rredit .scard.seg .k .ic{background:var(--blue-bg);color:var(--blue);}
-.rredit .scard .segtag{position:absolute;top:13px;right:14px;font-size:9px;font-weight:700;letter-spacing:.06em;color:var(--blue);background:var(--blue-bg);border:1px solid var(--blue-bd);padding:2px 7px;border-radius:999px;}
-.rredit .scard .projbadge{display:inline-block;align-self:flex-start;margin-top:8px;padding:3px 9px;border-radius:999px;font-size:9.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;background:#FEF3C7;color:#92400E;border:1px solid rgba(146,64,14,.30);}
+/* KPIs de seguro (condicionais) — bloco navy próprio; KpiBand do kit. Os 3 KPIs
+   fixos vivem no KpiBand dentro do HeaderNavy. */
+.rredit .segwrap-navy{background:var(--navy);border-radius:var(--r-lg);padding:22px 24px 24px;position:relative;overflow:hidden;}
+/* KpiBand foi desenhado p/ viver SOB o cabeçalho do HeaderNavy (margin-top + borda-topo
+   separam do título). Standalone, neutralizo esse divisor: */
+.rredit .segwrap-navy .rrui-kpiband{margin-top:0;border-top:none;padding-top:0;}
+/* projbadge (aviso de proveniência — projetado vs gravado) legível sobre navy: âmbar claro */
+.rredit .segwrap-navy .projbadge{display:block;width:fit-content;margin-top:7px;padding:3px 9px;border-radius:999px;font-size:9.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;background:rgba(245,158,11,.16);border:1px solid rgba(245,158,11,.42);color:#FCD34D;}
 
 /* active filter banner */
 .rredit .fbanner{display:flex;align-items:center;gap:13px;background:var(--blue-bg);border:1px solid var(--blue-bd);border-radius:var(--r-md);padding:12px 16px;flex-wrap:wrap;}
@@ -1799,14 +1745,8 @@ const CSS = `
 .rredit td.empty .empty-t{display:block;font-size:13px;font-weight:600;color:var(--ink);}
 .rredit td.empty .empty-s{display:block;font-size:11.5px;color:var(--ink-3);margin-top:5px;line-height:1.5;max-width:520px;margin-left:auto;margin-right:auto;white-space:normal;}
 
-@media (max-width:1100px){
-  .rredit .scards{grid-template-columns:repeat(3,1fr);}
-}
 @media (max-width:680px){
   .rredit .wrap{padding:20px 14px 120px;}
-  .rredit .header{padding:22px 18px 22px;}
-  .rredit .header h1{font-size:21px;}
-  .rredit .scards{grid-template-columns:1fr 1fr;}
   .rredit .hfilters{width:100%;}
 }
 `;
