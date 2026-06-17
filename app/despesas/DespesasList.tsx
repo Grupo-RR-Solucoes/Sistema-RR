@@ -8,6 +8,7 @@ import type { UserRole } from "@/lib/auth/types";
 import { canDeleteExpense } from "@/lib/auth/permissions";
 
 import DespesaModal from "./DespesaModal";
+import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
 
 export interface CompanyOption {
   id: string;
@@ -335,6 +336,7 @@ export default function DespesasList({
 
   return (
     <div className="rrdesp">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
@@ -345,75 +347,34 @@ export default function DespesasList({
           <span>Despesas</span>
         </nav>
 
-        {/* HEADER */}
-        <header className="header">
-          <div className="header-top">
-            <div>
-              <p className="brand">GRUPO RR CRED</p>
-              <h1>Despesas operacionais</h1>
-              <p className="sub">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M5 12h14M13 6l6 6-6 6" />
-                </svg>
-                Fonte que alimenta o Caixa e a DRE · sócios + equipe
-              </p>
-            </div>
-            <div className="hr-right">
-              <button
-                className="btn-new"
-                onClick={() => setModalState({ mode: "create" })}
-              >
-                <span className="plus">+</span>Nova despesa
-              </button>
-            </div>
-          </div>
-        </header>
+        {/* HEADER navy (kit) — CTA em actions; KPIs como children. Barras de
+            status dos KPIs viram subTone no sublabel (ok/amber legíveis no navy) */}
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title="Despesas operacionais"
+          subtitle="Fonte que alimenta o Caixa e a DRE · sócios + equipe"
+          actions={
+            <button className="btn-new" onClick={() => setModalState({ mode: "create" })}>
+              <span className="plus">+</span>Nova despesa
+            </button>
+          }
+        >
+          <KpiBand
+            valueSize={24}
+            items={[
+              { label: "Planejado", value: formatBRL(kpis.planned), sub: "a pagar no período filtrado" },
+              { label: "Pago", value: formatBRL(kpis.paid), sub: "liquidado no período filtrado", subTone: "ok" },
+              {
+                label: "Atrasado",
+                value: formatBRL(kpis.overdue),
+                sub: kpis.overdue > 0 ? "venceu e não foi pago" : "nada vencido em aberto",
+                subTone: kpis.overdue > 0 ? "amber" : "neutral",
+              },
+            ]}
+          />
+        </HeaderNavy>
 
         {error ? <div className="banner err">{error}</div> : null}
-
-        {/* KPIs */}
-        <div className="kpis">
-          <div className="kpi plan">
-            <p className="k">
-              <span className="ic">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="4" y="5" width="16" height="16" rx="2" />
-                  <path d="M4 9h16M9 3v4M15 3v4" />
-                </svg>
-              </span>
-              Planejado
-            </p>
-            <div className="v num">{formatBRL(kpis.planned)}</div>
-            <div className="s">a pagar no período filtrado</div>
-          </div>
-          <div className="kpi paid">
-            <p className="k">
-              <span className="ic">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M20 6L9 17l-5-5" />
-                </svg>
-              </span>
-              Pago
-            </p>
-            <div className="v num">{formatBRL(kpis.paid)}</div>
-            <div className="s">liquidado no período filtrado</div>
-          </div>
-          <div className="kpi late">
-            <p className="k">
-              <span className="ic">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 7v5l3 2" />
-                </svg>
-              </span>
-              Atrasado
-            </p>
-            <div className="v num">{formatBRL(kpis.overdue)}</div>
-            <div className={`s${kpis.overdue > 0 ? " has" : ""}`}>
-              {kpis.overdue > 0 ? "venceu e não foi pago" : "nada vencido em aberto"}
-            </div>
-          </div>
-        </div>
 
         {/* FILTER BAR */}
         <div className="filters">
@@ -764,35 +725,12 @@ const CSS = `
 .rrdesp .crumb a:hover{color:var(--navy);}
 .rrdesp .crumb .sep{color:#C2C8D2;}
 
-.rrdesp .header{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 32px;color:#fff;position:relative;overflow:hidden;}
-.rrdesp .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rrdesp .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
-.rrdesp .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rrdesp .header h1{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
-.rrdesp .header .sub{font-size:12.5px;color:#9DA9C6;margin:9px 0 0;display:flex;align-items:center;gap:8px;}
-.rrdesp .header .sub svg{display:block;}
-.rrdesp .hr-right{display:flex;flex-direction:column;align-items:flex-end;gap:12px;}
 .rrdesp .btn-new{display:inline-flex;align-items:center;gap:9px;background:var(--yellow);color:var(--navy);border:none;border-radius:11px;padding:13px 20px;font-family:inherit;font-size:13.5px;font-weight:700;letter-spacing:.01em;cursor:pointer;box-shadow:0 6px 18px rgba(255,240,0,.18);transition:transform .12s,box-shadow .12s,background .12s;}
 .rrdesp .btn-new:hover{background:#FFF55C;transform:translateY(-1px);box-shadow:0 10px 24px rgba(255,240,0,.26);}
 .rrdesp .btn-new .plus{font-size:17px;line-height:1;margin-top:-1px;}
 
 .rrdesp .banner{border-radius:var(--r-md);padding:12px 16px;font-size:13px;}
 .rrdesp .banner.err{background:var(--red-bg);border:1px solid #E9B7B2;color:#8E2F28;}
-
-.rrdesp .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
-.rrdesp .kpi{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--shadow);padding:19px 22px;display:flex;flex-direction:column;position:relative;overflow:hidden;}
-.rrdesp .kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;}
-.rrdesp .kpi.plan::before{background:var(--navy-bar);}
-.rrdesp .kpi.paid::before{background:var(--green);}
-.rrdesp .kpi.late::before{background:var(--warn-soft);}
-.rrdesp .kpi .k{font-size:12px;font-weight:500;color:var(--ink-3);margin:0 0 11px;display:flex;align-items:center;gap:8px;}
-.rrdesp .kpi .k .ic{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;flex:none;}
-.rrdesp .kpi.plan .k .ic{background:#EDF0F6;color:var(--navy);}
-.rrdesp .kpi.paid .k .ic{background:var(--green-bg);color:var(--green);}
-.rrdesp .kpi.late .k .ic{background:var(--warn-bg);color:var(--warn);}
-.rrdesp .kpi .v{font-size:27px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);}
-.rrdesp .kpi .s{font-size:12px;margin-top:9px;color:var(--ink-3);}
-.rrdesp .kpi.late .s.has{color:var(--warn);font-weight:600;}
 
 .rrdesp .filters{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--shadow);padding:14px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .rrdesp .filters .fsel{position:relative;display:inline-flex;align-items:center;}
@@ -927,11 +865,7 @@ const CSS = `
 
 @media (max-width:680px){
   .rrdesp .wrap{padding:18px 16px 40px;gap:16px;}
-  .rrdesp .header{padding:22px 20px 24px;}
-  .rrdesp .header h1{font-size:22px;}
-  .rrdesp .hr-right{align-items:stretch;width:100%;}
   .rrdesp .btn-new{justify-content:center;}
-  .rrdesp .kpis{grid-template-columns:1fr;}
   .rrdesp .mgrid{grid-template-columns:1fr;}
   .rrdesp .scope-toggle{grid-template-columns:1fr;}
   .rrdesp .catbar{justify-content:flex-start;}
