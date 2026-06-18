@@ -61,6 +61,42 @@ function Chevron({ dir }: { dir: "left" | "right" }) {
   );
 }
 
+// Logout (Lucide log-out) + Menu (Lucide menu) — mesmo idioma dos ícones da nav.
+const LOGOUT_PATH =
+  '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>';
+function LogoutIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      dangerouslySetInnerHTML={{ __html: LOGOUT_PATH }}
+    />
+  );
+}
+
+const MENU_PATH = '<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>';
+function MenuIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      dangerouslySetInnerHTML={{ __html: MENU_PATH }}
+    />
+  );
+}
+
 type NavItem = {
   href: string;
   label: string;
@@ -210,16 +246,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
       .filter((group) => group.items.length > 0);
   }, [user?.role]);
 
-  const allItems = visibleNavGroups.flatMap((g) => g.items);
-  const currentItem =
-    allItems.find((item) => isItemActive(item)) ??
-    visibleNavGroups[0]?.items[0] ??
-    navGroups[0].items[0];
-  const currentGroup =
-    visibleNavGroups.find((group) =>
-      group.items.some((item) => isItemActive(item))
-    ) ?? visibleNavGroups[0] ?? navGroups[0];
-
   function toggleSidebar() {
     if (isMobile) {
       setMobileOpen((c) => !c);
@@ -325,14 +351,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 style={styles.mobileToggle}
                 aria-label="Abrir menu"
               >
-                ≡
+                <MenuIcon />
               </button>
             ) : null}
-            <nav aria-label="Trilha" style={styles.breadcrumb}>
-              <span style={styles.crumbSection}>{currentGroup.label}</span>
-              <span style={styles.crumbSep}>›</span>
-              <span style={styles.crumbActive}>{currentItem.label}</span>
-            </nav>
           </div>
 
           <div style={styles.topbarRight}>
@@ -360,7 +381,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                     aria-label="Sair"
                     title="Sair"
                   >
-                    ↩
+                    <LogoutIcon />
                   </button>
                 </form>
               </>
@@ -382,7 +403,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     paddingInline: 20,
-    height: 56,
+    height: 40,
     gap: 16,
   },
   topbarLeft: {
@@ -402,28 +423,6 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 700,
     cursor: "pointer",
   },
-  breadcrumb: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    fontSize: 13,
-    minWidth: 0,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  crumbSection: {
-    color: "var(--rr-muted)",
-    fontWeight: 500,
-  },
-  crumbSep: {
-    color: "var(--rr-line-strong)",
-    fontWeight: 400,
-  },
-  crumbActive: {
-    color: "#0d4de3",
-    fontWeight: 600,
-  },
   topbarRight: {
     display: "flex",
     alignItems: "center",
@@ -434,8 +433,8 @@ const styles: Record<string, CSSProperties> = {
     width: 30,
     height: 30,
     borderRadius: "50%",
-    background: "#0d4de3",
-    color: "#FFFFFF",
+    background: "var(--navy)",
+    color: "var(--accent)",
     fontSize: 13,
     fontWeight: 700,
     display: "grid",

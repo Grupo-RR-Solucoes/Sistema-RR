@@ -288,7 +288,7 @@ a {
 .rr-content {
   min-width: 0;
   display: grid;
-  grid-template-rows: 56px 1fr;
+  grid-template-rows: 40px 1fr;
 }
 
 .rr-main {
@@ -308,7 +308,7 @@ a {
   z-index: 12;
   background: var(--paper);
   border-bottom: 1px solid var(--rr-line);
-  height: 56px;
+  height: 40px;
 }
 
 
