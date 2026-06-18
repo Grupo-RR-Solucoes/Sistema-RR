@@ -3,10 +3,15 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { UiStyles, HeaderNavy, KpiBand, Banner, Table, Num, Chip } from "@/components/ui";
+import type { ChipVariant } from "@/components/ui";
+
 // ============================================================
-// DASHBOARD (Visão geral) — REDESENHO Etapa 8, fiel ao HTML de referência
-// (Dashboard_RR_Cred_referencia.html). CSS do design escopado em .rrdash.
-// Dados ao vivo de /api/dashboard. Gráfico = produção REALIZADA do grupo
+// DASHBOARD (Visão geral). Header = bloco navy com os 4 stats embutidos
+// (formato original — KPI-sobre-navy, decisão do Diego). Piloto Etapa 3 parcial:
+// alerta de projeção → <Banner variant="warn"> e "Simples por CNPJ" →
+// <Table>/<Num>/<Chip> do kit; <UiStyles/> injeta a CSS dos primitivos. LÓGICA,
+// FETCH e CÁLCULOS INALTERADOS. Gráfico = produção REALIZADA do grupo
 // (promoter_monthly_results); jun = mês corrente PARCIAL, marcado.
 // ============================================================
 
@@ -64,6 +69,7 @@ export default function DashboardPage() {
 
   return (
     <div className="rrdash">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <Header data={data} />
@@ -94,59 +100,54 @@ function Header({ data }: { data: Payload | null }) {
   const prev = data ? brl0(data.previsaoReceita) : "—";
   const lim = data ? pct1(data.limiteSimples.pct) : "—";
   const limSub = data ? `${mm2(data.limiteSimples.rbt12)} / ${mm2(data.limiteSimples.teto)}` : "";
+  const prodSub = (
+    <>
+      mês corrente · parcial
+      {data && data.producaoNaoAtribuidaCount > 0 ? (
+        <>
+          <br />
+          <Link className="pending" href="/promotores?tab=migracao">
+            {brl0(data.producaoNaoAtribuida)} em {data.producaoNaoAtribuidaCount} proposta
+            {data.producaoNaoAtribuidaCount > 1 ? "s" : ""} aguardando atribuição →
+          </Link>
+        </>
+      ) : null}
+    </>
+  );
   return (
-    <header className="header">
-      <div className="header-top">
-        <div>
-          <p className="brand">GRUPO RR CRED</p>
-          <h1>Dashboard</h1>
-        </div>
-        <span className="badge"><span className="dot" />{data?.periodoLabel ?? "—"} · produção corrente</span>
-      </div>
-      <div className="stats">
-        <div className="stat">
-          <p className="label">Produção do grupo · mês</p>
-          <div className="value num">{prod}</div>
-          <div className="sub">mês corrente · parcial</div>
-          {data && data.producaoNaoAtribuidaCount > 0 ? (
-            <Link className="pending" href="/promotores?tab=migracao">
-              {brl0(data.producaoNaoAtribuida)} em {data.producaoNaoAtribuidaCount} proposta
-              {data.producaoNaoAtribuidaCount > 1 ? "s" : ""} aguardando atribuição →
-            </Link>
-          ) : null}
-        </div>
-        <div className="stat">
-          <p className="label">Comissão bruta (empresa)</p>
-          <div className="value num">{brutaEmpresa}</div>
-          <div className="sub gold">{brutaSub}</div>
-        </div>
-        <div className="stat">
-          <p className="label">Previsão de receita</p>
-          <div className="value num">{prev}</div>
-          <div className="sub amber">estimado</div>
-        </div>
-        <div className="stat">
-          <p className="label">Limite Simples</p>
-          <div className="value num">{lim}</div>
-          <div className="sub green num">{limSub}</div>
-        </div>
-      </div>
-    </header>
+    <HeaderNavy
+      brand="GRUPO RR CRED"
+      title="Dashboard"
+      badge={
+        <span className="badge">
+          <span className="dot" />
+          {data?.periodoLabel ?? "—"} · produção corrente
+        </span>
+      }
+    >
+      <KpiBand
+        items={[
+          { label: "Produção do grupo · mês", value: prod, sub: prodSub, accent: true },
+          { label: "Comissão bruta (empresa)", value: brutaEmpresa, sub: brutaSub, subTone: "gold" },
+          { label: "Previsão de receita", value: prev, sub: "estimado", subTone: "amber" },
+          { label: "Limite Simples", value: lim, sub: limSub, subTone: "ok" },
+        ]}
+      />
+    </HeaderNavy>
   );
 }
 
 function AlertProjecao({ p }: { p: Projecao }) {
   const ritmo = p.semaforo === "vermelho" ? "ritmo abaixo da meta" : "atenção ao ritmo da meta";
   return (
-    <div className="alert" role="status">
-      <span className="ic">!</span>
-      <span className="txt">
-        <b>Projeção do grupo em {pct1(p.percent)} da meta</b>
-        <span className="sep">·</span>
-        {p.diasDecorridos}º dia útil de {p.diasTotais} · {ritmo} de {p.mesLabel.split("/")[0]}
-      </span>
-      <Link href="/projecao">Ver projeção →</Link>
-    </div>
+    <Banner
+      variant="warn"
+      action={<Link className="banner-link" href="/projecao">Ver projeção →</Link>}
+    >
+      <b>Projeção do grupo em {pct1(p.percent)} da meta</b>
+      <span className="sep"> · </span>
+      {p.diasDecorridos}º dia útil de {p.diasTotais} · {ritmo} de {p.mesLabel.split("/")[0]}
+    </Banner>
   );
 }
 
@@ -212,24 +213,39 @@ function ChartCard({ data, error }: { data: Payload | null; error: string }) {
 }
 
 function CnpjCard({ rows }: { rows: CnpjRow[] }) {
-  const stColor = (s: string) => (s === "acima" ? "#cc2b49" : s === "amarelo" ? "#D6A13F" : "#3C9D6B");
+  const chipFor = (s: CnpjRow["sinal"]): ChipVariant =>
+    s === "acima" ? "risk" : s === "amarelo" ? "warn" : "ok";
+  const chipLabel = (s: CnpjRow["sinal"]) =>
+    s === "acima" ? "Acima" : s === "amarelo" ? "Atenção" : "OK";
   return (
     <section className="card">
       <div className="card-head">
         <div><h2>Simples por CNPJ</h2></div>
         <Link className="card-link" href="/receitas">Receita / RBT12 <span className="arr">→</span></Link>
       </div>
-      <div className="cnpj-list">
-        {rows.map((r) => (
-          <div className="cnpj-row" key={r.nome}>
-            <span className="st" style={{ background: stColor(r.sinal), boxShadow: `0 0 0 3px ${stColor(r.sinal)}22` }} />
-            <span className="name">{r.nome}</span>
-            <span className="faixa">{r.faixa}</span>
-            <span className="amt num">{brl0(r.rbt12)}</span>
-          </div>
-        ))}
-        {rows.length === 0 ? <div className="cnpj-row"><span className="name">Carregando…</span></div> : null}
-      </div>
+      <Table className="cnpj-table">
+        <thead>
+          <tr>
+            <th>Status</th>
+            <th>Empresa</th>
+            <th>Faixa</th>
+            <th style={{ textAlign: "right" }}>RBT12</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.nome}>
+              <td><Chip variant={chipFor(r.sinal)}>{chipLabel(r.sinal)}</Chip></td>
+              <td>{r.nome}</td>
+              <td><Chip variant="neutral" dot={false}>{r.faixa}</Chip></td>
+              <Num>{brl0(r.rbt12)}</Num>
+            </tr>
+          ))}
+          {rows.length === 0 ? (
+            <tr><td colSpan={4}>Carregando…</td></tr>
+          ) : null}
+        </tbody>
+      </Table>
     </section>
   );
 }
@@ -323,32 +339,15 @@ const CSS = `
 .rrdash .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
 .rrdash .mono{font-variant-numeric:tabular-nums;}
 .rrdash .wrap{max-width:1080px;margin:0 auto;padding:6px 0 24px;display:flex;flex-direction:column;gap:22px;}
-.rrdash .header{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 34px;color:#fff;position:relative;overflow:hidden;}
-.rrdash .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rrdash .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
-.rrdash .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rrdash .header h1{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
+/* bloco navy + marca + h1 agora vêm do <HeaderNavy> do kit */
 .rrdash .badge{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:500;color:#C9D2E8;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);padding:7px 13px;border-radius:999px;white-space:nowrap;}
 .rrdash .badge .dot{width:6px;height:6px;border-radius:50%;background:var(--green-soft);}
-.rrdash .stats{margin-top:28px;display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}
-.rrdash .stat{padding:0 26px;position:relative;}
-.rrdash .stat:first-child{padding-left:0;}
-.rrdash .stat + .stat::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:1px;background:rgba(255,255,255,.10);}
-.rrdash .stat .label{font-size:12px;font-weight:500;letter-spacing:.01em;color:#9DA9C6;margin:0 0 10px;}
-.rrdash .stat .value{font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1;color:#fff;}
-.rrdash .stat .sub{font-size:12.5px;margin-top:9px;color:#8C98B6;}
-.rrdash .stat .sub.amber{color:#E7BE6A;}
-.rrdash .stat .sub.gold{color:var(--gold);}
-.rrdash .stat .sub.green{color:var(--green-soft);}
-.rrdash .stat .pending{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold-soft,#E7BE6A);text-decoration:none;border-bottom:1px dashed rgba(231,190,106,.45);padding-bottom:1px;transition:color .14s,border-color .14s;}
-.rrdash .stat .pending:hover{color:#fff;border-color:rgba(255,255,255,.5);}
-.rrdash .alert{display:flex;align-items:center;gap:14px;background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r-md);padding:14px 18px;}
-.rrdash .alert .ic{flex:none;width:26px;height:26px;border-radius:7px;background:#F2DCA6;color:#8A6310;display:grid;place-items:center;font-weight:700;font-size:15px;}
-.rrdash .alert .txt{flex:1;min-width:0;font-size:13.5px;color:#5C4A1E;}
-.rrdash .alert .txt b{color:#3F3209;font-weight:600;}
-.rrdash .alert .txt .sep{color:#B79A55;margin:0 8px;}
-.rrdash .alert a{flex:none;font-size:13px;font-weight:600;color:var(--amber);text-decoration:none;white-space:nowrap;}
-.rrdash .alert a:hover{text-decoration:underline;}
+/* faixa de stats agora vem do <KpiBand> do kit; .pending (link custom no sub) fica */
+.rrdash .pending{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold-soft,#E7BE6A);text-decoration:none;border-bottom:1px dashed rgba(231,190,106,.45);padding-bottom:1px;transition:color .14s,border-color .14s;}
+.rrdash .pending:hover{color:#fff;border-color:rgba(255,255,255,.5);}
+/* alerta de projeção agora é <Banner variant="warn"> do kit; só o link da ação fica aqui */
+.rrdash .banner-link{font-size:13px;font-weight:600;color:var(--warn);text-decoration:none;white-space:nowrap;}
+.rrdash .banner-link:hover{text-decoration:underline;}
 .rrdash .card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:26px 28px;}
 .rrdash .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:6px;}
 .rrdash .card-head h2{font-size:16.5px;font-weight:600;letter-spacing:-.01em;margin:0;color:var(--ink);}
@@ -361,13 +360,8 @@ const CSS = `
 .rrdash .chart-empty{padding:48px 0;text-align:center;color:var(--ink-3);font-size:13.5px;}
 .rrdash .chart-foot{margin-top:14px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:12.5px;color:var(--ink-3);}
 .rrdash .chart-foot b{color:var(--ink);font-weight:600;}
-.rrdash .cnpj-list{margin-top:18px;display:flex;flex-direction:column;}
-.rrdash .cnpj-row{display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;gap:16px;padding:15px 2px;border-top:1px solid var(--bd-soft);}
-.rrdash .cnpj-row:first-child{border-top:none;}
-.rrdash .cnpj-row .st{width:9px;height:9px;border-radius:50%;background:var(--green);flex:none;}
-.rrdash .cnpj-row .name{font-size:14.5px;font-weight:600;color:var(--ink);}
-.rrdash .cnpj-row .faixa{font-size:11.5px;font-weight:600;letter-spacing:.02em;color:var(--ink-2);background:#F3F5F8;border:1px solid var(--bd);padding:4px 9px;border-radius:7px;white-space:nowrap;}
-.rrdash .cnpj-row .amt{font-size:15px;font-weight:600;color:var(--ink);text-align:right;min-width:118px;}
+/* lista "Simples por CNPJ" agora é <Table> do kit; só o espaçamento dentro do card */
+.rrdash .cnpj-table{margin-top:14px;}
 .rrdash .shortcuts{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
 .rrdash .sc{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);padding:18px;text-decoration:none;color:var(--ink);display:flex;flex-direction:column;gap:12px;transition:border-color .15s, box-shadow .15s, transform .15s;}
 .rrdash .sc:hover{border-color:#C7CEDA;box-shadow:var(--shadow);transform:translateY(-1px);}
@@ -376,28 +370,9 @@ const CSS = `
 .rrdash .sc .sc-name{font-size:14.5px;font-weight:600;}
 .rrdash .sc .sc-desc{font-size:12px;color:var(--ink-3);margin-top:-6px;}
 .rrdash .sc-ic svg{display:block;}
-@media (max-width:920px){
-  .rrdash .stats{grid-template-columns:repeat(2,1fr);row-gap:22px;}
-  .rrdash .stat:nth-child(1)::before,.rrdash .stat:nth-child(3)::before{display:none;}
-  .rrdash .stat:nth-child(3),.rrdash .stat:nth-child(4){padding-left:0;}
-}
+/* responsivo dos KPIs agora vem do KpiBand (920→2 col, 560→1 col) */
 @media (max-width:720px){
-  .rrdash .header{padding:22px 20px 24px;}
-  .rrdash .header h1{font-size:23px;}
-  .rrdash .stats{grid-template-columns:1fr;gap:0;padding-top:18px;margin-top:20px;}
-  .rrdash .stat{padding:18px 0;}
-  .rrdash .stat:first-child{padding-top:0;}
-  .rrdash .stat + .stat::before{display:none;}
-  .rrdash .stat + .stat{border-top:1px solid rgba(255,255,255,.10);}
-  .rrdash .stat .value{font-size:33px;}
-  .rrdash .alert{flex-wrap:wrap;}
-  .rrdash .alert a{margin-left:40px;}
   .rrdash .card{padding:20px 18px;}
-  .rrdash .cnpj-row{grid-template-columns:auto 1fr auto;grid-template-areas:"st name amt" "st faixa amt";row-gap:4px;column-gap:12px;}
-  .rrdash .cnpj-row .st{grid-area:st;}
-  .rrdash .cnpj-row .name{grid-area:name;}
-  .rrdash .cnpj-row .faixa{grid-area:faixa;justify-self:start;}
-  .rrdash .cnpj-row .amt{grid-area:amt;min-width:0;}
   .rrdash .shortcuts{grid-template-columns:repeat(2,1fr);}
 }
 `;

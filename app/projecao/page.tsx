@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useUser } from "../../lib/auth/useUser";
 import FeedbackBanner from "../../components/FeedbackBanner";
+import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
 
 // ============================================================
 // /projecao — Painel de Metas & Projeção (identidade .rrproj).
@@ -106,9 +107,9 @@ function ArrowDown() {
   );
 }
 
-function Chip({ s, label }: { s: Semaforo; label?: string }) {
+function Chip({ s, label, onNavy }: { s: Semaforo; label?: string; onNavy?: boolean }) {
   return (
-    <span className={`chip ${CHIP[s]}`}>
+    <span className={`chip ${CHIP[s]}${onNavy ? " on-navy" : ""}`}>
       <span className="d" />
       {label ?? SEMA_LABEL[s]}
     </span>
@@ -180,6 +181,7 @@ export default function ProjecaoPage() {
 
   return (
     <div className="rrproj">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
@@ -190,26 +192,24 @@ export default function ProjecaoPage() {
           <span>Projeção</span>
         </nav>
 
-        {/* HEADER navy scoped */}
-        <header className="header">
-          <div className="header-top">
-            <div>
-              <p className="brand">GRUPO RR CRED</p>
-              <h1>
-                {isPromotor ? (prom?.promoter_name ?? "Minha projeção") : "Projeção da equipe"}
-                {isPromotor && prom ? (
-                  <span className={`badge-lg ${CHIP[prom.semaforo]}`}>
-                    <span className="d" />
-                    {SEMA_LABEL[prom.semaforo]}
-                  </span>
-                ) : null}
-              </h1>
-              <p className="sub">
-                {isPromotor
-                  ? `${prom?.company_name ?? "—"} · projeção individual · ${mes(year, month)}`
-                  : "Estimativa de fechamento por ritmo linear · todos os CNPJ"}
-              </p>
-            </div>
+        {/* HEADER navy (kit) — badge semáforo no slot badge, pills no slot actions */}
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title={isPromotor ? (prom?.promoter_name ?? "Minha projeção") : "Projeção da equipe"}
+          subtitle={
+            isPromotor
+              ? `${prom?.company_name ?? "—"} · projeção individual · ${mes(year, month)}`
+              : "Estimativa de fechamento por ritmo linear · todos os CNPJ"
+          }
+          badge={
+            isPromotor && prom ? (
+              <span className={`badge-lg ${CHIP[prom.semaforo]}`}>
+                <span className="d" />
+                {SEMA_LABEL[prom.semaforo]}
+              </span>
+            ) : null
+          }
+          actions={
             <div className="selectors">
               <div className="pill">
                 <span className="plabel">Competência</span>
@@ -245,8 +245,8 @@ export default function ProjecaoPage() {
                 </div>
               ) : null}
             </div>
-          </div>
-        </header>
+          }
+        />
 
         {error ? (
           <FeedbackBanner variant="error" eyebrow="Erro" title="Não foi possível carregar a projeção." description={error} />
@@ -292,34 +292,31 @@ function EquipeView({ data }: { data: any }) {
 
   return (
     <>
-      {/* KPIs */}
-      <div className="kpis">
-        <div className="kpi">
-          <p className="k">Produção acumulada</p>
-          <div className="v num">{brl(cons.producao_acumulada)}</div>
-          <div className="s">{jan ? `${jan.dias_uteis_decorridos} de ${jan.dias_uteis_totais} dias úteis` : ""}</div>
-          {cons.nao_atribuido && cons.nao_atribuido.count > 0 ? (
-            <Link className="pend" href="/promotores?tab=migracao">
-              inclui {brl(cons.nao_atribuido.acumulada)} em {cons.nao_atribuido.count} não atribuída
-              {cons.nao_atribuido.count > 1 ? "s" : ""} →
-            </Link>
-          ) : null}
-        </div>
-        <div className="kpi accent">
-          <p className="k">Projeção do grupo</p>
-          <div className="v num">{brl(cons.projecao)}</div>
-          <div className="s">estimativa de fechamento</div>
-        </div>
-        <div className="kpi">
-          <p className="k">Meta do grupo</p>
-          <div className="v num">{brl(cons.meta)}</div>
-          <div className="s">soma das metas por CNPJ</div>
-        </div>
-        <div className="kpi">
-          <p className="k">% projetado do grupo</p>
-          <div className="v num">{pctTxt(cons.percent_projetado)}</div>
-          <div className="s"><Chip s={cons.semaforo} /></div>
-        </div>
+      {/* KPIs — faixa navy (kit) */}
+      <div className="kpiwrap-navy">
+        <KpiBand
+          valueSize={24}
+          items={[
+            {
+              label: "Produção acumulada",
+              value: brl(cons.producao_acumulada),
+              sub: (
+                <>
+                  {jan ? `${jan.dias_uteis_decorridos} de ${jan.dias_uteis_totais} dias úteis` : ""}
+                  {cons.nao_atribuido && cons.nao_atribuido.count > 0 ? (
+                    <Link className="pend" href="/promotores?tab=migracao">
+                      inclui {brl(cons.nao_atribuido.acumulada)} em {cons.nao_atribuido.count} não atribuída
+                      {cons.nao_atribuido.count > 1 ? "s" : ""} →
+                    </Link>
+                  ) : null}
+                </>
+              ),
+            },
+            { label: "Projeção do grupo", value: brl(cons.projecao), sub: "estimativa de fechamento", accent: true },
+            { label: "Meta do grupo", value: brl(cons.meta), sub: "soma das metas por CNPJ" },
+            { label: "% projetado do grupo", value: pctTxt(cons.percent_projetado), sub: <Chip s={cons.semaforo} onNavy /> },
+          ]}
+        />
       </div>
 
       {/* RISCO */}
@@ -502,28 +499,17 @@ function PromotorView({ data }: { data: any }) {
         </div>
       </section>
 
-      {/* 4 KPIs */}
-      <div className="kpis">
-        <div className="kpi">
-          <p className="k">Produção acumulada</p>
-          <div className="v num">{brl(p.producao_acumulada)}</div>
-          <div className="s">até hoje · {p.dias_uteis_decorridos}/{p.dias_uteis_totais} dias</div>
-        </div>
-        <div className="kpi accent">
-          <p className="k">Projeção do mês</p>
-          <div className="v num">{brl(p.projecao)}</div>
-          <div className="s">estimativa de fechamento</div>
-        </div>
-        <div className="kpi">
-          <p className="k">Sua meta</p>
-          <div className="v num">{p.meta > 0 ? brl(p.meta) : "Sem meta"}</div>
-          <div className="s">{mes(data.year, data.month)}</div>
-        </div>
-        <div className="kpi">
-          <p className="k">Dias úteis</p>
-          <div className="v num">{p.dias_uteis_decorridos} / {p.dias_uteis_totais}</div>
-          <div className="s">{data.fechado ? "competência fechada" : "janela aberta"}</div>
-        </div>
+      {/* 4 KPIs — faixa navy (kit) */}
+      <div className="kpiwrap-navy">
+        <KpiBand
+          valueSize={24}
+          items={[
+            { label: "Produção acumulada", value: brl(p.producao_acumulada), sub: `até hoje · ${p.dias_uteis_decorridos}/${p.dias_uteis_totais} dias` },
+            { label: "Projeção do mês", value: brl(p.projecao), sub: "estimativa de fechamento", accent: true },
+            { label: "Sua meta", value: p.meta > 0 ? brl(p.meta) : "Sem meta", sub: mes(data.year, data.month) },
+            { label: "Dias úteis", value: `${p.dias_uteis_decorridos} / ${p.dias_uteis_totais}`, sub: data.fechado ? "competência fechada" : "janela aberta" },
+          ]}
+        />
       </div>
 
       {/* COMPARATIVO */}
@@ -580,12 +566,6 @@ const CSS = `
 .rrproj .crumb a:hover{color:var(--navy);}
 .rrproj .crumb .sep{color:#C2C8D2;}
 
-.rrproj .header{background:var(--navy);border-radius:var(--r-lg);padding:26px 32px 28px;color:#fff;position:relative;overflow:hidden;}
-.rrproj .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rrproj .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:22px;flex-wrap:wrap;}
-.rrproj .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rrproj .header h1{font-size:25px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
-.rrproj .header .sub{font-size:12.5px;color:#9DA9C6;margin:9px 0 0;}
 .rrproj .selectors{display:flex;gap:9px;flex-wrap:wrap;}
 .rrproj .pill{position:relative;}
 .rrproj .pill select{appearance:none;-webkit-appearance:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);color:#E4E9F4;padding:8px 34px 8px 14px;border-radius:999px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
@@ -621,21 +601,25 @@ const CSS = `
 .rrproj .chip.n{background:#F1F3F7;border-color:var(--bd);color:var(--ink-3);}
 .rrproj .chip.n .d{background:#9CA3AF;}
 
-.rrproj .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
-.rrproj .kpi{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--shadow);padding:18px 20px 19px;display:flex;flex-direction:column;}
-.rrproj .kpi .k{font-size:12px;font-weight:500;color:var(--ink-3);margin:0 0 11px;}
-.rrproj .kpi .v{font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);}
-.rrproj .kpi .s{font-size:12px;margin-top:9px;color:var(--ink-3);display:flex;align-items:center;gap:8px;}
-.rrproj .kpi .pend{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold-deep,#B9842A);text-decoration:none;border-bottom:1px dashed rgba(185,132,42,.4);padding-bottom:1px;transition:color .14s,border-color .14s;}
-.rrproj .kpi .pend:hover{color:var(--ink);border-color:rgba(22,32,58,.5);}
+.rrproj .kpiwrap-navy{background:var(--navy);border-radius:var(--r-lg);padding:24px 28px 26px;position:relative;overflow:hidden;}
+/* KpiBand foi desenhado p/ viver SOB o cabeçalho do HeaderNavy (margin-top + borda-topo
+   separam do título). Standalone, neutralizo esse divisor: */
+.rrproj .kpiwrap-navy .rrui-kpiband{margin-top:0;border-top:none;padding-top:0;}
+/* link "não atribuído" (P2) legível sobre navy (gold-soft tracejado claro) */
+.rrproj .kpiwrap-navy .pend{display:block;width:fit-content;margin-top:6px;font-size:11.5px;font-weight:500;color:var(--gold-soft);text-decoration:none;border-bottom:1px dashed rgba(231,190,106,.5);padding-bottom:1px;transition:color .14s,border-color .14s;}
+.rrproj .kpiwrap-navy .pend:hover{color:#fff;border-color:rgba(255,255,255,.6);}
+/* Chip semáforo on-navy — mesma paleta do .badge-lg (legível sobre navy) */
+.rrproj .chip.on-navy.g{background:rgba(22,163,74,.16);border-color:rgba(22,163,74,.4);color:#86EFAC;}
+.rrproj .chip.on-navy.g .d{background:#4ADE80;}
+.rrproj .chip.on-navy.a{background:rgba(245,158,11,.16);border-color:rgba(245,158,11,.42);color:#FCD34D;}
+.rrproj .chip.on-navy.a .d{background:#FBBF24;}
+.rrproj .chip.on-navy.r{background:rgba(220,38,38,.18);border-color:rgba(220,38,38,.42);color:#FCA5A5;}
+.rrproj .chip.on-navy.r .d{background:#F87171;}
+.rrproj .chip.on-navy.n{background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.2);color:#C9D2E6;}
+.rrproj .chip.on-navy.n .d{background:#9DA9C6;}
 .rrproj tr.na-row td{background:#FBFAF7;color:var(--ink-2);}
 .rrproj tr.na-row .pname{font-weight:600;color:var(--ink-2);}
 .rrproj tr.na-row .na-tag{display:block;font-size:10.5px;font-weight:500;color:var(--gold-deep,#B9842A);margin-top:2px;}
-.rrproj .kpi.accent{background:var(--navy);border-color:var(--navy);position:relative;overflow:hidden;}
-.rrproj .kpi.accent::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--gold);}
-.rrproj .kpi.accent .k{color:#9DA9C6;}
-.rrproj .kpi.accent .v{color:#fff;}
-.rrproj .kpi.accent .s{color:#8C98B6;}
 
 .rrproj .card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);overflow:hidden;}
 .rrproj .card-pad{padding:24px 26px;}
@@ -734,15 +718,11 @@ const CSS = `
 @keyframes rrproj-spin{to{transform:rotate(360deg);}}
 
 @media (max-width:900px){
-  .rrproj .kpis{grid-template-columns:1fr 1fr;}
   .rrproj .phero{grid-template-columns:1fr;}
   .rrproj .phero .pleft{border-right:none;border-bottom:1px solid var(--bd-soft);}
 }
 @media (max-width:640px){
   .rrproj .wrap{padding:20px 16px 44px;}
-  .rrproj .header{padding:22px 20px 24px;}
-  .rrproj .header h1{font-size:21px;}
-  .rrproj .kpis{grid-template-columns:1fr;}
   .rrproj .emp-head .right{width:100%;justify-content:space-between;}
   .rrproj .compbars{gap:10px;}
 }

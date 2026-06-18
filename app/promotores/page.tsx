@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useUser } from "../../lib/auth/useUser";
 import PromotorView from "./PromotorView";
+import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
 
 type PeriodOption = {
   key: string;
@@ -752,6 +753,7 @@ function PromotoresFullPage() {
 
   return (
     <div className="rrprom">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
@@ -761,12 +763,10 @@ function PromotoresFullPage() {
         </nav>
 
         {/* HEADER + KPIs */}
-        <header className="header">
-          <div className="header-top">
-            <div>
-              <p className="brand">GRUPO RR CRED</p>
-              <h1>Promotores, metas e comissões</h1>
-            </div>
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title="Promotores, metas e comissões"
+          actions={
             <div className="comp">
               <select
                 aria-label="Competência"
@@ -781,50 +781,37 @@ function PromotoresFullPage() {
               </select>
               <span className="chev">▾</span>
             </div>
-          </div>
-          <div className="kpis">
-            <div className="kpi">
-              <p className="label">Promotores</p>
-              <div className="value num">{data.summary.promoters}</div>
-              <div className="sub">ativos na competência</div>
-            </div>
-            <div className="kpi">
-              <p className="label">Produção</p>
-              <div className="value num">{formatCurrency(data.summary.productionTotal)}</div>
-              {data.summary.productionUnassigned > 0 ? (
-                <button
-                  type="button"
-                  className="pend"
-                  onClick={() => setActiveSection("migracao")}
-                  title="Abrir a aba Migração"
-                >
-                  inclui {formatCurrency(data.summary.productionUnassigned)} em{" "}
-                  {data.summary.productionUnassignedCount} não atribuída
-                  {data.summary.productionUnassignedCount > 1 ? "s" : ""} →
-                </button>
-              ) : (
-                <div className="sub">crédito + seguro</div>
-              )}
-            </div>
-            <div className="kpi">
-              <p className="label">Comissão bruta</p>
-              <div className="value num">{formatCurrency(data.summary.finalCommission)}</div>
-              <div className="sub">antes de descontos</div>
-            </div>
-            <div className="kpi">
-              <p className="label">Comissão a pagar</p>
-              <div className="value num">{formatCurrency(data.summary.payableCommission)}</div>
-              <div className="sub gold">líquido a repassar</div>
-            </div>
-            <div className="kpi">
-              <p className="label">Penetração média</p>
-              <div className="value num">
-                {formatPercent(data.summary.averageInsurancePenetration)}
-              </div>
-              <div className="sub">seguro / crédito</div>
-            </div>
-          </div>
-        </header>
+          }
+        >
+          <KpiBand
+            valueSize={25}
+            items={[
+              { label: "Promotores", value: data.summary.promoters, sub: "ativos na competência" },
+              {
+                label: "Produção",
+                value: formatCurrency(data.summary.productionTotal),
+                sub:
+                  data.summary.productionUnassigned > 0 ? (
+                    <button
+                      type="button"
+                      className="pend"
+                      onClick={() => setActiveSection("migracao")}
+                      title="Abrir a aba Migração"
+                    >
+                      inclui {formatCurrency(data.summary.productionUnassigned)} em{" "}
+                      {data.summary.productionUnassignedCount} não atribuída
+                      {data.summary.productionUnassignedCount > 1 ? "s" : ""} →
+                    </button>
+                  ) : (
+                    "crédito + seguro"
+                  ),
+              },
+              { label: "Comissão bruta", value: formatCurrency(data.summary.finalCommission), sub: "antes de descontos" },
+              { label: "Comissão a pagar", value: formatCurrency(data.summary.payableCommission), sub: "líquido a repassar", subTone: "gold" },
+              { label: "Penetração média", value: formatPercent(data.summary.averageInsurancePenetration), sub: "seguro / crédito" },
+            ]}
+          />
+        </HeaderNavy>
 
         {error ? <div className="banner err">{error}</div> : null}
         {notice ? <div className="banner ok">{notice}</div> : null}
@@ -1819,27 +1806,16 @@ const CSS = `
 .rrprom .crumb a:hover{color:var(--navy);}
 .rrprom .crumb .sep{color:#C2C8D2;}
 
-.rrprom .header{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 30px;color:#fff;position:relative;overflow:hidden;}
-.rrprom .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rrprom .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
-.rrprom .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rrprom .header h1{font-size:26px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
+/* bloco navy + marca + h1 agora vêm do <HeaderNavy> do kit; .comp (select) fica */
 .rrprom .comp{position:relative;}
 .rrprom .comp select{appearance:none;-webkit-appearance:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);color:#E4E9F4;padding:8px 36px 8px 14px;border-radius:999px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
 .rrprom .comp select:focus{outline:none;border-color:rgba(255,255,255,.35);}
 .rrprom .comp select option{color:#16203A;}
 .rrprom .comp .chev{position:absolute;right:14px;top:50%;transform:translateY(-50%);pointer-events:none;color:#9DA9C6;font-size:11px;}
 
-.rrprom .kpis{margin-top:26px;display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid rgba(255,255,255,.10);padding-top:22px;}
-.rrprom .kpi{padding:0 22px;position:relative;}
-.rrprom .kpi:first-child{padding-left:0;}
-.rrprom .kpi + .kpi::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:1px;background:rgba(255,255,255,.10);}
-.rrprom .kpi .label{font-size:11.5px;font-weight:500;color:#9DA9C6;margin:0 0 9px;}
-.rrprom .kpi .value{font-size:25px;font-weight:600;letter-spacing:-.02em;line-height:1.05;color:#fff;}
-.rrprom .kpi .sub{font-size:11.5px;margin-top:7px;color:#8C98B6;}
-.rrprom .kpi .sub.gold{color:var(--gold);}
-.rrprom .kpi .pend{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold);background:none;border:none;border-bottom:1px dashed rgba(214,161,63,.45);padding:0 0 1px;cursor:pointer;font-family:inherit;text-align:left;transition:color .14s,border-color .14s;}
-.rrprom .kpi .pend:hover{color:#fff;border-color:rgba(255,255,255,.6);}
+/* faixa de KPIs agora vem do <KpiBand valueSize={25}> do kit; .pend (botão custom no sub) fica */
+.rrprom .pend{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold);background:none;border:none;border-bottom:1px dashed rgba(214,161,63,.45);padding:0 0 1px;cursor:pointer;font-family:inherit;text-align:left;transition:color .14s,border-color .14s;}
+.rrprom .pend:hover{color:#fff;border-color:rgba(255,255,255,.6);}
 
 .rrprom .banner{border-radius:var(--r-md);padding:12px 16px;font-size:13px;}
 .rrprom .banner.err{background:var(--red-bg);border:1px solid #E9B7B2;color:#8E2F28;}
@@ -1964,20 +1940,11 @@ const CSS = `
 @media (max-width:980px){
   .rrprom .resumo-grid{grid-template-columns:1fr;}
   .rrprom .edit{position:static;}
-  .rrprom .kpis{grid-template-columns:repeat(3,1fr);row-gap:20px;}
-  .rrprom .kpi:nth-child(1)::before,.rrprom .kpi:nth-child(4)::before{display:none;}
-  .rrprom .kpi:nth-child(4),.rrprom .kpi:nth-child(5){padding-left:0;}
   .rrprom .ndform{grid-template-columns:repeat(2,1fr);}
   .rrprom .dk{grid-template-columns:1fr 1fr;}
 }
 @media (max-width:720px){
   .rrprom .wrap{padding:18px 14px 40px;gap:16px;}
-  .rrprom .header{padding:22px 18px 22px;}
-  .rrprom .header h1{font-size:21px;}
-  .rrprom .kpis{grid-template-columns:1fr 1fr;padding-top:18px;margin-top:18px;}
-  .rrprom .kpi{padding:14px 0 0;}
-  .rrprom .kpi::before{display:none!important;}
-  .rrprom .kpi .value{font-size:21px;}
   .rrprom .ndform{grid-template-columns:1fr;}
 
   .rrprom table.wide{min-width:0;}

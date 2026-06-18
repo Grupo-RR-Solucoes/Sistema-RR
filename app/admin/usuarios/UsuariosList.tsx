@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { canManageUserRole } from "@/lib/auth/permissions";
+import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
 
 import CreateUsuarioModal from "./CreateUsuarioModal";
 import EditUsuarioModal from "./EditUsuarioModal";
@@ -14,7 +15,6 @@ import {
   roleLabel,
 } from "./usuariosStyles";
 import {
-  IcoUsers, IcoShield, IcoBriefcase, IcoUser, IcoUserCog, IcoCheckSq, IcoLock,
   IcoSearch, IcoPlus, IcoPencil, IcoKey, IcoTrash, IcoBan, IcoUndo, IcoX,
   IcoAlertTri, IcoInfo,
 } from "./icons";
@@ -179,6 +179,7 @@ export default function UsuariosList({
 
   return (
     <div className="rradmin">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: RRADMIN_CSS }} />
       <div className="wrap">
         {/* breadcrumb */}
@@ -191,57 +192,27 @@ export default function UsuariosList({
         </nav>
 
         {/* HEADER */}
-        <header className="header">
-          <div className="header-top">
-            <div>
-              <p className="brand">GRUPO RR CRED</p>
-              <h1>Usuários</h1>
-              <p className="sub">
-                <IcoUserCog />
-                Gestão de acesso · contas e papéis
-              </p>
-            </div>
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title="Usuários"
+          subtitle="Gestão de acesso · contas e papéis"
+          actions={
             <div className="role">
               <span className={`d ${roleClass(currentUserRole)}`} />
               {currentUserEmail} · {roleLabel(currentUserRole)}
             </div>
-          </div>
-        </header>
-
-        {/* REGRAS */}
-        <div className="rules">
-          <span className="rlab">Regras desta tela</span>
-          <span className="rchip"><IcoUsers />Funcionário só gerencia <b>promotores</b></span>
-          <span className="rchip"><IcoLock />Senha exibida <b>uma vez</b></span>
-          <span className="rchip"><IcoCheckSq />Toda ação é <b>auditável</b></span>
-        </div>
-
-        {/* KPIs */}
-        <div className="kpis">
-          <div className="scard accent">
-            <p className="k"><span className="ki"><IcoUsers /></span>Total de usuários</p>
-            <div className="v num">{kpi.total}</div>
-            <div className="s">{kpi.ativos} ativos · {kpi.inativos} inativo{kpi.inativos === 1 ? "" : "s"}</div>
-          </div>
-          <div className="scard">
-            <span className="dotmark" style={{ background: "var(--blue)" }} />
-            <p className="k"><span className="ki"><IcoShield /></span>Sócios</p>
-            <div className="v num">{kpi.socios}</div>
-            <div className="s">acesso completo</div>
-          </div>
-          <div className="scard">
-            <span className="dotmark" style={{ background: "var(--gold)" }} />
-            <p className="k"><span className="ki"><IcoBriefcase /></span>Funcionários</p>
-            <div className="v num">{kpi.funcionarios}</div>
-            <div className="s">operacional</div>
-          </div>
-          <div className="scard">
-            <span className="dotmark" style={{ background: "var(--green)" }} />
-            <p className="k"><span className="ki"><IcoUser /></span>Promotores</p>
-            <div className="v num">{kpi.promotores}</div>
-            <div className="s">acesso aos próprios dados</div>
-          </div>
-        </div>
+          }
+        >
+          <KpiBand
+            valueSize={28}
+            items={[
+              { label: "Total de usuários", value: kpi.total, sub: `${kpi.ativos} ativos · ${kpi.inativos} inativo${kpi.inativos === 1 ? "" : "s"}`, accent: true },
+              { label: "Sócios", value: kpi.socios, sub: "acesso completo" },
+              { label: "Funcionários", value: kpi.funcionarios, sub: "operacional" },
+              { label: "Promotores", value: kpi.promotores, sub: "acesso aos próprios dados" },
+            ]}
+          />
+        </HeaderNavy>
 
         {error ? (
           <div className="errbar" role="alert">

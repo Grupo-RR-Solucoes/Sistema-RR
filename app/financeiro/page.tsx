@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+
 // Etapa 8 (enxugar menu) Fase 3 — Tela A "Financeiro" (socio): consolida o antigo
 // /financeiro (Caixa & Resultado) + /dre numa tela de 2 abas. Reusa /api/financeiro
 // e /api/dre verbatim (zero religação). Entrada preservada: SALDO INICIAL (a despesa
@@ -196,6 +198,7 @@ export default function FinanceiroPage() {
 
   return (
     <div className="rrfin">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
@@ -204,12 +207,10 @@ export default function FinanceiroPage() {
           <span>Financeiro</span>
         </nav>
 
-        <header className="header">
-          <div className="header-top">
-            <div>
-              <p className="brand">GRUPO RR CRED</p>
-              <h1>Financeiro</h1>
-            </div>
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title="Financeiro"
+          actions={
             <div className="comp">
               <select aria-label="Competência" value={periodKey} onChange={(e) => setSelectedKey(e.target.value)}>
                 {(fin?.periods ?? []).map((p) => (
@@ -220,7 +221,8 @@ export default function FinanceiroPage() {
               </select>
               <span className="chev">▾</span>
             </div>
-          </div>
+          }
+        >
           <div className="tabs" role="tablist">
             <button className="tab" role="tab" aria-selected={tab === "caixa"} onClick={() => setTab("caixa")}>
               Caixa &amp; Resultado
@@ -229,35 +231,25 @@ export default function FinanceiroPage() {
               DRE
             </button>
           </div>
-        </header>
+          {tab === "caixa" && fin ? (
+            <KpiBand
+              valueSize={26}
+              items={[
+                { label: "Recebido", value: brl(fin.summary.receivedNet), sub: "crédito recebido (bruto)" },
+                { label: "Comissões pagas", value: brl(fin.summary.comissoesPagas), sub: "repasse aos promotores", subTone: "gold" },
+                { label: "Despesas", value: brl(fin.summary.totalExpenses), sub: "operacionais" },
+                { label: "Saldo do mês", value: brl(fin.summary.operatingResult), sub: "recebido − comissões − despesas", subTone: "ok", accent: true },
+              ]}
+            />
+          ) : null}
+        </HeaderNavy>
 
         {error ? <div className="banner err">{error}</div> : null}
         {loading ? <div className="state">Carregando financeiro…</div> : null}
 
         {!loading && tab === "caixa" && fin ? (
           <div className="panes">
-            <div className="summary">
-              <div className="scard">
-                <p className="k">Recebido</p>
-                <div className="v num">{brl(fin.summary.receivedNet)}</div>
-                <div className="s">crédito recebido (bruto)</div>
-              </div>
-              <div className="scard">
-                <p className="k">Comissões pagas</p>
-                <div className="v num">{brl(fin.summary.comissoesPagas)}</div>
-                <div className="s gold">repasse aos promotores</div>
-              </div>
-              <div className="scard">
-                <p className="k">Despesas</p>
-                <div className="v num">{brl(fin.summary.totalExpenses)}</div>
-                <div className="s">operacionais</div>
-              </div>
-              <div className="scard accent">
-                <p className="k">Saldo do mês</p>
-                <div className="v num">{brl(fin.summary.operatingResult)}</div>
-                <div className="s green">recebido − comissões − despesas</div>
-              </div>
-            </div>
+            {/* os 4 KPIs migraram pro <KpiBand> dentro do <HeaderNavy> (aba Caixa) */}
             <p className="note"><span className="dot" />Saldo de <b>caixa</b> = recebido − comissões pagas − despesas. Difere do resultado da DRE pela receita complementar (competência, não caixa).</p>
 
             <section className="card">
@@ -439,11 +431,7 @@ const CSS = `
 .rrfin .crumb a{color:var(--ink-2);text-decoration:none;font-weight:500;}
 .rrfin .crumb a:hover{color:var(--navy);}
 .rrfin .crumb .sep{color:#C2C8D2;}
-.rrfin .header{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 34px;color:#fff;position:relative;overflow:hidden;}
-.rrfin .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rrfin .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
-.rrfin .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rrfin .header h1{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
+/* bloco navy + marca + h1 agora vêm do <HeaderNavy> do kit; .comp (select) e .tabs (children) ficam */
 .rrfin .comp{position:relative;}
 .rrfin .comp select{appearance:none;-webkit-appearance:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);color:#E4E9F4;padding:8px 36px 8px 14px;border-radius:999px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
 .rrfin .comp select option{color:#16203A;}
@@ -460,18 +448,7 @@ const CSS = `
 .rrfin .ilink{color:var(--navy);font-weight:600;text-decoration:none;}
 .rrfin .ilink:hover{color:var(--gold);}
 .rrfin .panes{display:flex;flex-direction:column;gap:22px;}
-.rrfin .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
-.rrfin .scard{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--shadow);padding:18px 20px 20px;}
-.rrfin .scard .k{font-size:12px;font-weight:500;color:var(--ink-3);margin:0 0 11px;}
-.rrfin .scard .v{font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);}
-.rrfin .scard .s{font-size:12px;margin-top:9px;color:var(--ink-3);}
-.rrfin .scard .s.green{color:var(--green);}
-.rrfin .scard .s.gold{color:var(--gold-deep);}
-.rrfin .scard.accent{background:var(--navy);border-color:var(--navy);}
-.rrfin .scard.accent .k{color:#9DA9C6;}
-.rrfin .scard.accent .v{color:#fff;}
-.rrfin .scard.accent .s{color:#8C98B6;}
-.rrfin .scard.accent .s.green{color:var(--green-soft);}
+/* os 4 KPIs (.summary/.scard) agora vêm do <KpiBand valueSize={26}> do kit (navy embutido) */
 .rrfin .card{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:26px 28px;}
 .rrfin .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:4px;}
 .rrfin .card-head h2{font-size:16.5px;font-weight:600;letter-spacing:-.01em;margin:0;color:var(--ink);}
@@ -551,11 +528,8 @@ const CSS = `
 
 @media (max-width:760px){
   .rrfin .wrap{padding:18px 16px 40px;gap:16px;}
-  .rrfin .header{padding:22px 20px 24px;}
-  .rrfin .header h1{font-size:22px;}
   .rrfin .tabs{width:100%;}
   .rrfin .tab{flex:1;text-align:center;}
-  .rrfin .summary{grid-template-columns:1fr 1fr;}
   .rrfin .card{padding:20px 18px;}
   .rrfin .flow{grid-template-columns:1fr;gap:24px;}
   .rrfin .flow .panel{padding:0;}

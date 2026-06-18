@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useUser } from "../../lib/auth/useUser";
 import EmptyStatePanel from "../../components/EmptyStatePanel";
 import FeedbackBanner from "../../components/FeedbackBanner";
+import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
 
 // ============================================================
 // /importacoes — identidade .rrimp.
@@ -354,6 +355,7 @@ export default function ImportacoesPage() {
 
   return (
     <div className="rrimp">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb">
@@ -364,25 +366,42 @@ export default function ImportacoesPage() {
           <span>Importações</span>
         </nav>
 
-        {/* HEADER navy scoped */}
-        <header className="header">
-          <div className="header-top">
-            <div>
-              <p className="brand">GRUPO RR CRED</p>
-              <h1>Importações</h1>
-              <p className="sub">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 3v13" /><path d="m7 12 5 5 5-5" /><path d="M5 21h14" />
-                </svg>
-                Entrada de dados do sistema
-              </p>
-            </div>
+        {/* HEADER navy (kit) — KPIs + abas como children (modelo Financeiro) */}
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title="Importações"
+          subtitle="Entrada de dados do sistema"
+          actions={
             <div className="role">
               <span className="d" />
               {isFuncionario ? "Funcionário · leitura" : "Sócio · acesso total"}
             </div>
+          }
+        >
+          <KpiBand
+            valueSize={22}
+            items={[
+              { label: "Cargas diárias", value: data.summary.dailyImports, sub: "total importadas" },
+              { label: "Fechamentos mensais", value: data.summary.monthlyClosingImports, sub: "total importados" },
+              { label: "Última diária", value: formatDateTime(data.summary.lastDailyImportAt), sub: lastDaily ? `${lastDaily.rows_count || 0} linhas · ${lastDaily.file_name}` : "sem cargas ainda", accent: true },
+              { label: "Último fechamento", value: formatDateTime(data.summary.lastMonthlyClosingImportAt), sub: lastMonthly ? `${lastMonthly.company_name} · ${String(lastMonthly.month).padStart(2, "0")}/${lastMonthly.year}` : "sem fechamentos ainda" },
+            ]}
+          />
+          <div className="tabbar" role="tablist">
+            <button className={`tab${activeSection === "base" ? " on" : ""}`} onClick={() => setActiveSection("base")}>
+              <span className="tn">1</span>Base operacional
+            </button>
+            <button className={`tab${activeSection === "diaria" ? " on" : ""}`} onClick={() => setActiveSection("diaria")}>
+              <span className="tn">2</span>Diária
+            </button>
+            <button className={`tab${activeSection === "fechamento" ? " on" : ""}`} onClick={() => setActiveSection("fechamento")}>
+              <span className="tn">3</span>Fechamento mensal
+            </button>
+            <button className={`tab${activeSection === "historico" ? " on" : ""}`} onClick={() => setActiveSection("historico")}>
+              <span className="tn">4</span>Histórico
+            </button>
           </div>
-        </header>
+        </HeaderNavy>
 
         {/* INFO · fluxo recomendado */}
         <div className="infobar">
@@ -421,50 +440,6 @@ export default function ImportacoesPage() {
             actionHref="/auditoria"
           />
         ) : null}
-
-        {/* SUMMARY KPIs (reais) */}
-        <div className="scards">
-          <div className="scard">
-            <p className="k"><span className="ic"><IcoRows /></span>Cargas diárias</p>
-            <div className="v num">{data.summary.dailyImports}</div>
-            <div className="s">total importadas</div>
-          </div>
-          <div className="scard">
-            <p className="k"><span className="ic"><IcoCal /></span>Fechamentos mensais</p>
-            <div className="v num">{data.summary.monthlyClosingImports}</div>
-            <div className="s">total importados</div>
-          </div>
-          <div className="scard accent">
-            <p className="k"><span className="ic"><IcoClock /></span>Última diária</p>
-            <div className="v sm num">{formatDateTime(data.summary.lastDailyImportAt)}</div>
-            <div className="s">
-              {lastDaily ? `${lastDaily.rows_count || 0} linhas · ${lastDaily.file_name}` : "sem cargas ainda"}
-            </div>
-          </div>
-          <div className="scard">
-            <p className="k"><span className="ic"><IcoCheck /></span>Último fechamento</p>
-            <div className="v sm num">{formatDateTime(data.summary.lastMonthlyClosingImportAt)}</div>
-            <div className="s">
-              {lastMonthly ? `${lastMonthly.company_name} · ${String(lastMonthly.month).padStart(2, "0")}/${lastMonthly.year}` : "sem fechamentos ainda"}
-            </div>
-          </div>
-        </div>
-
-        {/* TABS */}
-        <div className="tabbar" role="tablist">
-          <button className={`tab${activeSection === "base" ? " on" : ""}`} onClick={() => setActiveSection("base")}>
-            <span className="tn">1</span>Base operacional
-          </button>
-          <button className={`tab${activeSection === "diaria" ? " on" : ""}`} onClick={() => setActiveSection("diaria")}>
-            <span className="tn">2</span>Diária
-          </button>
-          <button className={`tab${activeSection === "fechamento" ? " on" : ""}`} onClick={() => setActiveSection("fechamento")}>
-            <span className="tn">3</span>Fechamento mensal
-          </button>
-          <button className={`tab${activeSection === "historico" ? " on" : ""}`} onClick={() => setActiveSection("historico")}>
-            <span className="tn">4</span>Histórico
-          </button>
-        </div>
 
         {/* ===================== ABA BASE OPERACIONAL ===================== */}
         {activeSection === "base" ? (
@@ -1007,10 +982,7 @@ function formatDateTime(value?: string | null) {
 
 // ---------- icons ----------
 function Arrow() { return <span className="arr"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg></span>; }
-function IcoRows() { return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16v6H4z" /><path d="M4 14h16v6H4z" /><path d="M8 7h.01M8 17h.01" /></svg>; }
-function IcoCal() { return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="5" width="16" height="16" rx="2" /><path d="M4 9h16M9 3v4M15 3v4" /></svg>; }
 function IcoClock() { return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>; }
-function IcoCheck() { return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>; }
 function IcoInfo() { return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 16v-5" /><path d="M12 8h.01" /></svg>; }
 function IcoLock() { return <svg className="lk" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>; }
 function IcoPdf() { return <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3v5h5" /><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M9 13h2M9 17h4" /></svg>; }
@@ -1054,15 +1026,8 @@ const CSS = `
 .rrimp .crumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-3);margin:0 2px -2px;}
 .rrimp .crumb .sep{color:#C2C8D2;}
 
-.rrimp .header{background:var(--navy);border-radius:var(--r-lg);padding:28px 32px 30px;color:#fff;position:relative;overflow:hidden;}
-.rrimp .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rrimp .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:22px;flex-wrap:wrap;}
-.rrimp .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rrimp .header h1{font-size:26px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
-.rrimp .header .sub{font-size:12.5px;color:#9DA9C6;margin:9px 0 0;display:flex;align-items:center;gap:8px;}
-.rrimp .header .sub svg{display:block;}
-.rrimp .header .role{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);color:#E4E9F4;padding:8px 14px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;}
-.rrimp .header .role .d{width:7px;height:7px;border-radius:50%;background:var(--yellow);}
+.rrimp .role{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);color:#E4E9F4;padding:8px 14px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;}
+.rrimp .role .d{width:7px;height:7px;border-radius:50%;background:var(--yellow);}
 
 .rrimp .infobar{display:flex;align-items:center;gap:14px;background:#EAF0FB;border:1px solid #D5E0F4;border-radius:var(--r-md);padding:14px 18px;flex-wrap:wrap;}
 .rrimp .infobar .ic{flex:none;width:30px;height:30px;border-radius:9px;background:#fff;border:1px solid #D5E0F4;display:grid;place-items:center;color:var(--navy);}
@@ -1073,21 +1038,7 @@ const CSS = `
 .rrimp .flow .step .n{width:16px;height:16px;border-radius:50%;background:var(--navy);color:#fff;font-size:9.5px;display:grid;place-items:center;font-weight:700;}
 .rrimp .flow .arr{color:#9DB0D6;display:grid;place-items:center;}
 
-.rrimp .scards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
-.rrimp .scard{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);box-shadow:var(--shadow);padding:18px 20px 19px;display:flex;flex-direction:column;position:relative;overflow:hidden;}
-.rrimp .scard .k{font-size:12px;font-weight:500;color:var(--ink-3);margin:0 0 11px;display:flex;align-items:center;gap:8px;}
-.rrimp .scard .k .ic{width:22px;height:22px;border-radius:6px;background:#EDF0F6;color:var(--navy);display:grid;place-items:center;flex:none;}
-.rrimp .scard .v{font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--ink);}
-.rrimp .scard .v.sm{font-size:19px;}
-.rrimp .scard .s{font-size:12px;margin-top:9px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.rrimp .scard.accent{background:var(--navy);border-color:var(--navy);}
-.rrimp .scard.accent::after{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--gold);}
-.rrimp .scard.accent .k{color:#9DA9C6;}
-.rrimp .scard.accent .k .ic{background:rgba(255,255,255,.08);color:var(--yellow);}
-.rrimp .scard.accent .v{color:#fff;}
-.rrimp .scard.accent .s{color:#8C98B6;}
-
-.rrimp .tabbar{display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--bd);border-radius:999px;box-shadow:var(--shadow);padding:6px;width:fit-content;max-width:100%;flex-wrap:wrap;}
+.rrimp .tabbar{display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--bd);border-radius:999px;box-shadow:var(--shadow);padding:6px;width:fit-content;max-width:100%;flex-wrap:wrap;margin-top:24px;}
 .rrimp .tab{display:inline-flex;align-items:center;gap:9px;border:none;background:none;font-family:inherit;font-size:13px;font-weight:600;color:var(--ink-2);padding:9px 18px;border-radius:999px;cursor:pointer;transition:background .14s,color .14s;white-space:nowrap;}
 .rrimp .tab .tn{width:18px;height:18px;border-radius:50%;background:#EDF0F6;color:var(--ink-3);font-size:10px;display:grid;place-items:center;font-weight:700;transition:background .14s,color .14s;}
 .rrimp .tab:hover{background:#F4F6F9;color:var(--navy);}
@@ -1308,7 +1259,6 @@ const CSS = `
 .rrimp .alert .api .mono{color:var(--ink-2);}
 
 @media (max-width:980px){
-  .rrimp .scards{grid-template-columns:1fr 1fr;}
   .rrimp .two-up{grid-template-columns:1fr;}
   .rrimp .uhint{max-width:100%;}
   .rrimp .rstats{grid-template-columns:repeat(3,1fr);}
@@ -1318,9 +1268,6 @@ const CSS = `
 }
 @media (max-width:640px){
   .rrimp .wrap{padding:20px 16px 46px;}
-  .rrimp .header{padding:22px 20px 24px;}
-  .rrimp .header h1{font-size:21px;}
-  .rrimp .scards{grid-template-columns:1fr;}
   .rrimp .frow{grid-template-columns:1fr;}
   .rrimp .tabbar{width:100%;justify-content:space-between;}
   .rrimp .tab{padding:9px 12px;}

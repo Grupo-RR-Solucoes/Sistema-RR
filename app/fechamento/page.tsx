@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+
 // ============================================================
 // FECHAMENTO (Etapa 8) — fiel ao Fechamento_referencia.html (identidade), FOCADO EM
 // RECEBIDO (real). Previsto/cobertura/gap ficam de fora: o forecast vem zerado pelo
@@ -52,13 +54,15 @@ export default function FechamentoPage() {
 
   return (
     <div className="rrfech">
+      <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <nav className="crumb"><Link href="/dashboard">Dashboard</Link><span className="sep">/</span><span>Fechamento</span></nav>
 
-        <header className="header">
-          <div className="header-top">
-            <div><p className="brand">GRUPO RR CRED</p><h1>Fechamento mensal</h1></div>
+        <HeaderNavy
+          brand="GRUPO RR CRED"
+          title="Fechamento mensal"
+          actions={
             <div className="comp">
               <select aria-label="Competência" value={periodValue} onChange={(e) => setSelectedKey(e.target.value)}>
                 {(data?.periods ?? []).map((p) => (
@@ -67,14 +71,22 @@ export default function FechamentoPage() {
               </select>
               <span className="chev">▾</span>
             </div>
-          </div>
-
-          <div className="stats">
-            <div className="stat"><p className="label">Recebido real</p><div className="value num">{s ? brl0(s.recebido) : "—"}</div><div className="sub">crédito confirmado na competência</div></div>
-            <div className="stat"><p className="label">Empresas</p><div className="value num">{s ? s.empresas : "—"}</div><div className="sub">CNPJs com recebimento</div></div>
-            <div className="stat"><p className="label">vs mês anterior</p><div className="value num">{s && s.variacaoPct != null ? signedPct(s.variacaoPct) : "—"}</div><div className={`sub${s && s.variacaoPct != null && s.variacaoPct >= 0 ? " green" : ""}`}>{s && s.variacaoPct != null ? "variação do recebido" : "sem mês anterior"}</div></div>
-          </div>
-        </header>
+          }
+        >
+          <KpiBand
+            valueSize={38}
+            items={[
+              { label: "Recebido real", value: s ? brl0(s.recebido) : "—", sub: "crédito confirmado na competência" },
+              { label: "Empresas", value: s ? s.empresas : "—", sub: "CNPJs com recebimento" },
+              {
+                label: "vs mês anterior",
+                value: s && s.variacaoPct != null ? signedPct(s.variacaoPct) : "—",
+                sub: s && s.variacaoPct != null ? "variação do recebido" : "sem mês anterior",
+                subTone: s && s.variacaoPct != null && s.variacaoPct >= 0 ? "ok" : "neutral",
+              },
+            ]}
+          />
+        </HeaderNavy>
 
         {error ? <div className="aguard">{error}</div> : null}
 
@@ -155,23 +167,12 @@ const CSS = `
 .rrfech .crumb a{color:var(--ink-2);text-decoration:none;font-weight:500;}
 .rrfech .crumb a:hover{color:var(--navy);}
 .rrfech .crumb .sep{color:#C2C8D2;}
-.rrfech .header{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 34px;color:#fff;position:relative;overflow:hidden;}
-.rrfech .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
-.rrfech .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
-.rrfech .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
-.rrfech .header h1{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
+/* bloco navy + marca + h1 agora vêm do <HeaderNavy> do kit; .comp (select) fica */
 .rrfech .comp{position:relative;}
 .rrfech .comp select{appearance:none;-webkit-appearance:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);color:#E4E9F4;padding:8px 36px 8px 14px;border-radius:999px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
 .rrfech .comp select:focus{outline:none;border-color:rgba(255,255,255,.35);}
 .rrfech .comp .chev{position:absolute;right:14px;top:50%;transform:translateY(-50%);pointer-events:none;color:#9DA9C6;font-size:11px;}
-.rrfech .stats{margin-top:28px;display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}
-.rrfech .stat{padding:0 26px;position:relative;}
-.rrfech .stat:first-child{padding-left:0;}
-.rrfech .stat + .stat::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:1px;background:rgba(255,255,255,.10);}
-.rrfech .stat .label{font-size:12px;font-weight:500;color:#9DA9C6;margin:0 0 10px;}
-.rrfech .stat .value{font-size:38px;font-weight:600;letter-spacing:-.02em;line-height:1;color:#fff;}
-.rrfech .stat .sub{font-size:12.5px;margin-top:9px;color:#8C98B6;}
-.rrfech .stat .sub.green{color:var(--green-soft);}
+/* faixa de stats agora vem do <KpiBand valueSize={38}> do kit */
 .rrfech .note{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-3);}
 .rrfech .note .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(60,157,107,.13);}
 .rrfech .note b{color:var(--ink-2);font-weight:600;}
@@ -202,14 +203,6 @@ const CSS = `
 .rrfech .xrow span{text-align:center;font-size:12.5px;color:var(--ink-3);}
 .rrfech .xrow span.cur{color:var(--navy);font-weight:600;}
 @media (max-width:720px){
-  .rrfech .header{padding:22px 20px 24px;}
-  .rrfech .header h1{font-size:22px;}
-  .rrfech .stats{grid-template-columns:1fr;padding-top:18px;margin-top:20px;}
-  .rrfech .stat{padding:18px 0;}
-  .rrfech .stat:first-child{padding-top:0;}
-  .rrfech .stat + .stat::before{display:none;}
-  .rrfech .stat + .stat{border-top:1px solid rgba(255,255,255,.10);}
-  .rrfech .stat .value{font-size:32px;}
   .rrfech .card{padding:20px 18px;}
   .rrfech .thead{display:none;}
   .rrfech .trow{grid-template-columns:1fr 1fr;gap:10px 14px;padding:16px 0;}

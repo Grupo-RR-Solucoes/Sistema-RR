@@ -27,6 +27,31 @@
 
   --rr-sidebar-width: 220px;
   --rr-sidebar-collapsed-width: 64px;
+
+  /* === Design System RR — tokens canônicos (Sistema_de_Design_RR) — Etapa 1 ===
+     Aditivos. Os --rr-* acima e os tokens redeclarados nas páginas seguem
+     intactos; dedup/migração para estes é a Etapa 3. */
+  --accent: #FFF000;                                       /* acento AMARELO aprovado */
+
+  --navy: #0F1F4A;   --navy-deep: #0B1838;  --navy-bar: #1E3066;
+  --blue: #0d4de3;   --blue-bg: #EAF0FB;    --blue-bd: #D5E0F4;
+  --gold: #D6A13F;   --gold-deep: #B9842A;  --gold-soft: #E7BE6A;
+  --ink: #16203A;    --ink-2: #4B5468;      --ink-3: #838B9C;
+  --bd: #E4E7EC;     --bd-soft: #EEF0F4;    --neu: #F1F3F7;
+  --paper: #FFFFFF;  --bg: #F4F6FB;
+
+  /* semânticos canônicos */
+  --ok: #1F8A5B;     --ok-bg: #E7F4EE;      --ok-bd: #C2E4D2;   --ok-soft: #5FB98A;  /* verde claro p/ texto sobre navy */
+  --warn: #B07A12;   --warn-bg: #FBF1DC;    --warn-bd: #EAD7A6;
+  --risk: #C0392B;   --risk-bg: #FBEAE7;    --risk-bd: #F1C9C0;   --risk-soft: #E07A72;  /* vermelho claro p/ texto sobre navy */
+
+  /* semáforo saturado (dot + barra sobre navy) — família distinta dos soft (texto) e dos escuros do kit (texto sobre branco) */
+  --sem-ok: #3C9D6B;   --sem-warn: #D69A1E;   --sem-risk: #C0443C;
+
+  /* raios + sombras */
+  --r-btn: 8px;      --r-card: 12px;     --r-lg: 20px;   /* --r-lg: bloco navy (HeaderNavy) */
+  --sh-1: 0 8px 24px rgba(15, 31, 74, 0.08);
+  --sh-2: 0 4px 12px rgba(15, 31, 74, 0.05);
 }
 
 * {
@@ -40,7 +65,7 @@ html {
 body {
   margin: 0;
   color: var(--rr-navy);
-  font-family: var(--font-body), sans-serif;
+  font-family: var(--font-sans), "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   background: #F4F6FB;
 }
 
@@ -50,7 +75,7 @@ h3,
 h4,
 h5,
 h6 {
-  font-family: var(--font-heading), sans-serif;
+  font-family: var(--font-sans), "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   letter-spacing: -0.02em;
 }
 
@@ -79,7 +104,7 @@ a {
   top: 0;
   height: 100vh;
   overflow: hidden; /* header/divisor fixos; so a .rr-sb-nav rola */
-  background: var(--rr-navy);
+  background: var(--navy);
   transition: width 180ms ease;
   display: flex;
   flex-direction: column;
@@ -229,7 +254,7 @@ a {
 
 /* ativo — mantem o amarelo */
 .rr-sb-item.active {
-  border-left-color: var(--rr-yellow);
+  border-left-color: var(--accent);
   background: rgba(13, 77, 227, 0.45);
 }
 .rr-sb-item.active:hover {
@@ -240,8 +265,8 @@ a {
   font-weight: 700;
 }
 .rr-sb-item.active .rr-sb-ic {
-  background: var(--rr-yellow);
-  color: var(--rr-navy);
+  background: var(--accent);
+  color: var(--navy);
 }
 
 /* recolhido: so o icone, centralizado */
@@ -263,12 +288,12 @@ a {
 .rr-content {
   min-width: 0;
   display: grid;
-  grid-template-rows: 56px 1fr;
+  grid-template-rows: 40px 1fr;
 }
 
 .rr-main {
   padding: 20px 24px 32px;
-  background: #F4F6FB;
+  background: var(--bg);
 }
 
 .rr-main-shell {
@@ -281,9 +306,9 @@ a {
   position: sticky;
   top: 0;
   z-index: 12;
-  background: #ffffff;
+  background: var(--paper);
   border-bottom: 1px solid var(--rr-line);
-  height: 56px;
+  height: 40px;
 }
 
 

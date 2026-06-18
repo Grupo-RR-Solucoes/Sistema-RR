@@ -3,20 +3,11 @@
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { IBM_Plex_Sans } from "next/font/google";
 import { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "./BrandLogo";
 import { useUser } from "../lib/auth/useUser";
 import type { UserRole } from "../lib/auth/types";
-
-// Fonte da sidebar (mock Sidebar_Sistema_RR). Escopada via className no <aside>
-// para nao alterar a topbar nem os headers por-tela.
-const ibmPlex = IBM_Plex_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-});
 
 // Icones Lucide (stroke 1.8) — paths verbatim do mock aprovado.
 const ICON_PATHS: Record<string, string> = {
@@ -66,6 +57,42 @@ function Chevron({ dir }: { dir: "left" | "right" }) {
       strokeLinecap="round"
       strokeLinejoin="round"
       dangerouslySetInnerHTML={{ __html: CHEVRON[dir] }}
+    />
+  );
+}
+
+// Logout (Lucide log-out) + Menu (Lucide menu) — mesmo idioma dos ícones da nav.
+const LOGOUT_PATH =
+  '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>';
+function LogoutIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      dangerouslySetInnerHTML={{ __html: LOGOUT_PATH }}
+    />
+  );
+}
+
+const MENU_PATH = '<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>';
+function MenuIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      dangerouslySetInnerHTML={{ __html: MENU_PATH }}
     />
   );
 }
@@ -219,16 +246,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
       .filter((group) => group.items.length > 0);
   }, [user?.role]);
 
-  const allItems = visibleNavGroups.flatMap((g) => g.items);
-  const currentItem =
-    allItems.find((item) => isItemActive(item)) ??
-    visibleNavGroups[0]?.items[0] ??
-    navGroups[0].items[0];
-  const currentGroup =
-    visibleNavGroups.find((group) =>
-      group.items.some((item) => isItemActive(item))
-    ) ?? visibleNavGroups[0] ?? navGroups[0];
-
   function toggleSidebar() {
     if (isMobile) {
       setMobileOpen((c) => !c);
@@ -260,7 +277,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         onClick={() => setMobileOpen(false)}
       />
 
-      <aside className={`rr-sidebar ${ibmPlex.className}`}>
+      <aside className="rr-sidebar">
         {/* Header do sidebar: logo + toggle (fixos no topo) */}
         <div className="rr-sb-head">
           {collapsed ? (
@@ -334,14 +351,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 style={styles.mobileToggle}
                 aria-label="Abrir menu"
               >
-                ≡
+                <MenuIcon />
               </button>
             ) : null}
-            <nav aria-label="Trilha" style={styles.breadcrumb}>
-              <span style={styles.crumbSection}>{currentGroup.label}</span>
-              <span style={styles.crumbSep}>›</span>
-              <span style={styles.crumbActive}>{currentItem.label}</span>
-            </nav>
           </div>
 
           <div style={styles.topbarRight}>
@@ -369,7 +381,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                     aria-label="Sair"
                     title="Sair"
                   >
-                    ↩
+                    <LogoutIcon />
                   </button>
                 </form>
               </>
@@ -391,7 +403,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     paddingInline: 20,
-    height: 56,
+    height: 40,
     gap: 16,
   },
   topbarLeft: {
@@ -406,32 +418,10 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 8,
     border: "1px solid var(--rr-line)",
     background: "#fff",
-    color: "var(--rr-navy)",
+    color: "var(--navy)",
     fontSize: 18,
     fontWeight: 700,
     cursor: "pointer",
-  },
-  breadcrumb: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    fontSize: 13,
-    minWidth: 0,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  crumbSection: {
-    color: "var(--rr-muted)",
-    fontWeight: 500,
-  },
-  crumbSep: {
-    color: "var(--rr-line-strong)",
-    fontWeight: 400,
-  },
-  crumbActive: {
-    color: "#0d4de3",
-    fontWeight: 600,
   },
   topbarRight: {
     display: "flex",
@@ -443,8 +433,8 @@ const styles: Record<string, CSSProperties> = {
     width: 30,
     height: 30,
     borderRadius: "50%",
-    background: "#0d4de3",
-    color: "#FFFFFF",
+    background: "var(--navy)",
+    color: "var(--accent)",
     fontSize: 13,
     fontWeight: 700,
     display: "grid",
@@ -459,7 +449,7 @@ const styles: Record<string, CSSProperties> = {
   userName: {
     fontSize: 13,
     fontWeight: 600,
-    color: "var(--rr-navy)",
+    color: "var(--navy)",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -468,7 +458,7 @@ const styles: Record<string, CSSProperties> = {
   userRole: {
     fontSize: 11,
     fontWeight: 700,
-    color: "#d6a13f",
+    color: "var(--gold)",
     letterSpacing: "0.04em",
   },
   logoutForm: {
@@ -481,7 +471,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 8,
     border: "1px solid var(--rr-line)",
     background: "#fff",
-    color: "var(--rr-navy)",
+    color: "var(--navy)",
     fontSize: 14,
     fontWeight: 700,
     cursor: "pointer",
