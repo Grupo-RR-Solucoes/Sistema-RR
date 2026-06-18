@@ -3,20 +3,11 @@
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { IBM_Plex_Sans } from "next/font/google";
 import { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "./BrandLogo";
 import { useUser } from "../lib/auth/useUser";
 import type { UserRole } from "../lib/auth/types";
-
-// Fonte da sidebar (mock Sidebar_Sistema_RR). Escopada via className no <aside>
-// para nao alterar a topbar nem os headers por-tela.
-const ibmPlex = IBM_Plex_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-});
 
 // Icones Lucide (stroke 1.8) — paths verbatim do mock aprovado.
 const ICON_PATHS: Record<string, string> = {
@@ -260,7 +251,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         onClick={() => setMobileOpen(false)}
       />
 
-      <aside className={`rr-sidebar ${ibmPlex.className}`}>
+      <aside className="rr-sidebar">
         {/* Header do sidebar: logo + toggle (fixos no topo) */}
         <div className="rr-sb-head">
           {collapsed ? (
@@ -406,7 +397,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 8,
     border: "1px solid var(--rr-line)",
     background: "#fff",
-    color: "var(--rr-navy)",
+    color: "var(--navy)",
     fontSize: 18,
     fontWeight: 700,
     cursor: "pointer",
@@ -459,7 +450,7 @@ const styles: Record<string, CSSProperties> = {
   userName: {
     fontSize: 13,
     fontWeight: 600,
-    color: "var(--rr-navy)",
+    color: "var(--navy)",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -468,7 +459,7 @@ const styles: Record<string, CSSProperties> = {
   userRole: {
     fontSize: 11,
     fontWeight: 700,
-    color: "#d6a13f",
+    color: "var(--gold)",
     letterSpacing: "0.04em",
   },
   logoutForm: {
@@ -481,7 +472,7 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 8,
     border: "1px solid var(--rr-line)",
     background: "#fff",
-    color: "var(--rr-navy)",
+    color: "var(--navy)",
     fontSize: 14,
     fontWeight: 700,
     cursor: "pointer",

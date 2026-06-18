@@ -104,7 +104,7 @@ a {
   top: 0;
   height: 100vh;
   overflow: hidden; /* header/divisor fixos; so a .rr-sb-nav rola */
-  background: var(--rr-navy);
+  background: var(--navy);
   transition: width 180ms ease;
   display: flex;
   flex-direction: column;
@@ -254,7 +254,7 @@ a {
 
 /* ativo — mantem o amarelo */
 .rr-sb-item.active {
-  border-left-color: var(--rr-yellow);
+  border-left-color: var(--accent);
   background: rgba(13, 77, 227, 0.45);
 }
 .rr-sb-item.active:hover {
@@ -265,8 +265,8 @@ a {
   font-weight: 700;
 }
 .rr-sb-item.active .rr-sb-ic {
-  background: var(--rr-yellow);
-  color: var(--rr-navy);
+  background: var(--accent);
+  color: var(--navy);
 }
 
 /* recolhido: so o icone, centralizado */
@@ -293,7 +293,7 @@ a {
 
 .rr-main {
   padding: 20px 24px 32px;
-  background: #F4F6FB;
+  background: var(--bg);
 }
 
 .rr-main-shell {
@@ -306,7 +306,7 @@ a {
   position: sticky;
   top: 0;
   z-index: 12;
-  background: #ffffff;
+  background: var(--paper);
   border-bottom: 1px solid var(--rr-line);
   height: 56px;
 }
