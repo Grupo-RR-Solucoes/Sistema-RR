@@ -23,6 +23,13 @@ function num(v: unknown): number {
   return Number(String(v).replace(/\./g, "").replace(",", "."));
 }
 
+// data_credito: lancamento manual entra no caixa pela data REAL do credito
+// (sem defasagem M+1). Default neutro = dia 1 da competencia (ano/mes); o
+// usuario ajusta livremente do 1o ao ultimo dia (sem trava de dia util aqui).
+function defaultCreditDate(ano: number, mes: number): string {
+  return `${ano}-${String(mes).padStart(2, "0")}-01`;
+}
+
 export async function GET(req: Request) {
   try {
     const { supabase } = await withSocioOrFuncionarioAdmin();
@@ -33,7 +40,7 @@ export async function GET(req: Request) {
 
     let q = supabase
       .from("receita_lancamento_manual")
-      .select("id, company_id, ano, mes, categoria, valor, descricao, created_at, updated_at")
+      .select("id, company_id, ano, mes, categoria, valor, descricao, data_credito, created_at, updated_at")
       .order("ano", { ascending: false })
       .order("mes", { ascending: false })
       .order("created_at", { ascending: false });
@@ -65,6 +72,9 @@ export async function POST(req: Request) {
     const categoria = String(body?.categoria || "");
     const valor = num(body?.valor);
     const descricao = body?.descricao ? String(body.descricao) : null;
+    const data_credito = body?.data_credito
+      ? String(body.data_credito)
+      : defaultCreditDate(ano, mes);
 
     if (!company_id || !ano || !mes || mes < 1 || mes > 12) {
       return NextResponse.json({ error: "Informe empresa e competencia (ano/mes)." }, { status: 400 });
@@ -78,7 +88,7 @@ export async function POST(req: Request) {
 
     const { data, error } = await supabase
       .from("receita_lancamento_manual")
-      .insert({ company_id, ano, mes, categoria, valor, descricao })
+      .insert({ company_id, ano, mes, categoria, valor, descricao, data_credito })
       .select()
       .single();
     if (error) throw error;
@@ -111,6 +121,7 @@ export async function PATCH(req: Request) {
     }
     if (body.descricao !== undefined) patch.descricao = body.descricao ? String(body.descricao) : null;
     if (body.company_id !== undefined) patch.company_id = String(body.company_id);
+    if (body.data_credito !== undefined && body.data_credito) patch.data_credito = String(body.data_credito);
 
     const { error } = await supabase.from("receita_lancamento_manual").update(patch).eq("id", id);
     if (error) throw error;

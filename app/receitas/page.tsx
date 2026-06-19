@@ -33,11 +33,40 @@ type Lancamento = {
   categoria: string;
   valor: number;
   descricao: string;
+  data_credito: string | null;
 };
 
 const brl = (v: number | null | undefined) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(Number(v ?? 0));
 const mm = (v: number) => `R$ ${(v / 1e6).toFixed(2).replace(".", ",")}MM`;
+// dígitos -> string BR mascarada "1.234,56" (mesmo formato do input de criação).
+function maskDigits(digits: string) {
+  const p = (digits || "").padStart(3, "0");
+  return `${p.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, ".")},${p.slice(-2)}`;
+}
+// número (vindo da API) -> string BR mascarada para preencher o input na edição.
+function numberToMask(n: number | null | undefined) {
+  const cents = Math.round(Math.abs(Number(n ?? 0)) * 100);
+  return maskDigits(String(cents));
+}
+// data do credito: chave de competencia "YYYY-MM" -> dia 1 ("YYYY-MM-01")
+const firstDayOf = (key: string) => (key ? `${key}-01` : "");
+// ultimo dia da competencia "YYYY-MM" -> "YYYY-MM-DD" (limite VISUAL do date
+// picker; sem trava de dia util no codigo — a regra de negocio aceita 1->ultimo).
+const lastDayOf = (key: string) => {
+  if (!key) return "";
+  const [y, m] = key.split("-").map(Number);
+  if (!y || !m) return "";
+  const last = new Date(y, m, 0).getDate();
+  return `${key}-${String(last).padStart(2, "0")}`;
+};
+// "YYYY-MM-DD" -> "dd/mm/aa" (so a parte da data; ignora hora se vier)
+const fmtData = (d?: string | null) => {
+  if (!d) return "—";
+  const [y, m, dd] = String(d).slice(0, 10).split("-");
+  if (!y || !m || !dd) return "—";
+  return `${dd}/${m}/${y.slice(-2)}`;
+};
 
 function buildPeriods() {
   const out: { key: string; label: string; ano: number; mes: number }[] = [];
@@ -80,8 +109,17 @@ export default function ReceitasPage() {
   const [fValor, setFValor] = useState("");
   const [fTipo, setFTipo] = useState("CONSORCIO");
   const [fDesc, setFDesc] = useState("");
+  const [fData, setFData] = useState(""); // data do credito (YYYY-MM-DD)
+  const [dataTouched, setDataTouched] = useState(false); // usuario ajustou a data?
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // edição inline de um lançamento existente
+  const [editId, setEditId] = useState<string | null>(null);
+  const [eValor, setEValor] = useState("");
+  const [eTipo, setETipo] = useState("CONSORCIO");
+  const [eDesc, setEDesc] = useState("");
+  const [eData, setEData] = useState("");
+  const [eSaving, setESaving] = useState(false);
 
   const periodKey = selectedKey || periods.find((p) => isClosed(p.ano, p.mes))?.key || periods[0]?.key || "";
   const period = periods.find((p) => p.key === periodKey) || periods[0];
@@ -119,6 +157,11 @@ export default function ReceitasPage() {
   useEffect(() => {
     if (!fEmp && companies[0]) setFEmp(companies[0].id);
   }, [companies, fEmp]);
+  // default da data do credito = dia 1 da competencia do form; so reescreve
+  // enquanto o usuario nao tiver ajustado a data manualmente.
+  useEffect(() => {
+    if (!dataTouched && fComp) setFData(firstDayOf(fComp));
+  }, [fComp, dataTouched]);
 
   function onValor(raw: string) {
     const digits = raw.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
@@ -150,6 +193,8 @@ export default function ReceitasPage() {
           categoria: fTipo,
           valor: fValor,
           descricao: fDesc.trim() || "Receita complementar",
+          // data REAL do credito; se vazia, a API aplica dia 1 da competencia.
+          data_credito: fData || firstDayOf(fComp),
         }),
       });
       const j = await res.json();
@@ -158,6 +203,7 @@ export default function ReceitasPage() {
       setTimeout(() => setSaved(false), 2200);
       setFValor("");
       setFDesc("");
+      setDataTouched(false); // volta a sugerir dia 1 da competencia no proximo
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar.");
@@ -174,6 +220,57 @@ export default function ReceitasPage() {
       await loadAll();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao remover.");
+    }
+  }
+
+  // competência "YYYY-MM" do lançamento (para min/max do date picker na edição)
+  const keyOf = (l: Lancamento) => `${l.ano}-${String(l.mes).padStart(2, "0")}`;
+
+  function startEdit(l: Lancamento) {
+    setEditId(l.id);
+    setEValor(numberToMask(l.valor));
+    setETipo(l.categoria || "OUTRO");
+    setEDesc(l.descricao || "");
+    setEData(l.data_credito ? String(l.data_credito).slice(0, 10) : firstDayOf(keyOf(l)));
+    setError("");
+  }
+
+  function cancelEdit() {
+    setEditId(null);
+  }
+
+  function onEValor(raw: string) {
+    const digits = raw.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+    setEValor(digits ? maskDigits(digits) : "");
+  }
+
+  async function saveEdit(l: Lancamento) {
+    // mesma convenção do POST: valor vai como STRING BR; a API parseia.
+    const valorNum = Number(eValor.replace(/\./g, "").replace(",", ".")) || 0;
+    if (!valorNum) return;
+    try {
+      setESaving(true);
+      setError("");
+      const res = await fetch("/api/receita-lancamentos", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: l.id,
+          valor: eValor,
+          categoria: eTipo,
+          descricao: eDesc.trim() || "Receita complementar",
+          // competência (ano/mes) NÃO vai: edição mantém a competência original.
+          data_credito: eData || firstDayOf(keyOf(l)),
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || "Erro ao salvar a edição.");
+      setEditId(null);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao salvar.");
+    } finally {
+      setESaving(false);
     }
   }
 
@@ -301,6 +398,22 @@ export default function ReceitasPage() {
                         </div>
                       </div>
                       <div className="fld">
+                        <label>Data do crédito</label>
+                        <div className="ctrl">
+                          <input
+                            className="dt"
+                            type="date"
+                            value={fData}
+                            min={firstDayOf(fComp)}
+                            max={lastDayOf(fComp)}
+                            onChange={(e) => {
+                              setFData(e.target.value);
+                              setDataTouched(true);
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className="fld">
                         <label>Empresa</label>
                         <div className="ctrl">
                           <select value={fEmp} onChange={(e) => setFEmp(e.target.value)}>
@@ -353,18 +466,79 @@ export default function ReceitasPage() {
                   ) : (
                     <>
                       <div className="rlist">
-                        {lancamentos.map((l) => (
-                          <div className="ritem" key={l.id}>
-                            <span className="desc">{l.descricao || "Receita complementar"}</span>
-                            <span className="amt num">{brl(l.valor)}</span>
-                            <span className="meta">
-                              <span className="pill">{compName(l.company_id)}</span>
-                              <span className="dotsep">·</span>{lblOf(l)}
-                              <span className="dotsep">·</span>{CAT_LABEL[l.categoria] || l.categoria}
-                              <button type="button" className="del" title="Remover" onClick={() => remove(l.id)}>×</button>
-                            </span>
-                          </div>
-                        ))}
+                        {lancamentos.map((l) =>
+                          editId === l.id ? (
+                            <div className="ritem editing" key={l.id}>
+                              <div className="ehead">
+                                <span className="pill">{compName(l.company_id)}</span>
+                                <span className="dotsep">·</span>
+                                <span className="ecomp">{lblOf(l)} · competência fixa</span>
+                              </div>
+                              <div className="eedit">
+                                <div className="fld">
+                                  <label>Valor</label>
+                                  <div className="ctrl">
+                                    <span className="pre">R$</span>
+                                    <input className="money" inputMode="decimal" placeholder="0,00" value={eValor} onChange={(e) => onEValor(e.target.value)} />
+                                  </div>
+                                </div>
+                                <div className="fld">
+                                  <label>Natureza</label>
+                                  <div className="ctrl">
+                                    <select value={eTipo} onChange={(e) => setETipo(e.target.value)}>
+                                      <option value="CONSORCIO">Consórcio</option>
+                                      <option value="AJUSTE_CONTADOR">Ajuste contador</option>
+                                      <option value="OUTRO">Outro</option>
+                                    </select>
+                                    <span className="chev">▾</span>
+                                  </div>
+                                </div>
+                                <div className="fld">
+                                  <label>Data do crédito</label>
+                                  <div className="ctrl">
+                                    <input
+                                      className="dt"
+                                      type="date"
+                                      value={eData}
+                                      min={firstDayOf(keyOf(l))}
+                                      max={lastDayOf(keyOf(l))}
+                                      onChange={(e) => setEData(e.target.value)}
+                                    />
+                                  </div>
+                                </div>
+                                <div className="fld full">
+                                  <label>Descrição</label>
+                                  <div className="ctrl">
+                                    <input placeholder="Ex.: consultoria avulsa para parceiro" value={eDesc} onChange={(e) => setEDesc(e.target.value)} />
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="eactions">
+                                <button type="button" className="esave" onClick={() => saveEdit(l)} disabled={eSaving}>
+                                  {eSaving ? "Salvando…" : "Salvar"}
+                                </button>
+                                <button type="button" className="ecancel" onClick={cancelEdit} disabled={eSaving}>
+                                  Cancelar
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="ritem" key={l.id}>
+                              <span className="desc">{l.descricao || "Receita complementar"}</span>
+                              <span className="amt num">{brl(l.valor)}</span>
+                              <span className="meta">
+                                <span className="pill">{compName(l.company_id)}</span>
+                                <span className="dotsep">·</span>{lblOf(l)}
+                                <span className="dotsep">·</span>{CAT_LABEL[l.categoria] || l.categoria}
+                                <span className="dotsep">·</span><span className="cred" title="Data do crédito">crédito {fmtData(l.data_credito)}</span>
+                                <span className="racts">
+                                  <button type="button" className="ed" title="Editar" onClick={() => startEdit(l)}>Editar</button>
+                                  <button type="button" className="del" title="Remover" onClick={() => remove(l.id)}>×</button>
+                                </span>
+                              </span>
+                            </div>
+                          )
+                        )}
                       </div>
                       <div className="rlist-foot">
                         <span className="l">Total complementar lançado</span>
@@ -464,6 +638,8 @@ const CSS = `
 .rrrec .ctrl .pre{position:absolute;left:13px;font-size:13.5px;font-weight:600;color:var(--ink-3);pointer-events:none;}
 .rrrec .ctrl select,.rrrec .ctrl input{width:100%;font-family:inherit;font-size:13.5px;color:var(--ink);border:1px solid var(--bd);border-radius:10px;background:#fff;padding:11px 13px;outline:none;}
 .rrrec .ctrl input.money{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;font-weight:600;padding-left:38px;}
+.rrrec .ctrl input.dt{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;cursor:pointer;}
+.rrrec .ctrl input.dt::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.55;}
 .rrrec .ctrl select{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:34px;}
 .rrrec .ctrl .chev{position:absolute;right:13px;pointer-events:none;color:var(--ink-3);font-size:11px;}
 .rrrec .ctrl select:focus,.rrrec .ctrl input:focus{border-color:var(--navy);box-shadow:0 0 0 3px rgba(15,31,74,.08);}
@@ -486,8 +662,25 @@ const CSS = `
 .rrrec .ritem .meta{grid-column:1 / -1;font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .rrrec .ritem .meta .pill{font-size:10.5px;font-weight:600;color:var(--ink-2);background:#F3F5F8;border:1px solid var(--bd);padding:2px 7px;border-radius:6px;}
 .rrrec .ritem .meta .dotsep{color:#C2C8D2;}
-.rrrec .ritem .meta .del{margin-left:auto;appearance:none;border:none;background:none;color:var(--ink-3);font-size:16px;line-height:1;cursor:pointer;padding:0 4px;}
+.rrrec .ritem .meta .cred{font-variant-numeric:tabular-nums;color:var(--ink-2);font-weight:600;}
+.rrrec .ritem .meta .racts{margin-left:auto;display:inline-flex;align-items:center;gap:6px;}
+.rrrec .ritem .meta .ed{appearance:none;border:1px solid var(--bd);background:#fff;color:var(--ink-2);font-family:inherit;font-size:10.5px;font-weight:600;border-radius:6px;padding:3px 9px;cursor:pointer;}
+.rrrec .ritem .meta .ed:hover{border-color:var(--navy);color:var(--navy);}
+.rrrec .ritem .meta .del{appearance:none;border:none;background:none;color:var(--ink-3);font-size:16px;line-height:1;cursor:pointer;padding:0 4px;}
 .rrrec .ritem .meta .del:hover{color:var(--red);}
+/* edição inline: reusa .fld/.ctrl/.dt/.money do form de criação */
+.rrrec .ritem.editing{display:flex;flex-direction:column;gap:12px;padding:16px 2px;}
+.rrrec .ritem.editing .ehead{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-3);flex-wrap:wrap;}
+.rrrec .ritem.editing .ehead .ecomp{font-weight:500;}
+.rrrec .eedit{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.rrrec .eedit .fld.full{grid-column:1 / -1;}
+.rrrec .eactions{display:flex;align-items:center;gap:10px;}
+.rrrec .esave{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:9px 18px;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;}
+.rrrec .esave:hover{background:#16285C;}
+.rrrec .esave:disabled{opacity:.7;cursor:default;}
+.rrrec .ecancel{background:#fff;color:var(--ink-2);border:1px solid var(--bd);border-radius:9px;padding:9px 16px;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer;}
+.rrrec .ecancel:hover{border-color:var(--ink-3);}
+.rrrec .ecancel:disabled{opacity:.7;cursor:default;}
 .rrrec .rlist-foot{display:grid;grid-template-columns:1fr auto;gap:12px;margin-top:6px;padding:14px 2px 2px;border-top:2px solid var(--bd);}
 .rrrec .rlist-foot .l{font-size:12px;font-weight:600;color:var(--ink-2);}
 .rrrec .rlist-foot .v{font-size:14.5px;font-weight:700;color:var(--green);text-align:right;}

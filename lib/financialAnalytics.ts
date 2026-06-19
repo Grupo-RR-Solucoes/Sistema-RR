@@ -75,6 +75,15 @@ type DeferredRow = {
   data_prevista?: string | null;
 };
 
+// Receita manual (consorcio/ajustes). Regime de caixa: alocada pelo MES de
+// data_credito (sem defasagem M+1 — data_credito ja e o mes de caixa).
+type ManualRevenueRow = {
+  ano?: number | null;
+  mes?: number | null;
+  valor?: number | null;
+  data_credito?: string | null;
+};
+
 export type FinancePeriodOption = {
   key: string;
   label: string;
@@ -86,6 +95,8 @@ export type FinanceSummary = {
   periodLabel: string;
   openingBalance: number;
   receivedNet: number;
+  receivedClosing: number;
+  receivedManual: number;
   actualCash: number;
   actualPrt: number;
   actualInsurance: number;
@@ -202,6 +213,69 @@ function comparePeriods(a: { year: number; month: number }, b: { year: number; m
   return a.month - b.month;
 }
 
+// ============================================================
+// REGIME DE CAIXA (Etapa 3) — "Recebido" do /financeiro.
+// Caixa do mes M = fechamento da competencia M-1 (defasagem M+1) + receita
+// manual com data_credito dentro de M (manual nao tem defasagem). So o
+// "Recebido" muda; despesas/saldo/diferido/comissoes seguem como estao.
+// ============================================================
+
+// competencia anterior (M-1): se M=jan -> dez do ano anterior.
+function prevCompetencia(year: number, month: number) {
+  return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
+}
+
+// Σ liquido do fechamento (com o mesmo fallback ja usado: valor_liquido OU
+// avista+diferido+seguro-estorno-renovacao). valor_liquido JA e liquido de
+// estorno — o estorno acompanha o mesmo deslocamento, nada separado.
+function sumClosingNet(rows: ClosingRow[]) {
+  return rows.reduce(
+    (sum, row) =>
+      sum +
+      (toNumber(row.valor_liquido) ||
+        toNumber(row.valor_avista) +
+          toNumber(row.valor_diferido) +
+          toNumber(row.valor_seguro) -
+          toNumber(row.valor_estorno) -
+          toNumber(row.valor_renovacao)),
+    0
+  );
+}
+
+// mes de caixa de um lancamento manual: extrai ano/mes de data_credito
+// (YYYY-MM-DD). Fallback p/ ano/mes da competencia se data_credito faltar.
+function manualCreditYM(row: ManualRevenueRow): { year: number; month: number } | null {
+  if (row.data_credito) {
+    const [y, m] = String(row.data_credito).slice(0, 10).split("-").map(Number);
+    if (y && m) return { year: y, month: m };
+  }
+  if (row.ano && row.mes) return { year: row.ano, month: row.mes };
+  return null;
+}
+
+// "Recebido" (caixa) da competencia M: fechamento(M-1) + manuais(data_credito em M).
+function cashReceivedFor(
+  year: number,
+  month: number,
+  allClosings: ClosingRow[],
+  manualRows: ManualRevenueRow[]
+) {
+  const prev = prevCompetencia(year, month);
+  const closingRows = allClosings.filter((r) => r.ano === prev.year && r.mes === prev.month);
+  const receivedClosing = roundMoney(sumClosingNet(closingRows));
+  const receivedManual = roundMoney(
+    manualRows.reduce((sum, row) => {
+      const ym = manualCreditYM(row);
+      return ym && ym.year === year && ym.month === month ? sum + toNumber(row.valor) : sum;
+    }, 0)
+  );
+  return {
+    receivedClosing,
+    receivedManual,
+    receivedNet: roundMoney(receivedClosing + receivedManual),
+  };
+}
+
 function isPaidExpense(row: ExpenseRow) {
   const status = normalizeText(row.status);
   return status === "PAID" || status === "PAGO" || Boolean(row.payment_date);
@@ -229,7 +303,7 @@ export async function buildFinancialAnalytics(
     month?: number;
   }
 ): Promise<FinancialAnalyticsPayload> {
-  const [companies, categories, closings, expenses, openingBalances, deferredRows, pmrRows] =
+  const [companies, categories, closings, expenses, openingBalances, deferredRows, pmrRows, manualRevenues] =
     await Promise.all([
       fetchAllRows<CompanyRow>(() =>
         supabase
@@ -291,6 +365,13 @@ export async function buildFinancialAnalytics(
         supabase
           .from("promoter_monthly_results")
           .select("year, month, company_id, final_commission_value, discount_value")
+      ),
+      // RECEITA MANUAL (consórcio/ajustes) — entra no "Recebido" (caixa) pelo
+      // mês de data_credito (Etapa 3). Aditiva ao fechamento, sem defasagem.
+      fetchAllRows<ManualRevenueRow>(() =>
+        supabase
+          .from("receita_lancamento_manual")
+          .select("ano, mes, valor, data_credito")
       ),
     ]);
 
@@ -364,16 +445,10 @@ export async function buildFinancialAnalytics(
     (row) => row.year === selectedPeriod.year && row.month === selectedPeriod.month
   );
 
+  // actual* (avista/PRT/seguro/estorno/renovacao) seguem da competencia ATUAL —
+  // fora do escopo desta etapa (so o "Recebido"/receivedNet vira regime de caixa).
   const receivedSummary = selectedClosings.reduce(
     (acc, row) => {
-      acc.receivedNet += roundMoney(
-        toNumber(row.valor_liquido) ||
-          toNumber(row.valor_avista) +
-            toNumber(row.valor_diferido) +
-            toNumber(row.valor_seguro) -
-            toNumber(row.valor_estorno) -
-            toNumber(row.valor_renovacao)
-      );
       acc.actualCash += toNumber(row.valor_avista);
       acc.actualPrt += toNumber(row.valor_diferido);
       acc.actualInsurance += toNumber(row.valor_seguro);
@@ -382,13 +457,20 @@ export async function buildFinancialAnalytics(
       return acc;
     },
     {
-      receivedNet: 0,
       actualCash: 0,
       actualPrt: 0,
       actualInsurance: 0,
       actualEstorno: 0,
       actualRenewal: 0,
     }
+  );
+
+  // REGIME DE CAIXA: "Recebido" = fechamento(M-1) + manuais(data_credito em M).
+  const received = cashReceivedFor(
+    selectedPeriod.year,
+    selectedPeriod.month,
+    closings,
+    manualRevenues
   );
 
   const totalExpenses = roundMoney(
@@ -425,7 +507,10 @@ export async function buildFinancialAnalytics(
   const summary: FinanceSummary = {
     periodLabel: selectedPeriod.label,
     openingBalance,
-    receivedNet: roundMoney(receivedSummary.receivedNet),
+    // receivedNet = receivedClosing(M-1) + receivedManual(M) — regime de caixa.
+    receivedNet: received.receivedNet,
+    receivedClosing: received.receivedClosing,
+    receivedManual: received.receivedManual,
     actualCash: roundMoney(receivedSummary.actualCash),
     actualPrt: roundMoney(receivedSummary.actualPrt),
     actualInsurance: roundMoney(receivedSummary.actualInsurance),
@@ -438,10 +523,10 @@ export async function buildFinancialAnalytics(
     // conceito de CAIXA: recebido − comissões pagas − despesas operacionais.
     comissoesPagas,
     operatingResult: roundMoney(
-      receivedSummary.receivedNet - comissoesPagas - totalExpenses
+      received.receivedNet - comissoesPagas - totalExpenses
     ),
     cashBalance: roundMoney(
-      openingBalance + receivedSummary.receivedNet - comissoesPagas - paidExpenses
+      openingBalance + received.receivedNet - comissoesPagas - paidExpenses
     ),
     futureDeferredBalance,
     companiesCount: selectedClosings.length,
@@ -601,9 +686,6 @@ export async function buildFinancialAnalytics(
     .slice(0, 6)
     .sort(comparePeriods)
     .map((period) => {
-      const periodClosings = closings.filter(
-        (row) => row.ano === period.year && row.mes === period.month
-      );
       const periodExpenses = expenses.filter(
         (row) => row.year === period.year && row.month === period.month
       );
@@ -611,19 +693,9 @@ export async function buildFinancialAnalytics(
         (row) => row.year === period.year && row.month === period.month
       );
 
-      const receivedNet = roundMoney(
-        periodClosings.reduce(
-          (sum, row) =>
-            sum +
-            (toNumber(row.valor_liquido) ||
-              toNumber(row.valor_avista) +
-                toNumber(row.valor_diferido) +
-                toNumber(row.valor_seguro) -
-                toNumber(row.valor_estorno) -
-                toNumber(row.valor_renovacao)),
-          0
-        )
-      );
+      // mesmo regime de caixa do KPI: fechamento(M-1) + manuais(M). Mantém o
+      // gráfico coerente com o "Recebido" do summary.
+      const { receivedNet } = cashReceivedFor(period.year, period.month, closings, manualRevenues);
       const totalExpenses = roundMoney(
         periodExpenses.reduce((sum, row) => sum + toNumber(row.amount), 0)
       );

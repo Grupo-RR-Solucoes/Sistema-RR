@@ -53,9 +53,14 @@ const brl = (v: number | null | undefined) =>
 const brl2 = (v: number | null | undefined) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 }).format(Number(v ?? 0));
 
-function isClosed(p: { year: number; month: number }) {
-  const n = new Date();
-  return p.year < n.getFullYear() || (p.year === n.getFullYear() && p.month < n.getMonth() + 1);
+const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+function cashLabel(year: number, month: number) {
+  return `${MESES[month - 1]}/${String(year).slice(-2)}`;
+}
+// Regime de caixa: o caixa do mês M vem da competência M-1. Para listar os
+// meses de CAIXA do seletor, desloca cada competência de fechamento +1 mês.
+function shiftPlus1(year: number, month: number) {
+  return month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 };
 }
 function pick(o: Record<string, unknown>, keys: string[]): number | string | undefined {
   for (const k of keys) {
@@ -105,19 +110,32 @@ export default function FinanceiroPage() {
     };
   }, [selectedKey]);
 
-  useEffect(() => {
-    if (selectedKey || !fin?.periods?.length) return;
-    const closed = fin.periods.filter(isClosed);
-    const pick0 = closed.reduce<Period | null>((best, p) => {
-      if (!best) return p;
-      return p.year > best.year || (p.year === best.year && p.month > best.month) ? p : best;
-    }, null);
-    const target = pick0?.key || fin.selectedPeriod?.key || "";
-    if (target) setSelectedKey(target);
-  }, [fin, selectedKey]);
+  // Meses de CAIXA do seletor: cada competência de fechamento existente habilita
+  // o caixa do mês seguinte (M-1 → M). Sempre inclui o mês corrente. Ordena do
+  // mais recente para o mais antigo. (Não toca no motor — deriva de fin.periods.)
+  const cashPeriods = useMemo<Period[]>(() => {
+    const map = new Map<string, Period>();
+    const add = (year: number, month: number) => {
+      const key = `${year}-${String(month).padStart(2, "0")}`;
+      if (!map.has(key)) map.set(key, { key, label: cashLabel(year, month), year, month });
+    };
+    for (const p of fin?.periods ?? []) {
+      const s = shiftPlus1(p.year, p.month);
+      add(s.year, s.month);
+    }
+    const now = new Date();
+    add(now.getFullYear(), now.getMonth() + 1); // mês corrente sempre selecionável
+    return Array.from(map.values()).sort((a, b) => b.year - a.year || b.month - a.month);
+  }, [fin]);
 
-  const periodKey = selectedKey || fin?.selectedPeriod?.key || "";
-  const period = fin?.periods.find((p) => p.key === periodKey) || fin?.selectedPeriod || null;
+  // default = mês de caixa mais recente disponível (ex.: jun/26 hoje).
+  useEffect(() => {
+    if (selectedKey || cashPeriods.length === 0) return;
+    setSelectedKey(cashPeriods[0].key);
+  }, [cashPeriods, selectedKey]);
+
+  const periodKey = selectedKey || cashPeriods[0]?.key || fin?.selectedPeriod?.key || "";
+  const period = cashPeriods.find((p) => p.key === periodKey) || fin?.selectedPeriod || null;
   const periodShort = period?.label || "—";
 
   const chart = useMemo(() => {
@@ -212,10 +230,10 @@ export default function FinanceiroPage() {
           title="Financeiro"
           actions={
             <div className="comp">
-              <select aria-label="Competência" value={periodKey} onChange={(e) => setSelectedKey(e.target.value)}>
-                {(fin?.periods ?? []).map((p) => (
+              <select aria-label="Mês de caixa" value={periodKey} onChange={(e) => setSelectedKey(e.target.value)}>
+                {cashPeriods.map((p) => (
                   <option key={p.key} value={p.key}>
-                    {p.label} · {isClosed(p) ? "fechado" : "em aberto"}
+                    {p.label} · caixa
                   </option>
                 ))}
               </select>

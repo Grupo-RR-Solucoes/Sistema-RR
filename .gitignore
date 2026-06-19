@@ -30,3 +30,12 @@ supabase/.temp/
 # versionar — sao saidas auxiliares). PNGs/WebPs canonicos da logo
 # (logo-rr-cred-*.{png,webp}) ficam versionados.
 public/brand/_*.png
+
+# Dados sensíveis Promotiva / fechamentos (não versionar)
+_tmp_fechamentos/
+*.xlsx
+*.xls
+# Backups e cache
+*.bak_*
+__pycache__/
+scripts/__pycache__/
