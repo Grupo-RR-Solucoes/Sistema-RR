@@ -34,6 +34,13 @@ type ClosingRow = {
   valor_estorno?: number | null;
   valor_renovacao?: number | null;
   valor_liquido?: number | null;
+  // Fase 2C — campos por produto (caixa soma ao valor_liquido na mesma competência).
+  valor_consorcio?: number | null;
+  valor_bbcap?: number | null;
+  valor_conta_corrente?: number | null;
+  valor_dental?: number | null;
+  valor_lob?: number | null;
+  valor_credito?: number | null;
 };
 
 type ExpenseCategoryRow = {
@@ -96,6 +103,8 @@ export type FinanceSummary = {
   openingBalance: number;
   receivedNet: number;
   receivedClosing: number;
+  receivedLiquido: number;
+  receivedProdutos: number;
   receivedManual: number;
   actualCash: number;
   actualPrt: number;
@@ -242,6 +251,24 @@ function sumClosingNet(rows: ClosingRow[]) {
   );
 }
 
+// Fase 2C — Σ dos 6 campos por produto (consorcio/bbcap/conta_corrente/dental/
+// lob/credito). Entram no caixa junto com valor_liquido, na MESMA competencia
+// M-1 (o produto segue a mesma defasagem do fechamento). NAO estao em
+// valor_liquido (que vem so do Resumo: avista+PRT+seguro-estorno-renovacao).
+function sumClosingProdutos(rows: ClosingRow[]) {
+  return rows.reduce(
+    (sum, row) =>
+      sum +
+      toNumber(row.valor_consorcio) +
+      toNumber(row.valor_bbcap) +
+      toNumber(row.valor_conta_corrente) +
+      toNumber(row.valor_dental) +
+      toNumber(row.valor_lob) +
+      toNumber(row.valor_credito),
+    0
+  );
+}
+
 // mes de caixa de um lancamento manual: extrai ano/mes de data_credito
 // (YYYY-MM-DD). Fallback p/ ano/mes da competencia se data_credito faltar.
 function manualCreditYM(row: ManualRevenueRow): { year: number; month: number } | null {
@@ -254,6 +281,7 @@ function manualCreditYM(row: ManualRevenueRow): { year: number; month: number } 
 }
 
 // "Recebido" (caixa) da competencia M: fechamento(M-1) + manuais(data_credito em M).
+// receivedClosing = valor_liquido(M-1) + Σ produtos(M-1).
 function cashReceivedFor(
   year: number,
   month: number,
@@ -262,7 +290,9 @@ function cashReceivedFor(
 ) {
   const prev = prevCompetencia(year, month);
   const closingRows = allClosings.filter((r) => r.ano === prev.year && r.mes === prev.month);
-  const receivedClosing = roundMoney(sumClosingNet(closingRows));
+  const receivedLiquido = roundMoney(sumClosingNet(closingRows));
+  const receivedProdutos = roundMoney(sumClosingProdutos(closingRows));
+  const receivedClosing = roundMoney(receivedLiquido + receivedProdutos);
   const receivedManual = roundMoney(
     manualRows.reduce((sum, row) => {
       const ym = manualCreditYM(row);
@@ -270,6 +300,8 @@ function cashReceivedFor(
     }, 0)
   );
   return {
+    receivedLiquido,
+    receivedProdutos,
     receivedClosing,
     receivedManual,
     receivedNet: roundMoney(receivedClosing + receivedManual),
@@ -322,7 +354,7 @@ export async function buildFinancialAnalytics(
         supabase
           .from("fechamento_mensal_empresa")
           .select(
-            "empresa_cnpj, ano, mes, valor_avista, valor_diferido, valor_seguro, valor_estorno, valor_renovacao, valor_liquido"
+            "empresa_cnpj, ano, mes, valor_avista, valor_diferido, valor_seguro, valor_estorno, valor_renovacao, valor_liquido, valor_consorcio, valor_bbcap, valor_conta_corrente, valor_dental, valor_lob, valor_credito"
           )
           .order("ano", { ascending: true })
           .order("mes", { ascending: true })
@@ -508,8 +540,11 @@ export async function buildFinancialAnalytics(
     periodLabel: selectedPeriod.label,
     openingBalance,
     // receivedNet = receivedClosing(M-1) + receivedManual(M) — regime de caixa.
+    // receivedClosing = receivedLiquido + receivedProdutos (6 campos por produto).
     receivedNet: received.receivedNet,
     receivedClosing: received.receivedClosing,
+    receivedLiquido: received.receivedLiquido,
+    receivedProdutos: received.receivedProdutos,
     receivedManual: received.receivedManual,
     actualCash: roundMoney(receivedSummary.actualCash),
     actualPrt: roundMoney(receivedSummary.actualPrt),
