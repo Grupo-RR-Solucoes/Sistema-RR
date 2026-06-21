@@ -1,20 +1,23 @@
 // ============================================================
-// FORECAST — Camada 3: AGREGADOR previsto-vs-recebido.
+// FORECAST — Camada 3: AGREGADOR previsto-vs-recebido, GAP like-for-like.
 //
-// Junta, mês a mês, os componentes que já existem, com TRANSPARÊNCIA sobre o
-// que está incluído e o que falta (lacunas NÃO viram zero escondido):
-//   - RECEBIDO (realizado): buildFinancialAnalytics.receivedNet — só meses com
-//     fechamento(M-1); futuros = null.
-//   - PREVISTO PRT (Camada 1, prtAgenda): direito contratado da carteira.
-//   - PREVISTO À VISTA (Camada 2, avistaProducao): só no mês de caixa destino
-//     da produção aberta; demais meses futuros = não projetado (sem produção).
-//   - COBERTURA: o que está incluído vs a incluir (pra tela avisar honestamente).
-//   - GAP (só meses fechados): recebido − previsto.
+// Quadro por COMPETÊNCIA juntando os componentes existentes, comparando
+// PRODUTO A PRODUTO (não total-vs-parte) e com cobertura explícita.
 //
-// ATENÇÃO de BASE: recebido é CAIXA (fechamento M-1, todos os produtos); previsto
-// PRT é por COMPETÊNCIA (direito que vence no mês) e previsto à vista é parcial
-// (só crédito PF). O gap mistura bases e é parcial — a cobertura/nota deixam
-// isso explícito. NÃO reimplementa nada: orquestra as camadas existentes.
+//   - PREVISTO PRT (Camada 1, prtAgenda): direito contratado da carteira para a
+//     competência.
+//   - RECEBIDO PRT: actual valor_diferido da competência (summary.actualPrt do
+//     /financeiro), só meses fechados.
+//   - GAP PRT (acionável) = recebido PRT − previsto PRT, MESMA competência.
+//     Negativo => recebeu menos diferido que o direito contratado => candidato a
+//     questionamento à Promotiva.
+//   - À VISTA: previsto (Camada 2, produção aberta) vs recebido (actual
+//     valor_avista) — INFORMATIVO, não classificado como gap de auditoria (base
+//     ainda com arestas: produção parcial, 47 sem match no motor).
+//   - COBERTURA: o que está incluído vs a incluir (lacunas nomeadas, não zero).
+//
+// NÃO há "gap total" (recebido caixa total − previsto só PRT) — era falso. Os
+// gaps são decompostos por produto. NÃO reimplementa nada: orquestra as camadas.
 //
 // READ-ONLY.
 // ============================================================
@@ -32,20 +35,27 @@ export interface CoberturaMes {
 }
 
 export interface AgregadorMes {
-  /** Mês de caixa ("YYYY-MM"). */
+  /** Competência ("YYYY-MM"). */
   competencia: string;
-  /** true se fechamento(M-1) existe -> recebido é real. */
+  /** true se há fechamento desta competência (recebido real). */
   fechado: boolean;
-  /** receivedNet (caixa) ou null se ainda não recebido. */
-  recebido: number | null;
-  /** Previsto PRT (agenda, por competência) ou null se fora do horizonte. */
+
+  // ---- PRT (like-for-like, acionável) ----
+  /** Direito contratado da carteira para a competência (agenda). */
   previstoPrt: number | null;
-  /** Previsto à vista crédito PF (só no mês de caixa destino da produção aberta). */
+  /** Diferido realizado da competência (actual valor_diferido), só se fechado. */
+  recebidoPrt: number | null;
+  /** recebidoPrt − previstoPrt (mesma competência). Negativo = questionar. */
+  gapPrt: number | null;
+
+  // ---- À vista (INFORMATIVO, não auditoria) ----
+  /** À vista crédito PF previsto da produção aberta (Camada 2). */
   previstoAvista: number | null;
-  /** previstoPrt + previstoAvista (null se ambos null). */
-  totalPrevisto: number | null;
-  /** recebido − totalPrevisto (só meses fechados; senão null). */
-  gap: number | null;
+  /** À vista realizado da competência (actual valor_avista), só se fechado. */
+  recebidoAvista: number | null;
+  /** recebido − previsto à vista (INFORMATIVO; base com arestas). */
+  gapAvistaInformativo: number | null;
+
   cobertura: CoberturaMes;
 }
 
@@ -59,10 +69,10 @@ export interface AgregadorResult {
 
 export interface AgregadorOptions {
   refDate?: Date;
-  /** Meses à frente do caixa inicial (default 6 -> 7 linhas). */
+  /** Meses à frente da competência inicial (default 6). */
   horizonteMeses?: number;
-  /** Mês de caixa inicial; default = última competência fechada + 1. */
-  caixaInicial?: { year: number; month: number };
+  /** Competência inicial; default = snapshot do PRT (1ª com comparação fechada). */
+  competenciaInicial?: { year: number; month: number };
 }
 
 // ------------------------------------------------------------------ helpers --
@@ -73,6 +83,10 @@ function pad2(n: number): string {
 function label(year: number, month: number): string {
   return `${year}-${pad2(month)}`;
 }
+function parseComp(comp: string): { year: number; month: number } {
+  const [y, m] = comp.split("-").map(Number);
+  return { year: y, month: m };
+}
 function addMonth(year: number, month: number, delta: number): { year: number; month: number } {
   const idx = year * 12 + (month - 1) + delta;
   return { year: Math.floor(idx / 12), month: (idx % 12) + 1 };
@@ -81,27 +95,17 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Conjunto de competências (YYYY-MM) com fechamento + a mais recente. */
-async function fetchClosedMonths(
-  supabase: SupabaseClient,
-): Promise<{ set: Set<string>; latest: { year: number; month: number } | null }> {
+/** Conjunto de competências (YYYY-MM) com fechamento. */
+async function fetchClosedMonths(supabase: SupabaseClient): Promise<Set<string>> {
   const { data, error } = await supabase
     .from("fechamento_mensal_empresa")
     .select("ano, mes");
   if (error) throw new Error(error.message);
   const set = new Set<string>();
-  let latestIdx = -1;
-  let latest: { year: number; month: number } | null = null;
   for (const r of (data ?? []) as Array<{ ano: number; mes: number }>) {
-    const y = Number(r.ano), m = Number(r.mes);
-    set.add(label(y, m));
-    const idx = y * 12 + (m - 1);
-    if (idx > latestIdx) {
-      latestIdx = idx;
-      latest = { year: y, month: m };
-    }
+    set.add(label(Number(r.ano), Number(r.mes)));
   }
-  return { set, latest };
+  return set;
 }
 
 // ----------------------------------------------------------- orquestrador --
@@ -113,50 +117,51 @@ export async function buildAgregadorForecast(
   const horizonteMeses = options.horizonteMeses ?? 6;
   const refDate = options.refDate ?? new Date();
 
-  // Componentes (cada um já validado isoladamente).
-  const [agenda, avista, closed] = await Promise.all([
+  const [agenda, avista, closedSet] = await Promise.all([
     buildPrtAgenda(supabase, { horizonteMeses: horizonteMeses + 2 }),
     buildAvistaProducao(supabase, { refDate }),
     fetchClosedMonths(supabase),
   ]);
 
-  const agendaByComp = new Map(agenda.serie.map((p) => [p.competencia, p.previsto]));
+  // PRT previsto por competência: snapshot (base) + a série projetada.
+  const previstoPrtByComp = new Map<string, number>();
+  previstoPrtByComp.set(agenda.snapshot.competencia, agenda.baseComissao);
+  for (const p of agenda.serie) previstoPrtByComp.set(p.competencia, p.previsto);
 
-  // Caixa inicial: última competência fechada + 1 (o caixa "corrente").
-  const caixaInicial =
-    options.caixaInicial ??
-    (closed.latest ? addMonth(closed.latest.year, closed.latest.month, 1) : { year: refDate.getUTCFullYear(), month: refDate.getUTCMonth() + 1 });
+  // Competência inicial: por padrão a do snapshot (a única já fechada que a
+  // agenda cobre -> primeira comparação like-for-like possível).
+  const ini = options.competenciaInicial ?? parseComp(agenda.snapshot.competencia);
 
   const meses: AgregadorMes[] = [];
   for (let h = 0; h <= horizonteMeses; h++) {
-    const m = addMonth(caixaInicial.year, caixaInicial.month, h);
+    const m = addMonth(ini.year, ini.month, h);
     const comp = label(m.year, m.month);
-    const prev = addMonth(m.year, m.month, -1);
-    const fechado = closed.set.has(label(prev.year, prev.month));
+    const fechado = closedSet.has(comp);
 
-    // Recebido: só meses com fechamento(M-1). Evita chamar o financeiro à toa.
-    let recebido: number | null = null;
+    const previstoPrt = previstoPrtByComp.has(comp) ? (previstoPrtByComp.get(comp) as number) : null;
+    const previstoAvista = avista.competenciaProducao === comp ? avista.avistaPrevisto : null;
+
+    // Recebido por produto: actual* da PRÓPRIA competência (só se fechada).
+    let recebidoPrt: number | null = null;
+    let recebidoAvista: number | null = null;
     if (fechado) {
       const fin = await buildFinancialAnalytics(supabase, { year: m.year, month: m.month });
-      recebido = fin.summary.receivedNet;
+      recebidoPrt = round2(fin.summary.actualPrt);
+      recebidoAvista = round2(fin.summary.actualCash);
     }
 
-    const previstoPrt = agendaByComp.has(comp) ? (agendaByComp.get(comp) as number) : null;
-    const previstoAvista = avista.competenciaCaixa === comp ? avista.avistaPrevisto : null;
-
-    const totalPrevisto =
-      previstoPrt === null && previstoAvista === null
-        ? null
-        : round2((previstoPrt ?? 0) + (previstoAvista ?? 0));
-
-    const gap =
-      fechado && recebido !== null && totalPrevisto !== null
-        ? round2(recebido - totalPrevisto)
+    const gapPrt =
+      fechado && recebidoPrt !== null && previstoPrt !== null
+        ? round2(recebidoPrt - previstoPrt)
+        : null;
+    const gapAvistaInformativo =
+      fechado && recebidoAvista !== null && previstoAvista !== null
+        ? round2(recebidoAvista - previstoAvista)
         : null;
 
     // ---- cobertura (transparência honesta) ----
     const incluido: string[] = [];
-    if (previstoPrt !== null) incluido.push("PRT (agenda — direito contratado, base competência)");
+    if (previstoPrt !== null) incluido.push("PRT (agenda — direito contratado)");
     if (previstoAvista !== null) incluido.push("à vista crédito PF (produção aberta, só realizado)");
 
     const aIncluir: string[] = [
@@ -171,25 +176,27 @@ export async function buildAgregadorForecast(
     }
 
     let nota: string;
-    if (fechado) {
+    if (fechado && gapPrt !== null) {
       nota =
-        "Recebido = CAIXA total (fechamento M-1, todos os produtos); previsto é PARCIAL " +
-        "(só PRT + à vista crédito PF) e em base de competência. Gap positivo esperado — não comparar 1:1.";
+        comp === agenda.snapshot.competencia
+          ? "Competência do snapshot: previsto = base da agenda = recebido, gap PRT ~0 por construção. Gaps reais surgem nas competências futuras ao fecharem."
+          : "GAP PRT like-for-like (recebido diferido − agenda da MESMA competência). Negativo = recebeu menos que o direito contratado => questionar Promotiva.";
     } else {
       nota =
-        "Mês futuro: ainda não recebido. Previsto parcial (PRT agenda" +
-        (previstoAvista !== null ? " + à vista crédito PF da produção aberta" : "; à vista ainda não projetado") +
-        ").";
+        "Competência futura: ainda não fechada. PRT é o direito contratado (agenda)" +
+        (previstoAvista !== null ? " + à vista crédito PF da produção aberta (parcial, cresce com novas diárias)" : "") +
+        ". Gap só após o fechamento.";
     }
 
     meses.push({
       competencia: comp,
       fechado,
-      recebido: recebido === null ? null : round2(recebido),
       previstoPrt: previstoPrt === null ? null : round2(previstoPrt),
+      recebidoPrt,
+      gapPrt,
       previstoAvista: previstoAvista === null ? null : round2(previstoAvista),
-      totalPrevisto,
-      gap,
+      recebidoAvista,
+      gapAvistaInformativo,
       cobertura: { incluido, aIncluir, nota },
     });
   }
