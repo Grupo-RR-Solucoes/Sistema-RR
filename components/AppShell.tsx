@@ -24,6 +24,7 @@ const ICON_PATHS: Record<string, string> = {
   shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
   filechart: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><path d="M14 2v6h6"/><path d="M8 18v-3"/><path d="M12 18v-6"/><path d="M16 18v-2"/>',
   usercog: '<circle cx="18" cy="15" r="3"/><circle cx="9" cy="7" r="4"/><path d="M10 15H6a4 4 0 0 0-4 4v2"/><path d="m21.7 16.4-.9-.3"/><path d="m15.2 13.9-.9-.3"/><path d="m16.6 18.7.3-.9"/><path d="m19.1 12.2.3-.9"/><path d="m19.6 18.7-.4-1"/><path d="m16.8 12.3-.4-1"/><path d="m14.3 16.6 1-.4"/><path d="m20.7 13.8 1-.4"/>',
+  linechart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/>',
 };
 
 function NavIcon({ name }: { name: string }) {
@@ -140,6 +141,7 @@ const navGroups: NavGroup[] = [
     label: "Controle",
     items: [
       { href: "/financeiro", label: "Financeiro", icon: "wallet", visibleTo: ["socio"] },
+      { href: "/forecast", label: "Forecast", icon: "linechart", visibleTo: ["socio"] },
       { href: "/receitas", label: "Receita & Simples", icon: "percent", visibleTo: ["socio", "funcionario"] },
       { href: "/despesas", label: "Despesas", icon: "arrowdown", visibleTo: ["socio", "funcionario"] },
       { href: "/auditoria", label: "Auditoria", icon: "shield", visibleTo: ["socio"] },
