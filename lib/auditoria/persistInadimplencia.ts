@@ -28,7 +28,26 @@ import {
 const TABLE = "prt_inadimplencia_monitor";
 
 type Competencia = { year: number; month: number };
-type Acompanhamento = "NOVO" | "EM_COBRANCA" | "RECUPERADO" | "RESSURGIU" | "BAIXADO";
+// AGUARDANDO_EXPLICACAO e JUSTIFICADO são novos (ver ALTER proposto no fim do
+// arquivo). NOVO = fase A_COBRAR; AGUARDANDO_EXPLICACAO = fase homônima. BAIXADO/
+// JUSTIFICADO = baixa MANUAL (nunca automática). Abertos = NOVO + EM_COBRANCA +
+// AGUARDANDO_EXPLICACAO.
+type Acompanhamento =
+  | "NOVO"
+  | "AGUARDANDO_EXPLICACAO"
+  | "EM_COBRANCA"
+  | "RECUPERADO"
+  | "RESSURGIU"
+  | "BAIXADO"
+  | "JUSTIFICADO";
+
+/** Estados "abertos" (em aberto na fila) — todos contam no recuperável. */
+const ABERTOS: Acompanhamento[] = ["NOVO", "AGUARDANDO_EXPLICACAO", "EM_COBRANCA"];
+
+/** Fase (A_COBRAR/AGUARDANDO_EXPLICACAO) → status_acompanhamento inicial. */
+function statusInicialDaFase(fase: InadimplenciaNovoItem["fase"]): Acompanhamento {
+  return fase === "A_COBRAR" ? "NOVO" : "AGUARDANDO_EXPLICACAO";
+}
 
 export interface MonitorUpsert {
   competencia: string;
@@ -60,6 +79,8 @@ export interface PersistResult {
   updates: MonitorUpdate[];
   resumo: {
     novos: number;
+    aCobrar: number;
+    aguardandoExplicacao: number;
     emCobranca: number;
     recuperados: number;
     ressurgidos: number;
@@ -99,20 +120,30 @@ export async function persistInadimplenciaSnapshot(
   });
   const suspeitosAtuais = new Set(det.suspeitosAtuaisOps);
 
-  // ---- (a) primeira_deteccao: menor competência já registrada do contrato ----
+  // ---- (a) primeira_deteccao (menor competência do contrato) + preservação do
+  //         status atual da linha desta competência (não clobberar baixa manual
+  //         nem EM_COBRANCA/RECUPERADO já reconciliados num re-import). ----
   const primeiraByOp = new Map<string, string>();
+  const statusAtualByKey = new Map<string, Acompanhamento>();
   if (!dryRun && det.novos.length > 0) {
     const ops = det.novos.map((n) => n.operationNumber);
-    const rows = await fetchAllRows<{ operation_number: string; primeira_deteccao: string }>(
-      () =>
-        supabase
-          .from(TABLE)
-          .select("operation_number, primeira_deteccao")
-          .in("operation_number", ops),
+    const rows = await fetchAllRows<{
+      competencia: string;
+      operation_number: string;
+      primeira_deteccao: string;
+      status_acompanhamento: Acompanhamento;
+    }>(() =>
+      supabase
+        .from(TABLE)
+        .select("competencia, operation_number, primeira_deteccao, status_acompanhamento")
+        .in("operation_number", ops),
     );
     for (const r of rows) {
       const cur = primeiraByOp.get(r.operation_number);
       if (!cur || r.primeira_deteccao < cur) primeiraByOp.set(r.operation_number, r.primeira_deteccao);
+      if (r.competencia === competenciaStr) {
+        statusAtualByKey.set(r.operation_number, r.status_acompanhamento);
+      }
     }
   }
 
@@ -127,7 +158,10 @@ export async function persistInadimplenciaSnapshot(
     meses_parado: mesesParado(competencia, n.ultimoMesPago),
     recuperavel_estimado: n.recuperavelEstimado,
     primeira_deteccao: primeiraByOp.get(n.operationNumber) ?? competenciaStr,
-    status_acompanhamento: "NOVO",
+    // Linha nova → status da fase (NOVO ou AGUARDANDO_EXPLICACAO). Linha que já
+    // existe → PRESERVA o status atual (idempotente; respeita baixa manual).
+    status_acompanhamento:
+      statusAtualByKey.get(n.operationNumber) ?? statusInicialDaFase(n.fase),
   }));
 
   // ---- (b) reconciliação dos abertos (NOVO/EM_COBRANCA) ----
@@ -154,7 +188,7 @@ export async function persistInadimplenciaSnapshot(
       supabase
         .from(TABLE)
         .select("competencia, operation_number, status_acompanhamento, ja_cobrado")
-        .in("status_acompanhamento", ["NOVO", "EM_COBRANCA"]),
+        .in("status_acompanhamento", ABERTOS),
     );
 
     for (const row of abertos) {
@@ -213,6 +247,8 @@ export async function persistInadimplenciaSnapshot(
     updates,
     resumo: {
       novos: upserts.length,
+      aCobrar: det.aCobrar,
+      aguardandoExplicacao: det.aguardandoExplicacao,
       emCobranca: updates.filter((u) => u.status_acompanhamento === "EM_COBRANCA").length,
       recuperados: updates.filter((u) => u.status_acompanhamento === "RECUPERADO").length,
       ressurgidos: updates.filter((u) => u.status_acompanhamento === "RESSURGIU").length,
@@ -220,3 +256,24 @@ export async function persistInadimplenciaSnapshot(
     },
   };
 }
+
+// ============================================================
+// ALTER PROPOSTO (NÃO aplicado — banco é manual no Supabase Studio).
+// A migration 20260621000000_inadimplencia_monitor.sql tem:
+//   check (status_acompanhamento in
+//     ('NOVO','EM_COBRANCA','RECUPERADO','RESSURGIU','BAIXADO'))
+// Faltam os 2 estados novos. Rodar no Studio antes de persistir AGUARDANDO_EXPLICACAO:
+//
+//   alter table public.prt_inadimplencia_monitor
+//     drop constraint if exists prt_inadimplencia_monitor_status_acompanhamento_check;
+//   alter table public.prt_inadimplencia_monitor
+//     add constraint prt_inadimplencia_monitor_status_acompanhamento_check
+//     check (status_acompanhamento in
+//       ('NOVO','AGUARDANDO_EXPLICACAO','EM_COBRANCA',
+//        'RECUPERADO','RESSURGIU','BAIXADO','JUSTIFICADO'));
+//
+// (Confirme o nome real da constraint com:
+//   select conname from pg_constraint
+//   where conrelid = 'public.prt_inadimplencia_monitor'::regclass and contype = 'c';)
+// JUSTIFICADO = baixa manual quando a Promotiva justifica e o Diego ACEITA.
+// ============================================================

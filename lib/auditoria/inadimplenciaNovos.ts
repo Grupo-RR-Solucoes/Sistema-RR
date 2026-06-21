@@ -24,46 +24,74 @@ import {
   type ContractPrtStatus,
 } from "@/lib/historicalAuditEngine";
 
+// DECISÃO DO DIEGO (Camada 4.x): TODO contrato que parou de pagar antes de
+// quitar é RECEBÍVEL EM ABERTO — o sistema NUNCA descarta sozinho, só prioriza.
+// Por isso a fila inclui os DOIS interrompidos (SUSPEITO <12 parc e LEGITIMO
+// ≥12 parc) + AUSENTE. A baixa só sai por decisão manual (BAIXADO/JUSTIFICADO).
 const CANDIDATE_STATUSES: ContractPrtStatus[] = [
   "INTERROMPIDO_SUSPEITO",
+  "INTERROMPIDO_LEGITIMO",
   "AUSENTE",
 ];
+
+/**
+ * Fase de tratamento — PRIORIZA sem descartar:
+ * - A_COBRAR: INTERROMPIDO_SUSPEITO (<12 parcelas) — indício forte, cobrar logo.
+ * - AGUARDANDO_EXPLICACAO: INTERROMPIDO_LEGITIMO (≥12 parcelas) e AUSENTE
+ *   (nunca listou) — provável legítimo; pediu/vai pedir explicação à Promotiva.
+ * Ambas contam no recuperável EM ABERTO.
+ */
+export type FaseInadimplencia = "A_COBRAR" | "AGUARDANDO_EXPLICACAO";
+
+function faseDoStatus(status: ContractPrtStatus): FaseInadimplencia {
+  return status === "INTERROMPIDO_SUSPEITO" ? "A_COBRAR" : "AGUARDANDO_EXPLICACAO";
+}
 
 export interface InadimplenciaNovoItem {
   operationNumber: string;
   companyCnpj: string;
   status: ContractPrtStatus;
+  /** Prioridade sem descarte (deriva do status). */
+  fase: FaseInadimplencia;
   parcelasPagas: number;
   parcelasTotal: number;
   ultimoMesPago: { year: number; month: number } | null;
+  /** Meses desde o último pagamento (aging) — null p/ AUSENTE. Só prioriza. */
+  mesesParado: number | null;
   recuperavelEstimado: number;
 }
 
 export interface InadimplenciaNovosResult {
   competencia: { year: number; month: number };
+  /** Só rotula "parada antiga" (informativo). NÃO descarta mais nada. */
   lookbackParadaMeses: number;
-  /** SUSPEITO + AUSENTE detectados pelo motor (antes dos filtros). */
+  /** SUSPEITO + LEGITIMO + AUSENTE detectados pelo motor (antes do anti-dupla). */
   totalSuspeitos: number;
-  /** Excluídos por já estarem em cobranca_itens (tipo PRT). */
+  /** Excluídos por já estarem em cobranca_itens (tipo PRT) — única exclusão. */
   jaCobrados: number;
-  /** Excluídos por parada antiga (fora da janela de lookback). */
-  foraDaJanela: number;
-  /** Lista final (já filtrada), ordenada por recuperável desc. */
+  /** Informativo: parada > lookback. NÃO é excluído (decisão do Diego). */
+  paradaAntiga: number;
+  /** Lista final (só anti-dupla aplicada), ordenada por recuperável desc. */
   novos: InadimplenciaNovoItem[];
   totalNovos: number;
+  /** Fase A_COBRAR (SUSPEITO <12). */
+  aCobrar: number;
+  /** Fase AGUARDANDO_EXPLICACAO (LEGITIMO ≥12 + AUSENTE). */
+  aguardandoExplicacao: number;
+  /** Recuperável EM ABERTO = A_COBRAR + AGUARDANDO_EXPLICACAO (toda a fila). */
   recuperavelNovo: number;
   /**
-   * TODOS os operationNumbers ainda suspeitos nesta competência (SUSPEITO +
-   * AUSENTE, ANTES dos filtros anti-dupla/recência). Alimenta a transição
-   * RESSURGIU do reconciliador: um contrato aberto no monitor cujo op NÃO está
-   * mais aqui deixou de ser inadimplente (voltou a pagar / mudou de status).
+   * TODOS os operationNumbers ainda em aberto nesta competência (SUSPEITO +
+   * LEGITIMO + AUSENTE, ANTES do anti-dupla). Alimenta a transição RESSURGIU do
+   * reconciliador: um contrato aberto no monitor cujo op NÃO está mais aqui
+   * deixou de ser inadimplente (voltou a pagar / mudou de status).
    */
   suspeitosAtuaisOps: string[];
 }
 
 export interface InadimplenciaNovosOptions {
   competencia: { year: number; month: number };
-  /** Janela de "parada recente" em meses (default 3). */
+  /** Janela p/ ROTULAR "parada antiga" (default 3). NÃO descarta. */
   lookbackParadaMeses?: number;
 }
 
@@ -103,7 +131,7 @@ export async function buildInadimplenciaNovos(
       .map((i) => String(i.contract_number ?? "").trim()),
   );
 
-  // 2) candidatos: SUSPEITO + AUSENTE.
+  // 2) candidatos: SUSPEITO + LEGITIMO + AUSENTE (nada é pré-descartado).
   const candidatos = payload.results.filter((r) =>
     CANDIDATE_STATUSES.includes(r.status),
   );
@@ -114,40 +142,47 @@ export async function buildInadimplenciaNovos(
   ): number | null => (ump ? compIdx - (ump.year * 12 + (ump.month - 1)) : null);
 
   let jaCobrados = 0;
-  let foraDaJanela = 0;
+  let paradaAntiga = 0;
   const novos: InadimplenciaNovoItem[] = [];
 
   for (const r of candidatos) {
     const op = String(r.operationNumber ?? "").trim();
 
-    // 3) anti-dupla: já cobrado como PRT.
+    // 3) ÚNICA exclusão automática: anti-dupla (já cobrado como PRT). À vista e
+    //    PRT são complementares — só encerra o PRT quem já foi cobrado COMO PRT.
     if (cobradoPrt.has(op)) {
       jaCobrados += 1;
       continue;
     }
 
-    // 4) parada recente. AUSENTE não tem ultimoMesPago (nunca pagou) — mantém
-    //    sempre (é um sinal distinto, raro), só interrompidos passam pela janela.
+    // 4) Aging: rotula "parada antiga" (> lookback) só pra PRIORIZAR. NÃO
+    //    descarta — recebível em aberto até pago ou justificado manualmente.
     const ms = mesesDesdeUltimoPago(r.ultimoMesPago);
-    if (r.status !== "AUSENTE") {
-      if (ms === null || ms < 0 || ms > lookbackParadaMeses) {
-        foraDaJanela += 1;
-        continue;
-      }
-    }
+    if (ms !== null && ms > lookbackParadaMeses) paradaAntiga += 1;
 
     novos.push({
       operationNumber: op,
       companyCnpj: r.companyCnpj,
       status: r.status,
+      fase: faseDoStatus(r.status),
       parcelasPagas: r.parcelasPagas,
       parcelasTotal: r.parcelasTotal,
       ultimoMesPago: r.ultimoMesPago,
+      mesesParado: ms,
       recuperavelEstimado: r.recuperavelEstimado,
     });
   }
 
-  novos.sort((a, b) => b.recuperavelEstimado - a.recuperavelEstimado);
+  // Ordena por fase (A_COBRAR primeiro) e, dentro da fase, por recuperável desc.
+  const ordemFase: Record<FaseInadimplencia, number> = {
+    A_COBRAR: 0,
+    AGUARDANDO_EXPLICACAO: 1,
+  };
+  novos.sort(
+    (a, b) =>
+      ordemFase[a.fase] - ordemFase[b.fase] ||
+      b.recuperavelEstimado - a.recuperavelEstimado,
+  );
   const recuperavelNovo = round2(
     novos.reduce((a, r) => a + r.recuperavelEstimado, 0),
   );
@@ -157,9 +192,11 @@ export async function buildInadimplenciaNovos(
     lookbackParadaMeses,
     totalSuspeitos: candidatos.length,
     jaCobrados,
-    foraDaJanela,
+    paradaAntiga,
     novos,
     totalNovos: novos.length,
+    aCobrar: novos.filter((n) => n.fase === "A_COBRAR").length,
+    aguardandoExplicacao: novos.filter((n) => n.fase === "AGUARDANDO_EXPLICACAO").length,
     recuperavelNovo,
     suspeitosAtuaisOps: candidatos.map((c) => String(c.operationNumber ?? "").trim()),
   };
