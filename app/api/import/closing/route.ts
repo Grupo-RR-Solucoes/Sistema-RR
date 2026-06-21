@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
+import { persistInadimplenciaSnapshot } from "@/lib/auditoria/persistInadimplencia";
 import {
   DuplicateImportInFlightError,
   importMonthlyClosingWorkbook,
 } from "@/lib/monthlyClosingImport";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function POST(req: Request) {
   try {
@@ -33,7 +35,43 @@ export async function POST(req: Request) {
       createdBy: user.session.appUser.email,
     });
 
-    return NextResponse.json(payload);
+    // Camada 3 — gatilho pós-importação do monitor de inadimplência PRT.
+    // Roda para a competência DO FECHAMENTO recém-importado (year/month = a
+    // mesma competência usada em fechamento_mensal_empresa, não a de caixa).
+    // É efeito colateral: a importação já concluiu com sucesso acima, então
+    // qualquer falha aqui é logada mas NÃO derruba o import. Idempotente — o
+    // UPSERT por (competencia, operation_number) garante que re-importar a
+    // mesma competência não duplica linhas.
+    let inadimplenciaMonitor: {
+      ran: boolean;
+      novos?: number;
+      error?: string;
+    } = { ran: false };
+    try {
+      const snapshot = await persistInadimplenciaSnapshot(getSupabaseAdmin(), {
+        competencia: { year, month },
+        lookbackParadaMeses: 3,
+      });
+      inadimplenciaMonitor = { ran: true, novos: snapshot.resumo.novos };
+      console.log(
+        `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
+          `monitor inadimplência: ${snapshot.resumo.novos} novos detectados ` +
+          `(emCobranca=${snapshot.resumo.emCobranca}, recuperados=${snapshot.resumo.recuperados}, ` +
+          `ressurgidos=${snapshot.resumo.ressurgidos}).`
+      );
+    } catch (monitorError) {
+      const message =
+        monitorError instanceof Error
+          ? monitorError.message
+          : "Erro desconhecido no monitor de inadimplência.";
+      inadimplenciaMonitor = { ran: false, error: message };
+      console.error(
+        `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
+          `monitor de inadimplência falhou (import preservado): ${message}`
+      );
+    }
+
+    return NextResponse.json({ ...payload, inadimplenciaMonitor });
   } catch (error) {
     if (error instanceof DuplicateImportInFlightError) {
       return NextResponse.json(

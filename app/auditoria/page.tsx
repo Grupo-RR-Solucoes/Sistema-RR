@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { UiStyles, HeaderNavy, KpiHero } from "@/components/ui";
 import HistoricalFindingsSection from "../../components/auditoria/HistoricalFindingsSection";
+import InadimplenciaSection from "../../components/auditoria/InadimplenciaSection";
 
 // ============================================================
 // AUDITORIA (Etapa 8) — fiel ao Auditoria_referencia.html + REGRA da trava.
@@ -125,6 +126,9 @@ export default function AuditoriaPage() {
             ))}
           </section>
         ) : null}
+
+        {/* INADIMPLÊNCIA PRT — fila de cobrança (Camada 4, monitor automático) */}
+        <InadimplenciaSection />
 
         {/* CARREGAR HISTÓRICO SOB DEMANDA */}
         <div className="load">
