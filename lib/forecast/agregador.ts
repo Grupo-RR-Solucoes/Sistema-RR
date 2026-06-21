@@ -69,9 +69,14 @@ export interface AgregadorResult {
 
 export interface AgregadorOptions {
   refDate?: Date;
-  /** Meses à frente da competência inicial (default 6). */
+  /** Meses à frente do snapshot do PRT (default 6). */
   horizonteMeses?: number;
-  /** Competência inicial; default = snapshot do PRT (1ª com comparação fechada). */
+  /**
+   * Meses realizados ANTES do snapshot a incluir (default 0). Útil para a tela:
+   * dá a linha "realizado" (recebido PRT histórico) antes do previsto.
+   */
+  lookbackMeses?: number;
+  /** Competência inicial; default = snapshot − lookbackMeses. */
   competenciaInicial?: { year: number; month: number };
 }
 
@@ -128,12 +133,15 @@ export async function buildAgregadorForecast(
   previstoPrtByComp.set(agenda.snapshot.competencia, agenda.baseComissao);
   for (const p of agenda.serie) previstoPrtByComp.set(p.competencia, p.previsto);
 
-  // Competência inicial: por padrão a do snapshot (a única já fechada que a
-  // agenda cobre -> primeira comparação like-for-like possível).
-  const ini = options.competenciaInicial ?? parseComp(agenda.snapshot.competencia);
+  // Janela: do (snapshot − lookback) até (snapshot + horizonte). O lookback traz
+  // meses realizados (recebido PRT) antes do snapshot; o horizonte é o previsto.
+  const lookbackMeses = options.lookbackMeses ?? 0;
+  const snap = parseComp(agenda.snapshot.competencia);
+  const ini = options.competenciaInicial ?? addMonth(snap.year, snap.month, -lookbackMeses);
+  const totalSteps = lookbackMeses + horizonteMeses;
 
   const meses: AgregadorMes[] = [];
-  for (let h = 0; h <= horizonteMeses; h++) {
+  for (let h = 0; h <= totalSteps; h++) {
     const m = addMonth(ini.year, ini.month, h);
     const comp = label(m.year, m.month);
     const fechado = closedSet.has(comp);
