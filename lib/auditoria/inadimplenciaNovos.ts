@@ -52,6 +52,13 @@ export interface InadimplenciaNovosResult {
   novos: InadimplenciaNovoItem[];
   totalNovos: number;
   recuperavelNovo: number;
+  /**
+   * TODOS os operationNumbers ainda suspeitos nesta competência (SUSPEITO +
+   * AUSENTE, ANTES dos filtros anti-dupla/recência). Alimenta a transição
+   * RESSURGIU do reconciliador: um contrato aberto no monitor cujo op NÃO está
+   * mais aqui deixou de ser inadimplente (voltou a pagar / mudou de status).
+   */
+  suspeitosAtuaisOps: string[];
 }
 
 export interface InadimplenciaNovosOptions {
@@ -154,5 +161,6 @@ export async function buildInadimplenciaNovos(
     novos,
     totalNovos: novos.length,
     recuperavelNovo,
+    suspeitosAtuaisOps: candidatos.map((c) => String(c.operationNumber ?? "").trim()),
   };
 }
