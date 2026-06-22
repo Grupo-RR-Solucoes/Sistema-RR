@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { UiStyles, HeaderNavy, KpiBand, Banner, Table, Num, Chip } from "@/components/ui";
 import type { ChipVariant } from "@/components/ui";
+import FatorRSection from "@/components/dashboard/FatorRSection";
 
 // ============================================================
 // DASHBOARD (Visão geral). Header = bloco navy com os 4 stats embutidos
@@ -76,6 +77,7 @@ export default function DashboardPage() {
         {data?.projecao?.show ? <AlertProjecao p={data.projecao} /> : null}
         <ChartCard data={data} error={error} />
         <CnpjCard rows={data?.cnpjs ?? []} />
+        <FatorRSection />
         <Shortcuts />
       </main>
     </div>
