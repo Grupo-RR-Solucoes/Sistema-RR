@@ -134,8 +134,9 @@ export async function calcularFatorR(
 
   const rbt = await calcularRbt12(supabase, { ano, mes, janelaMeses: nMeses });
 
-  // janela de competências (mesma do RBT12) para somar a folha.
-  const janela = janelaMeses(ano, mes, nMeses);
+  // folha por competência casa com a janela de PRODUÇÃO do RBT12 (fiscal − 1),
+  // pra numerador e denominador cobrirem o mesmo período econômico
+  const janela = janelaMeses(rbt.referenciaProducao.ano, rbt.referenciaProducao.mes, nMeses);
   const janelaKeys = new Set(janela.map((j) => j.key));
 
   // categorias do numerador (por nome, robusto a acento/caixa).
@@ -217,7 +218,9 @@ export async function calcularFatorR(
 
   return {
     referencia: { ano, mes, key: `${ano}-${String(mes).padStart(2, "0")}` },
-    janela: { de: janela[0].key, ate: janela[janela.length - 1].key, meses: nMeses },
+    // exibe a janela FISCAL do RBT12 (regime de caixa, jul→jun), coerente com o
+    // monitor de faixa; a folha é casada internamente pela janela de produção.
+    janela: rbt.janela,
     tetoSimples: TETO_SIMPLES,
     empresas,
     algumAlertaTeto: empresas.some((e) => e.alertaTeto),
