@@ -26,8 +26,10 @@ type Empresa = {
   aliquotaEfetiva: number | null;
   folha12m: number;
   temDadosFolha: boolean;
+  mesesFolha: number;
+  folhaIncompleta: boolean;
   fatorR: number | null;
-  semaforo: "verde" | "amarelo" | "vermelho" | "sem_dados";
+  semaforo: "verde" | "amarelo" | "vermelho" | "parcial" | "sem_dados";
   anexoVigente: "III" | "V" | null;
   margemAteTeto: number;
   pctTetoUsado: number;
@@ -52,6 +54,7 @@ const nome = (n: string) =>
 
 const semaforoChip = (s: Empresa["semaforo"]): ChipVariant =>
   s === "verde" ? "ok" : s === "amarelo" ? "warn" : s === "vermelho" ? "risk" : "neutral";
+// "parcial" e "sem_dados" → neutral (sem cor de semáforo).
 
 export default function FatorRSection() {
   const [data, setData] = useState<Payload | null>(null);
@@ -126,13 +129,20 @@ export default function FatorRSection() {
               <div className="row">
                 <span className="k">Fator R</span>
                 <span className="v">
-                  {e.fatorR != null ? (
+                  {e.fatorR == null ? (
+                    <Chip variant="neutral" dot={false}>aguardando folha</Chip>
+                  ) : e.folhaIncompleta ? (
+                    <>
+                      <b className="num fr provisorio" title="Fator R provisório — não conclusivo até 12 meses de folha">
+                        {pct1(e.fatorR)}*
+                      </b>
+                      <Chip variant="neutral" dot={false}>folha incompleta: {e.mesesFolha}/12 meses</Chip>
+                    </>
+                  ) : (
                     <>
                       <b className="num fr">{pct1(e.fatorR)}</b>
                       <Chip variant={semaforoChip(e.semaforo)}>{e.anexoVigente ? `Anexo ${e.anexoVigente}` : e.semaforo}</Chip>
                     </>
-                  ) : (
-                    <Chip variant="neutral" dot={false}>aguardando folha</Chip>
                   )}
                 </span>
               </div>
@@ -161,6 +171,7 @@ export default function FatorRSection() {
 .fatorr-card .k{font-size:12px;color:var(--ink-3);}
 .fatorr-card .v{display:inline-flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;color:var(--ink);}
 .fatorr-card .v .fr{font-size:18px;}
+.fatorr-card .v .fr.provisorio{color:var(--ink-3);font-weight:600;}
 .fatorr-card .num{font-variant-numeric:tabular-nums;}
 .fatorr-card .muted{font-size:12px;color:var(--ink-3);font-weight:500;}
 .fatorr-card .parcial{font-size:11.5px;color:var(--ink-3);margin:2px 0 0;}

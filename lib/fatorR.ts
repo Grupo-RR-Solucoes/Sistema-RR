@@ -63,7 +63,7 @@ export function resolverAnexoIII(rbt12: number): FaixaResolvidaAnexoIII {
   return { faixa: f.faixa, nominal: f.nominal, pd: f.pd, aliquotaEfetiva, acimaSimples: false };
 }
 
-export type SemaforoFatorR = "verde" | "amarelo" | "vermelho" | "sem_dados";
+export type SemaforoFatorR = "verde" | "amarelo" | "vermelho" | "parcial" | "sem_dados";
 
 export function semaforoFatorR(fatorR: number | null): SemaforoFatorR {
   if (fatorR == null) return "sem_dados";
@@ -85,9 +85,15 @@ export interface FatorREmpresa {
   folha12m: number;
   /** Há ao menos 1 lançamento de folha na janela? (senão fatorR=null). */
   temDadosFolha: boolean;
+  /** Nº de meses distintos com folha lançada na janela (0..12). */
+  mesesFolha: number;
+  /** 1..11 meses lançados: Fator R provisório, NÃO conclusivo (não dispara Anexo V). */
+  folhaIncompleta: boolean;
+  /** Fator R = folha12m ÷ rbt12. Provisório se folhaIncompleta; null se sem folha. */
   fatorR: number | null;
   semaforo: SemaforoFatorR;
-  anexoVigente: "III" | "V" | null; // null se sem dados de folha ou acima do Simples
+  /** "III"/"V" só CONCLUSIVO com 12 meses; null se incompleta/sem dados/acima. */
+  anexoVigente: "III" | "V" | null;
   /** R$ que falta pro teto de 4,8 MM (0 se acima). */
   margemAteTeto: number;
   pctTetoUsado: number; // rbt12 / 4,8MM
@@ -171,11 +177,20 @@ export async function calcularFatorR(
     const anexo = resolverAnexoIII(e.rbt12);
     const folha = folhaByCompany.get(e.company_id);
     const folha12m = round2(folha?.soma ?? 0);
-    const temDadosFolha = !!folha && folha.meses.size > 0 && folha.soma > 0;
+    const mesesFolha = folha?.meses.size ?? 0;
+    const temDadosFolha = mesesFolha > 0 && (folha?.soma ?? 0) > 0;
+    // Fator R só é CONCLUSIVO com a janela cheia de folha. Com 1..11 meses, o
+    // ratio fica falsamente baixo (folha parcial ÷ RBT12 de 12m) — NÃO conclui
+    // Anexo V. fatorR continua calculado (provisório, para exibir esmaecido).
+    const folhaIncompleta = mesesFolha > 0 && mesesFolha < nMeses;
     const fatorR = temDadosFolha && e.rbt12 > 0 ? folha12m / e.rbt12 : null;
-    const semaforo = semaforoFatorR(fatorR);
+    const semaforo: SemaforoFatorR = folhaIncompleta ? "parcial" : semaforoFatorR(fatorR);
     const anexoVigente: "III" | "V" | null =
-      anexo.acimaSimples || fatorR == null ? null : fatorR >= FATOR_R_MIN_ANEXO_III ? "III" : "V";
+      anexo.acimaSimples || fatorR == null || folhaIncompleta
+        ? null
+        : fatorR >= FATOR_R_MIN_ANEXO_III
+          ? "III"
+          : "V";
     const pctTetoUsado = TETO_SIMPLES > 0 ? e.rbt12 / TETO_SIMPLES : 0;
     return {
       company_id: e.company_id,
@@ -188,6 +203,8 @@ export async function calcularFatorR(
       aliquotaEfetiva: anexo.aliquotaEfetiva,
       folha12m,
       temDadosFolha,
+      mesesFolha,
+      folhaIncompleta,
       fatorR,
       semaforo,
       anexoVigente,
