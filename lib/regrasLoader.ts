@@ -604,7 +604,8 @@ export function categoriasCandidatasFor(
   if (
     p.includes("NÃO CONSIGNADO") || p.includes("NAO CONSIGNADO") ||
     p.includes("SALÁRIO") || p.includes("SALARIO") ||
-    p.includes("BENEFÍCIO") || p.includes("BENEFICIO")
+    p.includes("BENEFÍCIO") || p.includes("BENEFICIO") ||
+    p.includes("AUTOMÁTICO") || p.includes("AUTOMATICO")
   ) {
     return ["NAO_CONSIGNADO"];
   }
