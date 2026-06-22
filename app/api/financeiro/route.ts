@@ -176,6 +176,114 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, id: data.id });
     }
 
+    if (action === "folha_lote") {
+      if (!canManageExpense(user.role)) {
+        return NextResponse.json(
+          { error: "Voce nao tem permissao para lancar folha." },
+          { status: 403 }
+        );
+      }
+      const companyId = body.companyId ? String(body.companyId) : null;
+      const rawCells = Array.isArray(body.cells) ? body.cells : [];
+      if (!companyId) {
+        return NextResponse.json({ error: "Selecione a empresa." }, { status: 400 });
+      }
+      // células válidas: amount > 0 (branco/zero é OMITIDO — não cria R$0).
+      type FolhaCell = { year: number; month: number; categoryId: string | null; amount: number };
+      const cells: FolhaCell[] = (rawCells as Array<Record<string, unknown>>)
+        .map((c) => ({
+          year: Number(c.year),
+          month: Number(c.month),
+          categoryId: c.categoryId ? String(c.categoryId) : null,
+          amount: toNumber(c.amount),
+        }))
+        .filter(
+          (c) => c.year > 0 && c.month >= 1 && c.month <= 12 && !!c.categoryId && c.amount > 0,
+        );
+      if (cells.length === 0) {
+        return NextResponse.json(
+          { error: "Nenhum valor para lancar (preencha ao menos uma celula > 0)." },
+          { status: 400 },
+        );
+      }
+
+      // nomes das categorias (p/ descrição automática).
+      const catIds = Array.from(new Set(cells.map((c) => c.categoryId as string)));
+      const { data: catRows } = await supabase
+        .from("expense_categories")
+        .select("id, name")
+        .in("id", catIds);
+      const catName = new Map(
+        ((catRows as Array<{ id: string; name: string }> | null) ?? []).map((c) => [c.id, c.name]),
+      );
+
+      // idempotência: linhas existentes (mesmo company/scope/categoria/ano) →
+      // mapa por (year-month-category) p/ ATUALIZAR em vez de duplicar.
+      const years = Array.from(new Set(cells.map((c) => c.year)));
+      const { data: existing, error: existErr } = await supabase
+        .from("financial_expenses")
+        .select("id, year, month, category_id")
+        .eq("company_id", companyId)
+        .eq("scope", "COMPANY")
+        .in("category_id", catIds)
+        .in("year", years);
+      if (existErr) throw existErr;
+      const byKey = new Map<string, string>();
+      for (const r of (existing as Array<{ id: string; year: number; month: number; category_id: string }> | null) ?? []) {
+        byKey.set(`${r.year}-${r.month}-${r.category_id}`, r.id);
+      }
+
+      let created = 0;
+      let updated = 0;
+      for (const c of cells) {
+        const lastDay = new Date(c.year, c.month, 0).getDate();
+        const paymentDate = `${c.year}-${String(c.month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+        const description = `${catName.get(c.categoryId as string) ?? "Folha"} - ${String(c.month).padStart(2, "0")}/${c.year}`;
+        const key = `${c.year}-${c.month}-${c.categoryId}`;
+        const existingId = byKey.get(key);
+        if (existingId) {
+          const { error } = await supabase
+            .from("financial_expenses")
+            .update({
+              amount: c.amount,
+              description,
+              status: "PAID",
+              payment_date: paymentDate,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", existingId);
+          if (error) throw error;
+          updated += 1;
+        } else {
+          const { data: ins, error } = await supabase
+            .from("financial_expenses")
+            .insert({
+              company_id: companyId,
+              year: c.year,
+              month: c.month,
+              category_id: c.categoryId,
+              scope: "COMPANY",
+              description,
+              amount: c.amount,
+              status: "PAID",
+              payment_date: paymentDate,
+            })
+            .select("id")
+            .single();
+          if (error) throw error;
+          created += 1;
+          byKey.set(key, ins.id); // evita duplicar dentro do próprio lote
+        }
+      }
+
+      await writeAuditLog(
+        "Lancamento de folha em lote",
+        { company_id: companyId, created, updated, total: cells.length },
+        auditActor,
+      );
+      return NextResponse.json({ success: true, created, updated, total: cells.length });
+    }
+
     if (action === "opening_balance") {
       if (user.role !== "socio") {
         return NextResponse.json(
