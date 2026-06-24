@@ -162,7 +162,7 @@ export default function FolhaLoteModal({ companies, categories, onClose, onSucce
         <form onSubmit={handleSubmit} noValidate>
           <div className="modal-body">
             <div className="lote-controls">
-              <div className="mfld">
+              <div className="mfld mfld-emp">
                 <label htmlFor="loteEmp">Empresa <span className="req">*</span></label>
                 <div className="mctrl">
                   <select id="loteEmp" value={companyId} onChange={(e) => setCompanyId(e.target.value)} disabled={submitting}>
@@ -175,15 +175,15 @@ export default function FolhaLoteModal({ companies, categories, onClose, onSucce
               <div className="mfld">
                 <label>De (mês/ano) <span className="req">*</span></label>
                 <div className="lote-range">
-                  <div className="mctrl"><select value={deMonth} onChange={(e) => setDeMonth(Number(e.target.value))} disabled={submitting}>{MES_LABEL.map((l, i) => <option key={i} value={i + 1}>{l}</option>)}</select><span className="chev">▾</span></div>
-                  <div className="mctrl"><select value={deYear} onChange={(e) => setDeYear(Number(e.target.value))} disabled={submitting}>{YEAR_OPTIONS.map((y) => <option key={y} value={y}>{y}</option>)}</select><span className="chev">▾</span></div>
+                  <div className="mctrl mes"><select value={deMonth} onChange={(e) => setDeMonth(Number(e.target.value))} disabled={submitting}>{MES_LABEL.map((l, i) => <option key={i} value={i + 1}>{l}</option>)}</select><span className="chev">▾</span></div>
+                  <div className="mctrl ano"><select value={deYear} onChange={(e) => setDeYear(Number(e.target.value))} disabled={submitting}>{YEAR_OPTIONS.map((y) => <option key={y} value={y}>{y}</option>)}</select><span className="chev">▾</span></div>
                 </div>
               </div>
               <div className="mfld">
                 <label>Até (mês/ano) <span className="req">*</span></label>
                 <div className="lote-range">
-                  <div className="mctrl"><select value={ateMonth} onChange={(e) => setAteMonth(Number(e.target.value))} disabled={submitting}>{MES_LABEL.map((l, i) => <option key={i} value={i + 1}>{l}</option>)}</select><span className="chev">▾</span></div>
-                  <div className="mctrl"><select value={ateYear} onChange={(e) => setAteYear(Number(e.target.value))} disabled={submitting}>{YEAR_OPTIONS.map((y) => <option key={y} value={y}>{y}</option>)}</select><span className="chev">▾</span></div>
+                  <div className="mctrl mes"><select value={ateMonth} onChange={(e) => setAteMonth(Number(e.target.value))} disabled={submitting}>{MES_LABEL.map((l, i) => <option key={i} value={i + 1}>{l}</option>)}</select><span className="chev">▾</span></div>
+                  <div className="mctrl ano"><select value={ateYear} onChange={(e) => setAteYear(Number(e.target.value))} disabled={submitting}>{YEAR_OPTIONS.map((y) => <option key={y} value={y}>{y}</option>)}</select><span className="chev">▾</span></div>
                 </div>
               </div>
             </div>
@@ -255,10 +255,14 @@ export default function FolhaLoteModal({ companies, categories, onClose, onSucce
 }
 
 const LOTE_CSS = `
-.modal-lote{max-width:760px;width:96vw;}
-.lote-controls{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:14px;margin-bottom:6px;}
-.lote-range{display:flex;gap:8px;}
-.lote-range .mctrl{flex:1;}
+.modal-lote{max-width:820px;width:96vw;}
+.lote-controls{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px;margin-bottom:6px;}
+.lote-controls .mfld-emp{grid-column:1 / -1;}
+.lote-range{display:flex;gap:10px;}
+.lote-range .mctrl{flex:1 1 0;}
+.lote-range .mctrl.mes{flex:1 1 96px;min-width:96px;}
+.lote-range .mctrl.ano{flex:0 0 104px;min-width:104px;}
+.lote-range .mctrl select{min-width:0;}
 .lote-grid-wrap{margin-top:12px;border:1px solid var(--bd,#E4E7EC);border-radius:12px;overflow:auto;max-height:46vh;}
 .lote-grid{width:100%;border-collapse:collapse;font-size:13px;}
 .lote-grid thead th{position:sticky;top:0;background:var(--neu,#F1F3F7);color:var(--ink-2,#4B5468);text-transform:uppercase;font-size:11px;letter-spacing:.04em;font-weight:600;text-align:right;padding:9px 12px;border-bottom:1px solid var(--bd,#E4E7EC);white-space:nowrap;}
