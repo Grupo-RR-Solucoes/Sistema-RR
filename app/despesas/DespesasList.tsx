@@ -8,6 +8,7 @@ import type { UserRole } from "@/lib/auth/types";
 import { canDeleteExpense } from "@/lib/auth/permissions";
 
 import DespesaModal from "./DespesaModal";
+import FolhaLoteModal from "./FolhaLoteModal";
 import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
 
 export interface CompanyOption {
@@ -137,7 +138,7 @@ export default function DespesasList({
   const [expenses, setExpenses] = useState<ExpenseRow[]>(initialExpenses);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [modalState, setModalState] = useState<
-    { mode: "none" } | { mode: "create" } | { mode: "edit"; expense: ExpenseRow }
+    { mode: "none" } | { mode: "create" } | { mode: "folha" } | { mode: "edit"; expense: ExpenseRow }
   >({ mode: "none" });
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(loadError);
@@ -354,9 +355,14 @@ export default function DespesasList({
           title="Despesas operacionais"
           subtitle="Fonte que alimenta o Caixa e a DRE · sócios + equipe"
           actions={
-            <button className="btn-new" onClick={() => setModalState({ mode: "create" })}>
-              <span className="plus">+</span>Nova despesa
-            </button>
+            <div className="head-ctas">
+              <button className="btn-new btn-lote" onClick={() => setModalState({ mode: "folha" })}>
+                <span className="plus">≣</span>Folha em lote
+              </button>
+              <button className="btn-new" onClick={() => setModalState({ mode: "create" })}>
+                <span className="plus">+</span>Nova despesa
+              </button>
+            </div>
           }
         >
           <KpiBand
@@ -677,10 +683,23 @@ export default function DespesasList({
         ) : null}
       </main>
 
-      {modalState.mode !== "none" ? (
+      {modalState.mode === "create" || modalState.mode === "edit" ? (
         <DespesaModal
           mode={modalState.mode}
           expense={modalState.mode === "edit" ? modalState.expense : null}
+          companies={initialCompanies}
+          categories={initialCategories}
+          onClose={() => setModalState({ mode: "none" })}
+          onSuccess={async (message) => {
+            setModalState({ mode: "none" });
+            await refetch();
+            showToast(message);
+          }}
+        />
+      ) : null}
+
+      {modalState.mode === "folha" ? (
+        <FolhaLoteModal
           companies={initialCompanies}
           categories={initialCategories}
           onClose={() => setModalState({ mode: "none" })}
@@ -728,6 +747,10 @@ const CSS = `
 .rrdesp .btn-new{display:inline-flex;align-items:center;gap:9px;background:var(--yellow);color:var(--navy);border:none;border-radius:11px;padding:13px 20px;font-family:inherit;font-size:13.5px;font-weight:700;letter-spacing:.01em;cursor:pointer;box-shadow:0 6px 18px rgba(255,240,0,.18);transition:transform .12s,box-shadow .12s,background .12s;}
 .rrdesp .btn-new:hover{background:#FFF55C;transform:translateY(-1px);box-shadow:0 10px 24px rgba(255,240,0,.26);}
 .rrdesp .btn-new .plus{font-size:17px;line-height:1;margin-top:-1px;}
+.rrdesp .head-ctas{display:flex;gap:10px;flex-wrap:wrap;}
+.rrdesp .btn-lote{background:rgba(255,255,255,.08);color:#E4E9F4;border:1px solid rgba(255,255,255,.18);box-shadow:none;}
+.rrdesp .btn-lote:hover{background:rgba(255,255,255,.15);box-shadow:none;}
+.rrdesp .btn-lote .plus{font-size:14px;}
 
 .rrdesp .banner{border-radius:var(--r-md);padding:12px 16px;font-size:13px;}
 .rrdesp .banner.err{background:var(--red-bg);border:1px solid #E9B7B2;color:#8E2F28;}
