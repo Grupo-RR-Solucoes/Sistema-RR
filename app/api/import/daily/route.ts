@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { apiGuardErrorResponse, withSocioOrFuncionarioAdmin } from "@/lib/auth/guards";
 import { clearMemoryCache } from "@/lib/memoryCache";
+import { deriveDailySegmentRows } from "@/lib/convenioSegmento";
 import {
   getProductionPeriodFromValue,
   getProductionPeriodKey,
@@ -11,6 +12,54 @@ import {
 
 const EXISTING_LOOKUP_CHUNK_SIZE = 200;
 const UPSERT_CHUNK_SIZE = 500;
+
+/**
+ * BEST-EFFORT / ISOLADO — auto-crescimento da tabela de referência
+ * convenio_segmento com os convênios desta importação (segmento do banco).
+ * NUNCA lança: qualquer erro (tabela ausente, RLS, etc.) é só logado e ignorado
+ * — o import da diária não pode quebrar por causa disto. Precedência: não
+ * rebaixa fonte 'convenios_oficiais'/'manual' (verdade oficial > inferência).
+ * Reusa a derivação de lib/convenioSegmento.ts (não duplica a lógica).
+ */
+async function growConvenioSegmento(
+  supabase: SupabaseClient,
+  records: Array<{ convenio_code?: string | number | null; convenio_segment?: string | number | null }>
+): Promise<void> {
+  try {
+    const rows = deriveDailySegmentRows(records);
+    if (rows.length === 0) return;
+    const codes = rows.map((r) => r.convenio_code);
+    // Lê os existentes p/ respeitar precedência de fonte.
+    const { data: existing, error: readErr } = await supabase
+      .from("convenio_segmento")
+      .select("convenio_code, fonte")
+      .in("convenio_code", codes);
+    if (readErr) throw readErr;
+    const protegidos = new Set(
+      (existing ?? [])
+        .filter((e: { fonte?: string }) => e.fonte === "convenios_oficiais" || e.fonte === "manual")
+        .map((e: { convenio_code?: string }) => String(e.convenio_code))
+    );
+    const hoje = new Date().toISOString().slice(0, 10);
+    const agora = new Date().toISOString();
+    const toUpsert = rows
+      .filter((r) => !protegidos.has(r.convenio_code))
+      .map((r) => ({ ...r, confirmado_em: hoje, updated_at: agora }));
+    if (toUpsert.length === 0) return;
+    const { error: upsertErr } = await supabase
+      .from("convenio_segmento")
+      .upsert(toUpsert, { onConflict: "convenio_code" });
+    if (upsertErr) throw upsertErr;
+    console.info(
+      `[import/daily] convenio_segmento auto-cresceu: ${toUpsert.length} convênio(s).`
+    );
+  } catch (e) {
+    console.warn(
+      "[import/daily] auto-crescimento de convenio_segmento falhou (best-effort, ignorado):",
+      e instanceof Error ? e.message : e
+    );
+  }
+}
 
 function normalizeText(value: unknown) {
   return String(value ?? "")
@@ -556,6 +605,11 @@ export async function POST(req: Request) {
       .eq("id", importLog.id);
 
     if (finishError) throw finishError;
+
+    // Auto-crescimento da tabela de referência convenio_segmento — DEPOIS do
+    // commit da produção (linhas + status COMPLETED já persistidos). Isolado:
+    // growConvenioSegmento nunca lança, então não afeta o retorno do import.
+    await growConvenioSegmento(supabase, recordsToSave);
 
     return NextResponse.json({
       success: true,
