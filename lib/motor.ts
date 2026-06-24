@@ -350,7 +350,7 @@ function isPrivateConvenio(op: Operation) {
   );
 }
 
-function inferCreditTable(op: Operation) {
+export function inferCreditTable(op: Operation) {
   const productCode = normalizeProductCode(op.product_code);
   const description = normalizeText(op.product_description);
   const convenioCode = normalizeConvenioCode(op.convenio_code);
