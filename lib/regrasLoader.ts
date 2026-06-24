@@ -115,23 +115,19 @@ export function lookupPctInRegra(
     return { pct: null, celula: null, jsonRegra, regraInferida };
   }
 
-  // Bug #6: ADIANTAMENTO_13 (e demais categorias com tx_juros_min) — se taxa
-  // declarada no contrato é menor que tx_juros_min do JSON, contrato está
-  // FORA_DA_TABELA. v8 atual retorna pct positivo erroneamente.
+  // Bug #6: tx_juros_min — se a taxa declarada no contrato é menor que o
+  // tx_juros_min do JSON, o contrato está FORA_DA_TABELA (pct null). Aplica a
+  // TODAS as categorias, SEM exceção, incluindo ADIANTAMENTO_13.
   //
-  // TODO Fase 4.4: revisar tx_juros_min para ADIANTAMENTO_13.
-  //   V8 e V9 humanas IGNORAM este check — motor TS espelha esta convenção
-  //   nesta fase (skip APENAS para ADIANTAMENTO_13). 6 contratos no batch
-  //   full são tratados como SUBPAGAMENTO por v9 mesmo com taxa abaixo do
-  //   tx_juros_min declarado (~R$ 227 total). 1 contrato outlier (204131022,
-  //   Fev/2026) v9 marcou FORA_DA_TABELA — v9 NÃO É CONSISTENTE INTERNAMENTE.
-  //   Identificar critério do outlier e investigar PDFs originais TRP07/08
-  //   antes de remover este skip. Risco se removido sem revisão: motor
-  //   diverge do email enviado 07/05/2026 que cobrou esses 6 contratos.
-  //   Ver gap_analysis.md "DÍVIDA TÉCNICA — Fase 4.4 — PADRAO_B_ADIANTAMENTO_13_TX_JUROS_MIN".
-  const skipTxJurosMin = categoriaProduto === "ADIANTAMENTO_13";
+  // Decisão Diego (Fase 4.4, PADRAO_B_ADIANTAMENTO_13_TX_JUROS_MIN): a TRP é
+  // regra inquestionável — ADIANTAMENTO_13 com taxa < tx_juros_min paga 0%
+  // (sem regra = sem comissão), igual a qualquer outra categoria. O antigo
+  // skipTxJurosMin (mirror v9, que pagava 2,35% em ~6 contratos / ~R$ 227) foi
+  // REMOVIDO. O limiar é POR COMPETÊNCIA, lido do JSON (2,79% em TRP07,
+  // 3,25% em TRP22+), não hard-coded. O motor já respeitava isto (gate B em
+  // VOLUME_5 + CREDIT_RULES.minRate no fallback); esta mudança alinha a
+  // auditoria à vista ao motor. Não afeta mês fechado (cms é ground truth).
   if (
-    !skipTxJurosMin &&
     typeof cat.tx_juros_min === "number" &&
     taxa < cat.tx_juros_min - EPS
   ) {
