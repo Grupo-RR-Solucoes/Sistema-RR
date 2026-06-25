@@ -26,6 +26,7 @@ import {
 type Divergencia = {
   contrato: string;
   empresa: string;
+  cnpj: string | null;
   produto: string | null;
   txJuros: number;
   prazo: number;
@@ -242,16 +243,34 @@ export default function ConferenciaAvistaSection() {
               <span className="cav-muted">
                 Contratos onde a Promotiva pagou MENOS que a TRP da competência manda.
               </span>
-              {data.divergencias.length > 0 ? (
-                <a
-                  className="cav-export"
-                  href={`/api/auditoria/avista-viva?year=${year}&month=${month}&format=csv`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Exportar divergências (CSV)
-                </a>
-              ) : null}
+              <div className="cav-actions">
+                {data.divergencias.length > 0 ? (
+                  <a
+                    className="cav-export"
+                    href={`/api/auditoria/avista-viva?year=${year}&month=${month}&format=csv`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Exportar divergências (CSV)
+                  </a>
+                ) : null}
+                {data.divergencias.length > 0 ? (
+                  <a
+                    className="cav-minuta"
+                    href={`/api/auditoria/avista-cobranca?year=${year}&month=${month}`}
+                  >
+                    Gerar minuta de cobrança (.zip)
+                  </a>
+                ) : (
+                  <span
+                    className="cav-minuta cav-minuta-off"
+                    aria-disabled="true"
+                    title="Sem divergências cobráveis nesta competência — nada a cobrar."
+                  >
+                    Gerar minuta de cobrança (.zip)
+                  </span>
+                )}
+              </div>
             </div>
 
             {data.divergencias.length === 0 ? (
@@ -344,6 +363,10 @@ const CSS = `
 .rrcav .cav-divhead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap;}
 .rrcav .cav-export{font-size:12.5px;font-weight:600;color:var(--navy,#0F1F4A);text-decoration:none;border:1px solid var(--bd,#E4E7EC);border-radius:8px;padding:7px 12px;background:#fff;}
 .rrcav .cav-export:hover{border-color:var(--navy,#0F1F4A);}
+.rrcav .cav-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.rrcav .cav-minuta{font-size:12.5px;font-weight:600;color:#fff;text-decoration:none;border:1px solid var(--navy,#0F1F4A);border-radius:8px;padding:7px 12px;background:var(--navy,#0F1F4A);transition:opacity .15s,background .15s;}
+.rrcav .cav-minuta:hover{background:#142a63;border-color:#142a63;}
+.rrcav .cav-minuta-off{background:#A7AEC0;border-color:#A7AEC0;color:#EEF1F6;cursor:not-allowed;pointer-events:none;opacity:.85;}
 .rrcav th.cav-r,.rrcav .cav-r{text-align:right;}
 .rrcav .cav-neg{color:var(--red,#C0443C);}
 `;

@@ -392,6 +392,7 @@ export async function auditAvistaMesVivo(
     const contrato: ContratoAvista = {
       contractNumber: String(c.contract_number ?? ""),
       empresa,
+      cnpj: c.company_cnpj ? String(c.company_cnpj).replace(/\D/g, "") : null,
       mes: ym, // competência do FECHAMENTO (o pago).
       produto,
       tipo,
@@ -478,4 +479,55 @@ export async function auditAvistaMesVivo(
     reconciliacao: { produzidoNaoPago, nMaduro, nRecente },
     batimento: { somaCashFechamentoMes, fmeValorAvista, deltaAbs, deltaPct },
   };
+}
+
+/** Divergência cobrável à vista (subpagamento, bloco PEDIDO_FIRME_2.1) já
+ *  enriquecida com os insumos do contrato. Forma única consumida pela rota de
+ *  conferência (avista-viva) e pela minuta de cobrança (avista-cobranca). */
+export interface DivergenciaCobravel {
+  contrato: string;
+  empresa: string;
+  cnpj: string | null;
+  produto: string | null;
+  txJuros: number;
+  prazo: number;
+  valorLiquido: number;
+  comissaoPaga: number;
+  comissaoDevida: number;
+  diferenca: number;
+  pctDevido: number | null;
+  regraTrp: string;
+}
+
+/** Extrai as divergências cobráveis (subpagamentos à vista) do resultado da
+ *  auditoria viva, ordenadas por diferença asc (maiores subpagamentos primeiro).
+ *  Fonte única — evita duplicar a lógica entre rota de conferência e minuta. */
+export function extrairDivergenciasCobravel(
+  r: AuditAvistaVivoResult
+): DivergenciaCobravel[] {
+  const inputByOp = new Map(r.itensAuditados.map((i) => [i.operacao, i.contrato]));
+  return r.resultados
+    .filter((x) => x.bloco === "PEDIDO_FIRME_2.1")
+    .map((x) => {
+      const c = inputByOp.get(x.contractNumber);
+      const t = x.trace;
+      const regraTrp =
+        [t.categoriaProduto, t.tabLabelUsado].filter(Boolean).join(" ") ||
+        (t.celula ?? "—");
+      return {
+        contrato: x.contractNumber,
+        empresa: c?.empresa ?? "",
+        cnpj: c?.cnpj ?? null,
+        produto: c?.produto ?? null,
+        txJuros: c?.txJuros ?? 0,
+        prazo: c?.prazo ?? 0,
+        valorLiquido: c?.valorLiquido ?? 0,
+        comissaoPaga: c?.comissaoPaga ?? 0,
+        comissaoDevida: x.comissaoDevida,
+        diferenca: x.diferenca,
+        pctDevido: x.pctDevido,
+        regraTrp,
+      };
+    })
+    .sort((a, b) => a.diferenca - b.diferenca);
 }

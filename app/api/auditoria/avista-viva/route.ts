@@ -16,24 +16,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { auditAvistaMesVivo } from "@/lib/auditoriaAvistaViva";
+import {
+  auditAvistaMesVivo,
+  extrairDivergenciasCobravel,
+} from "@/lib/auditoriaAvistaViva";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type Divergencia = {
-  contrato: string;
-  empresa: string;
-  produto: string | null;
-  txJuros: number;
-  prazo: number;
-  valorLiquido: number;
-  comissaoPaga: number;
-  comissaoDevida: number;
-  diferenca: number;
-  pctDevido: number | null;
-  regraTrp: string;
-};
 
 function csvCell(v: unknown): string {
   const s = String(v ?? "");
@@ -65,36 +54,13 @@ export async function GET(req: NextRequest) {
     const sb = getSupabaseAdmin();
     const r = await auditAvistaMesVivo(sb, year, month);
 
-    const inputByOp = new Map(r.itensAuditados.map((i) => [i.operacao, i.contrato]));
-
-    const divergencias: Divergencia[] = r.resultados
-      .filter((x) => x.bloco === "PEDIDO_FIRME_2.1")
-      .map((x) => {
-        const c = inputByOp.get(x.contractNumber);
-        const t = x.trace;
-        const regraTrp =
-          [t.categoriaProduto, t.tabLabelUsado].filter(Boolean).join(" ") ||
-          (t.celula ?? "—");
-        return {
-          contrato: x.contractNumber,
-          empresa: c?.empresa ?? "",
-          produto: c?.produto ?? null,
-          txJuros: c?.txJuros ?? 0,
-          prazo: c?.prazo ?? 0,
-          valorLiquido: c?.valorLiquido ?? 0,
-          comissaoPaga: c?.comissaoPaga ?? 0,
-          comissaoDevida: x.comissaoDevida,
-          diferenca: x.diferenca,
-          pctDevido: x.pctDevido,
-          regraTrp,
-        };
-      })
-      .sort((a, b) => a.diferenca - b.diferenca);
+    const divergencias = extrairDivergenciasCobravel(r);
 
     if (format === "csv") {
       const head = [
         "contrato",
         "empresa",
+        "cnpj",
         "produto",
         "tx_juros",
         "prazo",
@@ -111,6 +77,7 @@ export async function GET(req: NextRequest) {
           [
             d.contrato,
             d.empresa,
+            d.cnpj ?? "",
             d.produto ?? "",
             d.txJuros,
             d.prazo,
