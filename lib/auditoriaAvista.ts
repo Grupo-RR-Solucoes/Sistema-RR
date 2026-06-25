@@ -68,6 +68,8 @@ export interface MesContextAvista {
 export interface ContratoAvista {
   contractNumber: string;
   empresa: string;
+  /** CNPJ da empresa (dígitos; opcional — usado p/ consolidação em minutas). */
+  cnpj?: string | null;
   /** ISO YYYY-MM. */
   mes: string;
   produto: string | null;
