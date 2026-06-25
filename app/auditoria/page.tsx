@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { UiStyles, HeaderNavy, KpiHero } from "@/components/ui";
+import ConferenciaAvistaSection from "../../components/auditoria/ConferenciaAvistaSection";
 import HistoricalFindingsSection from "../../components/auditoria/HistoricalFindingsSection";
 import InadimplenciaSection from "../../components/auditoria/InadimplenciaSection";
 
@@ -126,6 +127,9 @@ export default function AuditoriaPage() {
             ))}
           </section>
         ) : null}
+
+        {/* CONFERÊNCIA À VISTA VIVA — pago × devido pela TRP, por competência (Camada 2/3) */}
+        <ConferenciaAvistaSection />
 
         {/* INADIMPLÊNCIA PRT — fila de cobrança (Camada 4, monitor automático) */}
         <InadimplenciaSection />
