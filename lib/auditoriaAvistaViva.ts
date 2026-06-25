@@ -232,8 +232,13 @@ export interface AuditAvistaVivoResult {
     nRecente: number;
   };
   batimento: {
+    /** Σ comissão à vista itemizada (entry_type=CASH, >0). Universo auditado. */
     somaCashFechamentoMes: number;
+    /** Σ crédito do mês (entry_type=CREDIT). Compõe o valor_avista do FME mas
+     *  NÃO é universo auditado (crédito não tem regra TRP à vista). */
+    somaCreditoFechamentoMes: number;
     fmeValorAvista: number | null;
+    /** (CASH + CRÉDITO) − valor_avista. Δ0 quando o fechamento está íntegro. */
     deltaAbs: number | null;
     deltaPct: number | null;
   };
@@ -266,7 +271,7 @@ export async function auditAvistaMesVivo(
     regraInferida: enq.regraInferida,
   };
 
-  const [companies, cash, daily, fme] = await Promise.all([
+  const [companies, cash, daily, fme, credito] = await Promise.all([
     fetchAll<{ cnpj: string; name: string }>(() => sb.from("companies").select("cnpj, name")),
     // UNIVERSO PRIMÁRIO — CASH pago do mês.
     fetchAll<CashRow>(() =>
@@ -293,6 +298,18 @@ export async function auditAvistaMesVivo(
         .select("valor_avista")
         .eq("ano", year)
         .eq("mes", month)
+    ),
+    // CRÉDITO do mês (entry_type=CREDIT) — NÃO entra no universo auditado (não
+    // tem regra TRP à vista). Só p/ RECONCILIAR o batimento: o valor_avista do
+    // FME = comissão à vista (CASH) + crédito, então o lado pago do batimento
+    // precisa somar CASH + CREDIT pra fechar Δ0. Ver readResumoTotals (import).
+    fetchAll<{ commission_value: number | null }>(() =>
+      sb
+        .from("monthly_closing_entries")
+        .select("commission_value")
+        .eq("entry_type", "CREDIT")
+        .eq("year", year)
+        .eq("month", month)
     ),
   ]);
 
@@ -451,7 +468,13 @@ export async function auditAvistaMesVivo(
   const fmeValorAvista = fme.length
     ? fme.reduce((s, r) => s + num(r.valor_avista), 0)
     : null;
-  const deltaAbs = fmeValorAvista != null ? somaCashFechamentoMes - fmeValorAvista : null;
+  // Crédito do mês (rubrica do valor_avista que NÃO é CASH itemizado). Soma p/
+  // reconciliar o batimento — NÃO é universo auditado.
+  const somaCreditoFechamentoMes = credito.reduce((s, r) => s + num(r.commission_value), 0);
+  // Lado PAGO do batimento = CASH + CRÉDITO, pois o valor_avista do FME inclui os
+  // dois. Sem o crédito, todo mês com crédito mostrava um Δ negativo falso.
+  const somaPagoConciliavel = somaCashFechamentoMes + somaCreditoFechamentoMes;
+  const deltaAbs = fmeValorAvista != null ? somaPagoConciliavel - fmeValorAvista : null;
   const deltaPct =
     fmeValorAvista != null && fmeValorAvista !== 0
       ? (deltaAbs as number) / fmeValorAvista
@@ -477,7 +500,13 @@ export async function auditAvistaMesVivo(
       somaComissaoPaga,
     },
     reconciliacao: { produzidoNaoPago, nMaduro, nRecente },
-    batimento: { somaCashFechamentoMes, fmeValorAvista, deltaAbs, deltaPct },
+    batimento: {
+      somaCashFechamentoMes,
+      somaCreditoFechamentoMes,
+      fmeValorAvista,
+      deltaAbs,
+      deltaPct,
+    },
   };
 }
 

@@ -54,6 +54,7 @@ type Payload = {
     porStatus: Record<string, number>;
     batimento: {
       somaCashFechamentoMes: number;
+      somaCreditoFechamentoMes: number;
       fmeValorAvista: number | null;
       deltaAbs: number | null;
       deltaPct: number | null;
@@ -137,7 +138,12 @@ export default function ConferenciaAvistaSection() {
         {
           label: "Batimento caixa",
           value: bat?.deltaAbs == null ? "—" : brl(bat.deltaAbs),
-          sub: bat?.deltaPct == null ? "sem fechamento" : `Δ ${pct(bat.deltaPct)}`,
+          sub:
+            bat?.deltaPct == null
+              ? "sem fechamento"
+              : bat.somaCreditoFechamentoMes > 0
+                ? `Δ ${pct(bat.deltaPct)} · à vista + ${brl(bat.somaCreditoFechamentoMes)} crédito`
+                : `Δ ${pct(bat.deltaPct)}`,
           subTone: batOk ? "ok" : "amber",
         },
       ]
