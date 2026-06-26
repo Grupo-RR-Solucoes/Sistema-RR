@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
 
     const [docxBuffer, xlsxBuffer] = await Promise.all([
       construirDocx(minuta),
-      Promise.resolve(construirAnexoAvistaXlsx(r.ym, divergencias)),
+      construirAnexoAvistaXlsx(r.ym, divergencias, r.faixa.faixa),
     ]);
 
     const zip = new JSZip();
