@@ -5,9 +5,8 @@
 //   - o anexo .xlsx com a lista COMPLETA das divergências.
 // Tom: cobrança firme ancorada na TRP (não "esclarecimento"). Decisões: top-12
 // na carta, consolidação por CNPJ, prazo 10 dias úteis.
-import * as XLSX from "xlsx";
-
 import type { DivergenciaCobravel } from "../auditoriaAvistaViva.ts";
+import { construirXlsxNavy, type Aba } from "../xlsxReport.ts";
 import {
   brl,
   competenciaLabel,
@@ -205,37 +204,120 @@ export function montarMinutaAvista(input: MinutaAvistaInput): Minuta {
   };
 }
 
-/** Anexo .xlsx com a lista COMPLETA das divergências (toolkit xlsx do projeto). */
-export function construirAnexoAvistaXlsx(
+/**
+ * Anexo .xlsx no padrão navy (relatório profissional), 3 abas:
+ *   - "Resumo Executivo" (KPIs): competência, faixa, nº contratos, Σ a cobrar,
+ *     batimento Σpaga × Σdevida.
+ *   - "Divergências" (tabela + autofilter + freeze + TOTAL dourado): a lista
+ *     completa contrato a contrato.
+ *   - "Consolidado por CNPJ" (tabela + TOTAL GERAL): Σ |diferença| por empresa.
+ * Delegação total da formatação ao helper genérico construirXlsxNavy.
+ */
+export async function construirAnexoAvistaXlsx(
   ym: string,
-  divergencias: DivergenciaCobravel[]
-): Buffer {
-  const rows = divergencias.map((d) => ({
-    Contrato: d.contrato,
-    Empresa: d.empresa || "",
-    CNPJ: formatCnpj(d.cnpj),
-    Produto: d.produto ?? "",
-    "Tx. juros": d.txJuros,
-    Prazo: d.prazo,
-    "Valor líquido": Number(d.valorLiquido.toFixed(2)),
-    "Comissão paga": Number(d.comissaoPaga.toFixed(2)),
-    "Comissão devida": Number(d.comissaoDevida.toFixed(2)),
-    "Diferença (a cobrar)": Number(Math.abs(d.diferenca).toFixed(2)),
-    "% devido": d.pctDevido != null ? Number((d.pctDevido * 100).toFixed(4)) : "",
-    "Regra TRP": d.regraTrp,
-  }));
+  divergencias: DivergenciaCobravel[],
+  faixa?: string
+): Promise<Buffer> {
+  const somaACobrar = divergencias.reduce((s, d) => s + Math.abs(d.diferenca), 0);
+  const somaPaga = divergencias.reduce((s, d) => s + d.comissaoPaga, 0);
+  const somaDevida = divergencias.reduce((s, d) => s + d.comissaoDevida, 0);
 
-  const normalizadas =
-    rows.length > 0 ? rows : [{ Info: "Sem divergências cobráveis nesta competência." }];
+  // Aba 1 — Resumo Executivo (modo KPI: 1 linha de dados, label/valor vertical).
+  const abaResumo: Aba = {
+    nome: "Resumo Executivo",
+    titulo: `Resumo Executivo — Cobrança à vista ${competenciaLabel(ym)}`,
+    modo: "kpi",
+    colunas: [
+      { chave: "competencia", titulo: "Competência", formato: "texto" },
+      { chave: "faixa", titulo: "Faixa aplicada", formato: "texto" },
+      { chave: "contratos", titulo: "Contratos com subpagamento", formato: "numero" },
+      { chave: "somaPaga", titulo: "Σ comissão paga", formato: "moeda" },
+      { chave: "somaDevida", titulo: "Σ comissão devida (TRP)", formato: "moeda" },
+      { chave: "somaACobrar", titulo: "Σ a cobrar (diferença)", formato: "moeda" },
+    ],
+    linhas: [
+      {
+        competencia: competenciaLabel(ym),
+        faixa: faixa ?? "—",
+        contratos: divergencias.length,
+        somaPaga,
+        somaDevida,
+        somaACobrar,
+      },
+    ],
+  };
 
-  const ws = XLSX.utils.json_to_sheet(normalizadas);
-  ws["!cols"] = Object.keys(normalizadas[0]).map((k) => ({
-    wch: Math.max(12, k.length + 2),
-  }));
-  const wb = XLSX.utils.book_new();
-  // Nome de aba não pode conter : \ / ? * [ ] — usa o ym ISO (2026-03).
-  XLSX.utils.book_append_sheet(wb, ws, `Divergencias ${ym}`.slice(0, 31));
-  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+  // Aba 2 — Divergências (lista completa). % em FRAÇÃO (numFmt '0.00%' multiplica
+  // por 100): pctDevido já é fração; txJuros vem em unidade percentual (1,65) →
+  // /100. Valores ficam números reais (filtráveis/somáveis).
+  const abaDivergencias: Aba = {
+    nome: `Divergências ${ym}`,
+    titulo: `Divergências à vista — ${competenciaLabel(ym)}`,
+    modo: "tabela",
+    colunas: [
+      { chave: "contrato", titulo: "Contrato", formato: "texto" },
+      { chave: "empresa", titulo: "Empresa", formato: "texto" },
+      { chave: "cnpj", titulo: "CNPJ", formato: "texto" },
+      { chave: "produto", titulo: "Produto", formato: "texto" },
+      { chave: "txJuros", titulo: "Tx. juros", formato: "percent" },
+      { chave: "prazo", titulo: "Prazo", formato: "numero" },
+      { chave: "valorLiquido", titulo: "Valor líquido", formato: "moeda" },
+      { chave: "comissaoPaga", titulo: "Comissão paga", formato: "moeda" },
+      { chave: "comissaoDevida", titulo: "Comissão devida", formato: "moeda" },
+      { chave: "diferenca", titulo: "Diferença a cobrar", formato: "moeda" },
+      { chave: "pctDevido", titulo: "% devido", formato: "percent" },
+      { chave: "regraTrp", titulo: "Regra TRP", formato: "texto" },
+    ],
+    linhas: divergencias.map((d) => ({
+      contrato: d.contrato,
+      empresa: d.empresa || "",
+      cnpj: formatCnpj(d.cnpj),
+      produto: d.produto ?? "",
+      txJuros: Number.isFinite(d.txJuros) ? d.txJuros / 100 : "",
+      prazo: d.prazo,
+      valorLiquido: Number(d.valorLiquido.toFixed(2)),
+      comissaoPaga: Number(d.comissaoPaga.toFixed(2)),
+      comissaoDevida: Number(d.comissaoDevida.toFixed(2)),
+      diferenca: Number(Math.abs(d.diferenca).toFixed(2)),
+      pctDevido: d.pctDevido != null ? d.pctDevido : "",
+      regraTrp: d.regraTrp,
+    })),
+    totais: {
+      contrato: "TOTAL",
+      comissaoPaga: Number(somaPaga.toFixed(2)),
+      comissaoDevida: Number(somaDevida.toFixed(2)),
+      diferenca: Number(somaACobrar.toFixed(2)),
+    },
+  };
+
+  // Aba 3 — Consolidado por CNPJ (reusa consolidarPorEmpresa; já ordenado desc).
+  const consolidado = consolidarPorEmpresa(divergencias);
+  const abaConsolidado: Aba = {
+    nome: "Consolidado por CNPJ",
+    titulo: `Consolidado por CNPJ — ${competenciaLabel(ym)}`,
+    modo: "tabela",
+    colunas: [
+      { chave: "cnpj", titulo: "CNPJ", formato: "texto" },
+      { chave: "empresa", titulo: "Empresa", formato: "texto" },
+      { chave: "contratos", titulo: "Contratos", formato: "numero" },
+      { chave: "total", titulo: "Total a cobrar", formato: "moeda" },
+    ],
+    linhas: consolidado.map((c) => ({
+      cnpj: formatCnpj(c.cnpj),
+      empresa: c.empresa || "—",
+      contratos: c.contratos,
+      total: Number(c.total.toFixed(2)),
+    })),
+    totais: {
+      cnpj: "TOTAL GERAL",
+      contratos: consolidado.reduce((s, c) => s + c.contratos, 0),
+      total: Number(somaACobrar.toFixed(2)),
+    },
+  };
+
+  return construirXlsxNavy({
+    abas: [abaResumo, abaDivergencias, abaConsolidado],
+  });
 }
 
 /** Texto de uso interno (debug/log): resumo das peças geradas. */
