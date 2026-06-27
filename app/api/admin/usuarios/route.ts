@@ -4,10 +4,12 @@ import {
   apiGuardErrorResponse,
   requireSocioOrFuncionario,
 } from "@/lib/auth/guards";
-import { generateProvisionalPassword } from "@/lib/admin/generatePassword";
 import { canManageUserRole } from "@/lib/auth/permissions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { UserRole } from "@/lib/auth/types";
+import { isValidCPF, onlyDigits } from "@/lib/validators/cpf";
+import { uniqueViolationResponse } from "@/lib/admin/pgErrors";
+import { resolveSiteUrl } from "@/lib/siteUrl";
 
 /**
  * GET /api/admin/usuarios
@@ -22,7 +24,7 @@ export async function GET() {
     let query = supabase
       .from("app_users")
       .select(
-        "id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, active, created_at, created_by"
+        "id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, cpf, active, created_at, created_by"
       )
       .order("created_at", { ascending: false });
 
@@ -48,14 +50,18 @@ interface CreateUserBody {
   role?: UserRole;
   cnpj_id?: string | null;
   promoter_id?: string | null;
+  /** CPF (qualquer formato): obrigatório p/ funcionario/promotor; ignorado p/ socio. */
+  cpf?: string | null;
 }
 
 /**
  * POST /api/admin/usuarios
- * Cria novo usuario em auth.users + app_users e retorna a senha provisoria
- * gerada UMA VEZ. Registra em audit_logs com action='user_created'.
+ * Convida novo usuario: inviteUserByEmail cria a conta em auth.users (sem
+ * senha) e dispara o e-mail de convite; em seguida cria a linha em app_users.
+ * Resposta { user, invited:true, email } — NAO ha senha na tela; o usuario
+ * define a senha pelo link do e-mail. Registra em audit_logs (user_created).
  *
- * Sem transacao distribuida: se INSERT em app_users falhar apos createUser,
+ * Sem transacao distribuida: se INSERT em app_users falhar apos o convite,
  * tenta rollback via auth.admin.deleteUser. Se rollback tambem falhar,
  * retorna erro com instrucao de limpeza manual.
  */
@@ -103,19 +109,31 @@ export async function POST(req: Request) {
       );
     }
 
-    const provisionalPassword = generateProvisionalPassword(16);
+    // CPF: login por CPF é exclusivo de funcionario/promotor — obrigatório e
+    // validado. Socio loga por e-mail → cpf sempre NULL (ignorado se enviado).
+    let cpf: string | null = null;
+    if (role === "funcionario" || role === "promotor") {
+      const digits = onlyDigits(body.cpf ?? "");
+      if (!isValidCPF(digits)) {
+        return NextResponse.json(
+          { error: "CPF invalido (obrigatorio para funcionario/promotor)" },
+          { status: 400 }
+        );
+      }
+      cpf = digits;
+    }
 
-    // 1. Criar em auth.users
+    // 1. Convidar em auth.users — inviteUserByEmail cria o usuario SEM senha e
+    // dispara o e-mail de convite (via SMTP/Resend) com link p/ /auth/callback,
+    // que troca o code por sessao e leva o convidado a /definir-senha.
+    const redirectTo = `${resolveSiteUrl(req)}/auth/callback`;
     const { data: authData, error: authError } =
-      await supabase.auth.admin.createUser({
-        email,
-        password: provisionalPassword,
-        email_confirm: true,
-      });
+      await supabase.auth.admin.inviteUserByEmail(email, { redirectTo });
 
     if (authError || !authData?.user) {
+      // E-mail ja existente no Auth tambem cai aqui (mensagem do proprio Auth).
       return NextResponse.json(
-        { error: authError?.message ?? "Falha ao criar auth user" },
+        { error: authError?.message ?? "Falha ao convidar usuario" },
         { status: 500 }
       );
     }
@@ -132,6 +150,7 @@ export async function POST(req: Request) {
         role,
         cnpj_id,
         promoter_id,
+        cpf,
         active: true,
         created_by: session.appUser.id,
       })
@@ -139,10 +158,15 @@ export async function POST(req: Request) {
       .single();
 
     if (appUserError || !appUserData) {
-      // Rollback: deletar o auth.users criado
+      // Rollback: deletar o auth.users do usuario convidado
       await supabase.auth.admin.deleteUser(authUserId).catch(() => {
         // Best-effort rollback. Se falhou, socio tera que limpar manual.
       });
+
+      // Unique violation (23505): CPF/e-mail ja cadastrado -> 409 amigavel,
+      // sem expor SQL/constraint.
+      const dup = uniqueViolationResponse(appUserError);
+      if (dup) return dup;
 
       // Disc.7 - Mensagem amigavel para FK violation (23503). Race
       // tipico: socio seleciona empresa/promotor no modal, alguem
@@ -189,7 +213,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       user: appUserData,
-      password: provisionalPassword,
+      invited: true,
+      email,
     });
   } catch (e) {
     return apiGuardErrorResponse(e);

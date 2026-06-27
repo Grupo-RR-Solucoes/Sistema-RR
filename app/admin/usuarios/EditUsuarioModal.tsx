@@ -3,6 +3,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import type { UserRole } from "@/lib/auth/types";
+import { canManageUserRole } from "@/lib/auth/permissions";
+import { isValidCPF, maskCPF, onlyDigits } from "@/lib/validators/cpf";
 
 import type { UsuarioRow } from "./UsuariosList";
 import { IcoPencil, IcoX, IcoSave, IcoUser } from "./icons";
@@ -36,9 +38,14 @@ export default function EditUsuarioModal({
   // REGRA EXISTENTE: só sócio troca papel (canChangeUserRole). Para
   // funcionário o select de papel fica travado (ele só edita o nome).
   const canChangeRole = currentUserRole === "socio";
+  // Sócio edita e-mail de qualquer um; funcionário só de promotor.
+  // (canManageUserRole: socio→todos, funcionario→promotor, promotor→nada.)
+  const canEditEmail = canManageUserRole(currentUserRole, target.role);
 
   const [fullName, setFullName] = useState(target.full_name ?? "");
+  const [email, setEmail] = useState(target.email ?? "");
   const [role, setRole] = useState<Role>(target.role);
+  const [cpf, setCpf] = useState(onlyDigits(target.cpf ?? "")); // só dígitos
   const [cnpjId, setCnpjId] = useState("");
   const [promoterId, setPromoterId] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -86,6 +93,18 @@ export default function EditUsuarioModal({
     setError(null);
 
     const body: Record<string, unknown> = { full_name: fullName.trim() || null };
+
+    // E-mail — só envia se mudou e o ator pode editar. Valida formato.
+    if (canEditEmail) {
+      const emailTrim = email.trim().toLowerCase();
+      if (emailTrim !== (target.email ?? "").toLowerCase()) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) {
+          setError("E-mail inválido");
+          return;
+        }
+        body.email = emailTrim;
+      }
+    }
     // Só enviamos `role` se REALMENTE mudou — assim o backend não re-exige
     // cnpj_id/promoter_id de um promotor que permaneceu promotor.
     if (role !== target.role) {
@@ -102,6 +121,17 @@ export default function EditUsuarioModal({
         body.cnpj_id = cnpjId;
         body.promoter_id = promoterId;
       }
+    }
+
+    // CPF — funcionário/promotor (role final): valida e envia. Sócio não envia
+    // (a rota zera o cpf ao virar sócio). Mensagem genérica.
+    if (role === "funcionario" || role === "promotor") {
+      const cpfDigits = onlyDigits(cpf);
+      if (!isValidCPF(cpfDigits)) {
+        setError("CPF inválido");
+        return;
+      }
+      body.cpf = cpfDigits;
     }
 
     setSubmitting(true);
@@ -146,6 +176,22 @@ export default function EditUsuarioModal({
               </div>
 
               <div className="field">
+                <label>E-mail</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="email@dominio.com"
+                  disabled={submitting || !canEditEmail}
+                />
+                {canEditEmail ? (
+                  <span className="hint">Alterar o e-mail sincroniza login e canal de convite/reset.</span>
+                ) : (
+                  <span className="hint">Você não tem permissão para alterar o e-mail deste usuário.</span>
+                )}
+              </div>
+
+              <div className="field">
                 <label>Perfil de acesso</label>
                 <select value={role} onChange={(e) => { setRole(e.target.value as Role); setCnpjId(""); setPromoterId(""); }} disabled={submitting || !canChangeRole}>
                   <option value="socio">Sócio (acesso completo)</option>
@@ -158,6 +204,22 @@ export default function EditUsuarioModal({
                   <span className="hint">Alterando de <b>{roleLabel(target.role)}</b> para <b>{roleLabel(role)}</b>.</span>
                 ) : null}
               </div>
+
+              {role === "funcionario" || role === "promotor" ? (
+                <div className="field">
+                  <label>CPF <span className="req">*</span></label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    value={cpf ? maskCPF(cpf) : ""}
+                    onChange={(e) => setCpf(onlyDigits(e.target.value).slice(0, 11))}
+                    disabled={submitting}
+                    placeholder="000.000.000-00"
+                  />
+                  <span className="hint">Apenas números. Usado para login deste perfil.</span>
+                </div>
+              ) : null}
 
               {becomingPromotor ? (
                 <div className="condbox">

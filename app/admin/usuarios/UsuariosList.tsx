@@ -27,6 +27,7 @@ export interface UsuarioRow {
   role: "socio" | "funcionario" | "promotor";
   cnpj_id: string | null;
   promoter_id: string | null;
+  cpf: string | null;
   active: boolean;
   created_at: string;
   created_by: string | null;

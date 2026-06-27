@@ -4,26 +4,25 @@ import {
   apiGuardErrorResponse,
   requireSocioOrFuncionario,
 } from "@/lib/auth/guards";
-import { generateProvisionalPassword } from "@/lib/admin/generatePassword";
 import { canManageUserRole } from "@/lib/auth/permissions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { resolveSiteUrl } from "@/lib/siteUrl";
 
 /**
  * POST /api/admin/usuarios/[id]/reset-password
  *
- * Gera nova senha provisoria, atualiza em auth.users via
- * auth.admin.updateUserById, e registra em audit_logs com
- * action='password_reset_by_admin'.
+ * Dispara o e-mail de redefinicao de senha para o usuario-alvo e registra em
+ * audit_logs (action='password_reset_by_admin'). NAO gera/expoe senha.
  *
- * updateUserById invalida automaticamente sessoes ativas do user-alvo
- * (refresh tokens) — comportamento padrao do Supabase Auth. O user
- * precisara fazer login novamente com a senha nova.
- *
- * Retorna { password } com a senha em texto claro — UI deve exibir UMA VEZ
- * e nunca persistir.
+ * Metodo: supabase.auth.resetPasswordForEmail(email, { redirectTo }).
+ *   Por que este e nao admin.generateLink({type:'recovery'}): generateLink
+ *   apenas PRODUZ o link (action_link) e NAO envia e-mail — caberia ao app
+ *   enviar manualmente. resetPasswordForEmail dispara o e-mail de recovery
+ *   pelo SMTP configurado no projeto (Resend), que e o que queremos. O link
+ *   aponta para /auth/callback (PKCE: exchangeCodeForSession) → /definir-senha.
  */
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -52,24 +51,24 @@ export async function POST(
       );
     }
 
-    if (!target.auth_user_id) {
+    if (!target.email) {
       return NextResponse.json(
-        { error: "Usuario sem auth_user_id; reset indisponivel" },
+        { error: "Usuario sem e-mail; redefinicao indisponivel" },
         { status: 400 }
       );
     }
 
-    // 2. Gerar senha + update em auth.users
-    const novaSenha = generateProvisionalPassword(16);
-
-    const { error: updateError } = await supabase.auth.admin.updateUserById(
-      target.auth_user_id,
-      { password: novaSenha }
+    // 2. Dispara o e-mail de redefinicao (SMTP/Resend). O link leva ao
+    //    /auth/callback → /definir-senha. Nenhuma senha e gerada/retornada.
+    const redirectTo = `${resolveSiteUrl(req)}/auth/callback`;
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+      target.email,
+      { redirectTo }
     );
 
-    if (updateError) {
+    if (resetError) {
       return NextResponse.json(
-        { error: updateError.message },
+        { error: resetError.message },
         { status: 500 }
       );
     }
@@ -79,7 +78,7 @@ export async function POST(
       entity_name: "app_users",
       entity_id: target.id,
       action: "password_reset_by_admin",
-      description: `${session.appUser.role} ${session.appUser.email} resetou senha de ${target.email} (${target.role})`,
+      description: `${session.appUser.role} ${session.appUser.email} enviou link de redefinicao para ${target.email} (${target.role})`,
       payload: {
         performed_by_user_id: session.appUser.id,
         performed_by_email: session.appUser.email,
@@ -87,12 +86,12 @@ export async function POST(
         target_auth_user_id: target.auth_user_id,
         target_email: target.email,
         target_role: target.role,
-        reset_at: new Date().toISOString(),
+        reset_sent_at: new Date().toISOString(),
       },
       created_by: session.appUser.email,
     });
 
-    return NextResponse.json({ password: novaSenha });
+    return NextResponse.json({ reset_sent: true, email: target.email });
   } catch (e) {
     return apiGuardErrorResponse(e);
   }

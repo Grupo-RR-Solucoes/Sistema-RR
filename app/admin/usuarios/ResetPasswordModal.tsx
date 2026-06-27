@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import type { UsuarioRow } from "./UsuariosList";
 import { initials } from "./usuariosStyles";
-import { IcoKey, IcoX, IcoCopy, IcoCheck, IcoAlertTri } from "./icons";
+import { IcoKey, IcoX, IcoCheck, IcoAlertTri } from "./icons";
 
 interface Props {
   target: UsuarioRow;
@@ -14,8 +14,7 @@ interface Props {
 export default function ResetPasswordModal({ target, onClose }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [newPassword, setNewPassword] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   async function handleConfirm() {
     setError(null);
@@ -24,25 +23,14 @@ export default function ResetPasswordModal({ target, onClose }: Props) {
       const res = await fetch(`/api/admin/usuarios/${target.id}/reset-password`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? "Falha ao resetar senha");
+        setError(data.error ?? "Falha ao enviar redefinição");
         return;
       }
-      setNewPassword(data.password as string);
+      setResetSent(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro inesperado");
     } finally {
       setSubmitting(false);
-    }
-  }
-
-  async function copyPassword() {
-    if (!newPassword) return;
-    try {
-      await navigator.clipboard.writeText(newPassword);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Fallback manual
     }
   }
 
@@ -52,13 +40,13 @@ export default function ResetPasswordModal({ target, onClose }: Props) {
     <div className="rradmin">
       <div className="overlay" role="dialog" aria-modal="true" onClick={onClose}>
         <div className="dialog" onClick={(e) => e.stopPropagation()}>
-          {newPassword ? (
+          {resetSent ? (
             <>
               <div className="dialog-head">
                 <div className="dt2">
                   <span className="di green"><IcoCheck /></span>
                   <div>
-                    <h3>Nova senha gerada</h3>
+                    <h3>Link de redefinição enviado</h3>
                     <p className="dsub">{target.email}</p>
                   </div>
                 </div>
@@ -66,19 +54,9 @@ export default function ResetPasswordModal({ target, onClose }: Props) {
               </div>
               <div className="dialog-body">
                 <p className="pwlead">
-                  Nova senha provisória para <b>{targetName}</b>. As sessões ativas do usuário
-                  foram <b>invalidadas</b> — ele precisará logar de novo.
+                  Link de redefinição enviado para <b>{target.email}</b>. {targetName} vai
+                  receber um e-mail com o link para criar uma nova senha.
                 </p>
-                <div className="pwbox">
-                  <code>{newPassword}</code>
-                  <button type="button" className="copy" onClick={copyPassword}>
-                    {copied ? <><IcoCheck />Copiado</> : <><IcoCopy />Copiar</>}
-                  </button>
-                </div>
-                <div className="pwwarn">
-                  <IcoAlertTri />
-                  <span><b>Esta senha não será exibida novamente.</b> Copie agora — depois só gerando uma nova.</span>
-                </div>
               </div>
               <div className="dialog-foot">
                 <button type="button" className="btn-primary" onClick={onClose}><IcoCheck />Concluir</button>
@@ -90,14 +68,14 @@ export default function ResetPasswordModal({ target, onClose }: Props) {
                 <div className="dt2">
                   <span className="di"><IcoKey /></span>
                   <div>
-                    <h3>Resetar senha</h3>
-                    <p className="dsub">Gera uma nova senha provisória</p>
+                    <h3>Redefinir senha</h3>
+                    <p className="dsub">Envia um link de redefinição por e-mail</p>
                   </div>
                 </div>
                 <button className="x" onClick={onClose} aria-label="Fechar"><IcoX /></button>
               </div>
               <div className="dialog-body">
-                <p className="cfm">Gerar nova senha para <b>{targetName}</b>?</p>
+                <p className="cfm">Enviar link de redefinição para <b>{targetName}</b>?</p>
                 <div className="userbox">
                   <span className="av">{initials(target.full_name, target.email)}</span>
                   <div>
@@ -107,13 +85,13 @@ export default function ResetPasswordModal({ target, onClose }: Props) {
                 </div>
                 <div className="infobanner">
                   <IcoAlertTri />
-                  <span>A senha atual será invalidada e <b>as sessões ativas do usuário serão encerradas</b>. Ele precisará logar de novo.</span>
+                  <span>Um e-mail será enviado para <b>{target.email}</b> com um link para o usuário criar uma nova senha.</span>
                 </div>
                 {error ? <div className="errbox">{error}</div> : null}
               </div>
               <div className="dialog-foot">
                 <button type="button" className="btn-primary" onClick={handleConfirm} disabled={submitting}>
-                  {submitting ? <><span className="spinner" />Gerando…</> : <><IcoKey />Gerar nova senha</>}
+                  {submitting ? <><span className="spinner" />Enviando…</> : <><IcoKey />Enviar link</>}
                 </button>
                 <button type="button" className="btn-ghost" onClick={onClose} disabled={submitting}>Cancelar</button>
               </div>
