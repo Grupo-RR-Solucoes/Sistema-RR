@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { canManageUserRole } from "@/lib/auth/permissions";
-import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+import { UiStyles, HeaderNavy, KpiBand, Table } from "@/components/ui";
 
 import CreateUsuarioModal from "./CreateUsuarioModal";
 import EditUsuarioModal from "./EditUsuarioModal";
@@ -276,11 +276,10 @@ export default function UsuariosList({
               <span className="lg"><span className="sw" style={{ background: "var(--green)" }} />Promotor</span>
             </div>
           </div>
-          <div className="tscroll">
-            <table className="dt">
+          <Table scrollable minWidth={780}>
               <thead>
                 <tr>
-                  <th>Nome</th>
+                  <th className="rr-sticky-col">Nome</th>
                   <th>E-mail</th>
                   <th>Perfil</th>
                   <th>Status</th>
@@ -304,7 +303,7 @@ export default function UsuariosList({
                     const showActions = canManage && !isSelf;
                     return (
                       <tr key={u.id} className={u.active ? undefined : "inactive"}>
-                        <td>
+                        <td className="rr-sticky-col">
                           <div className="nm">
                             <span className="av">{initials(u.full_name, u.email)}</span>
                             {u.full_name ?? "—"}
@@ -350,8 +349,7 @@ export default function UsuariosList({
                   })
                 )}
               </tbody>
-            </table>
-          </div>
+          </Table>
         </div>
 
         {/* nota Desativar x Excluir */}

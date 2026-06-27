@@ -66,14 +66,12 @@ export const RRADMIN_CSS = `
 .rradmin .tcard-head .leg{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--ink-3);}
 .rradmin .tcard-head .leg .lg{display:inline-flex;align-items:center;gap:6px;}
 .rradmin .tcard-head .leg .lg .sw{width:9px;height:9px;border-radius:3px;}
-.rradmin .tscroll{overflow-x:auto;}
-.rradmin table.dt{border-collapse:separate;border-spacing:0;width:100%;min-width:780px;}
-.rradmin table.dt thead th{position:sticky;top:0;z-index:4;background:#FAFBFC;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);text-align:left;padding:11px 18px;border-bottom:1px solid var(--bd);white-space:nowrap;}
-.rradmin table.dt thead th.r{text-align:right;}
-.rradmin table.dt tbody td{padding:13px 18px;border-bottom:1px solid var(--bd-soft);font-size:13px;color:var(--ink-2);white-space:nowrap;vertical-align:middle;}
-.rradmin table.dt tbody tr:last-child td{border-bottom:none;}
-.rradmin table.dt tbody td.r{text-align:right;}
-.rradmin table.dt tbody tr:hover td{background:#FBFCFD;}
+/* Tabela migrada para o kit (<Table scrollable minWidth={780}>): o chrome
+   (scroll horizontal, min-width, thead sticky, padding, zebra, hover) agora vem
+   do kit (.rr-table-wrap / .rrui-table). Mantemos só ajustes próprios da tela:
+   alinhamento à direita do cabeçalho "Ações" e células em linha única. */
+.rradmin .rrui-table thead th.r{text-align:right;}
+.rradmin .rrui-table tbody td{white-space:nowrap;}
 .rradmin .nm{font-weight:600;color:var(--ink);display:flex;align-items:center;gap:9px;}
 .rradmin .nm .av{width:30px;height:30px;border-radius:9px;background:linear-gradient(150deg,#EAEEF6,#DCE3EF);color:var(--navy);display:grid;place-items:center;font-size:11.5px;font-weight:700;flex:none;border:1px solid var(--bd);}
 .rradmin .nm .self{font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--blue);background:var(--blue-bg);border:1px solid var(--blue-bd);padding:1px 7px;border-radius:999px;}
