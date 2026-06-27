@@ -1,7 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/api/auth"];
+// Rotas públicas (sem sessão): login, APIs de auth, a aterrissagem dos links
+// de e-mail (/auth/callback — é ela que CRIA a sessão) e a página de definição
+// de senha (/definir-senha — mostra aviso próprio quando não há sessão).
+const PUBLIC_PATHS = ["/login", "/api/auth", "/auth/callback", "/definir-senha"];
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));

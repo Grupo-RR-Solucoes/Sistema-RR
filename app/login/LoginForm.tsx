@@ -1,14 +1,27 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
 import BrandLogo from "../../components/BrandLogo";
 import { getSupabaseBrowserClient } from "../../lib/auth/supabaseBrowserClient";
+import { maskCPF, onlyDigits } from "../../lib/validators/cpf";
+import { clientSiteUrl } from "../../lib/siteUrl";
+
+const LINK_BTN: CSSProperties = {
+  background: "none",
+  border: "none",
+  padding: 0,
+  font: "inherit",
+  color: "var(--blue)",
+  cursor: "pointer",
+  textDecoration: "underline",
+};
 
 export default function LoginForm() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  // Campo único: aceita CPF (só dígitos) OU e-mail (contém "@").
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -16,15 +29,93 @@ export default function LoginForm() {
   // Parte B: conta desativada -> mensagem âmbar própria (evita o loop /<->/login).
   const [inactive, setInactive] = useState(false);
 
+  // "Esqueci minha senha" — reset SEMPRE por e-mail (não CPF).
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotBusy, setForgotBusy] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState<string | null>(null);
+
+  async function handleForgot() {
+    setForgotBusy(true);
+    setForgotMsg(null);
+    const email = forgotEmail.trim();
+    try {
+      // Só dispara se o formato for de e-mail; a mensagem final é uniforme
+      // (não revela se o e-mail existe).
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        const supabase = getSupabaseBrowserClient();
+        await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${clientSiteUrl()}/auth/callback`,
+        });
+      }
+    } catch {
+      // silencioso — resposta uniforme
+    } finally {
+      setForgotBusy(false);
+      setForgotMsg(
+        "Se este e-mail estiver cadastrado, enviamos um link para redefinir a senha."
+      );
+    }
+  }
+
+  // Mascara como CPF SOMENTE quando o valor é só dígitos (sem "@"). Enquanto
+  // houver "@" ou letras (e-mail), mostra o valor cru sem mexer.
+  function handleIdentifierChange(raw: string) {
+    if (raw.includes("@")) {
+      setIdentifier(raw);
+      return;
+    }
+    const digits = onlyDigits(raw);
+    // Tem caractere não-dígito (fora de pontuação de CPF) e sem "@" → e-mail em
+    // digitação (ex.: "voce" antes do "@"): não mascarar.
+    if (raw.replace(/[.\-\s]/g, "") !== digits) {
+      setIdentifier(raw);
+      return;
+    }
+    setIdentifier(maskCPF(digits));
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setInactive(false);
     setSubmitting(true);
 
+    // Resolve o e-mail de login a partir do campo único.
+    const valor = identifier.trim();
+    let loginEmail: string;
+    if (valor.includes("@")) {
+      // Fluxo atual: e-mail direto (sócios e quem prefira e-mail).
+      loginEmail = valor;
+    } else {
+      // Fluxo CPF: resolve CPF -> e-mail interno via rota server-side.
+      const cpf = onlyDigits(valor);
+      try {
+        const res = await fetch("/api/auth/resolve-cpf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cpf }),
+        });
+        const json = (await res.json().catch(() => ({ email: null }))) as {
+          email?: string | null;
+        };
+        if (!res.ok || !json.email) {
+          // Resposta uniforme: nunca dizer "CPF não cadastrado".
+          setError("CPF ou senha inválidos.");
+          setSubmitting(false);
+          return;
+        }
+        loginEmail = json.email;
+      } catch {
+        setError("CPF ou senha inválidos.");
+        setSubmitting(false);
+        return;
+      }
+    }
+
     const supabase = getSupabaseBrowserClient();
     const { data, error: signInError } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
+      email: loginEmail,
       password,
     });
 
@@ -90,18 +181,19 @@ export default function LoginForm() {
         ) : null}
 
         <div className="field">
-          <label htmlFor="email">E-mail</label>
+          <label htmlFor="identifier">CPF ou e-mail</label>
           <div className="control">
             <svg className="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m4 7 8 6 8-6" /></svg>
             <input
-              id="email"
-              type="email"
+              id="identifier"
+              type="text"
+              inputMode="text"
               autoComplete="username"
               required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              value={identifier}
+              onChange={(e) => handleIdentifierChange(e.target.value)}
               disabled={submitting}
-              placeholder="voce@gruporrcred.com.br"
+              placeholder="CPF ou voce@gruporrcred.com.br"
             />
           </div>
         </div>
@@ -148,9 +240,54 @@ export default function LoginForm() {
           )}
         </button>
 
-        <p className="resethint">
-          Esqueceu a senha? <b>Solicite a um sócio</b> para gerar uma nova credencial.
-        </p>
+        {!forgotOpen ? (
+          <p className="resethint">
+            <button type="button" style={LINK_BTN} onClick={() => { setForgotOpen(true); setForgotMsg(null); }}>
+              Esqueci minha senha
+            </button>
+          </p>
+        ) : (
+          <div className="forgot">
+            {forgotMsg ? (
+              <div className="alert" role="status">
+                <span>{forgotMsg}</span>
+              </div>
+            ) : (
+              <>
+                <div className="field">
+                  <label htmlFor="forgotEmail">E-mail para redefinição</label>
+                  <div className="control">
+                    <svg className="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m4 7 8 6 8-6" /></svg>
+                    <input
+                      id="forgotEmail"
+                      type="email"
+                      autoComplete="email"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      disabled={forgotBusy}
+                      placeholder="voce@exemplo.com"
+                    />
+                  </div>
+                </div>
+                <button type="button" className="btn" onClick={handleForgot} disabled={forgotBusy || !forgotEmail.trim()}>
+                  {forgotBusy ? (
+                    <>
+                      <span className="spin" aria-hidden="true" />
+                      Enviando…
+                    </>
+                  ) : (
+                    "Enviar link de redefinição"
+                  )}
+                </button>
+              </>
+            )}
+            <p className="resethint">
+              <button type="button" style={LINK_BTN} onClick={() => { setForgotOpen(false); setForgotMsg(null); }}>
+                Voltar ao login
+              </button>
+            </p>
+          </div>
+        )}
       </form>
 
       <p className="pagefoot"><span className="dot" />Grupo RR Cred · acesso restrito</p>
