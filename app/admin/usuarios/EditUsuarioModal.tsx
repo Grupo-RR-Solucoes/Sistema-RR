@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import type { UserRole } from "@/lib/auth/types";
+import { canManageUserRole } from "@/lib/auth/permissions";
 import { isValidCPF, maskCPF, onlyDigits } from "@/lib/validators/cpf";
 
 import type { UsuarioRow } from "./UsuariosList";
@@ -37,8 +38,12 @@ export default function EditUsuarioModal({
   // REGRA EXISTENTE: só sócio troca papel (canChangeUserRole). Para
   // funcionário o select de papel fica travado (ele só edita o nome).
   const canChangeRole = currentUserRole === "socio";
+  // Sócio edita e-mail de qualquer um; funcionário só de promotor.
+  // (canManageUserRole: socio→todos, funcionario→promotor, promotor→nada.)
+  const canEditEmail = canManageUserRole(currentUserRole, target.role);
 
   const [fullName, setFullName] = useState(target.full_name ?? "");
+  const [email, setEmail] = useState(target.email ?? "");
   const [role, setRole] = useState<Role>(target.role);
   const [cpf, setCpf] = useState(onlyDigits(target.cpf ?? "")); // só dígitos
   const [cnpjId, setCnpjId] = useState("");
@@ -88,6 +93,18 @@ export default function EditUsuarioModal({
     setError(null);
 
     const body: Record<string, unknown> = { full_name: fullName.trim() || null };
+
+    // E-mail — só envia se mudou e o ator pode editar. Valida formato.
+    if (canEditEmail) {
+      const emailTrim = email.trim().toLowerCase();
+      if (emailTrim !== (target.email ?? "").toLowerCase()) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) {
+          setError("E-mail inválido");
+          return;
+        }
+        body.email = emailTrim;
+      }
+    }
     // Só enviamos `role` se REALMENTE mudou — assim o backend não re-exige
     // cnpj_id/promoter_id de um promotor que permaneceu promotor.
     if (role !== target.role) {
@@ -156,6 +173,22 @@ export default function EditUsuarioModal({
               <div className="field">
                 <label>Nome completo</label>
                 <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Nome completo do usuário" disabled={submitting} />
+              </div>
+
+              <div className="field">
+                <label>E-mail</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="email@dominio.com"
+                  disabled={submitting || !canEditEmail}
+                />
+                {canEditEmail ? (
+                  <span className="hint">Alterar o e-mail sincroniza login e canal de convite/reset.</span>
+                ) : (
+                  <span className="hint">Você não tem permissão para alterar o e-mail deste usuário.</span>
+                )}
               </div>
 
               <div className="field">

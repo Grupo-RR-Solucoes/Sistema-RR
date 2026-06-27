@@ -21,6 +21,8 @@ interface PatchUserBody {
   active?: boolean;
   /** CPF (qualquer formato): obrigatório/valido p/ funcionario-promotor; NULL p/ socio. */
   cpf?: string | null;
+  /** E-mail: ao alterar, sincroniza app_users.email E auth.users. */
+  email?: string | null;
 }
 
 /**
@@ -73,6 +75,22 @@ export async function PATCH(
 
     if (body.full_name !== undefined) update.full_name = body.full_name;
     if (typeof body.active === "boolean") update.active = body.active;
+
+    // E-mail — valida formato; só marca alteração se realmente mudou. A
+    // permissão de editar (sócio: qualquer; funcionário: só promotor) já é
+    // garantida por canManageUserRole(actor, target.role) acima. A sincronia
+    // com auth.users acontece após o UPDATE em app_users (abaixo).
+    let newEmail: string | null = null;
+    if (body.email !== undefined && body.email !== null) {
+      const e = String(body.email).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+        return NextResponse.json({ error: "E-mail invalido" }, { status: 400 });
+      }
+      if (e !== (target.email ?? "").toLowerCase()) {
+        newEmail = e;
+        update.email = e;
+      }
+    }
 
     if (body.role !== undefined) {
       if (!["socio", "funcionario", "promotor"].includes(body.role)) {
@@ -161,6 +179,36 @@ export async function PATCH(
         { error: error?.message ?? "Usuario nao encontrado" },
         { status: 404 }
       );
+    }
+
+    // Sincroniza o e-mail no auth.users quando mudou. app_users.email já foi
+    // atualizado acima (a unique de e-mail lá pega duplicidade via 23505).
+    // email_confirm:true marca o novo e-mail como confirmado — evita disparar
+    // o fluxo de confirmação dupla do Supabase. Se o Auth falhar (ex.: e-mail
+    // já usado por outra conta no Auth), revertemos app_users p/ não dessincronizar.
+    if (newEmail && target.auth_user_id) {
+      const { error: authEmailError } = await supabase.auth.admin.updateUserById(
+        target.auth_user_id,
+        { email: newEmail, email_confirm: true }
+      );
+      if (authEmailError) {
+        await supabase
+          .from("app_users")
+          .update({ email: target.email })
+          .eq("id", id)
+          .then(() => undefined);
+        const msg = (authEmailError.message ?? "").toLowerCase();
+        if (msg.includes("already") || msg.includes("registered") || msg.includes("exist")) {
+          return NextResponse.json(
+            { error: "Este e-mail já está cadastrado." },
+            { status: 409 }
+          );
+        }
+        return NextResponse.json(
+          { error: "Falha ao sincronizar o e-mail no Auth." },
+          { status: 500 }
+        );
+      }
     }
 
     // SEGURANCA — Desativar corta o acesso de verdade: ao mudar active para

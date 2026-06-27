@@ -6,7 +6,7 @@ import { allowedTargetRoles } from "@/lib/auth/permissions";
 import type { UserRole } from "@/lib/auth/types";
 import { isValidCPF, maskCPF, onlyDigits } from "@/lib/validators/cpf";
 
-import { IcoUserCog, IcoX, IcoCopy, IcoCheck, IcoAlertTri, IcoInfo, IcoUser } from "./icons";
+import { IcoUserCog, IcoX, IcoCheck, IcoInfo, IcoUser } from "./icons";
 
 interface Props {
   onClose: () => void;
@@ -44,8 +44,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
   const [promoterId, setPromoterId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [createdPassword, setCreatedPassword] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [invited, setInvited] = useState(false);
 
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [promoters, setPromoters] = useState<PromoterOption[]>([]);
@@ -120,7 +119,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
         setError(data.error ?? "Falha ao criar usuário");
         return;
       }
-      setCreatedPassword(data.password as string);
+      setInvited(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro inesperado");
     } finally {
@@ -128,19 +127,8 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
     }
   }
 
-  async function copyPassword() {
-    if (!createdPassword) return;
-    try {
-      await navigator.clipboard.writeText(createdPassword);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Fallback: usuario seleciona e copia manualmente
-    }
-  }
-
   function close() {
-    if (createdPassword) onCreated();
+    if (invited) onCreated();
     else onClose();
   }
 
@@ -148,33 +136,23 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
     <div className="rradmin">
       <div className="overlay" role="dialog" aria-modal="true" onClick={close}>
         <div className="dialog" onClick={(e) => e.stopPropagation()}>
-          {createdPassword ? (
+          {invited ? (
             <>
               <div className="dialog-head">
                 <div className="dt2">
                   <span className="di green"><IcoCheck /></span>
                   <div>
-                    <h3>Senha gerada</h3>
-                    <p className="dsub">Usuário {email} criado</p>
+                    <h3>Convite enviado</h3>
+                    <p className="dsub">{email}</p>
                   </div>
                 </div>
                 <button className="x" onClick={close} aria-label="Fechar"><IcoX /></button>
               </div>
               <div className="dialog-body">
                 <p className="pwlead">
-                  Compartilhe a senha abaixo com <b>{fullName.trim() || email}</b>. Por segurança,
-                  ela <b>não será exibida novamente</b>.
+                  Convite enviado para <b>{email}</b>. O usuário vai receber um link por
+                  e-mail para definir a senha e acessar o sistema.
                 </p>
-                <div className="pwbox">
-                  <code>{createdPassword}</code>
-                  <button type="button" className="copy" onClick={copyPassword}>
-                    {copied ? <><IcoCheck />Copiado</> : <><IcoCopy />Copiar</>}
-                  </button>
-                </div>
-                <div className="pwwarn">
-                  <IcoAlertTri />
-                  <span><b>Esta senha não será exibida novamente.</b> Copie agora — depois só gerando uma nova.</span>
-                </div>
               </div>
               <div className="dialog-foot">
                 <button type="button" className="btn-primary" onClick={close}><IcoCheck />Concluir</button>

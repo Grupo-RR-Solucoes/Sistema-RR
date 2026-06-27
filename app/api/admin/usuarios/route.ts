@@ -4,12 +4,12 @@ import {
   apiGuardErrorResponse,
   requireSocioOrFuncionario,
 } from "@/lib/auth/guards";
-import { generateProvisionalPassword } from "@/lib/admin/generatePassword";
 import { canManageUserRole } from "@/lib/auth/permissions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { UserRole } from "@/lib/auth/types";
 import { isValidCPF, onlyDigits } from "@/lib/validators/cpf";
 import { uniqueViolationResponse } from "@/lib/admin/pgErrors";
+import { resolveSiteUrl } from "@/lib/siteUrl";
 
 /**
  * GET /api/admin/usuarios
@@ -56,10 +56,12 @@ interface CreateUserBody {
 
 /**
  * POST /api/admin/usuarios
- * Cria novo usuario em auth.users + app_users e retorna a senha provisoria
- * gerada UMA VEZ. Registra em audit_logs com action='user_created'.
+ * Convida novo usuario: inviteUserByEmail cria a conta em auth.users (sem
+ * senha) e dispara o e-mail de convite; em seguida cria a linha em app_users.
+ * Resposta { user, invited:true, email } — NAO ha senha na tela; o usuario
+ * define a senha pelo link do e-mail. Registra em audit_logs (user_created).
  *
- * Sem transacao distribuida: se INSERT em app_users falhar apos createUser,
+ * Sem transacao distribuida: se INSERT em app_users falhar apos o convite,
  * tenta rollback via auth.admin.deleteUser. Se rollback tambem falhar,
  * retorna erro com instrucao de limpeza manual.
  */
@@ -121,19 +123,17 @@ export async function POST(req: Request) {
       cpf = digits;
     }
 
-    const provisionalPassword = generateProvisionalPassword(16);
-
-    // 1. Criar em auth.users
+    // 1. Convidar em auth.users — inviteUserByEmail cria o usuario SEM senha e
+    // dispara o e-mail de convite (via SMTP/Resend) com link p/ /auth/callback,
+    // que troca o code por sessao e leva o convidado a /definir-senha.
+    const redirectTo = `${resolveSiteUrl(req)}/auth/callback`;
     const { data: authData, error: authError } =
-      await supabase.auth.admin.createUser({
-        email,
-        password: provisionalPassword,
-        email_confirm: true,
-      });
+      await supabase.auth.admin.inviteUserByEmail(email, { redirectTo });
 
     if (authError || !authData?.user) {
+      // E-mail ja existente no Auth tambem cai aqui (mensagem do proprio Auth).
       return NextResponse.json(
-        { error: authError?.message ?? "Falha ao criar auth user" },
+        { error: authError?.message ?? "Falha ao convidar usuario" },
         { status: 500 }
       );
     }
@@ -158,7 +158,7 @@ export async function POST(req: Request) {
       .single();
 
     if (appUserError || !appUserData) {
-      // Rollback: deletar o auth.users criado
+      // Rollback: deletar o auth.users do usuario convidado
       await supabase.auth.admin.deleteUser(authUserId).catch(() => {
         // Best-effort rollback. Se falhou, socio tera que limpar manual.
       });
@@ -213,7 +213,8 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       user: appUserData,
-      password: provisionalPassword,
+      invited: true,
+      email,
     });
   } catch (e) {
     return apiGuardErrorResponse(e);

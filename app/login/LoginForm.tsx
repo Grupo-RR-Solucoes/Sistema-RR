@@ -1,11 +1,22 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, type CSSProperties, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
 import BrandLogo from "../../components/BrandLogo";
 import { getSupabaseBrowserClient } from "../../lib/auth/supabaseBrowserClient";
 import { maskCPF, onlyDigits } from "../../lib/validators/cpf";
+import { clientSiteUrl } from "../../lib/siteUrl";
+
+const LINK_BTN: CSSProperties = {
+  background: "none",
+  border: "none",
+  padding: 0,
+  font: "inherit",
+  color: "var(--blue)",
+  cursor: "pointer",
+  textDecoration: "underline",
+};
 
 export default function LoginForm() {
   const router = useRouter();
@@ -17,6 +28,35 @@ export default function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   // Parte B: conta desativada -> mensagem âmbar própria (evita o loop /<->/login).
   const [inactive, setInactive] = useState(false);
+
+  // "Esqueci minha senha" — reset SEMPRE por e-mail (não CPF).
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotBusy, setForgotBusy] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState<string | null>(null);
+
+  async function handleForgot() {
+    setForgotBusy(true);
+    setForgotMsg(null);
+    const email = forgotEmail.trim();
+    try {
+      // Só dispara se o formato for de e-mail; a mensagem final é uniforme
+      // (não revela se o e-mail existe).
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        const supabase = getSupabaseBrowserClient();
+        await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${clientSiteUrl()}/auth/callback`,
+        });
+      }
+    } catch {
+      // silencioso — resposta uniforme
+    } finally {
+      setForgotBusy(false);
+      setForgotMsg(
+        "Se este e-mail estiver cadastrado, enviamos um link para redefinir a senha."
+      );
+    }
+  }
 
   // Mascara como CPF SOMENTE quando o valor é só dígitos (sem "@"). Enquanto
   // houver "@" ou letras (e-mail), mostra o valor cru sem mexer.
@@ -200,9 +240,54 @@ export default function LoginForm() {
           )}
         </button>
 
-        <p className="resethint">
-          Esqueceu a senha? <b>Solicite a um sócio</b> para gerar uma nova credencial.
-        </p>
+        {!forgotOpen ? (
+          <p className="resethint">
+            <button type="button" style={LINK_BTN} onClick={() => { setForgotOpen(true); setForgotMsg(null); }}>
+              Esqueci minha senha
+            </button>
+          </p>
+        ) : (
+          <div className="forgot">
+            {forgotMsg ? (
+              <div className="alert" role="status">
+                <span>{forgotMsg}</span>
+              </div>
+            ) : (
+              <>
+                <div className="field">
+                  <label htmlFor="forgotEmail">E-mail para redefinição</label>
+                  <div className="control">
+                    <svg className="lead" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="m4 7 8 6 8-6" /></svg>
+                    <input
+                      id="forgotEmail"
+                      type="email"
+                      autoComplete="email"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      disabled={forgotBusy}
+                      placeholder="voce@exemplo.com"
+                    />
+                  </div>
+                </div>
+                <button type="button" className="btn" onClick={handleForgot} disabled={forgotBusy || !forgotEmail.trim()}>
+                  {forgotBusy ? (
+                    <>
+                      <span className="spin" aria-hidden="true" />
+                      Enviando…
+                    </>
+                  ) : (
+                    "Enviar link de redefinição"
+                  )}
+                </button>
+              </>
+            )}
+            <p className="resethint">
+              <button type="button" style={LINK_BTN} onClick={() => { setForgotOpen(false); setForgotMsg(null); }}>
+                Voltar ao login
+              </button>
+            </p>
+          </div>
+        )}
       </form>
 
       <p className="pagefoot"><span className="dot" />Grupo RR Cred · acesso restrito</p>
