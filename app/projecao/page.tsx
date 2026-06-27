@@ -60,6 +60,50 @@ type Grupo = {
   nao_atribuido?: NaoAtribuido | null;
 };
 
+// ---------- ordenação (ranking de promotores) ----------
+type SortKey = "percent" | "acumulado" | "projecao" | "meta";
+type SortDir = "asc" | "desc";
+
+// "sem meta" = meta 0 → percent_projetado === null.
+const semMeta = (p: Promotor) => p.percent_projetado === null;
+const valorDe = (p: Promotor, key: SortKey): number => {
+  switch (key) {
+    case "percent":
+      return p.percent_projetado ?? 0; // sem-meta é tratado à parte (vai pro fim)
+    case "acumulado":
+      return p.producao_acumulada;
+    case "projecao":
+      return p.projecao;
+    case "meta":
+      return p.meta;
+  }
+};
+
+// Ordena uma CÓPIA de g.promotores. Regras:
+//  - 'percent' e 'meta': promotores SEM meta vão SEMPRE pro fim (entre eles,
+//    produção acumulada desc), independente de sortDir.
+//  - 'acumulado' e 'projecao': todos entram juntos (sem-meta têm valor real).
+function sortPromotores(list: Promotor[], key: SortKey, dir: SortDir): Promotor[] {
+  const mult = dir === "asc" ? 1 : -1;
+  const forceBottom = key === "percent" || key === "meta";
+  return [...list].sort((a, b) => {
+    if (forceBottom) {
+      const sa = semMeta(a);
+      const sb = semMeta(b);
+      if (sa && sb) return b.producao_acumulada - a.producao_acumulada;
+      if (sa) return 1; // a (sem meta) vai pro fim
+      if (sb) return -1; // b (sem meta) vai pro fim
+    }
+    const diff = valorDe(a, key) - valorDe(b, key);
+    if (diff !== 0) return diff * mult;
+    // desempate estável: acumulado desc, depois nome.
+    if (a.producao_acumulada !== b.producao_acumulada) {
+      return b.producao_acumulada - a.producao_acumulada;
+    }
+    return a.promoter_name.localeCompare(b.promoter_name, "pt-BR");
+  });
+}
+
 const brl = (n: number) =>
   "R$ " + new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
 const pctTxt = (r: number | null) => (r === null ? "—" : `${(r * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`);
@@ -290,6 +334,23 @@ function EquipeView({ data }: { data: any }) {
   const risco: Promotor[] = data.risco || [];
   const jan = data.janela;
 
+  // Ordenação GLOBAL (mesmo critério para todos os CNPJs). Default: ranking por
+  // produção acumulada, maior primeiro (sem-meta não vão pro fim aqui — entram
+  // junto pelo valor real; R$ 0,00 cai no fim naturalmente).
+  const [sortKey, setSortKey] = useState<SortKey>("acumulado");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const onSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc"); // nova coluna → maior primeiro
+    }
+  };
+  const arrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
+  const ariaSort = (key: SortKey): "ascending" | "descending" | "none" =>
+    sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none";
+
   return (
     <>
       {/* KPIs — faixa navy (kit) */}
@@ -381,16 +442,56 @@ function EquipeView({ data }: { data: any }) {
               <thead>
                 <tr>
                   <th className="sticky">Promotor</th>
-                  <th className="r">Acumulado</th>
-                  <th className="r">Projeção</th>
-                  <th className="r">Meta</th>
-                  <th className="r">% projetado</th>
+                  <th
+                    className="r"
+                    role="button"
+                    tabIndex={0}
+                    style={{ cursor: "pointer" }}
+                    aria-sort={ariaSort("acumulado")}
+                    onClick={() => onSort("acumulado")}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSort("acumulado"); } }}
+                  >
+                    Acumulado{arrow("acumulado")}
+                  </th>
+                  <th
+                    className="r"
+                    role="button"
+                    tabIndex={0}
+                    style={{ cursor: "pointer" }}
+                    aria-sort={ariaSort("projecao")}
+                    onClick={() => onSort("projecao")}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSort("projecao"); } }}
+                  >
+                    Projeção{arrow("projecao")}
+                  </th>
+                  <th
+                    className="r"
+                    role="button"
+                    tabIndex={0}
+                    style={{ cursor: "pointer" }}
+                    aria-sort={ariaSort("meta")}
+                    onClick={() => onSort("meta")}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSort("meta"); } }}
+                  >
+                    Meta{arrow("meta")}
+                  </th>
+                  <th
+                    className="r"
+                    role="button"
+                    tabIndex={0}
+                    style={{ cursor: "pointer" }}
+                    aria-sort={ariaSort("percent")}
+                    onClick={() => onSort("percent")}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSort("percent"); } }}
+                  >
+                    % projetado{arrow("percent")}
+                  </th>
                   <th className="c">Tendência</th>
                   <th className="c">Semáforo</th>
                 </tr>
               </thead>
               <tbody>
-                {g.promotores.map((p) => (
+                {sortPromotores(g.promotores, sortKey, sortDir).map((p) => (
                   <tr key={p.promoter_id}>
                     <td className="sticky pname">{p.promoter_name}</td>
                     <td className="r">{brl(p.producao_acumulada)}</td>
