@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { allowedTargetRoles } from "@/lib/auth/permissions";
 import type { UserRole } from "@/lib/auth/types";
+import { isValidCPF, maskCPF, onlyDigits } from "@/lib/validators/cpf";
 
 import { IcoUserCog, IcoX, IcoCopy, IcoCheck, IcoAlertTri, IcoInfo, IcoUser } from "./icons";
 
@@ -38,6 +39,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState<Role>(defaultRole);
+  const [cpf, setCpf] = useState(""); // só dígitos
   const [cnpjId, setCnpjId] = useState("");
   const [promoterId, setPromoterId] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -85,12 +87,24 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
       setError("Você não tem permissão para criar usuário com esse perfil.");
       return;
     }
+    // CPF obrigatório/validado para funcionário e promotor (login por CPF).
+    // Sócio loga por e-mail → não valida nem envia CPF.
+    const cpfDigits = onlyDigits(cpf);
+    if (role === "funcionario" || role === "promotor") {
+      if (!isValidCPF(cpfDigits)) {
+        setError("CPF inválido");
+        return;
+      }
+    }
     setSubmitting(true);
     const body: Record<string, unknown> = {
       email: email.trim(),
       full_name: fullName.trim() || null,
       role,
     };
+    if (role === "funcionario" || role === "promotor") {
+      body.cpf = cpfDigits;
+    }
     if (role === "promotor") {
       body.cnpj_id = cnpjId.trim();
       body.promoter_id = promoterId.trim();
@@ -189,13 +203,29 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
                 </div>
                 <div className={`field${roleLocked ? " locked" : ""}`}>
                   <label>Perfil de acesso <span className="req">*</span></label>
-                  <select value={role} onChange={(e) => setRole(e.target.value as Role)} disabled={submitting || roleLocked}>
+                  <select value={role} onChange={(e) => { const r = e.target.value as Role; setRole(r); if (r === "socio") setCpf(""); }} disabled={submitting || roleLocked}>
                     {targetRoles.includes("socio") ? <option value="socio">Sócio (acesso completo)</option> : null}
                     {targetRoles.includes("funcionario") ? <option value="funcionario">Funcionário (operacional)</option> : null}
                     {targetRoles.includes("promotor") ? <option value="promotor">Promotor (acesso aos próprios dados)</option> : null}
                   </select>
                   {roleLocked ? <span className="hint">Como funcionário, você só cadastra promotores.</span> : null}
                 </div>
+
+                {role === "funcionario" || role === "promotor" ? (
+                  <div className="field">
+                    <label>CPF <span className="req">*</span></label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      required
+                      value={cpf ? maskCPF(cpf) : ""}
+                      onChange={(e) => setCpf(onlyDigits(e.target.value).slice(0, 11))}
+                      disabled={submitting}
+                      placeholder="000.000.000-00"
+                    />
+                    <span className="hint">Apenas números. Usado para login deste perfil.</span>
+                  </div>
+                ) : null}
 
                 {role === "promotor" ? (
                   <div className="condbox">

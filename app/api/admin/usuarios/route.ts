@@ -9,6 +9,7 @@ import { canManageUserRole } from "@/lib/auth/permissions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { UserRole } from "@/lib/auth/types";
 import { isValidCPF, onlyDigits } from "@/lib/validators/cpf";
+import { uniqueViolationResponse } from "@/lib/admin/pgErrors";
 
 /**
  * GET /api/admin/usuarios
@@ -23,7 +24,7 @@ export async function GET() {
     let query = supabase
       .from("app_users")
       .select(
-        "id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, active, created_at, created_by"
+        "id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, cpf, active, created_at, created_by"
       )
       .order("created_at", { ascending: false });
 
@@ -161,6 +162,11 @@ export async function POST(req: Request) {
       await supabase.auth.admin.deleteUser(authUserId).catch(() => {
         // Best-effort rollback. Se falhou, socio tera que limpar manual.
       });
+
+      // Unique violation (23505): CPF/e-mail ja cadastrado -> 409 amigavel,
+      // sem expor SQL/constraint.
+      const dup = uniqueViolationResponse(appUserError);
+      if (dup) return dup;
 
       // Disc.7 - Mensagem amigavel para FK violation (23503). Race
       // tipico: socio seleciona empresa/promotor no modal, alguem

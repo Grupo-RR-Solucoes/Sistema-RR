@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import type { UserRole } from "@/lib/auth/types";
+import { isValidCPF, maskCPF, onlyDigits } from "@/lib/validators/cpf";
 
 import type { UsuarioRow } from "./UsuariosList";
 import { IcoPencil, IcoX, IcoSave, IcoUser } from "./icons";
@@ -39,6 +40,7 @@ export default function EditUsuarioModal({
 
   const [fullName, setFullName] = useState(target.full_name ?? "");
   const [role, setRole] = useState<Role>(target.role);
+  const [cpf, setCpf] = useState(onlyDigits(target.cpf ?? "")); // só dígitos
   const [cnpjId, setCnpjId] = useState("");
   const [promoterId, setPromoterId] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -104,6 +106,17 @@ export default function EditUsuarioModal({
       }
     }
 
+    // CPF — funcionário/promotor (role final): valida e envia. Sócio não envia
+    // (a rota zera o cpf ao virar sócio). Mensagem genérica.
+    if (role === "funcionario" || role === "promotor") {
+      const cpfDigits = onlyDigits(cpf);
+      if (!isValidCPF(cpfDigits)) {
+        setError("CPF inválido");
+        return;
+      }
+      body.cpf = cpfDigits;
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch(`/api/admin/usuarios/${target.id}`, {
@@ -158,6 +171,22 @@ export default function EditUsuarioModal({
                   <span className="hint">Alterando de <b>{roleLabel(target.role)}</b> para <b>{roleLabel(role)}</b>.</span>
                 ) : null}
               </div>
+
+              {role === "funcionario" || role === "promotor" ? (
+                <div className="field">
+                  <label>CPF <span className="req">*</span></label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    value={cpf ? maskCPF(cpf) : ""}
+                    onChange={(e) => setCpf(onlyDigits(e.target.value).slice(0, 11))}
+                    disabled={submitting}
+                    placeholder="000.000.000-00"
+                  />
+                  <span className="hint">Apenas números. Usado para login deste perfil.</span>
+                </div>
+              ) : null}
 
               {becomingPromotor ? (
                 <div className="condbox">

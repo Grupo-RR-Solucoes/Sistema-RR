@@ -10,6 +10,8 @@ import {
 } from "@/lib/auth/permissions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { UserRole } from "@/lib/auth/types";
+import { isValidCPF, onlyDigits } from "@/lib/validators/cpf";
+import { uniqueViolationResponse } from "@/lib/admin/pgErrors";
 
 interface PatchUserBody {
   full_name?: string | null;
@@ -17,6 +19,8 @@ interface PatchUserBody {
   cnpj_id?: string | null;
   promoter_id?: string | null;
   active?: boolean;
+  /** CPF (qualquer formato): obrigatório/valido p/ funcionario-promotor; NULL p/ socio. */
+  cpf?: string | null;
 }
 
 /**
@@ -39,7 +43,7 @@ export async function PATCH(
 
     const { data: target, error: targetError } = await supabase
       .from("app_users")
-      .select("id, role, email, auth_user_id, active")
+      .select("id, role, email, auth_user_id, active, cpf")
       .eq("id", id)
       .single();
 
@@ -114,6 +118,26 @@ export async function PATCH(
       if (body.promoter_id !== undefined) update.promoter_id = body.promoter_id;
     }
 
+    // CPF — segue o role FINAL (mesma regra do POST). funcionario/promotor:
+    // valida e normaliza quando vier no body; obrigatorio quando o usuario
+    // PASSA A SER funcionario/promotor. socio: zera (NULL) ao virar socio.
+    const finalRole = (body.role ?? target.role) as UserRole;
+    if (finalRole === "socio") {
+      if (body.role === "socio") update.cpf = null;
+    } else if (body.cpf !== undefined) {
+      const cpfDigits = onlyDigits(typeof body.cpf === "string" ? body.cpf : "");
+      if (!isValidCPF(cpfDigits)) {
+        return NextResponse.json({ error: "CPF invalido" }, { status: 400 });
+      }
+      update.cpf = cpfDigits;
+    } else if (body.role !== undefined && body.role !== target.role) {
+      // Passou a ser funcionario/promotor sem informar CPF.
+      return NextResponse.json(
+        { error: "CPF invalido (obrigatorio para funcionario/promotor)" },
+        { status: 400 }
+      );
+    }
+
     if (Object.keys(update).length === 0) {
       return NextResponse.json(
         { error: "Nada para atualizar" },
@@ -125,10 +149,14 @@ export async function PATCH(
       .from("app_users")
       .update(update)
       .eq("id", id)
-      .select("id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, active, created_at")
+      .select("id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, cpf, active, created_at")
       .single();
 
     if (error || !data) {
+      // Unique violation (23505): CPF/e-mail ja cadastrado -> 409 amigavel,
+      // sem expor SQL/constraint.
+      const dup = uniqueViolationResponse(error);
+      if (dup) return dup;
       return NextResponse.json(
         { error: error?.message ?? "Usuario nao encontrado" },
         { status: 404 }
