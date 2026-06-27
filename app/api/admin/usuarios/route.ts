@@ -8,6 +8,7 @@ import { generateProvisionalPassword } from "@/lib/admin/generatePassword";
 import { canManageUserRole } from "@/lib/auth/permissions";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { UserRole } from "@/lib/auth/types";
+import { isValidCPF, onlyDigits } from "@/lib/validators/cpf";
 
 /**
  * GET /api/admin/usuarios
@@ -48,6 +49,8 @@ interface CreateUserBody {
   role?: UserRole;
   cnpj_id?: string | null;
   promoter_id?: string | null;
+  /** CPF (qualquer formato): obrigatório p/ funcionario/promotor; ignorado p/ socio. */
+  cpf?: string | null;
 }
 
 /**
@@ -103,6 +106,20 @@ export async function POST(req: Request) {
       );
     }
 
+    // CPF: login por CPF é exclusivo de funcionario/promotor — obrigatório e
+    // validado. Socio loga por e-mail → cpf sempre NULL (ignorado se enviado).
+    let cpf: string | null = null;
+    if (role === "funcionario" || role === "promotor") {
+      const digits = onlyDigits(body.cpf ?? "");
+      if (!isValidCPF(digits)) {
+        return NextResponse.json(
+          { error: "CPF invalido (obrigatorio para funcionario/promotor)" },
+          { status: 400 }
+        );
+      }
+      cpf = digits;
+    }
+
     const provisionalPassword = generateProvisionalPassword(16);
 
     // 1. Criar em auth.users
@@ -132,6 +149,7 @@ export async function POST(req: Request) {
         role,
         cnpj_id,
         promoter_id,
+        cpf,
         active: true,
         created_by: session.appUser.id,
       })
