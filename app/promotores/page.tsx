@@ -1851,16 +1851,18 @@ const CSS = `
 .rrprom .head-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
 .rrprom .state{padding:26px 24px;font-size:13.5px;color:var(--ink-3);}
 
-.rrprom .scroll{overflow-x:auto;}
+.rrprom .scroll{overflow:auto;max-height:calc(100vh - 240px);}
 .rrprom table{border-collapse:collapse;width:100%;min-width:760px;font-size:13.5px;}
 .rrprom table.wide{min-width:1600px;}
-.rrprom thead th{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);text-align:right;padding:0 16px 11px;border-bottom:1px solid var(--bd);white-space:nowrap;background:var(--card);}
+.rrprom thead th{position:sticky;top:0;z-index:3;font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);text-align:right;padding:11px 16px;border-bottom:1px solid var(--bd);white-space:nowrap;background:var(--card);}
 .rrprom thead th.l{text-align:left;}
 .rrprom tbody td{padding:13px 16px;border-bottom:1px solid var(--bd-soft);text-align:right;white-space:nowrap;color:var(--ink);}
 .rrprom tbody td.l{text-align:left;}
 .rrprom tbody tr:last-child td{border-bottom:none;}
 .rrprom .sticky{position:sticky;left:0;z-index:2;background:var(--card);}
-.rrprom thead th.sticky{z-index:3;}
+/* canto superior-esquerdo (cabeçalho da 1ª coluna): acima do thead (z3) e da
+   coluna (z2). Hierarquia: canto(4) > thead(3) > coluna(2) > normal. */
+.rrprom thead th.sticky{z-index:4;}
 .rrprom .sticky::after{content:"";position:absolute;top:0;right:0;width:14px;height:100%;transform:translateX(100%);background:linear-gradient(90deg,rgba(15,31,74,.06),rgba(15,31,74,0));pointer-events:none;}
 .rrprom .prom{font-weight:600;}
 .rrprom .prom small{display:block;font-weight:500;font-size:11.5px;color:var(--ink-3);margin-top:1px;}
@@ -1947,6 +1949,9 @@ const CSS = `
   .rrprom .wrap{padding:18px 14px 40px;gap:16px;}
   .rrprom .ndform{grid-template-columns:1fr;}
 
+  /* mobile-card: desfaz a janela de scroll vertical do desktop para os cards
+     empilharem livremente (o thead some logo abaixo via display:none). */
+  .rrprom .scroll{max-height:none;overflow:visible;}
   .rrprom table.wide{min-width:0;}
   .rrprom table,.rrprom thead,.rrprom tbody,.rrprom tfoot,.rrprom tr,.rrprom th,.rrprom td{display:block;}
   .rrprom table{min-width:0;}
