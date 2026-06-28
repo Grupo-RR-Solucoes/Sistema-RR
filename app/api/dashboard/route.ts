@@ -8,6 +8,11 @@ import { buildProjecaoMetas, consolidarGrupo } from "@/lib/projecaoMetas";
 import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { fetchAllRows } from "@/lib/queryHelpers";
+import {
+  fetchInsuranceSlipRules,
+  calculateInsuranceCommissionFromRules,
+} from "@/lib/insuranceCalculator";
+import { getPrazoTrp } from "@/lib/prazoTrp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,7 +48,12 @@ function displayCompany(name: string) {
     .join(" ");
 }
 
-type PmrRow = { year: number; month: number; production_value: number | null };
+type PmrRow = {
+  year: number;
+  month: number;
+  production_value: number | null;
+  insured_production_value: number | null;
+};
 
 type DailyUnassignedRow = {
   company_id: string | null;
@@ -52,6 +62,18 @@ type DailyUnassignedRow = {
   net_value: number | null;
   movement_date: string | null;
   cancellation_date: string | null;
+  // Seguro do MASTER (não atribuído): o registro NÃO tem insurance_commission_amount
+  // precomputado, então recalculamos pelo caminho DB-driven (insuranceCalculator
+  // + insurance_slip_rules), NUNCA pelo legado motor/getInsurancePercentByTerm.
+  gross_value: number | null;
+  insurance_value: number | null;
+  insurance_type: string | null;
+  has_insurance: boolean | null;
+  term_months: number | null;
+  installments: number | null;
+  contract_date: string | null;
+  product_code: string | number | null;
+  raw_payload: Record<string, unknown> | null;
 };
 
 // Mesma regra de validade/produção do motor (app/api/calculate/monthly/route.ts):
@@ -103,9 +125,12 @@ export async function GET() {
       monthClosed,
       activeCompanies,
       dailyUnassigned,
+      insuranceSlipRules,
     ] = await Promise.all([
         fetchAllRows<PmrRow>(() =>
-          supabase.from("promoter_monthly_results").select("year, month, production_value")
+          supabase
+            .from("promoter_monthly_results")
+            .select("year, month, production_value, insured_production_value")
         ),
         buildClosingAnalytics(supabase, { fastDashboardMode: true }),
         calcularRbt12(supabase, { ano: year, mes: month }),
@@ -124,12 +149,13 @@ export async function GET() {
           supabase
             .from("daily_production_records")
             .select(
-              "company_id, status, is_srcc_restricted, net_value, movement_date, cancellation_date"
+              "company_id, status, is_srcc_restricted, net_value, movement_date, cancellation_date, gross_value, insurance_value, insurance_type, has_insurance, term_months, installments, contract_date, product_code, raw_payload"
             )
             .is("assigned_promoter_id", null)
             .gte("movement_date", `${year - 1}-12-15`)
             .lt("movement_date", `${year + 1}-01-10`)
         ),
+        fetchInsuranceSlipRules(supabase),
       ]);
 
     // ---- produção mensal do grupo (ano corrente) ----
@@ -246,6 +272,89 @@ export async function GET() {
       comissaoBrutaEmpresaLabel = `${MES[month - 1]}/${year} · parcial`;
     }
 
+    // ---- KPIs de SEGURO (DB-driven; NUNCA motor/closingAnalytics) ----
+    // Split idêntico ao comissaoBrutaEmpresa (monthClosed). A penetração ponderada
+    // é ATRIBUÍDO-ONLY nos dois regimes (o master não existe no PMR/cms) — decisão
+    // Diego, documentada aqui.
+    let comissaoSeguroGrupo = 0;
+    let penetracaoSeguroGrupo = 0; // fração 0..1
+    let seguroLabel = "";
+    let seguroMasterSemRegra = 0;
+    if (monthClosed) {
+      // Ground truth do fechamento (já inclui tudo; sem master separado no fechado).
+      const cmsSeguro = await fetchAllRows<{
+        promoter_insurance: number | null;
+        penetration: number | null;
+        net_value: number | null;
+      }>(() =>
+        supabase
+          .from("cms_promoter_entries")
+          .select("promoter_insurance, penetration, net_value")
+          .eq("prod_year", year)
+          .eq("prod_month", month)
+      );
+      comissaoSeguroGrupo = roundMoney(
+        cmsSeguro.reduce((sum, r) => sum + toNumber(r.promoter_insurance), 0)
+      );
+      // Penetração ponderada = Σ(penetration_i × net_value_i) / Σ net_value_i.
+      // cms.penetration já é FRAÇÃO (0..1); pondera pelo net_value.
+      let penNum = 0;
+      let penDen = 0;
+      for (const r of cmsSeguro) {
+        const nv = toNumber(r.net_value);
+        penNum += toNumber(r.penetration) * nv;
+        penDen += nv;
+      }
+      penetracaoSeguroGrupo = penDen > 0 ? penNum / penDen : 0;
+      seguroLabel = `${MES[month - 1]}/${year} · fechado`;
+    } else {
+      // ATRIBUÍDO: Σ summaryRows.insurance_commission_value (PMR via analytics;
+      // ex-SRCC já filtrado no pipeline).
+      const seguroAtribuido = (promoterAnalytics.summaryRows || []).reduce(
+        (sum, r) => sum + toNumber(r.insurance_commission_value),
+        0
+      );
+      // MASTER (não atribuído): recalcula pelo MESMO caminho DB-driven do pipeline
+      // (calculateInsuranceCommissionFromRules + insurance_slip_rules). Mesmo filtro
+      // ex-SRCC/produção/competência da produção master. Sem regra → soma 0 e conta
+      // em seguroMasterSemRegra (NÃO chuta fallback legado).
+      let seguroMaster = 0;
+      for (const r of dailyUnassigned || []) {
+        if (!r.company_id || !activeIds.has(r.company_id)) continue;
+        if (!isProductionStatus(r.status)) continue;
+        if (!isValidDailyRecord(r)) continue;
+        const period = getProductionPeriodFromValue(r.movement_date);
+        if (!period || period.year !== year || period.month !== month) continue;
+        if (!(toNumber(r.insurance_value) > 0 || r.has_insurance === true)) continue;
+        const res = calculateInsuranceCommissionFromRules({
+          rules: insuranceSlipRules,
+          grossValue: toNumber(r.gross_value),
+          premioValue: toNumber(r.insurance_value),
+          insuranceType: r.insurance_type,
+          termPromotiva: getPrazoTrp(r) ?? toNumber(r.term_months || r.installments),
+          contractDate: r.contract_date || r.movement_date,
+        });
+        if (!res) {
+          seguroMasterSemRegra += 1;
+          continue;
+        }
+        seguroMaster += res.amount;
+      }
+      comissaoSeguroGrupo = roundMoney(seguroAtribuido + seguroMaster);
+      // Penetração ponderada ATRIBUÍDO-ONLY = Σ insured_production_value /
+      // Σ production_value do PMR (mês corrente). O master NÃO entra (não existe no
+      // PMR). Fração 0..1.
+      let penNum = 0;
+      let penDen = 0;
+      for (const r of pmrRows) {
+        if (r.year !== year || r.month !== month) continue;
+        penNum += toNumber(r.insured_production_value);
+        penDen += toNumber(r.production_value);
+      }
+      penetracaoSeguroGrupo = penDen > 0 ? penNum / penDen : 0;
+      seguroLabel = `${MES[month - 1]}/${year} · parcial`;
+    }
+
     // ---- alerta de projeção (só se houver risco: amarelo/vermelho) ----
     const cons = consolidarGrupo(projecaoRes);
     const projecao = {
@@ -272,6 +381,13 @@ export async function GET() {
       producaoMensal,
       cnpjs,
       projecao,
+      // Seguridade (DB-driven). penetracaoSeguroGrupo = fração 0..1 (ponderada,
+      // atribuído-only). seguroMasterSemRegra = nº de contratos master com seguro
+      // sem regra TRP casada (não somados; sinalizar discreto na UI).
+      comissaoSeguroGrupo,
+      penetracaoSeguroGrupo,
+      seguroLabel,
+      seguroMasterSemRegra,
     });
   } catch (error) {
     return apiGuardErrorResponse(error);
