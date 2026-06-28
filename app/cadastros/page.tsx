@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+import { UiStyles, HeaderNavy, KpiBand, Table } from "@/components/ui";
 
 // Redesign (.rrcad): camada visual reescrita para o padrao scoped novo
 // (header navy, chips, KPIs .scard, abas pill, tabelas claras, form aside).
@@ -550,11 +550,10 @@ export default function CadastrosPage() {
                   <p className="csub">{counts.ativos} ativos · clique no lápis para editar o cadastro</p>
                 </div>
               </div>
-              <div className="tscroll">
-                <table className="dt">
+              <Table scrollable minWidth={600}>
                   <thead>
                     <tr>
-                      <th>Nome</th>
+                      <th className="rr-sticky-col">Nome</th>
                       <th>Empresa</th>
                       <th className="c">Chaves J</th>
                       <th>Admissão</th>
@@ -573,7 +572,7 @@ export default function CadastrosPage() {
                         const active = isActive(p.active);
                         return (
                           <tr key={p.id} className={active ? "" : "inactive"}>
-                            <td className="nm">
+                            <td className="nm rr-sticky-col">
                               {p.name}
                               <small>{p.keys[0]?.j_key || "Sem chave"}</small>
                             </td>
@@ -593,8 +592,7 @@ export default function CadastrosPage() {
                       })
                     )}
                   </tbody>
-                </table>
-              </div>
+              </Table>
             </div>
 
             <div>
@@ -687,11 +685,10 @@ export default function CadastrosPage() {
                     <p className="csub">Pessoas jurídicas do grupo</p>
                   </div>
                 </div>
-                <div className="tscroll">
-                  <table className="dt">
+                <Table scrollable minWidth={600}>
                     <thead>
                       <tr>
-                        <th>Nome fantasia</th>
+                        <th className="rr-sticky-col">Nome fantasia</th>
                         <th>CNPJ</th>
                         <th className="c">Identificadores</th>
                         <th>Status</th>
@@ -708,7 +705,7 @@ export default function CadastrosPage() {
                           const active = isActive(c.active);
                           return (
                             <tr key={c.id} className={active ? "" : "inactive"}>
-                              <td className="nm">{c.name}<small>{c.legal_name || "—"}</small></td>
+                              <td className="nm rr-sticky-col">{c.name}<small>{c.legal_name || "—"}</small></td>
                               <td className="num mono">{fmtCnpj(c.cnpj)}</td>
                               <td className="c"><span className="cntpill">{c.identifiers.length}</span></td>
                               <td><StatusChip active={active} /></td>
@@ -723,8 +720,7 @@ export default function CadastrosPage() {
                         })
                       )}
                     </tbody>
-                  </table>
-                </div>
+                </Table>
               </div>
 
               {/* IDENTIFICADORES */}
@@ -748,10 +744,9 @@ export default function CadastrosPage() {
                     <IcoPlus />{submitting === "identifier_upsert" ? "Salvando…" : "Adicionar"}
                   </button>
                 </form>
-                <div className="tscroll">
-                  <table className="dt">
+                <Table scrollable minWidth={600}>
                     <thead>
-                      <tr><th>Empresa</th><th>MCI</th><th>Coban</th><th>Tipo</th></tr>
+                      <tr><th className="rr-sticky-col">Empresa</th><th>MCI</th><th>Coban</th><th>Tipo</th></tr>
                     </thead>
                     <tbody>
                       {data.companies.flatMap((c) => c.identifiers.map((i) => ({ c, i }))).length === 0 ? (
@@ -760,7 +755,7 @@ export default function CadastrosPage() {
                         data.companies.flatMap((c) =>
                           c.identifiers.map((i) => (
                             <tr key={i.id}>
-                              <td className="nm">{c.name}</td>
+                              <td className="nm rr-sticky-col">{c.name}</td>
                               <td className="num mono">{i.mci || "—"}</td>
                               <td className="num mono">{i.coban_code || "—"}</td>
                               <td><span className="idtype">{i.identifier_type || "PRIMARY"}</span></td>
@@ -769,8 +764,7 @@ export default function CadastrosPage() {
                         )
                       )}
                     </tbody>
-                  </table>
-                </div>
+                </Table>
               </div>
             </div>
 
@@ -826,11 +820,10 @@ export default function CadastrosPage() {
                   <p className="csub">Identificadores de operador na produção</p>
                 </div>
               </div>
-              <div className="tscroll">
-                <table className="dt">
+              <Table scrollable minWidth={600}>
                   <thead>
                     <tr>
-                      <th>Chave J</th>
+                      <th className="rr-sticky-col">Chave J</th>
                       <th>Empresa</th>
                       <th>Promotor</th>
                       <th>Tipo</th>
@@ -849,7 +842,7 @@ export default function CadastrosPage() {
                         const master = (k.key_type || "").toUpperCase() === "MASTER";
                         return (
                           <tr key={k.id} className={active ? "" : "inactive"}>
-                            <td className="num mono" style={{ fontWeight: 600, color: "var(--ink)" }}>{k.j_key}</td>
+                            <td className="num mono rr-sticky-col" style={{ fontWeight: 600, color: "var(--ink)" }}>{k.j_key}</td>
                             <td>{k.company_name}</td>
                             <td style={k.promoter_name ? undefined : { color: "var(--ink-3)" }}>{k.promoter_name || "Sem promotor"}</td>
                             <td>{master ? <MasterBadge /> : <span className="badge indiv">Individual</span>}</td>
@@ -865,8 +858,7 @@ export default function CadastrosPage() {
                       })
                     )}
                   </tbody>
-                </table>
-              </div>
+              </Table>
             </div>
 
             <div>
@@ -1081,16 +1073,15 @@ const CSS = `
 .rrcad .tcard-head{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px 22px 14px;border-bottom:1px solid var(--bd-soft);}
 .rrcad .tcard-head h2{font-size:14.5px;font-weight:600;margin:0;color:var(--ink);}
 .rrcad .tcard-head .csub{font-size:11.5px;color:var(--ink-3);margin-top:2px;}
-.rrcad .tscroll{overflow-x:auto;}
-.rrcad table.dt{border-collapse:separate;border-spacing:0;width:100%;min-width:600px;}
-.rrcad table.dt thead th{position:sticky;top:0;z-index:4;background:#FAFBFC;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);text-align:left;padding:11px 16px;border-bottom:1px solid var(--bd);white-space:nowrap;}
-.rrcad table.dt thead th.c{text-align:center;}
-.rrcad table.dt thead th.r{text-align:right;}
-.rrcad table.dt tbody td{padding:13px 16px;border-bottom:1px solid var(--bd-soft);font-size:13px;color:var(--ink-2);white-space:nowrap;vertical-align:middle;}
-.rrcad table.dt tbody tr:last-child td{border-bottom:none;}
-.rrcad table.dt tbody td.c{text-align:center;}
-.rrcad table.dt tbody td.r{text-align:right;}
-.rrcad table.dt tbody tr:hover td{background:#FBFCFD;}
+/* Tabelas migradas para o kit (<Table scrollable minWidth={600}>): scroll horizontal,
+   min-width, thead sticky, padding, zebra, hover e coluna fixa vêm do kit
+   (.rr-table-wrap / .rrui-table / .rr-sticky-col). Mantidos só ajustes da tela:
+   alinhamento .c/.r dos cabeçalhos e células e células em linha única. */
+.rrcad .rrui-table thead th.c{text-align:center;}
+.rrcad .rrui-table thead th.r{text-align:right;}
+.rrcad .rrui-table tbody td.c{text-align:center;}
+.rrcad .rrui-table tbody td.r{text-align:right;}
+.rrcad .rrui-table tbody td{white-space:nowrap;vertical-align:middle;}
 .rrcad .nm{font-weight:600;color:var(--ink);}
 .rrcad .nm small{display:block;font-weight:500;font-size:11px;color:var(--ink-3);margin-top:1px;}
 .rrcad .cntpill{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 7px;border-radius:999px;background:var(--neu);border:1px solid var(--bd);font-size:11.5px;font-weight:600;color:var(--ink-2);}

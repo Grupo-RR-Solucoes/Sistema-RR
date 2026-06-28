@@ -272,7 +272,7 @@ export default function InadimplenciaSection() {
             Nenhum PRT interrompido não cobrado nesta competência. Fila limpa.
           </p>
         ) : (
-          <Table>
+          <Table scrollable>
             <thead>
               <tr>
                 <th>Operação</th>
