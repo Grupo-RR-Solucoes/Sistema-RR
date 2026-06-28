@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useUser } from "../../lib/auth/useUser";
 import FeedbackBanner from "../../components/FeedbackBanner";
-import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+import { UiStyles, HeaderNavy, KpiBand, Table } from "@/components/ui";
 
 // ============================================================
 // /projecao — Painel de Metas & Projeção (identidade .rrproj).
@@ -437,11 +437,10 @@ function EquipeView({ data }: { data: any }) {
               <Chip s={g.semaforo} />
             </div>
           </div>
-          <div className="tscroll">
-            <table>
+          <Table scrollable minWidth={760}>
               <thead>
                 <tr>
-                  <th className="sticky">Promotor</th>
+                  <th className="rr-sticky-col">Promotor</th>
                   <th
                     className="r"
                     role="button"
@@ -493,7 +492,7 @@ function EquipeView({ data }: { data: any }) {
               <tbody>
                 {sortPromotores(g.promotores, sortKey, sortDir).map((p) => (
                   <tr key={p.promoter_id}>
-                    <td className="sticky pname">{p.promoter_name}</td>
+                    <td className="rr-sticky-col pname">{p.promoter_name}</td>
                     <td className="r">{brl(p.producao_acumulada)}</td>
                     <td className="r">{brl(p.projecao)}</td>
                     <td className="r">{p.meta > 0 ? brl(p.meta) : "—"}</td>
@@ -504,7 +503,7 @@ function EquipeView({ data }: { data: any }) {
                 ))}
                 {g.nao_atribuido && g.nao_atribuido.acumulada > 0 ? (
                   <tr className="na-row">
-                    <td className="sticky pname">
+                    <td className="rr-sticky-col pname">
                       Não atribuído · chave master
                       <span className="na-tag">{g.nao_atribuido.count} prop · aguardando Migração</span>
                     </td>
@@ -517,8 +516,7 @@ function EquipeView({ data }: { data: any }) {
                   </tr>
                 ) : null}
               </tbody>
-            </table>
-          </div>
+          </Table>
         </section>
       ))}
     </>
@@ -759,18 +757,16 @@ const CSS = `
 .rrproj .emp-head .pm .l{font-size:11px;color:var(--ink-3);margin-top:1px;}
 .rrproj .emp-head .pct{font-size:18px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;}
 
-.rrproj .tscroll{overflow-x:auto;}
-.rrproj table{width:100%;border-collapse:collapse;min-width:760px;}
-.rrproj thead th{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);text-align:left;padding:12px 16px;background:#FAFBFC;border-bottom:1px solid var(--bd);white-space:nowrap;}
-.rrproj thead th.r{text-align:right;}
-.rrproj thead th.c{text-align:center;}
-.rrproj tbody td{padding:13px 16px;border-bottom:1px solid var(--bd-soft);font-size:13.5px;color:var(--ink-2);vertical-align:middle;font-variant-numeric:tabular-nums;}
-.rrproj tbody tr:last-child td{border-bottom:none;}
-.rrproj tbody tr:hover td{background:#FBFCFD;}
-.rrproj th.sticky,.rrproj td.sticky{position:sticky;left:0;background:#fff;z-index:2;}
-.rrproj thead th.sticky{background:#FAFBFC;z-index:3;}
-.rrproj tbody tr:hover td.sticky{background:#FBFCFD;}
-.rrproj td.sticky::after,.rrproj th.sticky::after{content:"";position:absolute;top:0;right:0;bottom:0;width:1px;background:var(--bd-soft);}
+/* Tabela migrada para o kit (<Table scrollable minWidth={760}>): scroll horizontal,
+   min-width, thead/td base, zebra, hover e coluna fixa vêm do kit
+   (.rr-table-wrap / .rrui-table / .rr-sticky-col). Mantidos só ajustes da tela:
+   alinhamento dos cabeçalhos .r/.c, números tabulares, a divisória da 1ª coluna
+   e o fundo próprio da linha "Não atribuído" na coluna congelada. */
+.rrproj .rrui-table thead th.r{text-align:right;}
+.rrproj .rrui-table thead th.c{text-align:center;}
+.rrproj .rrui-table tbody td{vertical-align:middle;font-variant-numeric:tabular-nums;}
+.rrproj .rrui-table .rr-sticky-col::after{content:"";position:absolute;top:0;right:0;bottom:0;width:1px;background:var(--bd-soft);}
+.rrproj tr.na-row .rr-sticky-col{background:#FBFAF7;}
 .rrproj .pname{font-weight:600;color:var(--ink);min-width:150px;}
 .rrproj td.r{text-align:right;}
 .rrproj td.c{text-align:center;}

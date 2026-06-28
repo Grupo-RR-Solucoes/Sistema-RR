@@ -432,7 +432,7 @@ a {
 .rr-table-wrap--scrollable thead {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 3; /* ver hierarquia em "1ª coluna fixa" abaixo */
 }
 
 .rr-table-wrap--scrollable thead th {
@@ -448,4 +448,38 @@ a {
   bottom: -1px;
   height: 1px;
   background: rgba(15, 31, 74, 0.08);
+}
+
+/* ===== 1ª coluna fixa (scroll horizontal) — className "rr-sticky-col" =====
+   Marque os <th>/<td> da 1ª coluna com className="rr-sticky-col". Funciona em
+   conjunto com o thead sticky (vertical) do modo --scrollable.
+
+   HIERARQUIA DE Z-INDEX (thead sticky + coluna sticky ao mesmo tempo):
+     4 = CANTO superior-esquerdo (thead th.rr-sticky-col) — acima de tudo
+     3 = thead sticky vertical (.rr-table-wrap--scrollable thead)
+     1 = células sticky da 1ª coluna (corpo)
+     auto(0) = células normais
+   Sem isso o canto sumiria atrás do thead OU da coluna ao rolar nos 2 eixos.
+
+   BACKGROUND SÓLIDO é obrigatório nessas células (senão o conteúdo das demais
+   colunas/linhas aparece por trás ao rolar). As cores acompanham zebra/hover. */
+.rr-table-wrap .rr-sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--paper);
+}
+.rr-table-wrap tbody tr:nth-child(even) .rr-sticky-col {
+  background: var(--neu);
+}
+.rr-table-wrap tbody tr:hover .rr-sticky-col {
+  background: var(--blue-bg);
+}
+/* canto (cabeçalho da 1ª coluna): maior z-index + fundo sólido do header. */
+.rr-table-wrap thead th.rr-sticky-col {
+  z-index: 4;
+  background: var(--neu);
+}
+.rr-table-wrap--scrollable thead th.rr-sticky-col {
+  background: #E8EDF5;
 }

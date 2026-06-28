@@ -9,7 +9,7 @@ import { canDeleteExpense } from "@/lib/auth/permissions";
 
 import DespesaModal from "./DespesaModal";
 import FolhaLoteModal from "./FolhaLoteModal";
-import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+import { UiStyles, HeaderNavy, KpiBand, Table } from "@/components/ui";
 
 export interface CompanyOption {
   id: string;
@@ -503,11 +503,10 @@ export default function DespesasList({
           </div>
 
           {!noneAtAll && !emptyFiltered ? (
-            <div className="tscroll">
-              <table>
+            <Table scrollable minWidth={920}>
                 <thead>
                   <tr>
-                    <th className="sticky">Descrição</th>
+                    <th className="rr-sticky-col">Descrição</th>
                     <th>Empresa / Escopo</th>
                     <th>Categoria</th>
                     <th>Competência</th>
@@ -529,7 +528,7 @@ export default function DespesasList({
                     const rowBusy = busyId === e.id;
                     return (
                       <tr key={e.id}>
-                        <td className="sticky desc-cell">
+                        <td className="rr-sticky-col desc-cell">
                           {e.description}
                           {e.notes ? <span className="obs">{e.notes}</span> : null}
                         </td>
@@ -608,8 +607,7 @@ export default function DespesasList({
                     );
                   })}
                 </tbody>
-              </table>
-            </div>
+            </Table>
           ) : (
             <div className="empty">
               <div className="art">
@@ -779,18 +777,14 @@ const CSS = `
 .rrdesp .tcard-head .total{font-size:13px;color:var(--ink-3);}
 .rrdesp .tcard-head .total b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums;}
 
-.rrdesp .tscroll{overflow-x:auto;}
-.rrdesp table{width:100%;border-collapse:collapse;min-width:920px;}
-.rrdesp thead th{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);text-align:left;padding:13px 16px;background:#FAFBFC;border-bottom:1px solid var(--bd);white-space:nowrap;}
-.rrdesp thead th.r{text-align:right;}
-.rrdesp thead th.c{text-align:center;}
-.rrdesp tbody td{padding:15px 16px;border-bottom:1px solid var(--bd-soft);font-size:13.5px;color:var(--ink-2);vertical-align:middle;}
-.rrdesp tbody tr:last-child td{border-bottom:none;}
-.rrdesp tbody tr:hover td{background:#FBFCFD;}
-.rrdesp th.sticky,.rrdesp td.sticky{position:sticky;left:0;z-index:2;background:#fff;}
-.rrdesp thead th.sticky{background:#FAFBFC;z-index:3;}
-.rrdesp tbody tr:hover td.sticky{background:#FBFCFD;}
-.rrdesp td.sticky::after,.rrdesp th.sticky::after{content:"";position:absolute;top:0;right:0;bottom:0;width:1px;background:var(--bd-soft);}
+/* Tabela migrada para o kit (<Table scrollable minWidth={920}>): scroll horizontal,
+   min-width, thead sticky, padding, zebra, hover e coluna fixa vêm do kit
+   (.rr-table-wrap / .rrui-table / .rr-sticky-col). Mantidos só ajustes da tela:
+   alinhamento dos cabeçalhos .r/.c, vertical-align e a divisória da 1ª coluna. */
+.rrdesp .rrui-table thead th.r{text-align:right;}
+.rrdesp .rrui-table thead th.c{text-align:center;}
+.rrdesp .rrui-table tbody td{vertical-align:middle;}
+.rrdesp .rrui-table .rr-sticky-col::after{content:"";position:absolute;top:0;right:0;bottom:0;width:1px;background:var(--bd-soft);}
 .rrdesp .desc-cell{font-weight:600;color:var(--ink);min-width:200px;}
 .rrdesp .desc-cell .obs{display:block;font-size:11.5px;font-weight:400;color:var(--ink-3);margin-top:2px;}
 .rrdesp .scope{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--ink-2);white-space:nowrap;}
