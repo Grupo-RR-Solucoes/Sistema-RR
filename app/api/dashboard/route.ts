@@ -314,11 +314,21 @@ export async function GET() {
           .eq("prod_year", year)
           .eq("prod_month", month)
       );
-      comissaoSeguroGrupo = roundMoney(
-        cmsSeguro.reduce((sum, r) => sum + toNumber(r.promoter_insurance), 0)
+      // TOTAL do grupo = comissão-EMPRESA do fechamento (fechamento_mensal_empresa.
+      // valor_seguro) — MESMA fonte do financeiro/DRE. NÃO o share do promotor
+      // (cms.promoter_insurance), que é a camada de repasse, não o ganho da empresa.
+      const fechSeguro = await fetchAllRows<{ valor_seguro: number | null }>(() =>
+        supabase
+          .from("fechamento_mensal_empresa")
+          .select("valor_seguro")
+          .eq("ano", year)
+          .eq("mes", month)
       );
-      // Penetração ponderada = Σ(penetration_i × net_value_i) / Σ net_value_i.
-      // cms.penetration já é FRAÇÃO (0..1); pondera pelo net_value.
+      comissaoSeguroGrupo = roundMoney(
+        fechSeguro.reduce((sum, r) => sum + toNumber(r.valor_seguro), 0)
+      );
+      // Penetração ponderada = Σ(penetration_i × net_value_i) / Σ net_value_i (cms).
+      // INALTERADA — penetração independe de empresa vs share.
       let penNum = 0;
       let penDen = 0;
       for (const r of cmsSeguro) {
