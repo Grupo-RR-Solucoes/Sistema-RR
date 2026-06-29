@@ -106,6 +106,10 @@ export type FinanceSummary = {
   receivedLiquido: number;
   receivedProdutos: number;
   receivedManual: number;
+  // INFORMATIVO — "do qual seguro" do Recebido: Σ valor_seguro dos MESMOS
+  // fechamentos M-1 que compoem receivedLiquido. JA dentro de receivedNet —
+  // NAO somar. Difere de actualInsurance (que e competencia M, descasada).
+  receivedInsurance: number;
   actualCash: number;
   actualPrt: number;
   actualInsurance: number;
@@ -269,6 +273,12 @@ function sumClosingProdutos(rows: ClosingRow[]) {
   );
 }
 
+// INFORMATIVO — Σ valor_seguro dos fechamentos (mesmas rows que sumClosingNet).
+// "do qual seguro" do receivedLiquido; NAO entra em nenhum total, so segregacao.
+function sumClosingInsurance(rows: ClosingRow[]) {
+  return rows.reduce((sum, row) => sum + toNumber(row.valor_seguro), 0);
+}
+
 // mes de caixa de um lancamento manual: extrai ano/mes de data_credito
 // (YYYY-MM-DD). Fallback p/ ano/mes da competencia se data_credito faltar.
 function manualCreditYM(row: ManualRevenueRow): { year: number; month: number } | null {
@@ -292,6 +302,8 @@ function cashReceivedFor(
   const closingRows = allClosings.filter((r) => r.ano === prev.year && r.mes === prev.month);
   const receivedLiquido = roundMoney(sumClosingNet(closingRows));
   const receivedProdutos = roundMoney(sumClosingProdutos(closingRows));
+  // INFORMATIVO: parcela de seguro JA dentro de receivedLiquido (mesmas M-1 rows).
+  const receivedInsurance = roundMoney(sumClosingInsurance(closingRows));
   const receivedClosing = roundMoney(receivedLiquido + receivedProdutos);
   const receivedManual = roundMoney(
     manualRows.reduce((sum, row) => {
@@ -302,6 +314,7 @@ function cashReceivedFor(
   return {
     receivedLiquido,
     receivedProdutos,
+    receivedInsurance,
     receivedClosing,
     receivedManual,
     receivedNet: roundMoney(receivedClosing + receivedManual),
@@ -546,6 +559,7 @@ export async function buildFinancialAnalytics(
     receivedLiquido: received.receivedLiquido,
     receivedProdutos: received.receivedProdutos,
     receivedManual: received.receivedManual,
+    receivedInsurance: received.receivedInsurance,
     actualCash: roundMoney(receivedSummary.actualCash),
     actualPrt: roundMoney(receivedSummary.actualPrt),
     actualInsurance: roundMoney(receivedSummary.actualInsurance),

@@ -14,6 +14,7 @@ type Period = { key: string; label: string; year: number; month: number };
 
 type FinSummary = {
   receivedNet: number;
+  receivedInsurance: number; // informativo: "do qual seguro" do Recebido (M-1)
   totalExpenses: number;
   comissoesPagas: number;
   operatingResult: number;
@@ -270,6 +271,23 @@ export default function FinanceiroPage() {
           <div className="panes">
             {/* os 4 KPIs migraram pro <KpiBand> dentro do <HeaderNavy> (aba Caixa) */}
             <p className="note"><span className="dot" />Saldo de <b>caixa</b> = recebido − comissões pagas − despesas. Difere do resultado da DRE pela receita complementar (competência, não caixa).</p>
+
+            {/* Subtotal INFORMATIVO de seguro RECEBIDO: "do qual" do Recebido —
+                JA dentro de receivedNet (nao soma). Regime de caixa: o seguro vem
+                dos fechamentos de M-1 (mes anterior), mesmo conjunto do Recebido. */}
+            <section className="card" style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)", textTransform: "uppercase", letterSpacing: ".04em" }}>
+                  Comissão de seguro recebida <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "var(--ink-3)" }}>(do qual)</span>
+                </div>
+                <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginTop: 5 }}>
+                  parte do “Recebido” acima — regime de caixa (ref. mês anterior), não é parcela adicional
+                </div>
+              </div>
+              <div className="num" style={{ fontSize: 26, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono',ui-monospace,monospace", fontVariantNumeric: "tabular-nums" }}>
+                {brl2(fin.summary.receivedInsurance)}
+              </div>
+            </section>
 
             <section className="card">
               <div className="card-head">
