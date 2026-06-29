@@ -480,11 +480,7 @@ export default function RelatoriosPage() {
 
           {/* botões */}
           <div className="dlbtns">
-            {reportType === "seguro" ? (
-              <p style={{ fontSize: 13, color: "var(--ink-3)", margin: 0 }}>
-                Exports (PDF / Excel) chegam na próxima etapa. O preview já reflete os dados de seguro.
-              </p>
-            ) : reportType !== "promotores" ? (
+            {reportType !== "promotores" ? (
               <>
                 <a className="dl primary" href={exportHref("pdf")} target="_blank" rel="noreferrer" onClick={() => fireToast("PDF")}>
                   <span className="fi pdf">PDF</span>PDF

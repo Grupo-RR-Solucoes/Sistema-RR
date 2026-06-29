@@ -16,6 +16,7 @@ import {
   isColetivaJKey,
   COLETIVA_MASK,
 } from "@/lib/promoterReportData";
+import { construirXlsxNavy, type Aba } from "@/lib/xlsxReport";
 
 export type ReportKind = "financeiro" | "fechamento" | "auditoria" | "promotores" | "seguro";
 export type ReportFormat = "pdf" | "xlsx";
@@ -2054,6 +2055,247 @@ export async function buildReportPreview(
   };
 }
 
+// ============================================================
+// SEGURO / SEGURIDADE — export (xlsx navy + PDF). SO fontes DB-driven:
+//   Por promotor -> PMR (buildPromoterAnalytics.summaryRows + insured_production_value)
+//   Por empresa  -> fechamento_mensal_empresa.valor_seguro
+//   Por contrato -> cms_promoter_entries (buildCmsProposalRowsBatch, mes fechado)
+// NUNCA buildClosingAnalytics / getInsurancePercentByTerm (legado proibido).
+// ============================================================
+async function buildSeguroDatasets(
+  supabase: SupabaseClient,
+  input: ReportFilters
+) {
+  const data = await buildPromoterAnalytics(supabase, input);
+  const year = data.selectedPeriod?.year ?? input.year;
+  const month = data.selectedPeriod?.month ?? input.month;
+  const periodLabel = data.selectedPeriod?.label ?? null;
+
+  // ---- Por promotor (DB-driven: PMR). summaryRows ja respeita company/promoter.
+  const promoterRows = data.summaryRows.filter((row) => row.active !== false);
+  // insured_production_value nao vem em summaryRows — busca direto no PMR.
+  const insuredByPromoter = new Map<string, number>();
+  if (year && month) {
+    const { data: pmr } = await supabase
+      .from("promoter_monthly_results")
+      .select("promoter_id, insured_production_value")
+      .eq("year", year)
+      .eq("month", month);
+    for (const row of pmr || []) {
+      insuredByPromoter.set(
+        String((row as { promoter_id: string }).promoter_id),
+        toNumber((row as { insured_production_value?: number | null }).insured_production_value)
+      );
+    }
+  }
+  const porPromotor = promoterRows.map((row) => ({
+    promotor: row.promoter_name,
+    cnpj: row.company_cnpj || "",
+    comissao_seguro: toNumber(row.insurance_commission_value),
+    penetracao: toNumber(row.insurance_penetration_percent) / 100, // fracao p/ formato percent
+    producao_segurada: insuredByPromoter.get(row.promoter_id) ?? 0,
+  }));
+  const totPromotor = {
+    promotor: "TOTAL",
+    cnpj: "",
+    comissao_seguro: porPromotor.reduce((s, x) => s + x.comissao_seguro, 0),
+    producao_segurada: porPromotor.reduce((s, x) => s + x.producao_segurada, 0),
+  };
+
+  // ---- Por empresa (DB-driven: fechamento_mensal_empresa.valor_seguro).
+  const companyNameByCnpj = new Map(
+    data.companies.map((c) => [(c as { cnpj?: string }).cnpj ?? "", c.name])
+  );
+  const companyCnpjFilter = (
+    data.companies.find((c) => c.id === input.companyId) as { cnpj?: string } | undefined
+  )?.cnpj;
+  const porEmpresa: Array<{ cnpj: string; empresa: string; comissao_seguro: number }> = [];
+  if (year && month) {
+    let q = supabase
+      .from("fechamento_mensal_empresa")
+      .select("empresa_cnpj, valor_seguro")
+      .eq("ano", year)
+      .eq("mes", month);
+    if (companyCnpjFilter) q = q.eq("empresa_cnpj", companyCnpjFilter);
+    const { data: fech } = await q;
+    for (const row of fech || []) {
+      const cnpj = String((row as { empresa_cnpj?: string }).empresa_cnpj ?? "");
+      porEmpresa.push({
+        cnpj,
+        empresa: companyNameByCnpj.get(cnpj) || "—",
+        comissao_seguro: toNumber((row as { valor_seguro?: number | null }).valor_seguro),
+      });
+    }
+  }
+  porEmpresa.sort((a, b) => b.comissao_seguro - a.comissao_seguro);
+  const totEmpresa = {
+    cnpj: "",
+    empresa: "TOTAL",
+    comissao_seguro: porEmpresa.reduce((s, x) => s + x.comissao_seguro, 0),
+  };
+
+  // ---- Por contrato (DB-driven: cms_promoter_entries — ground truth do mes
+  // fechado). Cobre TODOS os promotores do filtro. company_insurance_commission
+  // nao e rastreado por contrato no cms (fica 0); premio e comissao do promotor sim.
+  const porContrato: Array<{
+    chave: string;
+    proposta: string;
+    promotor: string;
+    premio: number;
+    comissao_empresa: number;
+    comissao_promotor: number;
+    tem_seguro: string;
+  }> = [];
+  let contratoFechado = false;
+  if (year && month) {
+    try {
+      contratoFechado = await detectClosedMonth(supabase, year, month);
+    } catch {
+      contratoFechado = false;
+    }
+    if (contratoFechado) {
+      const nameById = new Map(promoterRows.map((r) => [r.promoter_id, r.promoter_name]));
+      const batch = await buildCmsProposalRowsBatch(
+        supabase,
+        promoterRows.map((r) => r.promoter_id),
+        year,
+        month
+      );
+      for (const [pid, rows] of batch) {
+        for (const row of rows) {
+          const premio = toNumber(row.insurance_value);
+          porContrato.push({
+            chave: row.j_key || "—",
+            proposta: row.proposal_number || "—",
+            promotor: nameById.get(pid) || "—",
+            premio,
+            comissao_empresa: toNumber(row.company_insurance_commission_amount),
+            comissao_promotor: toNumber(row.insurance_commission_amount),
+            tem_seguro: premio > 0 ? "Sim" : "Não",
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    year,
+    month,
+    periodLabel,
+    contratoFechado,
+    porPromotor,
+    totPromotor,
+    porEmpresa,
+    totEmpresa,
+    porContrato,
+  };
+}
+
+async function buildSeguroWorkbook(
+  ds: Awaited<ReturnType<typeof buildSeguroDatasets>>
+): Promise<Buffer> {
+  const sufixo = ds.periodLabel ? ` — ${ds.periodLabel}` : "";
+  const abas: Aba[] = [
+    {
+      nome: "Por promotor",
+      titulo: `Seguro · por promotor${sufixo}`,
+      modo: "tabela",
+      colunas: [
+        { chave: "promotor", titulo: "Promotor", formato: "texto" },
+        { chave: "cnpj", titulo: "CNPJ", formato: "texto" },
+        { chave: "comissao_seguro", titulo: "Comissão seguro", formato: "moeda" },
+        { chave: "penetracao", titulo: "Penetração", formato: "percent" },
+        { chave: "producao_segurada", titulo: "Produção segurada", formato: "moeda" },
+      ],
+      linhas: ds.porPromotor,
+      totais: ds.totPromotor,
+    },
+    {
+      nome: "Por empresa",
+      titulo: `Seguro · por empresa${sufixo}`,
+      modo: "tabela",
+      colunas: [
+        { chave: "cnpj", titulo: "CNPJ", formato: "texto" },
+        { chave: "empresa", titulo: "Empresa", formato: "texto" },
+        { chave: "comissao_seguro", titulo: "Comissão seguro", formato: "moeda" },
+      ],
+      linhas: ds.porEmpresa,
+      totais: ds.totEmpresa,
+    },
+    {
+      nome: "Por contrato",
+      titulo: `Seguro · por contrato${sufixo}`,
+      modo: "tabela",
+      colunas: [
+        { chave: "chave", titulo: "Chave", formato: "texto" },
+        { chave: "proposta", titulo: "Proposta", formato: "texto" },
+        { chave: "promotor", titulo: "Promotor", formato: "texto" },
+        { chave: "premio", titulo: "Prêmio", formato: "moeda" },
+        { chave: "comissao_empresa", titulo: "Comissão empresa", formato: "moeda" },
+        { chave: "comissao_promotor", titulo: "Comissão promotor", formato: "moeda" },
+        { chave: "tem_seguro", titulo: "Tem seguro", formato: "texto", alinhamento: "centro" },
+      ],
+      linhas: ds.porContrato,
+    },
+  ];
+  return construirXlsxNavy({ abas });
+}
+
+async function buildSeguroPdf(
+  ds: Awaited<ReturnType<typeof buildSeguroDatasets>>
+): Promise<Buffer> {
+  const padE = (v: string, n: number) => (v.length > n ? v.slice(0, n - 1) + "…" : v).padEnd(n);
+  const padS = (v: string, n: number) => (v.length > n ? v.slice(0, n) : v).padStart(n);
+
+  return pdfToBuffer(
+    (doc) => {
+      addPdfHeader(
+        doc,
+        "Seguro / Seguridade",
+        `Grupo RR | comissão de seguro por promotor e empresa${ds.periodLabel ? ` — ${ds.periodLabel}` : ""}`
+      );
+      addPdfMetrics(doc, "Resumo", [
+        {
+          label: "Comissão de seguro · promotores",
+          value: formatCurrency(ds.totPromotor.comissao_seguro),
+          detail: "Σ insurance_commission_value do PMR (share repassado ao promotor).",
+        },
+        {
+          label: "Comissão de seguro · empresas",
+          value: formatCurrency(ds.totEmpresa.comissao_seguro),
+          detail: "Σ valor_seguro do fechamento mensal por empresa.",
+        },
+      ]);
+
+      const promLines = ds.porPromotor.map(
+        (r) =>
+          `${padE(r.promotor, 30)} ${padE(r.cnpj, 18)} ${padS(formatCurrency(r.comissao_seguro), 16)} ${padS(formatPercent(r.penetracao * 100), 9)} ${padS(formatCurrency(r.producao_segurada), 16)}`
+      );
+      promLines.push(
+        `${padE("TOTAL", 30)} ${padE("", 18)} ${padS(formatCurrency(ds.totPromotor.comissao_seguro), 16)} ${padS("", 9)} ${padS(formatCurrency(ds.totPromotor.producao_segurada), 16)}`
+      );
+      addPdfLines(doc, "Por promotor", promLines, "Sem promotores com seguro nesta competência.");
+
+      const empLines = ds.porEmpresa.map(
+        (r) => `${padE(r.empresa, 34)} ${padE(r.cnpj, 18)} ${padS(formatCurrency(r.comissao_seguro), 16)}`
+      );
+      empLines.push(
+        `${padE("TOTAL", 34)} ${padE("", 18)} ${padS(formatCurrency(ds.totEmpresa.comissao_seguro), 16)}`
+      );
+      addPdfLines(doc, "Por empresa", empLines, "Sem seguro no fechamento desta competência.");
+
+      // Por contrato fica SO no xlsx (pode ser extenso); aqui só o ponteiro.
+      addPdfLines(
+        doc,
+        "Por contrato",
+        [`${ds.porContrato.length} contrato(s) com detalhamento de seguro disponível no Excel.`],
+        "Detalhamento por contrato disponível no Excel (mês fechado)."
+      );
+    },
+    { layout: "landscape" }
+  );
+}
+
 export async function buildReportExport(
   supabase: SupabaseClient,
   input: ReportFilters & { type?: string | null; format?: string | null }
@@ -2061,10 +2303,21 @@ export async function buildReportExport(
   const reportType = normalizeReportKind(input.type);
   const reportFormat = normalizeReportFormat(input.format);
 
-  // ETAPA 1: preview do seguro pronto; export (PDF/xlsx) vem na ETAPA 2. Guarda
-  // explicita p/ NAO cair no fallthrough de promotores e gerar arquivo errado.
+  // SEGURO — export DB-driven (xlsx navy 3 abas / PDF paisagem). Guarda explicita
+  // p/ NAO cair no fallthrough de promotores.
   if (reportType === "seguro") {
-    throw new Error("Export do relatorio de seguro disponivel na proxima etapa.");
+    const ds = await buildSeguroDatasets(supabase, input);
+    return {
+      buffer:
+        reportFormat === "pdf"
+          ? await buildSeguroPdf(ds)
+          : await buildSeguroWorkbook(ds),
+      contentType:
+        reportFormat === "pdf"
+          ? "application/pdf"
+          : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      fileName: buildFileName("seguro", reportFormat, ds.periodLabel),
+    };
   }
 
   if (reportType === "financeiro") {
