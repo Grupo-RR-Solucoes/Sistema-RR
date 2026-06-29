@@ -41,6 +41,12 @@ type Payload = {
   producaoMensal: MesPonto[];
   cnpjs: CnpjRow[];
   projecao: Projecao | null;
+  // Seguridade (DB-driven). penetracaoSeguroGrupo = fração 0..1 (ponderada,
+  // atribuído-only). seguroMasterSemRegra = contratos master sem regra de seguro.
+  comissaoSeguroGrupo: number;
+  penetracaoSeguroGrupo: number;
+  seguroLabel: string;
+  seguroMasterSemRegra: number;
 };
 
 function brl0(v?: number) {
@@ -74,6 +80,7 @@ export default function DashboardPage() {
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <Header data={data} />
+        <Seguridade data={data} />
         {data?.projecao?.show ? <AlertProjecao p={data.projecao} /> : null}
         <ChartCard data={data} error={error} />
         <CnpjCard rows={data?.cnpjs ?? []} />
@@ -133,6 +140,62 @@ function Header({ data }: { data: Payload | null }) {
           { label: "Comissão bruta (empresa)", value: brutaEmpresa, sub: brutaSub, subTone: "gold" },
           { label: "Previsão de receita", value: prev, sub: "estimado", subTone: "amber" },
           { label: "Limite Simples", value: lim, sub: limSub, subTone: "ok" },
+        ]}
+      />
+    </HeaderNavy>
+  );
+}
+
+function Seguridade({ data }: { data: Payload | null }) {
+  const comissao = data ? brl0(data.comissaoSeguroGrupo) : "—";
+  const penetracao = data ? pct1(data.penetracaoSeguroGrupo) : "—";
+  const label = data?.seguroLabel ?? "—";
+  const semRegra = data?.seguroMasterSemRegra ?? 0;
+  // Sinalização discreta (sem alarme): nº de contratos master com seguro sem
+  // regra TRP casada (não somados). Fica acessível via tooltip/sub.
+  const comissaoSub = (
+    <>
+      {label}
+      {semRegra > 0 ? (
+        <>
+          {" · "}
+          <span
+            title={`${semRegra} contrato(s) master com seguro sem regra TRP casada — não somado(s)`}
+            style={{ textDecoration: "underline dotted", cursor: "help" }}
+          >
+            {semRegra} s/ regra
+          </span>
+        </>
+      ) : null}
+    </>
+  );
+  return (
+    <HeaderNavy
+      brand="SEGURIDADE"
+      title="Seguro · grupo"
+      badge={
+        <span className="badge">
+          <span className="dot" />
+          {label}
+        </span>
+      }
+    >
+      <KpiBand
+        columns={2}
+        items={[
+          {
+            label: "Comissão de seguro",
+            value: comissao,
+            sub: comissaoSub,
+            subTone: "gold",
+            accent: true,
+          },
+          {
+            label: "Penetração média",
+            value: penetracao,
+            sub: "ponderada · atribuído",
+            subTone: "ok",
+          },
         ]}
       />
     </HeaderNavy>
