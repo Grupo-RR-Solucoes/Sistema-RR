@@ -45,6 +45,9 @@ type Promotor = {
   tendencia: Tendencia;
   tendencia_percent: number | null;
   semaforo: Semaforo;
+  seguro_comissao_acumulada: number;
+  seguro_comissao_projecao: number;
+  seguro_penetracao: number | null;
 };
 type NaoAtribuido = { acumulada: number; projecao: number; count: number };
 type Grupo = {
@@ -61,7 +64,7 @@ type Grupo = {
 };
 
 // ---------- ordenação (ranking de promotores) ----------
-type SortKey = "percent" | "acumulado" | "projecao" | "meta";
+type SortKey = "percent" | "acumulado" | "projecao" | "meta" | "seguro_pen";
 type SortDir = "asc" | "desc";
 
 // "sem meta" = meta 0 → percent_projetado === null.
@@ -76,6 +79,8 @@ const valorDe = (p: Promotor, key: SortKey): number => {
       return p.projecao;
     case "meta":
       return p.meta;
+    case "seguro_pen":
+      return p.seguro_penetracao ?? 0; // null (sem base) trata como 0 → cai no fim no desc
   }
 };
 
@@ -378,6 +383,24 @@ function EquipeView({ data }: { data: any }) {
             { label: "% projetado do grupo", value: pctTxt(cons.percent_projetado), sub: <Chip s={cons.semaforo} onNavy /> },
           ]}
         />
+        {/* Seguro (DB-driven). Faixa separada p/ nao apertar os 4 de producao.
+            EquipeView mostra ACUMULADO (proj fica no payload, usado no promotor).
+            Penetracao = card proprio (atual, ponderada); SEM meta/semaforo. */}
+        <KpiBand
+          valueSize={24}
+          columns={2}
+          items={[
+            {
+              label: "Comissão seguro acum.",
+              value: brl(cons.seguro_comissao_acumulada),
+            },
+            {
+              label: "Penetração seguro",
+              value: pctTxt(cons.seguro_penetracao),
+              sub: "atual, ponderada",
+            },
+          ]}
+        />
       </div>
 
       {/* RISCO */}
@@ -437,7 +460,7 @@ function EquipeView({ data }: { data: any }) {
               <Chip s={g.semaforo} />
             </div>
           </div>
-          <Table scrollable minWidth={760}>
+          <Table scrollable minWidth={880}>
               <thead>
                 <tr>
                   <th className="rr-sticky-col">Promotor</th>
@@ -487,6 +510,17 @@ function EquipeView({ data }: { data: any }) {
                   </th>
                   <th className="c">Tendência</th>
                   <th className="c">Semáforo</th>
+                  <th
+                    className="r"
+                    role="button"
+                    tabIndex={0}
+                    style={{ cursor: "pointer" }}
+                    aria-sort={ariaSort("seguro_pen")}
+                    onClick={() => onSort("seguro_pen")}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSort("seguro_pen"); } }}
+                  >
+                    Penetração seg.{arrow("seguro_pen")}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -499,6 +533,7 @@ function EquipeView({ data }: { data: any }) {
                     <td className="pctcell">{pctTxt(p.percent_projetado)}</td>
                     <td className="c"><TrendCell p={p} /></td>
                     <td className="c"><Chip s={p.semaforo} /></td>
+                    <td className="r">{pctTxt(p.seguro_penetracao)}</td>
                   </tr>
                 ))}
                 {g.nao_atribuido && g.nao_atribuido.acumulada > 0 ? (
@@ -513,6 +548,7 @@ function EquipeView({ data }: { data: any }) {
                     <td className="pctcell">—</td>
                     <td className="c">—</td>
                     <td className="c">—</td>
+                    <td className="r">—</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -607,6 +643,15 @@ function PromotorView({ data }: { data: any }) {
             { label: "Projeção do mês", value: brl(p.projecao), sub: "estimativa de fechamento", accent: true },
             { label: "Sua meta", value: p.meta > 0 ? brl(p.meta) : "Sem meta", sub: mes(data.year, data.month) },
             { label: "Dias úteis", value: `${p.dias_uteis_decorridos} / ${p.dias_uteis_totais}`, sub: data.fechado ? "competência fechada" : "janela aberta" },
+          ]}
+        />
+        {/* Seguro do PROPRIO promotor (route ja filtra: p = so o dele). SEM meta. */}
+        <KpiBand
+          valueSize={24}
+          columns={2}
+          items={[
+            { label: "Comissão seguro proj.", value: brl(p.seguro_comissao_projecao), sub: "estimativa de fechamento", accent: true },
+            { label: "Penetração seg.", value: pctTxt(p.seguro_penetracao), sub: "atual (não projetada)" },
           ]}
         />
       </div>
