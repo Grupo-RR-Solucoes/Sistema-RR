@@ -116,13 +116,16 @@ export async function GET() {
     const year = now.getUTCFullYear();
     const month = now.getUTCMonth() + 1;
 
+    // Regime do mês precisa ser conhecido ANTES do analytics (decide CALCULATED/PMR
+    // vs LIVE_BASE/daily). Resolve sequencialmente; o resto segue em paralelo.
+    const monthClosed = await detectClosedMonth(supabase, year, month).catch(() => false);
+
     const [
       pmrRows,
       closingPayload,
       rbt12,
       projecaoRes,
       promoterAnalytics,
-      monthClosed,
       activeCompanies,
       dailyUnassigned,
       insuranceSlipRules,
@@ -135,9 +138,9 @@ export async function GET() {
         buildClosingAnalytics(supabase, { fastDashboardMode: true }),
         calcularRbt12(supabase, { ano: year, mes: month }),
         buildProjecaoMetas(supabase, { year, month }),
-        // motor: comissão bruta da EMPRESA do grupo no mês corrente (aberto).
-        buildPromoterAnalytics(supabase, { year, month }),
-        detectClosedMonth(supabase, year, month).catch(() => false),
+        // motor: comissão bruta/seguro do grupo no mês corrente. closed=monthClosed
+        // → mês ABERTO usa LIVE_BASE (daily ao vivo), alinhado à projeção.
+        buildPromoterAnalytics(supabase, { year, month, closed: monthClosed }),
         // CNPJs do grupo (4 ativas) — para somar só produção do grupo.
         fetchAllRows<{ id: string }>(() =>
           supabase.from("companies").select("id").eq("active", true)

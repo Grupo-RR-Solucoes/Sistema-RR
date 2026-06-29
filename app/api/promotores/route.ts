@@ -106,22 +106,29 @@ export async function GET(req: Request) {
     const yearN = Number(searchParams.get("year") || 0) || undefined;
     const monthN = Number(searchParams.get("month") || 0) || undefined;
 
-    const payload = await buildPromoterAnalytics(supabase, {
-      year: yearN,
-      month: monthN,
-      companyId: searchParams.get("companyId") || undefined,
-      promoterId: effectivePromoterId,
-    });
-
-    // FRENTE 2 — mes FECHADO: detalhe vem do cms (ground truth), nao do diario.
-    let proposalSource: "daily" | "cms" = "daily";
-    if (yearN && monthN && effectivePromoterId) {
-      let closed = false;
+    // Regime do mês ANTES do analytics: aberto(false)=LIVE_BASE (daily ao vivo),
+    // fechado(true)=CALCULATED (PMR/cms). Sem year/month explícitos => undefined
+    // (mantém CALCULATED, comportamento anterior). Reusado no swap cms abaixo.
+    let closed: boolean | undefined = undefined;
+    if (yearN && monthN) {
       try {
         closed = await detectClosedMonth(supabase, yearN, monthN);
       } catch {
         closed = false; // tabela ausente / erro -> trata como aberto
       }
+    }
+
+    const payload = await buildPromoterAnalytics(supabase, {
+      year: yearN,
+      month: monthN,
+      companyId: searchParams.get("companyId") || undefined,
+      promoterId: effectivePromoterId,
+      closed,
+    });
+
+    // FRENTE 2 — mes FECHADO: detalhe vem do cms (ground truth), nao do diario.
+    let proposalSource: "daily" | "cms" = "daily";
+    if (yearN && monthN && effectivePromoterId) {
       if (closed) {
         proposalSource = "cms";
         const cmsRows = await buildCmsProposalRows(

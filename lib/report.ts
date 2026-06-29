@@ -170,6 +170,22 @@ function normalizeReportFormat(input?: string | null): ReportFormat {
   throw new Error("Formato de exportacao invalido.");
 }
 
+// Regime do mês p/ os relatórios: ABERTO(false)=LIVE_BASE (daily ao vivo),
+// FECHADO(true)=CALCULATED (PMR/cms). Sem year/month explícitos => undefined
+// (mantém CALCULATED, comportamento anterior). Erro/tabela ausente => false.
+async function resolveReportClosed(
+  supabase: SupabaseClient,
+  year?: number,
+  month?: number
+): Promise<boolean | undefined> {
+  if (!year || !month) return undefined;
+  try {
+    return await detectClosedMonth(supabase, year, month);
+  } catch {
+    return false;
+  }
+}
+
 function normalizePromoterReportScope(input?: string | null): PromoterReportScope {
   const value = normalizeText(input || "geral");
 
@@ -1846,7 +1862,13 @@ export async function buildReportPreview(
   // NUNCA buildClosingAnalytics / getInsurancePercentByTerm (legado proibido).
   // ============================================================
   if (reportType === "seguro") {
-    const data = await buildPromoterAnalytics(supabase, input);
+    const data = await buildPromoterAnalytics(supabase, {
+      year: input.year,
+      month: input.month,
+      companyId: input.companyId,
+      promoterId: input.promoterId,
+      closed: await resolveReportClosed(supabase, input.year, input.month),
+    });
     const year = data.selectedPeriod?.year ?? input.year;
     const month = data.selectedPeriod?.month ?? input.month;
 
@@ -1943,7 +1965,13 @@ export async function buildReportPreview(
     };
   }
 
-  const data = await buildPromoterAnalytics(supabase, input);
+  const data = await buildPromoterAnalytics(supabase, {
+    year: input.year,
+    month: input.month,
+    companyId: input.companyId,
+    promoterId: input.promoterId,
+    closed: await resolveReportClosed(supabase, input.year, input.month),
+  });
   const promoterScope = normalizePromoterReportScope(input.scope);
   const selectedPromoter =
     data.summaryRows.find((row) => row.promoter_id === data.selectedPromoterId) || null;
@@ -2066,7 +2094,13 @@ async function buildSeguroDatasets(
   supabase: SupabaseClient,
   input: ReportFilters
 ) {
-  const data = await buildPromoterAnalytics(supabase, input);
+  const data = await buildPromoterAnalytics(supabase, {
+    year: input.year,
+    month: input.month,
+    companyId: input.companyId,
+    promoterId: input.promoterId,
+    closed: await resolveReportClosed(supabase, input.year, input.month),
+  });
   const year = data.selectedPeriod?.year ?? input.year;
   const month = data.selectedPeriod?.month ?? input.month;
   const periodLabel = data.selectedPeriod?.label ?? null;
@@ -2374,7 +2408,16 @@ export async function buildReportExport(
     };
   }
 
-  let data = await buildPromoterAnalytics(supabase, input);
+  // Regime do mês (1 resolução): aberto=LIVE_BASE, fechado=CALCULATED. Reusado no
+  // swap cms abaixo (evita 2ª chamada a detectClosedMonth).
+  const closedForExport = await resolveReportClosed(supabase, input.year, input.month);
+  let data = await buildPromoterAnalytics(supabase, {
+    year: input.year,
+    month: input.month,
+    companyId: input.companyId,
+    promoterId: input.promoterId,
+    closed: closedForExport,
+  });
   const promoterScope = normalizePromoterReportScope(input.scope);
   const teamOrder = normalizeTeamOrder(input.order);
 
@@ -2391,12 +2434,7 @@ export async function buildReportExport(
     input.month &&
     data.selectedPromoterId
   ) {
-    let closed = false;
-    try {
-      closed = await detectClosedMonth(supabase, input.year, input.month);
-    } catch {
-      closed = false;
-    }
+    const closed = closedForExport === true; // reusa a resolução acima
     if (closed) {
       const cmsRows = await buildCmsProposalRows(
         supabase,
@@ -2519,10 +2557,12 @@ export async function buildPromoterBatchExport(
   const mode: PromoterBatchMode = input.mode === "abas" ? "abas" : "zip";
 
   // Fetch-once: 1 base com TODAS as 9 queries; fatiamos N vezes em memoria.
+  // closed: aberto=LIVE_BASE, fechado=CALCULATED (resolvido do período do input).
   const base = await loadPromoterAnalyticsBase(supabase, {
     year: input.year,
     month: input.month,
     companyId: input.companyId,
+    closed: await resolveReportClosed(supabase, input.year, input.month),
   });
 
   const period = base.latestPeriod;

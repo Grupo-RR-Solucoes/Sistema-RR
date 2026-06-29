@@ -436,6 +436,11 @@ export async function loadPromoterAnalyticsBase(
     year?: number;
     month?: number;
     companyId?: string;
+    // Regime do mês: FECHADO (true) ou indefinido => pode usar o PMR (CALCULATED).
+    // ABERTO (false) => ignora o PMR (snapshot defasado) e força LIVE_BASE (daily
+    // ao vivo). Quem decide é o CHAMADOR (via detectClosedMonth). Default sem
+    // closed = comportamento anterior (CALCULATED) — preserva dre/projecao.
+    closed?: boolean;
   }
 ) {
   const yearParam = filters?.year;
@@ -609,12 +614,19 @@ export async function loadPromoterAnalyticsBase(
       (record) => record.assigned_promoter_id === promoter.id
     );
     const validRecords = promoterRecords.filter(isEligibleProductionRecord);
-    const result = monthlyResults.find(
-      (row) =>
-        row.promoter_id === promoter.id &&
-        row.year === latestPeriod.year &&
-        row.month === latestPeriod.month
-    );
+    // Mês ABERTO (filters.closed === false): NÃO usa o PMR (snapshot defasado) —
+    // result = undefined força o ramo LIVE_BASE (Σ daily ao vivo), alinhando com a
+    // projeção. Fechado (true) ou indefinido: mantém CALCULATED (PMR/cms) — idêntico
+    // ao comportamento anterior. Recorte só do mês aberto; não toca histórico fechado.
+    const result =
+      filters?.closed === false
+        ? undefined
+        : monthlyResults.find(
+            (row) =>
+              row.promoter_id === promoter.id &&
+              row.year === latestPeriod.year &&
+              row.month === latestPeriod.month
+          );
     const target = targets.find(
       (row) =>
         row.promoter_id === promoter.id &&
@@ -929,6 +941,7 @@ export async function buildPromoterAnalytics(
     month?: number;
     companyId?: string;
     promoterId?: string;
+    closed?: boolean; // ver loadPromoterAnalyticsBase: aberto(false)=LIVE_BASE, fechado/indef=CALCULATED
   }
 ): Promise<PromoterAnalyticsPayload> {
   const base = await loadPromoterAnalyticsBase(supabase, filters);
