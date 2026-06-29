@@ -17,7 +17,7 @@ import {
   COLETIVA_MASK,
 } from "@/lib/promoterReportData";
 
-export type ReportKind = "financeiro" | "fechamento" | "auditoria" | "promotores";
+export type ReportKind = "financeiro" | "fechamento" | "auditoria" | "promotores" | "seguro";
 export type ReportFormat = "pdf" | "xlsx";
 export type PromoterReportScope = "geral" | "individual";
 
@@ -155,6 +155,7 @@ function normalizeReportKind(input?: string | null): ReportKind {
   if (value === "fechamento") return "fechamento";
   if (value === "auditoria") return "auditoria";
   if (value === "promotores") return "promotores";
+  if (value === "seguro") return "seguro";
 
   throw new Error("Tipo de relatorio invalido.");
 }
@@ -1836,6 +1837,111 @@ export async function buildReportPreview(
     };
   }
 
+  // ============================================================
+  // SEGURO / SEGURIDADE — relatorio dedicado, SO fontes DB-driven:
+  //   Por promotor  -> buildPromoterAnalytics (PMR via loadPromoterAnalyticsBase)
+  //   Por empresa   -> fechamento_mensal_empresa.valor_seguro (query direta)
+  //   Por contrato  -> proposalRows (daily_production_records via insurance_slip_rules)
+  // NUNCA buildClosingAnalytics / getInsurancePercentByTerm (legado proibido).
+  // ============================================================
+  if (reportType === "seguro") {
+    const data = await buildPromoterAnalytics(supabase, input);
+    const year = data.selectedPeriod?.year ?? input.year;
+    const month = data.selectedPeriod?.month ?? input.month;
+
+    // Por promotor (DB-driven: PMR). summaryRows ja respeita companyId e o
+    // promoterId opcional (visibleSummaryRows). Filtra ativos p/ casar com o
+    // dashboard/projecao.
+    const promoterRows = data.summaryRows.filter((row) => row.active !== false);
+    const seguroPromotores = promoterRows.reduce(
+      (sum, row) => sum + toNumber(row.insurance_commission_value),
+      0
+    );
+    const comProm = promoterRows.filter(
+      (row) => toNumber(row.insurance_commission_value) > 0
+    ).length;
+    // Penetracao ponderada pela producao (nao media simples).
+    let penNum = 0;
+    let penDen = 0;
+    for (const row of promoterRows) {
+      const prod = toNumber(row.production_value);
+      if (prod > 0) {
+        penNum += toNumber(row.insurance_penetration_percent) * prod;
+        penDen += prod;
+      }
+    }
+    const penetracaoMedia = penDen > 0 ? penNum / penDen : 0;
+
+    // Por empresa (DB-driven: fechamento_mensal_empresa.valor_seguro, competencia M).
+    // Filtra pelo CNPJ da empresa selecionada, se houver companyId.
+    const companyCnpj = (
+      data.companies.find((company) => company.id === input.companyId) as
+        | { cnpj?: string }
+        | undefined
+    )?.cnpj;
+    let seguroEmpresas = 0;
+    if (year && month) {
+      let fechQuery = supabase
+        .from("fechamento_mensal_empresa")
+        .select("empresa_cnpj, valor_seguro")
+        .eq("ano", year)
+        .eq("mes", month);
+      if (companyCnpj) fechQuery = fechQuery.eq("empresa_cnpj", companyCnpj);
+      const { data: fechRows } = await fechQuery;
+      seguroEmpresas = (fechRows || []).reduce(
+        (sum, row: { valor_seguro?: number | null }) => sum + toNumber(row.valor_seguro),
+        0
+      );
+    }
+
+    return {
+      reportType,
+      title: "Seguro / Seguridade",
+      description:
+        "Comissao de seguro do mes por promotor, por empresa e por contrato — fontes DB-driven (PMR, fechamento mensal e propostas).",
+      sourceHref: "/dashboard",
+      sourceLabel: "Abrir Dashboard",
+      periods: data.periods,
+      selectedPeriod: data.selectedPeriod,
+      selectedCompanyId: data.selectedCompanyId,
+      selectedPromoterId: data.selectedPromoterId,
+      reportScope: null,
+      companies: data.companies.map((company) => ({ id: company.id, name: company.name })),
+      promoters: (data.promoterOptions.length > 0
+        ? data.promoterOptions
+        : data.promoterLookup
+      ).map((promoter) => ({ id: promoter.id, name: promoter.name })),
+      cards: [
+        {
+          label: "Comissao de seguro · promotores",
+          value: formatCurrency(seguroPromotores),
+          detail: "Σ insurance_commission_value do PMR (share repassado ao promotor).",
+        },
+        {
+          label: "Comissao de seguro · empresas",
+          value: formatCurrency(seguroEmpresas),
+          detail: "Σ valor_seguro do fechamento mensal por empresa (competencia do mes).",
+        },
+        {
+          label: "Penetracao media",
+          value: formatPercent(penetracaoMedia),
+          detail: "Ponderada pela producao dos promotores no filtro atual.",
+        },
+        {
+          label: "Promotores com seguro",
+          value: formatNumber(comProm),
+          detail: `De ${formatNumber(promoterRows.length)} promotores no filtro.`,
+        },
+      ],
+      sections: [
+        "Por promotor: comissao de seguro, penetracao e producao segurada (fonte PMR).",
+        "Por empresa: comissao de seguro do fechamento mensal (valor_seguro).",
+        "Por contrato: premio, comissao empresa e comissao promotor (propostas DB-driven).",
+      ],
+      alerts: [],
+    };
+  }
+
   const data = await buildPromoterAnalytics(supabase, input);
   const promoterScope = normalizePromoterReportScope(input.scope);
   const selectedPromoter =
@@ -1954,6 +2060,12 @@ export async function buildReportExport(
 ): Promise<ExportBundle> {
   const reportType = normalizeReportKind(input.type);
   const reportFormat = normalizeReportFormat(input.format);
+
+  // ETAPA 1: preview do seguro pronto; export (PDF/xlsx) vem na ETAPA 2. Guarda
+  // explicita p/ NAO cair no fallthrough de promotores e gerar arquivo errado.
+  if (reportType === "seguro") {
+    throw new Error("Export do relatorio de seguro disponivel na proxima etapa.");
+  }
 
   if (reportType === "financeiro") {
     const data = await buildFinancialAnalytics(supabase, input);
