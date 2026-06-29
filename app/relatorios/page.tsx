@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useUser } from "../../lib/auth/useUser";
 import { UiStyles, HeaderNavy } from "@/components/ui";
 
-type ReportType = "financeiro" | "fechamento" | "auditoria" | "promotores";
+type ReportType = "financeiro" | "fechamento" | "auditoria" | "promotores" | "seguro";
 type Visao = "geral" | "individual" | "lote";
 type TeamOrder = "percent" | "receber" | "producao";
 type LoteMode = "zip" | "abas";
@@ -84,6 +84,17 @@ const TYPE_DEFS: TypeDef[] = [
         <circle cx="9" cy="8" r="3" />
         <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
         <path d="M16 8.5a3 3 0 0 1 0 5.5M21 19a5 5 0 0 0-3.5-4.8" />
+      </svg>
+    ),
+  },
+  {
+    id: "seguro",
+    label: "Seguro / Seguridade",
+    desc: "Comissão de seguro por promotor, empresa e contrato",
+    icon: (
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6l7-3z" />
+        <path d="M9 12l2 2 4-4" />
       </svg>
     ),
   },
