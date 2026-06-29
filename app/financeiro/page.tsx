@@ -17,6 +17,7 @@ type FinSummary = {
   receivedInsurance: number; // informativo: "do qual seguro" do Recebido (M-1)
   totalExpenses: number;
   comissoesPagas: number;
+  paidInsuranceShare: number; // informativo: "do qual seguro" do repasse (M)
   operatingResult: number;
   actualPrt: number;
   openingBalance: number;
@@ -286,6 +287,23 @@ export default function FinanceiroPage() {
               </div>
               <div className="num" style={{ fontSize: 26, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono',ui-monospace,monospace", fontVariantNumeric: "tabular-nums" }}>
                 {brl2(fin.summary.receivedInsurance)}
+              </div>
+            </section>
+
+            {/* Subtotal INFORMATIVO de seguro REPASSADO: "do qual" das Comissoes
+                pagas — JA dentro de comissoesPagas (final = producao + seguro), nao
+                soma. Competencia M (mes), distinta do seguro recebido (M-1). */}
+            <section className="card" style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)", textTransform: "uppercase", letterSpacing: ".04em" }}>
+                  Comissão de seguro repassada <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "var(--ink-3)" }}>(do qual)</span>
+                </div>
+                <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginTop: 5 }}>
+                  parte das “Comissões pagas” acima (repasse aos promotores) — competência do mês, não é parcela adicional
+                </div>
+              </div>
+              <div className="num" style={{ fontSize: 26, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono',ui-monospace,monospace", fontVariantNumeric: "tabular-nums" }}>
+                {brl2(fin.summary.paidInsuranceShare)}
               </div>
             </section>
 
