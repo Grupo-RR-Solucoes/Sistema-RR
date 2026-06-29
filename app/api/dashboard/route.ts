@@ -194,22 +194,36 @@ export async function GET() {
       );
     }
 
-    // total[m] = atribuído (PMR) + master não-atribuído (daily).
+    // Atribuído do mês CORRENTE: mês ABERTO usa o daily ao vivo (summaryRows em
+    // LIVE_BASE após o fix), NÃO o PMR snapshot (byMonth) defasado. Mês FECHADO
+    // mantém o PMR/cms (byMonth). Só o ponto/KPI do mês corrente muda; histórico igual.
+    const atribuidoMesCorrente = monthClosed
+      ? toNumber(byMonth.get(month))
+      : promoterAnalytics.summaryRows.reduce(
+          (sum, r) => sum + toNumber(r.production_value),
+          0
+        );
+
+    // total[m] = atribuído (PMR no fechado/histórico; daily-live no corrente aberto)
+    // + master não-atribuído (daily).
     const monthsSet = new Set<number>([...byMonth.keys(), ...unassignedByMonth.keys()]);
     const producaoMensal = Array.from(monthsSet)
       .sort((a, b) => a - b)
       .map((m) => ({
         mes: MES[m - 1],
         month: m,
-        valor: roundMoney(toNumber(byMonth.get(m)) + toNumber(unassignedByMonth.get(m))),
+        valor: roundMoney(
+          (m === month ? atribuidoMesCorrente : toNumber(byMonth.get(m))) +
+            toNumber(unassignedByMonth.get(m))
+        ),
         // mês corrente = parcial (em andamento). Os anteriores são realizados.
         parcial: m === month,
       }));
 
-    // KPI "Produção do grupo · mês" = total do mês corrente (atribuído + master
-    // pendente), coerente com o ponto do gráfico e com o portal.
+    // KPI "Produção do grupo · mês" = total do mês corrente (atribuído ao vivo no
+    // aberto + master pendente), coerente com o ponto do gráfico e com o portal.
     const producaoGrupoMes = roundMoney(
-      toNumber(byMonth.get(month)) + toNumber(unassignedByMonth.get(month))
+      atribuidoMesCorrente + toNumber(unassignedByMonth.get(month))
     );
     // Aviso discreto: produção (net) ainda em chave master sem promotor.
     const producaoNaoAtribuida = roundMoney(toNumber(unassignedByMonth.get(month)));
@@ -279,6 +293,10 @@ export async function GET() {
     // Split idêntico ao comissaoBrutaEmpresa (monthClosed). A penetração ponderada
     // é ATRIBUÍDO-ONLY nos dois regimes (o master não existe no PMR/cms) — decisão
     // Diego, documentada aqui.
+    // Consolidado da projeção (mês corrente) — fonte da penetração no mês aberto
+    // (idêntica à tela de projeção). Reusado no alerta de projeção abaixo.
+    const cons = consolidarGrupo(projecaoRes);
+
     let comissaoSeguroGrupo = 0;
     let penetracaoSeguroGrupo = 0; // fração 0..1
     let seguroLabel = "";
@@ -344,22 +362,15 @@ export async function GET() {
         seguroMaster += res.amount;
       }
       comissaoSeguroGrupo = roundMoney(seguroAtribuido + seguroMaster);
-      // Penetração ponderada ATRIBUÍDO-ONLY = Σ insured_production_value /
-      // Σ production_value do PMR (mês corrente). O master NÃO entra (não existe no
-      // PMR). Fração 0..1.
-      let penNum = 0;
-      let penDen = 0;
-      for (const r of pmrRows) {
-        if (r.year !== year || r.month !== month) continue;
-        penNum += toNumber(r.insured_production_value);
-        penDen += toNumber(r.production_value);
-      }
-      penetracaoSeguroGrupo = penDen > 0 ? penNum / penDen : 0;
+      // Penetração: mês ABERTO usa a MESMA da projeção (cons.seguro_penetracao —
+      // ponderada pela produção, daily ao vivo), alinhando com a tela de projeção
+      // (ex.: 19,1%) em vez do PMR snapshot defasado (18,0%). Fração 0..1.
+      penetracaoSeguroGrupo = cons.seguro_penetracao ?? 0;
       seguroLabel = `${MES[month - 1]}/${year} · parcial`;
     }
 
     // ---- alerta de projeção (só se houver risco: amarelo/vermelho) ----
-    const cons = consolidarGrupo(projecaoRes);
+    // cons já calculado acima (reusado na penetração de seguro do mês aberto).
     const projecao = {
       percent: cons.percent_projetado,
       semaforo: cons.semaforo,
