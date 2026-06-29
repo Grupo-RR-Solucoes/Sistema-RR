@@ -106,6 +106,10 @@ export type FinanceSummary = {
   receivedLiquido: number;
   receivedProdutos: number;
   receivedManual: number;
+  // INFORMATIVO — "do qual seguro" do Recebido: Σ valor_seguro dos MESMOS
+  // fechamentos M-1 que compoem receivedLiquido. JA dentro de receivedNet —
+  // NAO somar. Difere de actualInsurance (que e competencia M, descasada).
+  receivedInsurance: number;
   actualCash: number;
   actualPrt: number;
   actualInsurance: number;
@@ -115,6 +119,10 @@ export type FinanceSummary = {
   paidExpenses: number;
   pendingExpenses: number;
   comissoesPagas: number;
+  // INFORMATIVO — "do qual seguro" do repasse: Σ PMR.insurance_commission_value
+  // da competencia M (mesma de comissoesPagas). JA dentro de comissoesPagas
+  // (final = producao + seguro) — NAO somar. Competencia M, nao M-1.
+  paidInsuranceShare: number;
   operatingResult: number;
   cashBalance: number;
   futureDeferredBalance: number;
@@ -269,6 +277,12 @@ function sumClosingProdutos(rows: ClosingRow[]) {
   );
 }
 
+// INFORMATIVO — Σ valor_seguro dos fechamentos (mesmas rows que sumClosingNet).
+// "do qual seguro" do receivedLiquido; NAO entra em nenhum total, so segregacao.
+function sumClosingInsurance(rows: ClosingRow[]) {
+  return rows.reduce((sum, row) => sum + toNumber(row.valor_seguro), 0);
+}
+
 // mes de caixa de um lancamento manual: extrai ano/mes de data_credito
 // (YYYY-MM-DD). Fallback p/ ano/mes da competencia se data_credito faltar.
 function manualCreditYM(row: ManualRevenueRow): { year: number; month: number } | null {
@@ -292,6 +306,8 @@ function cashReceivedFor(
   const closingRows = allClosings.filter((r) => r.ano === prev.year && r.mes === prev.month);
   const receivedLiquido = roundMoney(sumClosingNet(closingRows));
   const receivedProdutos = roundMoney(sumClosingProdutos(closingRows));
+  // INFORMATIVO: parcela de seguro JA dentro de receivedLiquido (mesmas M-1 rows).
+  const receivedInsurance = roundMoney(sumClosingInsurance(closingRows));
   const receivedClosing = roundMoney(receivedLiquido + receivedProdutos);
   const receivedManual = roundMoney(
     manualRows.reduce((sum, row) => {
@@ -302,6 +318,7 @@ function cashReceivedFor(
   return {
     receivedLiquido,
     receivedProdutos,
+    receivedInsurance,
     receivedClosing,
     receivedManual,
     receivedNet: roundMoney(receivedClosing + receivedManual),
@@ -393,10 +410,11 @@ export async function buildFinancialAnalytics(
         company_id: string | null;
         final_commission_value: number | null;
         discount_value: number | null;
+        insurance_commission_value: number | null;
       }>(() =>
         supabase
           .from("promoter_monthly_results")
-          .select("year, month, company_id, final_commission_value, discount_value")
+          .select("year, month, company_id, final_commission_value, discount_value, insurance_commission_value")
       ),
       // RECEITA MANUAL (consórcio/ajustes) — entra no "Recebido" (caixa) pelo
       // mês de data_credito (Etapa 3). Aditiva ao fechamento, sem defasagem.
@@ -413,10 +431,17 @@ export async function buildFinancialAnalytics(
 
   // Comissão paga (saída de caixa) por competência — Σ payable_commission_value.
   const comissaoByPeriod = new Map<string, number>();
+  // INFORMATIVO: parcela de seguro do repasse (JA dentro de comissaoByPeriod,
+  // pois final = producao + seguro). Mesmas linhas/competencia do payable.
+  const comissaoSeguroByPeriod = new Map<string, number>();
   for (const row of pmrRows) {
     const k = getPeriodKey(row.year, row.month);
     const payable = toNumber(row.final_commission_value) - toNumber(row.discount_value);
     comissaoByPeriod.set(k, toNumber(comissaoByPeriod.get(k)) + payable);
+    comissaoSeguroByPeriod.set(
+      k,
+      toNumber(comissaoSeguroByPeriod.get(k)) + toNumber(row.insurance_commission_value)
+    );
   }
 
   const periodMap = new Map<string, FinancePeriodOption>();
@@ -535,6 +560,9 @@ export async function buildFinancialAnalytics(
   );
 
   const comissoesPagas = roundMoney(comissaoByPeriod.get(selectedPeriod.key) ?? 0);
+  // INFORMATIVO: "do qual seguro" do repasse — competencia M (selectedPeriod),
+  // mesmo conjunto de comissoesPagas. NAO confundir com receivedInsurance (M-1).
+  const paidInsuranceShare = roundMoney(comissaoSeguroByPeriod.get(selectedPeriod.key) ?? 0);
 
   const summary: FinanceSummary = {
     periodLabel: selectedPeriod.label,
@@ -546,6 +574,7 @@ export async function buildFinancialAnalytics(
     receivedLiquido: received.receivedLiquido,
     receivedProdutos: received.receivedProdutos,
     receivedManual: received.receivedManual,
+    receivedInsurance: received.receivedInsurance,
     actualCash: roundMoney(receivedSummary.actualCash),
     actualPrt: roundMoney(receivedSummary.actualPrt),
     actualInsurance: roundMoney(receivedSummary.actualInsurance),
@@ -557,6 +586,7 @@ export async function buildFinancialAnalytics(
     // Comissão paga = maior saída de caixa (repasse). Saldo/resultado refletem o
     // conceito de CAIXA: recebido − comissões pagas − despesas operacionais.
     comissoesPagas,
+    paidInsuranceShare,
     operatingResult: roundMoney(
       received.receivedNet - comissoesPagas - totalExpenses
     ),
