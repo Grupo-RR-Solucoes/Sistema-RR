@@ -46,3 +46,7 @@ scripts/__pycache__/
 scripts/_backup_*.json
 # Scripts temporários de teste/validação (não versionar)
 scripts/_tmp_*
+# Mockups/protótipos de telas em HTML na raiz (referência de design, não são
+# servidos pelo app — Next.js serve estáticos de public/). O app real vive em
+# app/. Nenhum .html legítimo é servido da raiz.
+/*.html
