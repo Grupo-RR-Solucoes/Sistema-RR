@@ -378,6 +378,25 @@ function EquipeView({ data }: { data: any }) {
             { label: "% projetado do grupo", value: pctTxt(cons.percent_projetado), sub: <Chip s={cons.semaforo} onNavy /> },
           ]}
         />
+        {/* Seguro projetado (DB-driven). Faixa separada p/ nao apertar os 4 de
+            producao. SEM meta/semaforo/%: penetracao (atual, ponderada) vai no sub. */}
+        <KpiBand
+          valueSize={24}
+          columns={2}
+          items={[
+            {
+              label: "Comissão seguro acum.",
+              value: brl(cons.seguro_comissao_acumulada),
+              sub: `penetração ${pctTxt(cons.seguro_penetracao)} (atual, ponderada)`,
+            },
+            {
+              label: "Comissão seguro proj.",
+              value: brl(cons.seguro_comissao_projecao),
+              sub: "estimativa de fechamento",
+              accent: true,
+            },
+          ]}
+        />
       </div>
 
       {/* RISCO */}

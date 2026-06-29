@@ -146,6 +146,12 @@ export type ProjecaoPromotor = {
   tendencia: Tendencia;
   tendencia_percent: number | null; // ratio de variacao vs media 3m
   semaforo: Semaforo;
+  // ---- Seguro (DB-driven: insurance_commission_value/amount ja em
+  // filteredSummaryRows; fechado=PMR, aberto=Σ por registro recortado por
+  // refDate, MESMOS registros elegiveis da producao). SEM meta/semaforo.
+  seguro_comissao_acumulada: number;
+  seguro_comissao_projecao: number;
+  seguro_penetracao: number | null; // fracao 0-1, ATUAL (nao projetada); null = sem base
 };
 
 // Produção em chave MASTER ainda sem promotor (não entra em nenhum promotor
@@ -230,7 +236,11 @@ export async function buildProjecaoMetas(
   }
 
   // Acumulado por promotor (mes aberto: records elegiveis ate refDate; fechado: production_value).
+  // Seguro segue o MESMO recorte: soma insurance_commission_amount por registro
+  // (DB-driven; o mesmo valor que filteredSummaryRows.insurance_commission_value
+  // agrega no ramo LIVE_BASE) dos MESMOS registros elegiveis ate refKey.
   const acumPorPromotor = new Map<string, number>();
+  const acumSeguroPorPromotor = new Map<string, number>();
   if (!closed) {
     for (const rec of base.recordsForPeriod as any[]) {
       if (!rec.assigned_promoter_id) continue;
@@ -241,6 +251,11 @@ export async function buildProjecaoMetas(
       acumPorPromotor.set(
         rec.assigned_promoter_id,
         (acumPorPromotor.get(rec.assigned_promoter_id) || 0) + toNumber(rec.net_value)
+      );
+      acumSeguroPorPromotor.set(
+        rec.assigned_promoter_id,
+        (acumSeguroPorPromotor.get(rec.assigned_promoter_id) || 0) +
+          toNumber(rec.insurance_commission_amount)
       );
     }
   }
@@ -310,6 +325,25 @@ export async function buildProjecaoMetas(
         ? (acumulada / diasDecorridos) * total
         : 0;
 
+    // Seguro: fechado=insurance_commission_value do PMR (ja em summaryRows);
+    // aberto=Σ por registro recortado por refKey (acumSeguroPorPromotor).
+    const seguroAcum = closed
+      ? toNumber(row.insurance_commission_value)
+      : toNumber(acumSeguroPorPromotor.get(row.promoter_id));
+    // MESMA formula de ritmo linear da producao.
+    const seguroProj = periodoCompleto
+      ? seguroAcum
+      : diasDecorridos > 0
+        ? (seguroAcum / diasDecorridos) * total
+        : 0;
+    // Penetracao ATUAL (fracao 0-1), NAO projetada. insurance_penetration_percent
+    // ja vem pronto em summaryRows (fechado=PMR, aberto=insuredGross/gross).
+    // Sem base de producao => sem penetracao (null).
+    const seguroPenetracao =
+      acumulada > 0 || toNumber(row.production_value) > 0
+        ? toNumber(row.insurance_penetration_percent) / 100
+        : null;
+
     const meta = toNumber(row.target_value);
     const percent = meta > 0 ? projecao / meta : null;
 
@@ -340,6 +374,9 @@ export async function buildProjecaoMetas(
       tendencia,
       tendencia_percent: tendenciaPercent,
       semaforo: semaforoFromPercent(percent),
+      seguro_comissao_acumulada: seguroAcum,
+      seguro_comissao_projecao: seguroProj,
+      seguro_penetracao: seguroPenetracao,
     };
   });
 
@@ -366,6 +403,9 @@ export type ProjecaoGrupoTotais = {
   meta: number;
   percent_projetado: number | null;
   semaforo: Semaforo;
+  seguro_comissao_acumulada: number;
+  seguro_comissao_projecao: number;
+  seguro_penetracao: number | null; // PONDERADA: Σ insured / Σ producao do grupo/cnpj
 };
 export type ProjecaoGrupoCnpj = ProjecaoGrupoTotais & {
   company_id: string;
@@ -384,13 +424,32 @@ export type ProjecaoConsolidadoGrupo = ProjecaoGrupoTotais & {
 
 function totaliza(promotores: ProjecaoPromotor[]): ProjecaoGrupoTotais {
   const acc = { producao_acumulada: 0, projecao: 0, meta: 0 };
+  let seguroAcum = 0;
+  let seguroProj = 0;
+  // Penetracao PONDERADA: numerador = Σ(penetracao_i × producao_i) = Σ insured_i;
+  // denominador = Σ producao_i (so promotores com penetracao e producao). NAO media simples.
+  let penNum = 0;
+  let penDen = 0;
   for (const p of promotores) {
     acc.producao_acumulada += p.producao_acumulada;
     acc.projecao += p.projecao;
     acc.meta += p.meta;
+    seguroAcum += p.seguro_comissao_acumulada;
+    seguroProj += p.seguro_comissao_projecao;
+    if (p.seguro_penetracao != null && p.producao_acumulada > 0) {
+      penNum += p.seguro_penetracao * p.producao_acumulada;
+      penDen += p.producao_acumulada;
+    }
   }
   const percent = acc.meta > 0 ? acc.projecao / acc.meta : null;
-  return { ...acc, percent_projetado: percent, semaforo: semaforoFromPercent(percent) };
+  return {
+    ...acc,
+    percent_projetado: percent,
+    semaforo: semaforoFromPercent(percent),
+    seguro_comissao_acumulada: seguroAcum,
+    seguro_comissao_projecao: seguroProj,
+    seguro_penetracao: penDen > 0 ? penNum / penDen : null,
+  };
 }
 
 // Consolidado do grupo SÓ com produção atribuída (promotores). Usado pelo
@@ -416,6 +475,10 @@ export function consolidarGrupoEquipe(res: ProjecaoResultado): ProjecaoConsolida
     meta,
     percent_projetado: percent,
     semaforo: semaforoFromPercent(percent),
+    // Seguro = so promotores (chave master nao tem comissao de seguro atribuida).
+    seguro_comissao_acumulada: base.seguro_comissao_acumulada,
+    seguro_comissao_projecao: base.seguro_comissao_projecao,
+    seguro_penetracao: base.seguro_penetracao,
     nao_atribuido: na,
   };
 }
@@ -459,6 +522,9 @@ export function agruparPorCnpj(res: ProjecaoResultado): ProjecaoGrupoCnpj[] {
       meta: 0,
       percent_projetado: null,
       semaforo: "sem_meta",
+      seguro_comissao_acumulada: 0,
+      seguro_comissao_projecao: 0,
+      seguro_penetracao: null,
     });
   }
   // grupos com pior % projetado primeiro (puxando o grupo pra baixo no topo da atencao);
