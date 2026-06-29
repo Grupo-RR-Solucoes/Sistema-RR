@@ -36,6 +36,7 @@ type DreRow = {
   scope: "COMPANY" | "GROUP";
   name: string;
   receita: number;
+  receitaSeguro: number; // informativo: "do qual seguro" (ja dentro de receita)
   comissoes: number;
   despesas: number;
   resultadoLiquido: number;
@@ -390,6 +391,21 @@ export default function FinanceiroPage() {
             ) : (
               <>
                 <p className="note"><span className="dot" /><b>DRE gerencial · {dre.period?.label || periodShort}</b>&nbsp;— resultado consolidado por CNPJ</p>
+                {/* Subtotal INFORMATIVO de seguro: "do qual" — JA dentro da
+                    receita (nao soma de novo). Fonte: fechamento_mensal_empresa.valor_seguro (competencia M). */}
+                <section className="card" style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)", textTransform: "uppercase", letterSpacing: ".04em" }}>
+                      Comissão de seguro <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "var(--ink-3)" }}>(do qual)</span>
+                    </div>
+                    <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginTop: 5 }}>
+                      já inclusa na receita abaixo — não é parcela adicional
+                    </div>
+                  </div>
+                  <div className="num" style={{ fontSize: 26, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono',ui-monospace,monospace", fontVariantNumeric: "tabular-nums" }}>
+                    {brl2(dre.group.receitaSeguro)}
+                  </div>
+                </section>
                 <section className="card">
                   <div className="card-head">
                     <div>

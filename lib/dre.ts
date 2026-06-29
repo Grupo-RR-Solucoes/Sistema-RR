@@ -64,6 +64,10 @@ export type DreLine = {
   receita: number;
   receitaFechamento: number;
   receitaComplementar: number;
+  // INFORMATIVO — "do qual seguro": parcela de comissao de seguro
+  // (fechamento_mensal_empresa.valor_seguro, competencia M) JA inclusa em
+  // `receita`/`receitaFechamento`. NAO somar ao total — so segregacao visual.
+  receitaSeguro: number;
   comissoes: number;
   resultadoBruto: number;
   despesas: number;
@@ -217,12 +221,18 @@ export async function buildDre(
     );
   }
   const receitaFechamentoByCompany = new Map<string, number>();
+  // INFORMATIVO: Σ valor_seguro por empresa (parcela JA dentro da receita acima).
+  const receitaSeguroByCompany = new Map<string, number>();
   for (const row of fechamentoRows) {
     const company = byCnpj.get(row.empresa_cnpj);
     if (!company) continue; // ignora TEMP/sem match — DRE é das empresas reais
     receitaFechamentoByCompany.set(
       company.id,
       toNum(receitaFechamentoByCompany.get(company.id)) + receitaFechamentoDoMes(row)
+    );
+    receitaSeguroByCompany.set(
+      company.id,
+      toNum(receitaSeguroByCompany.get(company.id)) + toNum(row.valor_seguro)
     );
   }
 
@@ -323,6 +333,8 @@ export async function buildDre(
     const receitaFechamento = round(toNum(receitaFechamentoByCompany.get(c.id)));
     const receitaComplementar = round(toNum(receitaComplementarByCompany.get(c.id)));
     const receita = round(receitaFechamento + receitaComplementar);
+    // INFORMATIVO — nao entra em `receita`/`resultado` (ja embutido neles).
+    const receitaSeguro = round(toNum(receitaSeguroByCompany.get(c.id)));
     const comissoes = round(toNum(comissaoByCompany.get(c.id)));
     const despesas = round(toNum(despesaByCompany.get(c.id)));
     const resultadoBruto = round(receita - comissoes);
@@ -335,6 +347,7 @@ export async function buildDre(
       receita,
       receitaFechamento,
       receitaComplementar,
+      receitaSeguro,
       comissoes,
       resultadoBruto,
       despesas,
@@ -352,6 +365,7 @@ export async function buildDre(
   const gReceita = sum((l) => l.receita);
   const gReceitaFech = sum((l) => l.receitaFechamento);
   const gReceitaComp = sum((l) => l.receitaComplementar);
+  const gReceitaSeguro = sum((l) => l.receitaSeguro); // seguroTotalGrupo (informativo)
   const gComissoes = sum((l) => l.comissoes);
   const gDespesasEmpresas = sum((l) => l.despesas);
   const gDespesas = round(gDespesasEmpresas + despesasGrupo);
@@ -365,6 +379,7 @@ export async function buildDre(
     receita: gReceita,
     receitaFechamento: gReceitaFech,
     receitaComplementar: gReceitaComp,
+    receitaSeguro: gReceitaSeguro,
     comissoes: gComissoes,
     resultadoBruto: gResultadoBruto,
     despesas: gDespesas,
