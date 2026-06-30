@@ -1862,26 +1862,28 @@ export async function buildReportPreview(
   // NUNCA buildClosingAnalytics / getInsurancePercentByTerm (legado proibido).
   // ============================================================
   if (reportType === "seguro") {
+    const closed = await resolveReportClosed(supabase, input.year, input.month);
     const data = await buildPromoterAnalytics(supabase, {
       year: input.year,
       month: input.month,
       companyId: input.companyId,
       promoterId: input.promoterId,
-      closed: await resolveReportClosed(supabase, input.year, input.month),
+      closed,
     });
     const year = data.selectedPeriod?.year ?? input.year;
     const month = data.selectedPeriod?.month ?? input.month;
 
     // Por promotor (DB-driven: PMR). summaryRows ja respeita companyId e o
     // promoterId opcional (visibleSummaryRows). Filtra ativos p/ casar com o
-    // dashboard/projecao.
+    // dashboard/projecao. §188 empresa por promotor (LIVE_BASE no aberto) = base
+    // do total-empresa do grupo no aberto.
     const promoterRows = data.summaryRows.filter((row) => row.active !== false);
-    const seguroPromotores = promoterRows.reduce(
+    const seguro188Empresa = promoterRows.reduce(
       (sum, row) => sum + toNumber(row.insurance_commission_value),
       0
     );
     const comProm = promoterRows.filter(
-      (row) => toNumber(row.insurance_commission_value) > 0
+      (row) => toNumber(row.insurance_penetration_percent) > 0
     ).length;
     // Penetracao ponderada pela producao (nao media simples).
     let penNum = 0;
@@ -1917,6 +1919,10 @@ export async function buildReportPreview(
       );
     }
 
+    // TOTAL do grupo = comissao-EMPRESA, regime-aware (igual dashboard/projecao):
+    // aberto = Σ §188 por promotor; fechado = Σ fechamento.valor_seguro.
+    const seguroEmpresaTotal = closed ? seguroEmpresas : seguro188Empresa;
+
     return {
       reportType,
       title: "Seguro / Seguridade",
@@ -1936,14 +1942,9 @@ export async function buildReportPreview(
       ).map((promoter) => ({ id: promoter.id, name: promoter.name })),
       cards: [
         {
-          label: "Comissao de seguro · promotores",
-          value: formatCurrency(seguroPromotores),
-          detail: "Σ insurance_commission_value do PMR (share repassado ao promotor).",
-        },
-        {
-          label: "Comissao de seguro · empresas",
-          value: formatCurrency(seguroEmpresas),
-          detail: "Σ valor_seguro do fechamento mensal por empresa (competencia do mes).",
+          label: "Comissao de seguro (empresa)",
+          value: formatCurrency(seguroEmpresaTotal),
+          detail: "Ganho do grupo — aberto §188 (daily); fechado fechamento mensal.",
         },
         {
           label: "Penetracao media",
@@ -1957,9 +1958,9 @@ export async function buildReportPreview(
         },
       ],
       sections: [
-        "Por promotor: comissao de seguro, penetracao e producao segurada (fonte PMR).",
+        "Por promotor: penetracao e producao segurada (sem comissao por promotor).",
         "Por empresa: comissao de seguro do fechamento mensal (valor_seguro).",
-        "Por contrato: premio, comissao empresa e comissao promotor (propostas DB-driven).",
+        "Por contrato: premio e indicador de seguro (sem comissao por contrato).",
       ],
       alerts: [],
     };
@@ -2094,19 +2095,27 @@ async function buildSeguroDatasets(
   supabase: SupabaseClient,
   input: ReportFilters
 ) {
+  const closed = await resolveReportClosed(supabase, input.year, input.month);
   const data = await buildPromoterAnalytics(supabase, {
     year: input.year,
     month: input.month,
     companyId: input.companyId,
     promoterId: input.promoterId,
-    closed: await resolveReportClosed(supabase, input.year, input.month),
+    closed,
   });
   const year = data.selectedPeriod?.year ?? input.year;
   const month = data.selectedPeriod?.month ?? input.month;
   const periodLabel = data.selectedPeriod?.label ?? null;
 
   // ---- Por promotor (DB-driven: PMR). summaryRows ja respeita company/promoter.
+  // Por promotor mostra so PENETRACAO + PRODUCAO SEGURADA (sem comissao — comissao
+  // de seguro e EMPRESA, agregada no total do grupo, nao por promotor).
   const promoterRows = data.summaryRows.filter((row) => row.active !== false);
+  // §188 empresa por promotor (LIVE_BASE no aberto) = base do total-empresa no aberto.
+  const seguro188Empresa = promoterRows.reduce(
+    (s, r) => s + toNumber(r.insurance_commission_value),
+    0
+  );
   // insured_production_value nao vem em summaryRows — busca direto no PMR.
   const insuredByPromoter = new Map<string, number>();
   if (year && month) {
@@ -2125,14 +2134,12 @@ async function buildSeguroDatasets(
   const porPromotor = promoterRows.map((row) => ({
     promotor: row.promoter_name,
     cnpj: row.company_cnpj || "",
-    comissao_seguro: toNumber(row.insurance_commission_value),
     penetracao: toNumber(row.insurance_penetration_percent) / 100, // fracao p/ formato percent
     producao_segurada: insuredByPromoter.get(row.promoter_id) ?? 0,
   }));
   const totPromotor = {
     promotor: "TOTAL",
     cnpj: "",
-    comissao_seguro: porPromotor.reduce((s, x) => s + x.comissao_seguro, 0),
     producao_segurada: porPromotor.reduce((s, x) => s + x.producao_segurada, 0),
   };
 
@@ -2168,46 +2175,38 @@ async function buildSeguroDatasets(
     comissao_seguro: porEmpresa.reduce((s, x) => s + x.comissao_seguro, 0),
   };
 
-  // ---- Por contrato (DB-driven: cms_promoter_entries — ground truth do mes
-  // fechado). Cobre TODOS os promotores do filtro. company_insurance_commission
-  // nao e rastreado por contrato no cms (fica 0); premio e comissao do promotor sim.
+  // TOTAL do grupo = comissao-EMPRESA, regime-aware: aberto Σ§188, fechado Σ fechamento.
+  const seguroEmpresaTotal = closed ? totEmpresa.comissao_seguro : seguro188Empresa;
+
+  // ---- Por contrato (DB-driven: cms_promoter_entries, mes fechado). So contratos
+  // com seguro: chave/proposta, promotor, premio, tem seguro. SEM comissao por
+  // contrato (empresa nao e rastreada por contrato no cms; share nao cabe em
+  // relatorio de gestao).
   const porContrato: Array<{
     chave: string;
     proposta: string;
     promotor: string;
     premio: number;
-    comissao_empresa: number;
-    comissao_promotor: number;
     tem_seguro: string;
   }> = [];
-  let contratoFechado = false;
-  if (year && month) {
-    try {
-      contratoFechado = await detectClosedMonth(supabase, year, month);
-    } catch {
-      contratoFechado = false;
-    }
-    if (contratoFechado) {
-      const nameById = new Map(promoterRows.map((r) => [r.promoter_id, r.promoter_name]));
-      const batch = await buildCmsProposalRowsBatch(
-        supabase,
-        promoterRows.map((r) => r.promoter_id),
-        year,
-        month
-      );
-      for (const [pid, rows] of batch) {
-        for (const row of rows) {
-          const premio = toNumber(row.insurance_value);
-          porContrato.push({
-            chave: row.j_key || "—",
-            proposta: row.proposal_number || "—",
-            promotor: nameById.get(pid) || "—",
-            premio,
-            comissao_empresa: toNumber(row.company_insurance_commission_amount),
-            comissao_promotor: toNumber(row.insurance_commission_amount),
-            tem_seguro: premio > 0 ? "Sim" : "Não",
-          });
-        }
+  if (closed === true) {
+    const nameById = new Map(promoterRows.map((r) => [r.promoter_id, r.promoter_name]));
+    const batch = await buildCmsProposalRowsBatch(
+      supabase,
+      promoterRows.map((r) => r.promoter_id),
+      year as number,
+      month as number
+    );
+    for (const [pid, rows] of batch) {
+      for (const row of rows) {
+        const premio = toNumber(row.insurance_value);
+        porContrato.push({
+          chave: row.j_key || "—",
+          proposta: row.proposal_number || "—",
+          promotor: nameById.get(pid) || "—",
+          premio,
+          tem_seguro: premio > 0 ? "Sim" : "Não",
+        });
       }
     }
   }
@@ -2216,7 +2215,7 @@ async function buildSeguroDatasets(
     year,
     month,
     periodLabel,
-    contratoFechado,
+    seguroEmpresaTotal,
     porPromotor,
     totPromotor,
     porEmpresa,
@@ -2237,7 +2236,6 @@ async function buildSeguroWorkbook(
       colunas: [
         { chave: "promotor", titulo: "Promotor", formato: "texto" },
         { chave: "cnpj", titulo: "CNPJ", formato: "texto" },
-        { chave: "comissao_seguro", titulo: "Comissão seguro", formato: "moeda" },
         { chave: "penetracao", titulo: "Penetração", formato: "percent" },
         { chave: "producao_segurada", titulo: "Produção segurada", formato: "moeda" },
       ],
@@ -2265,8 +2263,6 @@ async function buildSeguroWorkbook(
         { chave: "proposta", titulo: "Proposta", formato: "texto" },
         { chave: "promotor", titulo: "Promotor", formato: "texto" },
         { chave: "premio", titulo: "Prêmio", formato: "moeda" },
-        { chave: "comissao_empresa", titulo: "Comissão empresa", formato: "moeda" },
-        { chave: "comissao_promotor", titulo: "Comissão promotor", formato: "moeda" },
         { chave: "tem_seguro", titulo: "Tem seguro", formato: "texto", alinhamento: "centro" },
       ],
       linhas: ds.porContrato,
@@ -2290,25 +2286,20 @@ async function buildSeguroPdf(
       );
       addPdfMetrics(doc, "Resumo", [
         {
-          label: "Comissão de seguro · promotores",
-          value: formatCurrency(ds.totPromotor.comissao_seguro),
-          detail: "Σ insurance_commission_value do PMR (share repassado ao promotor).",
-        },
-        {
-          label: "Comissão de seguro · empresas",
-          value: formatCurrency(ds.totEmpresa.comissao_seguro),
-          detail: "Σ valor_seguro do fechamento mensal por empresa.",
+          label: "Comissão de seguro (empresa)",
+          value: formatCurrency(ds.seguroEmpresaTotal),
+          detail: "Ganho do grupo — aberto §188 (daily); fechado fechamento mensal.",
         },
       ]);
 
       const promLines = ds.porPromotor.map(
         (r) =>
-          `${padE(r.promotor, 30)} ${padE(r.cnpj, 18)} ${padS(formatCurrency(r.comissao_seguro), 16)} ${padS(formatPercent(r.penetracao * 100), 9)} ${padS(formatCurrency(r.producao_segurada), 16)}`
+          `${padE(r.promotor, 34)} ${padE(r.cnpj, 18)} ${padS(formatPercent(r.penetracao * 100), 10)} ${padS(formatCurrency(r.producao_segurada), 18)}`
       );
       promLines.push(
-        `${padE("TOTAL", 30)} ${padE("", 18)} ${padS(formatCurrency(ds.totPromotor.comissao_seguro), 16)} ${padS("", 9)} ${padS(formatCurrency(ds.totPromotor.producao_segurada), 16)}`
+        `${padE("TOTAL", 34)} ${padE("", 18)} ${padS("", 10)} ${padS(formatCurrency(ds.totPromotor.producao_segurada), 18)}`
       );
-      addPdfLines(doc, "Por promotor", promLines, "Sem promotores com seguro nesta competência.");
+      addPdfLines(doc, "Por promotor (penetração / produção segurada)", promLines, "Sem promotores com seguro nesta competência.");
 
       const empLines = ds.porEmpresa.map(
         (r) => `${padE(r.empresa, 34)} ${padE(r.cnpj, 18)} ${padS(formatCurrency(r.comissao_seguro), 16)}`
