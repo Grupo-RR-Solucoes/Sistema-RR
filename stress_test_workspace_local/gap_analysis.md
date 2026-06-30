@@ -1055,3 +1055,18 @@ Após CP4 (commit 2b4b575) o universo foi reduzido a 181 contratos UNCLASSIFIED 
 - `scratch/fase_4_5/bug_outros_4_contratos.md` — CP4 bug_outros (variante HD3)
 - `scratch/fase_4_5/zona_cinza_consolidado.md` + `zona_cinza_dump.json` — A3 zona cinza esgotada
 - `scratch/fase_4_5/PR2023_134_estorno.md` — Etapa C HD13 (PR2023/134 estorno cancelamento)
+
+---
+
+## Nota técnica — Dualidade da Chave MASTER (ref. bug do PR #27)
+
+**Data:** 2026-06-30
+**Origem:** PR #27 (`fix/migracao-master-bucket`) — aba Migração retornava "Nenhuma proposta encontrada" para chave master.
+**Tipo:** Mapeamento de dados / referência futura (não altera código).
+
+A Chave MASTER tem **DOIS registros distintos conforme o caminho**:
+
+- **Diário (`daily_production_records`):** propostas da master entram com `assigned_promoter_id = NULL` e `promoter_source = MASTER_REASSIGNED`. São o **"balde"** a redistribuir. O KPI do grupo conta via `unassignedProduction` (`!assigned_promoter_id`). A aba Migração lista esse balde quando `is_master` + `masterUnassigned` (rota `/api/promotores`).
+- **cms (`cms_promoter_entries`):** a master guarda `promoter_id = master.id`. Caminho do **mês fechado** (ground truth do cms).
+
+**Invariante:** qualquer alteração na aba Migração, no import diário ou no roteamento de master deve respeitar essa dualidade. **Match exato por `assigned_promoter_id` NUNCA casa para master no diário** (é NULL) — foi exatamente a causa do bug do PR #27.

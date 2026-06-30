@@ -736,7 +736,7 @@ export async function loadPromoterAnalyticsBase(
 export function selectPromoterView(
   base: Awaited<ReturnType<typeof loadPromoterAnalyticsBase>>,
   promoterId?: string,
-  options?: { masterUnassigned?: boolean }
+  options?: { masterUnassigned?: boolean; allUnassigned?: boolean }
 ): PromoterAnalyticsPayload {
   const {
     periods,
@@ -822,13 +822,22 @@ export function selectPromoterView(
   const selectedPromoter = promoterById.get(selectedPromoterId) || null;
   const showMasterBucket =
     options?.masterUnassigned === true && selectedPromoter?.is_master === true;
+  // AJUSTE 1 — modo agregado "todas as não atribuídas" (link do Dashboard,
+  // ?unassigned=1): SEM promotor selecionado, lista TODO o balde pendente
+  // (!assigned_promoter_id) no escopo da empresa atual (recordsForPeriod já
+  // vem restrito por companyId). Só vale enquanto NENHUM promotor está
+  // selecionado; ao escolher um real/master, volta ao comportamento normal
+  // (match exato / PR #27).
+  const showAllUnassigned =
+    options?.allUnassigned === true && !selectedPromoterId;
+  const showBucket = showMasterBucket || showAllUnassigned;
 
   const matchesProposalScope = (record: ProductionRow) =>
-    showMasterBucket
+    showBucket
       ? !record.assigned_promoter_id
       : record.assigned_promoter_id === selectedPromoterId;
 
-  const proposalRows = selectedPromoterId
+  const proposalRows = selectedPromoterId || showAllUnassigned
     ? recordsForPeriod
         .filter(
           (record) =>
@@ -968,11 +977,15 @@ export async function buildPromoterAnalytics(
     // não atribuído (assigned_promoter_id NULL) p/ redistribuir. Default off =>
     // todos os demais chamadores ficam idênticos (match exato por promoter_id).
     masterUnassigned?: boolean;
+    // Modo agregado da Migração: lista todo o balde não atribuído sem promotor
+    // selecionado (link do Dashboard). Default off => demais chamadores intactos.
+    allUnassigned?: boolean;
   }
 ): Promise<PromoterAnalyticsPayload> {
   const base = await loadPromoterAnalyticsBase(supabase, filters);
   return selectPromoterView(base, filters?.promoterId, {
     masterUnassigned: filters?.masterUnassigned,
+    allUnassigned: filters?.allUnassigned,
   });
 }
 

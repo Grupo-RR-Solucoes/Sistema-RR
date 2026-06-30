@@ -115,7 +115,7 @@ function Header({ data }: { data: Payload | null }) {
       {data && data.producaoNaoAtribuidaCount > 0 ? (
         <>
           <br />
-          <Link className="pending" href="/promotores?tab=migracao">
+          <Link className="pending" href="/promotores?tab=migracao&unassigned=1">
             {brl0(data.producaoNaoAtribuida)} em {data.producaoNaoAtribuidaCount} proposta
             {data.producaoNaoAtribuidaCount > 1 ? "s" : ""} aguardando atribuição →
           </Link>

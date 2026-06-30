@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useUser } from "../../lib/auth/useUser";
 import PromotorView from "./PromotorView";
 import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
@@ -208,6 +208,13 @@ function PromotoresFullPage() {
   const [proposalTargets, setProposalTargets] = useState<Record<string, string>>({});
   const [proposalReasons, setProposalReasons] = useState<Record<string, string>>({});
   const [movingProposalId, setMovingProposalId] = useState("");
+  // AJUSTE 1 — modo agregado "todas as não atribuídas": acionado pelo link do
+  // Dashboard (?unassigned=1). Guardamos o "pedido" e derivamos o modo efetivo
+  // gateado na aba migração, p/ Detalhamento/Resumo nunca verem o balde. Ao
+  // SAIR da Migração o pedido é limpo (reentrada só pelo link).
+  const [unassignedRequested, setUnassignedRequested] = useState(false);
+  const unassignedMode = unassignedRequested && activeSection === "migracao";
+  const prevSectionRef = useRef<typeof activeSection>("resumo");
   // Aba "Metas & escala" (Fase 2 p2: editor em lote migrado da /metas — reusa
   // /api/metas verbatim; a escala grava em promoter_goal_repasse, onde o motor lê).
   const [metasRows, setMetasRows] = useState<MetaRow[]>([]);
@@ -240,10 +247,12 @@ function PromotoresFullPage() {
   // não atribuída no Dashboard). Aceita as chaves de seção válidas.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const tab = new URLSearchParams(window.location.search).get("tab");
+    const sp = new URLSearchParams(window.location.search);
+    const tab = sp.get("tab");
     if (tab === "resumo" || tab === "metas" || tab === "descontos" || tab === "detalhamento" || tab === "migracao") {
       setActiveSection(tab);
     }
+    if (sp.get("unassigned") === "1") setUnassignedRequested(true);
   }, []);
 
   useEffect(() => {
@@ -268,6 +277,10 @@ function PromotoresFullPage() {
           params.set("promoterId", promoterId);
         }
 
+        if (unassignedMode) {
+          params.set("unassigned", "1");
+        }
+
         const response = await fetch(
           `/api/promotores${params.toString() ? `?${params.toString()}` : ""}`
         );
@@ -286,7 +299,7 @@ function PromotoresFullPage() {
     }
 
     load();
-  }, [selectedKey, companyId, promoterId, reloadKey]);
+  }, [selectedKey, companyId, promoterId, reloadKey, unassignedMode]);
 
   // DEFAULT de competência = último mês FECHADO. Heurística de data: o mês
   // corrente do calendário está aberto (em produção), então escolhemos o
@@ -299,6 +312,17 @@ function PromotoresFullPage() {
     const now = new Date();
     const cy = now.getFullYear();
     const cm = now.getMonth() + 1;
+    // AJUSTE 2 — aba Migração = redistribuição AO VIVO: no LOAD INICIAL já
+    // entrando na Migração (link do Dashboard / ?tab=migracao), default no mês
+    // VIGENTE (aberto), não no último fechado. Demais abas seguem a heurística
+    // de último mês fechado abaixo (números consolidados). O clique na aba
+    // depois do load é tratado no efeito de transição de seção.
+    if (activeSection === "migracao") {
+      const current = data.periods.find((p) => p.year === cy && p.month === cm);
+      const target = current?.key || data.selectedPeriod.key;
+      if (target) setSelectedKey(target);
+      return;
+    }
     const closed = data.periods.filter(
       (p) => p.year < cy || (p.year === cy && p.month < cm)
     );
@@ -313,7 +337,41 @@ function PromotoresFullPage() {
     if (target) {
       setSelectedKey(target);
     }
-  }, [data.periods, data.selectedPeriod.key, selectedKey]);
+  }, [data.periods, data.selectedPeriod.key, selectedKey, activeSection]);
+
+  // Transição de seção: dispara só na ENTRADA/SAÍDA da Migração (via ref de
+  // seção anterior), nunca em mudanças de período/promotor — assim não bloqueia
+  // a navegação manual de meses depois de entrar, nem cria loop com o default.
+  useEffect(() => {
+    const prev = prevSectionRef.current;
+    const entering = prev !== "migracao" && activeSection === "migracao";
+    const leaving = prev === "migracao" && activeSection !== "migracao";
+    prevSectionRef.current = activeSection;
+
+    if (leaving) {
+      // AJUSTE 1(b) — sair da Migração desliga o modo agregado; Detalhamento/
+      // Resumo nunca mostram a contagem do balde. Reentrada só pelo link.
+      setUnassignedRequested(false);
+      return;
+    }
+    if (!entering || data.periods.length === 0) return;
+
+    // AJUSTE 2 — ao CLICAR na aba Migração com a competência em mês FECHADO,
+    // pula para o mês VIGENTE (se houver período com dados; senão mantém).
+    // Só na transição de entrada → não refaz em troca manual de mês.
+    const now = new Date();
+    const cy = now.getFullYear();
+    const cm = now.getMonth() + 1;
+    const sel = selectedKey || data.selectedPeriod.key;
+    if (!sel) return;
+    const [sy, smo] = sel.split("-").map(Number);
+    const isClosedMonth = sy < cy || (sy === cy && smo < cm);
+    if (!isClosedMonth) return;
+    const current = data.periods.find((p) => p.year === cy && p.month === cm);
+    if (current && current.key !== selectedKey) {
+      setSelectedKey(current.key);
+    }
+  }, [activeSection, data.periods, data.selectedPeriod.key, selectedKey]);
 
   useEffect(() => {
     if (!promoterId && data.selectedPromoterId) {
@@ -1604,10 +1662,14 @@ function PromotoresFullPage() {
               </div>
               {loading ? (
                 <div className="state">Carregando propostas…</div>
-              ) : !promoterId ? (
+              ) : !promoterId && !unassignedMode ? (
                 <div className="state">Selecione um promotor para detalhar as propostas.</div>
               ) : data.proposalRows.length === 0 ? (
-                <div className="state">Nenhuma proposta encontrada para este promotor.</div>
+                <div className="state">
+                  {unassignedMode && !promoterId
+                    ? "Nenhuma proposta aguardando atribuição nesta competência."
+                    : "Nenhuma proposta encontrada para este promotor."}
+                </div>
               ) : (
                 <div className="scroll">
                   <table>

@@ -128,6 +128,9 @@ export async function GET(req: Request) {
       // ainda está sem promotor (assigned_promoter_id NULL) p/ redistribuir.
       // Só atua no mês ABERTO — no fechado a rota retorna cmsRows antes (abaixo).
       masterUnassigned: true,
+      // Modo agregado: link "aguardando atribuição" do Dashboard chega com
+      // ?unassigned=1 → lista todo o balde pendente sem promotor selecionado.
+      allUnassigned: searchParams.get("unassigned") === "1",
     });
 
     // FRENTE 2 — mes FECHADO: detalhe vem do cms (ground truth), nao do diario.
