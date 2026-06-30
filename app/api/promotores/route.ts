@@ -124,6 +124,10 @@ export async function GET(req: Request) {
       companyId: searchParams.get("companyId") || undefined,
       promoterId: effectivePromoterId,
       closed,
+      // Master é balde temporário: ao selecioná-la na aba Migração, listar o que
+      // ainda está sem promotor (assigned_promoter_id NULL) p/ redistribuir.
+      // Só atua no mês ABERTO — no fechado a rota retorna cmsRows antes (abaixo).
+      masterUnassigned: true,
     });
 
     // FRENTE 2 — mes FECHADO: detalhe vem do cms (ground truth), nao do diario.

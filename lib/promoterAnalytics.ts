@@ -25,6 +25,7 @@ type PromoterRow = {
   name: string;
   status?: string | null;
   active?: boolean | null;
+  is_master?: boolean | null;
 };
 
 type JKeyRow = {
@@ -458,7 +459,7 @@ export async function loadPromoterAnalyticsBase(
       fetchAllRows<PromoterRow>(() => {
         let query = supabase
           .from("promoters")
-          .select("id, company_id, name, status, active")
+          .select("id, company_id, name, status, active, is_master")
           .order("name", { ascending: true });
 
         if (companyId) {
@@ -734,7 +735,8 @@ export async function loadPromoterAnalyticsBase(
 // summary), pra que cada relatorio do lote seja bit-a-bit igual ao individual.
 export function selectPromoterView(
   base: Awaited<ReturnType<typeof loadPromoterAnalyticsBase>>,
-  promoterId?: string
+  promoterId?: string,
+  options?: { masterUnassigned?: boolean }
 ): PromoterAnalyticsPayload {
   const {
     periods,
@@ -805,12 +807,32 @@ export function selectPromoterView(
     }))
     .sort((a, b) => b.amount - a.amount);
 
+  // Chave MASTER = balde temporário: as propostas digitadas nela entram em
+  // daily_production_records com assigned_promoter_id = NULL (o import marca
+  // promoter_source = MASTER_REASSIGNED e só preenche o id quando a Chave J é
+  // INDIVIDUAL — ver app/api/import/daily/route.ts). O match exato
+  // (assigned_promoter_id === id) nunca casa p/ master, por isso a aba Migração
+  // vinha vazia justo em quem MAIS precisa redistribuir. Quando o chamador pede
+  // (masterUnassigned) e o selecionado é is_master, lista o balde NÃO atribuído.
+  // O escopo de empresa segue o filtro da tela: recordsForPeriod já vem
+  // restrito por companyId quando há empresa selecionada (loadPromoterAnalyticsBase),
+  // então NÃO filtramos por empresa aqui — com "todas" mostra todo o pendente,
+  // sem esconder propostas de outra empresa. Promotor real: match exato de
+  // sempre, intacto.
+  const selectedPromoter = promoterById.get(selectedPromoterId) || null;
+  const showMasterBucket =
+    options?.masterUnassigned === true && selectedPromoter?.is_master === true;
+
+  const matchesProposalScope = (record: ProductionRow) =>
+    showMasterBucket
+      ? !record.assigned_promoter_id
+      : record.assigned_promoter_id === selectedPromoterId;
+
   const proposalRows = selectedPromoterId
     ? recordsForPeriod
         .filter(
           (record) =>
-            record.assigned_promoter_id === selectedPromoterId &&
-            isEligibleProductionRecord(record)
+            matchesProposalScope(record) && isEligibleProductionRecord(record)
         )
         .map((record) => {
           // CORREÇÃO A — usar produção CONSOLIDADA do grupo, nao por CNPJ.
@@ -942,9 +964,15 @@ export async function buildPromoterAnalytics(
     companyId?: string;
     promoterId?: string;
     closed?: boolean; // ver loadPromoterAnalyticsBase: aberto(false)=LIVE_BASE, fechado/indef=CALCULATED
+    // Aba Migração: quando o selecionado é is_master, proposalRows lista o balde
+    // não atribuído (assigned_promoter_id NULL) p/ redistribuir. Default off =>
+    // todos os demais chamadores ficam idênticos (match exato por promoter_id).
+    masterUnassigned?: boolean;
   }
 ): Promise<PromoterAnalyticsPayload> {
   const base = await loadPromoterAnalyticsBase(supabase, filters);
-  return selectPromoterView(base, filters?.promoterId);
+  return selectPromoterView(base, filters?.promoterId, {
+    masterUnassigned: filters?.masterUnassigned,
+  });
 }
 
