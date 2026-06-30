@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { detectClosedMonth } from "@/lib/cmsMonthly";
+import {
+  fetchInsuranceSlipTiers,
+  lookupInsuranceShareFromPenetration,
+} from "@/lib/insuranceCalculator";
 import { loadPromoterAnalyticsBase } from "@/lib/promoterAnalytics";
 import { fetchAllRows } from "@/lib/queryHelpers";
 
@@ -146,11 +150,15 @@ export type ProjecaoPromotor = {
   tendencia: Tendencia;
   tendencia_percent: number | null; // ratio de variacao vs media 3m
   semaforo: Semaforo;
-  // ---- Seguro (DB-driven: insurance_commission_value/amount ja em
-  // filteredSummaryRows; fechado=PMR, aberto=Σ por registro recortado por
-  // refDate, MESMOS registros elegiveis da producao). SEM meta/semaforo.
+  // ---- Seguro EMPRESA (ganho do grupo, §188): aberto=Σ daily por registro;
+  // fechado=0 (sem empresa por-promotor no fechado — o GRUPO usa fechamento_mensal_
+  // empresa.valor_seguro na rota). Alimenta o KPI de grupo da EquipeView.
   seguro_comissao_acumulada: number;
   seguro_comissao_projecao: number;
+  // ---- Seguro SHARE do promotor (repasse): fechado=PMR.insurance_commission_value;
+  // aberto=empresa(§188) × share_scale(penetracao). Alimenta a PromotorView.
+  seguro_share_acumulada: number;
+  seguro_share_projecao: number;
   seguro_penetracao: number | null; // fracao 0-1, ATUAL (nao projetada); null = sem base
 };
 
@@ -206,12 +214,14 @@ export async function buildProjecaoMetas(
         return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
       })();
 
-  const [base, closed, allPmr] = await Promise.all([
+  const [base, closed, allPmr, shareTiers] = await Promise.all([
     loadPromoterAnalyticsBase(supabase, { year, month, companyId: input.companyId }),
     detectClosedMonth(supabase, year, month).catch(() => false),
     fetchAllRows<{ promoter_id: string; year: number; month: number; production_value: number }>(
       () => supabase.from("promoter_monthly_results").select("promoter_id, year, month, production_value")
     ),
+    // Scale SEGURO_SLIP_MAIO_2026 — share do promotor sobre a comissao-empresa.
+    fetchInsuranceSlipTiers(supabase),
   ]);
 
   const { start, end, total, holidays } = productionBusinessWindow(year, month);
@@ -325,17 +335,6 @@ export async function buildProjecaoMetas(
         ? (acumulada / diasDecorridos) * total
         : 0;
 
-    // Seguro: fechado=insurance_commission_value do PMR (ja em summaryRows);
-    // aberto=Σ por registro recortado por refKey (acumSeguroPorPromotor).
-    const seguroAcum = closed
-      ? toNumber(row.insurance_commission_value)
-      : toNumber(acumSeguroPorPromotor.get(row.promoter_id));
-    // MESMA formula de ritmo linear da producao.
-    const seguroProj = periodoCompleto
-      ? seguroAcum
-      : diasDecorridos > 0
-        ? (seguroAcum / diasDecorridos) * total
-        : 0;
     // Penetracao ATUAL (fracao 0-1), NAO projetada. insurance_penetration_percent
     // ja vem pronto em summaryRows (fechado=PMR, aberto=insuredGross/gross).
     // Sem base de producao => sem penetracao (null).
@@ -343,6 +342,27 @@ export async function buildProjecaoMetas(
       acumulada > 0 || toNumber(row.production_value) > 0
         ? toNumber(row.insurance_penetration_percent) / 100
         : null;
+
+    // EMPRESA (§188): aberto=Σ daily por registro (acumSeguroPorPromotor); fechado=0
+    // (acumSeguroPorPromotor so e populado no aberto). O total-empresa do GRUPO no
+    // fechado vem de fechamento_mensal_empresa.valor_seguro na rota, nao da soma aqui.
+    const seguroEmpresaAcum = toNumber(acumSeguroPorPromotor.get(row.promoter_id));
+    const seguroEmpresaProj = periodoCompleto
+      ? seguroEmpresaAcum
+      : diasDecorridos > 0
+        ? (seguroEmpresaAcum / diasDecorridos) * total
+        : 0;
+
+    // SHARE do promotor (repasse): fechado=PMR (share gravado); aberto=empresa(§188)
+    // × share_scale(penetracao) — MESMA logica do motor (validado: reproduz o PMR).
+    const seguroShareAcum = closed
+      ? toNumber(row.insurance_commission_value)
+      : seguroEmpresaAcum * lookupInsuranceShareFromPenetration(shareTiers, seguroPenetracao ?? 0);
+    const seguroShareProj = periodoCompleto
+      ? seguroShareAcum
+      : diasDecorridos > 0
+        ? (seguroShareAcum / diasDecorridos) * total
+        : 0;
 
     const meta = toNumber(row.target_value);
     const percent = meta > 0 ? projecao / meta : null;
@@ -374,8 +394,10 @@ export async function buildProjecaoMetas(
       tendencia,
       tendencia_percent: tendenciaPercent,
       semaforo: semaforoFromPercent(percent),
-      seguro_comissao_acumulada: seguroAcum,
-      seguro_comissao_projecao: seguroProj,
+      seguro_comissao_acumulada: seguroEmpresaAcum,
+      seguro_comissao_projecao: seguroEmpresaProj,
+      seguro_share_acumulada: seguroShareAcum,
+      seguro_share_projecao: seguroShareProj,
       seguro_penetracao: seguroPenetracao,
     };
   });

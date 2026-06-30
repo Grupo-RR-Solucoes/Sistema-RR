@@ -69,6 +69,25 @@ export async function GET(req: Request) {
       .select("id, name, cnpj")
       .order("name", { ascending: true });
 
+    const consolidado = consolidarGrupoEquipe(res);
+    // TOTAL de comissao-EMPRESA de seguro do GRUPO (KPI da EquipeView):
+    //   ABERTO = Σ §188 por promotor (consolidado.seguro_comissao_acumulada);
+    //   FECHADO = fechamento_mensal_empresa.valor_seguro (mesma fonte do dashboard/
+    //   financeiro — nao existe empresa por-promotor no fechado).
+    let seguroComissaoGrupoEmpresa = consolidado.seguro_comissao_acumulada;
+    if (res.fechado) {
+      const { data: fechSeguro } = await supabase
+        .from("fechamento_mensal_empresa")
+        .select("valor_seguro")
+        .eq("ano", year)
+        .eq("mes", month);
+      const soma = (fechSeguro || []).reduce(
+        (sum, r) => sum + (Number((r as { valor_seguro?: number | null }).valor_seguro ?? 0) || 0),
+        0
+      );
+      seguroComissaoGrupoEmpresa = Math.round(soma * 100) / 100;
+    }
+
     return Response.json({
       scope: "equipe",
       year,
@@ -78,7 +97,8 @@ export async function GET(req: Request) {
       janela: res.janela,
       selectedCompanyId: companyId || "",
       companies: companies || [],
-      consolidado: consolidarGrupoEquipe(res),
+      consolidado,
+      seguro_comissao_grupo_empresa: seguroComissaoGrupoEmpresa,
       grupos: agruparPorCnpj(res),
       risco: promotoresEmRisco(res),
       total_promotores: res.promotores.length,

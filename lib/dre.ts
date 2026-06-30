@@ -285,7 +285,8 @@ export async function buildDre(
   // ---- COMISSÕES PAGAS: Σ payable_commission_value dos ATIVOS por CNPJ ----
   // Mesma base/eixo do relatório geral/equipe (mês fechado => promoter_monthly_results
   // do cms; respeita a regra cms/motor por construção).
-  const base = await loadPromoterAnalyticsBase(supabase, { year: selected.year, month: selected.month });
+  // DRE só monta para mês FECHADO (guard `if (!closed) return` acima) → CALCULATED (PMR/cms).
+  const base = await loadPromoterAnalyticsBase(supabase, { year: selected.year, month: selected.month, closed: true });
   if (base.latestPeriod.year !== selected.year || base.latestPeriod.month !== selected.month) {
     alerts.push(
       `Sem produção de promotores em ${selected.label} na base analítica — comissões exibidas como 0.`

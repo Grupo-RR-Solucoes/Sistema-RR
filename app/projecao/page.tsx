@@ -45,8 +45,10 @@ type Promotor = {
   tendencia: Tendencia;
   tendencia_percent: number | null;
   semaforo: Semaforo;
-  seguro_comissao_acumulada: number;
+  seguro_comissao_acumulada: number; // EMPRESA (§188) — usado no consolidado do grupo
   seguro_comissao_projecao: number;
+  seguro_share_acumulada: number; // SHARE do promotor — PromotorView
+  seguro_share_projecao: number;
   seguro_penetracao: number | null;
 };
 type NaoAtribuido = { acumulada: number; projecao: number; count: number };
@@ -383,16 +385,16 @@ function EquipeView({ data }: { data: any }) {
             { label: "% projetado do grupo", value: pctTxt(cons.percent_projetado), sub: <Chip s={cons.semaforo} onNavy /> },
           ]}
         />
-        {/* Seguro (DB-driven). Faixa separada p/ nao apertar os 4 de producao.
-            EquipeView mostra ACUMULADO (proj fica no payload, usado no promotor).
-            Penetracao = card proprio (atual, ponderada); SEM meta/semaforo. */}
+        {/* Seguro (DB-driven). KPI do GRUPO = comissão-EMPRESA (aberto §188; fechado
+            fechamento.valor_seguro), MESMA fonte do dashboard/financeiro. Penetracao =
+            card proprio (atual, ponderada); SEM meta/semaforo. */}
         <KpiBand
           valueSize={24}
           columns={2}
           items={[
             {
-              label: "Comissão seguro acum.",
-              value: brl(cons.seguro_comissao_acumulada),
+              label: "Comissão seguro (empresa)",
+              value: brl(data.seguro_comissao_grupo_empresa),
             },
             {
               label: "Penetração seguro",
@@ -645,12 +647,14 @@ function PromotorView({ data }: { data: any }) {
             { label: "Dias úteis", value: `${p.dias_uteis_decorridos} / ${p.dias_uteis_totais}`, sub: data.fechado ? "competência fechada" : "janela aberta" },
           ]}
         />
-        {/* Seguro do PROPRIO promotor (route ja filtra: p = so o dele). SEM meta. */}
+        {/* Seguro do PROPRIO promotor (route ja filtra: p = so o dele). SEM meta.
+            Mostra o SHARE dele (repasse), nao a comissao-empresa: aberto = empresa
+            × share_scale(penetracao); fechado = PMR (share gravado). */}
         <KpiBand
           valueSize={24}
           columns={2}
           items={[
-            { label: "Comissão seguro proj.", value: brl(p.seguro_comissao_projecao), sub: "estimativa de fechamento", accent: true },
+            { label: "Comissão seguro proj.", value: brl(p.seguro_share_projecao), sub: "seu repasse · estimativa de fechamento", accent: true },
             { label: "Penetração seg.", value: pctTxt(p.seguro_penetracao), sub: "atual (não projetada)" },
           ]}
         />
