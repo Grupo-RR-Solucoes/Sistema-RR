@@ -113,6 +113,30 @@ export async function requireSocioOrFuncionario(): Promise<{
   return { session, role };
 }
 
+/**
+ * Garante que ha sessao autenticada E role in {'supervisor','gerente_regional'}.
+ *
+ * Retorna `{ session, role }` quando OK.
+ * Lanca ApiGuardError(401) se nao logado, (403) para socio/funcionario/promotor.
+ *
+ * Use nos handlers da visao do gestor (F4): /api/equipe/*. A visao de dados do
+ * gestor e restrita — produção do time SEM comissão, via vw_team_production
+ * (F3). socio/funcionario tem as telas completas; promotor tem a propria.
+ */
+export async function requireGestor(): Promise<{
+  session: AuthSession;
+  role: "supervisor" | "gerente_regional";
+}> {
+  const { session, role } = await requireAuthenticated();
+  if (role !== "supervisor" && role !== "gerente_regional") {
+    throw new ApiGuardError(
+      403,
+      "Acesso restrito a gestores (supervisor/gerente regional)"
+    );
+  }
+  return { session, role };
+}
+
 // ============================================================
 // Composicoes guard + client (Dia 4.2)
 // ============================================================
@@ -157,5 +181,17 @@ export async function withSocioAdmin() {
 export async function withSocioOrFuncionarioAdmin() {
   const user = await requireSocioOrFuncionario();
   const supabase = getSupabaseAdmin();
+  return { user, supabase };
+}
+
+/**
+ * Guard de gestor + client ANON autenticado (Escola B: RLS + auth.uid()).
+ * A view vw_team_production e a policy de monthly_targets (F3) filtram pela
+ * arvore do gestor via auth.uid() — por isso o client PRECISA ser o anon
+ * autenticado (nao service_role, que teria auth.uid() nulo e devolveria vazio).
+ */
+export async function withGestorAnon() {
+  const user = await requireGestor();
+  const supabase = await createSupabaseServerClient();
   return { user, supabase };
 }
