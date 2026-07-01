@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { detectClosedMonth } from "@/lib/cmsMonthly";
+import { todayInFortaleza } from "@/lib/dateFortaleza";
 import {
   fetchInsuranceSlipTiers,
   lookupInsuranceShareFromPenetration,
@@ -207,12 +208,13 @@ export async function buildProjecaoMetas(
   input: { year: number; month: number; companyId?: string; referenceDate?: Date }
 ): Promise<ProjecaoResultado> {
   const { year, month } = input;
+  // "Hoje" (refDate) no fuso America/Fortaleza por padrão, NÃO UTC: driva refKey
+  // (recorte do acumulado) e diasDecorridos (a contagem "N/total"). Em UTC, às
+  // 21h BRT o dia já virava o seguinte e contava 1 dia útil a mais. Chamador
+  // pode sobrescrever via input.referenceDate (mantido).
   const refDate = input.referenceDate
     ? new Date(Date.UTC(input.referenceDate.getUTCFullYear(), input.referenceDate.getUTCMonth(), input.referenceDate.getUTCDate()))
-    : (() => {
-        const now = new Date();
-        return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-      })();
+    : todayInFortaleza();
 
   const [base, closed, allPmr, shareTiers] = await Promise.all([
     loadPromoterAnalyticsBase(supabase, { year, month, companyId: input.companyId }),
