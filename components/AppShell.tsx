@@ -157,6 +157,16 @@ const navGroups: NavGroup[] = [
       { href: "/admin/equipes", label: "Equipes", icon: "network", visibleTo: ["socio", "funcionario"] },
     ],
   },
+  {
+    // Visão restrita do gestor (F4): supervisor/gerente_regional só enxergam
+    // este grupo. Itens sensíveis (Dashboard, Financeiro, Auditoria, Projeção,
+    // Promotores) NÃO incluem os roles de gestão no visibleTo.
+    id: "gestao",
+    label: "Gestão",
+    items: [
+      { href: "/equipe", label: "Minha Equipe", icon: "users", visibleTo: ["supervisor", "gerente_regional"] },
+    ],
+  },
 ];
 
 const SIDEBAR_STORAGE_KEY = "rr-shell-sidebar-collapsed";

@@ -34,6 +34,8 @@ export const RRADMIN_CSS = `
 .rradmin .role .d.socio{background:var(--blue);}
 .rradmin .role .d.func{background:var(--gold);}
 .rradmin .role .d.prom{background:var(--green);}
+.rradmin .role .d.sup{background:#1E3066;}
+.rradmin .role .d.ger{background:#7C3AED;}
 
 .rradmin .rules{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:0 4px;margin:-2px 0;}
 .rradmin .rules .rlab{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);}
@@ -90,6 +92,12 @@ export const RRADMIN_CSS = `
 .rradmin .rolechip.func .d{background:var(--gold);}
 .rradmin .rolechip.prom{color:var(--green-tx);background:var(--green-bg);border-color:var(--green-bd);}
 .rradmin .rolechip.prom .d{background:var(--green);}
+/* F4: cor própria dos roles de gestão — supervisor (navy) e gerente (violeta),
+   distintos entre si e de socio/func/promotor. */
+.rradmin .rolechip.sup{color:#1E3066;background:#E7EAF3;border-color:#CDD5E6;}
+.rradmin .rolechip.sup .d{background:#1E3066;}
+.rradmin .rolechip.ger{color:#6D28D9;background:#F1EAFB;border-color:#DFCFF6;}
+.rradmin .rolechip.ger .d{background:#7C3AED;}
 
 .rradmin .chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:4px 11px;border-radius:999px;border:1px solid;white-space:nowrap;}
 .rradmin .chip .d{width:6px;height:6px;border-radius:50%;}
@@ -206,7 +214,7 @@ export function roleLabel(role: UserRole): string {
 export function roleClass(role: UserRole): string {
   if (role === "socio") return "socio";
   if (role === "funcionario") return "func";
-  // F1: supervisor/gerente_regional herdam a cor neutra de "prom"; chip próprio
-  // (cor/legenda) chega na F4 junto da visão do gestor.
+  if (role === "supervisor") return "sup";
+  if (role === "gerente_regional") return "ger";
   return "prom";
 }
