@@ -137,7 +137,9 @@ export default function UsuariosList({
     for (const u of users) {
       if (u.role === "socio") socios += 1;
       else if (u.role === "funcionario") funcionarios += 1;
-      else promotores += 1;
+      else if (u.role === "promotor") promotores += 1;
+      // supervisor/gerente_regional (F1): ainda sem card próprio; entram só no
+      // total. Card dedicado de gestores chega na F4.
       if (u.active) ativos += 1;
     }
     return { total: users.length, socios, funcionarios, promotores, ativos, inativos: users.length - ativos };
@@ -209,7 +211,7 @@ export default function UsuariosList({
             items={[
               { label: "Total de usuários", value: kpi.total, sub: `${kpi.ativos} ativos · ${kpi.inativos} inativo${kpi.inativos === 1 ? "" : "s"}`, accent: true },
               { label: "Sócios", value: kpi.socios, sub: "acesso completo" },
-              { label: "Funcionários", value: kpi.funcionarios, sub: "operacional" },
+              { label: "Auxiliares Financeiros", value: kpi.funcionarios, sub: "operacional" },
               { label: "Promotores", value: kpi.promotores, sub: "acesso aos próprios dados" },
             ]}
           />
@@ -273,7 +275,7 @@ export default function UsuariosList({
             </div>
             <div className="leg">
               <span className="lg"><span className="sw" style={{ background: "var(--blue)" }} />Sócio</span>
-              <span className="lg"><span className="sw" style={{ background: "var(--gold)" }} />Funcionário</span>
+              <span className="lg"><span className="sw" style={{ background: "var(--gold)" }} />Auxiliar Financeiro</span>
               <span className="lg"><span className="sw" style={{ background: "var(--green)" }} />Promotor</span>
             </div>
           </div>
@@ -312,7 +314,7 @@ export default function UsuariosList({
                           </div>
                         </td>
                         <td><span className="em">{u.email}</span></td>
-                        <td><span className={`rolechip ${roleClass(u.role)}`}><span className="d" />{u.role.toUpperCase()}</span></td>
+                        <td><span className={`rolechip ${roleClass(u.role)}`}><span className="d" />{roleLabel(u.role).toUpperCase()}</span></td>
                         <td>
                           <span className={`chip ${u.active ? "on" : "off"}`}>
                             <span className="d" />{u.active ? "Ativo" : "Inativo"}

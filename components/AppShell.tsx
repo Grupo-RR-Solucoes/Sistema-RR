@@ -159,8 +159,10 @@ const SIDEBAR_STORAGE_KEY = "rr-shell-sidebar-collapsed";
 
 const ROLE_LABEL: Record<string, string> = {
   socio: "Sócio",
-  funcionario: "Funcionário",
+  funcionario: "Auxiliar Financeiro",
   promotor: "Promotor",
+  supervisor: "Supervisor",
+  gerente_regional: "Gerente Regional",
 };
 
 export default function AppShell({ children }: { children: ReactNode }) {

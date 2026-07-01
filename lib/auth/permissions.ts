@@ -34,7 +34,8 @@ export function canChangeUserRole(actor: AppRole): boolean {
  * Util para popular dropdown de role no modal CreateUsuario.
  */
 export function allowedTargetRoles(actor: AppRole): ManageableRole[] {
-  if (actor === "socio") return ["socio", "funcionario", "promotor"];
+  if (actor === "socio")
+    return ["socio", "funcionario", "promotor", "supervisor", "gerente_regional"];
   if (actor === "funcionario") return ["promotor"];
   return [];
 }

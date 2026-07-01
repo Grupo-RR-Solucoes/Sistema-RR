@@ -14,7 +14,7 @@ interface Props {
   currentUserRole: UserRole;
 }
 
-type Role = "socio" | "funcionario" | "promotor";
+type Role = UserRole;
 
 type CompanyOption = { id: string; name: string; cnpj: string };
 type PromoterOption = { id: string; company_id: string | null; name: string };
@@ -181,12 +181,14 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
                 </div>
                 <div className={`field${roleLocked ? " locked" : ""}`}>
                   <label>Perfil de acesso <span className="req">*</span></label>
-                  <select value={role} onChange={(e) => { const r = e.target.value as Role; setRole(r); if (r === "socio") setCpf(""); }} disabled={submitting || roleLocked}>
+                  <select value={role} onChange={(e) => { const r = e.target.value as Role; setRole(r); if (r !== "funcionario" && r !== "promotor") setCpf(""); }} disabled={submitting || roleLocked}>
                     {targetRoles.includes("socio") ? <option value="socio">Sócio (acesso completo)</option> : null}
-                    {targetRoles.includes("funcionario") ? <option value="funcionario">Funcionário (operacional)</option> : null}
+                    {targetRoles.includes("funcionario") ? <option value="funcionario">Auxiliar Financeiro (operacional)</option> : null}
                     {targetRoles.includes("promotor") ? <option value="promotor">Promotor (acesso aos próprios dados)</option> : null}
+                    {targetRoles.includes("supervisor") ? <option value="supervisor">Supervisor (produção/desempenho da equipe)</option> : null}
+                    {targetRoles.includes("gerente_regional") ? <option value="gerente_regional">Gerente Regional (produção/desempenho da regional)</option> : null}
                   </select>
-                  {roleLocked ? <span className="hint">Como funcionário, você só cadastra promotores.</span> : null}
+                  {roleLocked ? <span className="hint">Como auxiliar financeiro, você só cadastra promotores.</span> : null}
                 </div>
 
                 {role === "funcionario" || role === "promotor" ? (
@@ -234,7 +236,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
                 ) : null}
 
                 {currentUserRole === "socio" ? (
-                  <div className="infobanner"><IcoInfo />Funcionário só cadastra promotores — para ele o perfil fica travado em Promotor.</div>
+                  <div className="infobanner"><IcoInfo />Auxiliar Financeiro só cadastra promotores — para ele o perfil fica travado em Promotor.</div>
                 ) : null}
 
                 {error ? <div className="errbox">{error}</div> : null}

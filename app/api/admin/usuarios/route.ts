@@ -84,9 +84,17 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    if (!role || !["socio", "funcionario", "promotor"].includes(role)) {
+    if (
+      !role ||
+      !["socio", "funcionario", "promotor", "supervisor", "gerente_regional"].includes(
+        role
+      )
+    ) {
       return NextResponse.json(
-        { error: "Role invalido (socio|funcionario|promotor)" },
+        {
+          error:
+            "Role invalido (socio|funcionario|promotor|supervisor|gerente_regional)",
+        },
         { status: 400 }
       );
     }

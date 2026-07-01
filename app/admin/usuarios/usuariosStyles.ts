@@ -1,6 +1,8 @@
 // Redesign (.rradmin): CSS scoped da tela /admin/usuarios, irma de
 // .rrcad/.rrprom/.rredit. Injetado uma vez por UsuariosList; os modais
 // usam className="rradmin" na raiz do overlay para herdar o escopo/tokens.
+import type { UserRole } from "@/lib/auth/types";
+
 export const RRADMIN_CSS = `
 .rradmin{
   --navy:#0F1F4A; --navy-bar:#1E3066;
@@ -193,14 +195,18 @@ export function initials(name?: string | null, email?: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-export function roleLabel(role: "socio" | "funcionario" | "promotor"): string {
+export function roleLabel(role: UserRole): string {
   if (role === "socio") return "Sócio";
-  if (role === "funcionario") return "Funcionário";
+  if (role === "funcionario") return "Auxiliar Financeiro";
+  if (role === "supervisor") return "Supervisor";
+  if (role === "gerente_regional") return "Gerente Regional";
   return "Promotor";
 }
 
-export function roleClass(role: "socio" | "funcionario" | "promotor"): string {
+export function roleClass(role: UserRole): string {
   if (role === "socio") return "socio";
   if (role === "funcionario") return "func";
+  // F1: supervisor/gerente_regional herdam a cor neutra de "prom"; chip próprio
+  // (cor/legenda) chega na F4 junto da visão do gestor.
   return "prom";
 }
