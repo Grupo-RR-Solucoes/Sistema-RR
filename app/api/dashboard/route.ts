@@ -4,7 +4,8 @@ import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import { buildClosingAnalytics } from "@/lib/closingAnalytics";
 import { detectClosedMonth } from "@/lib/cmsMonthly";
 import { calcularRbt12 } from "@/lib/rbt12";
-import { buildProjecaoMetas, consolidarGrupo } from "@/lib/projecaoMetas";
+import { buildProjecaoMetas, consolidarGrupo, consolidarGrupoEquipe } from "@/lib/projecaoMetas";
+import { nowInFortaleza } from "@/lib/dateFortaleza";
 import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { fetchAllRows } from "@/lib/queryHelpers";
@@ -112,9 +113,12 @@ export async function GET() {
   try {
     const { supabase } = await withSocioAnon();
 
-    const now = new Date();
-    const year = now.getUTCFullYear();
-    const month = now.getUTCMonth() + 1;
+    // Competência corrente no fuso America/Fortaleza, NÃO UTC: às 21h BRT o mês
+    // já virava o seguinte em UTC, roteando a competência cedo demais (ex.: 30/06
+    // 21h → julho). Assim, 30/06 resolve para JUNHO. O rótulo do header
+    // ("<mês>/<ano> · produção corrente") deriva de periodoLabel = MES[month-1]/year,
+    // então passa a exibir jun/2026 automaticamente.
+    const { year, month } = nowInFortaleza();
 
     // Regime do mês precisa ser conhecido ANTES do analytics (decide CALCULATED/PMR
     // vs LIVE_BASE/daily). Resolve sequencialmente; o resto segue em paralelo.
@@ -194,15 +198,17 @@ export async function GET() {
       );
     }
 
-    // Atribuído do mês CORRENTE: mês ABERTO usa o daily ao vivo (summaryRows em
-    // LIVE_BASE após o fix), NÃO o PMR snapshot (byMonth) defasado. Mês FECHADO
-    // mantém o PMR/cms (byMonth). Só o ponto/KPI do mês corrente muda; histórico igual.
-    const atribuidoMesCorrente = monthClosed
-      ? toNumber(byMonth.get(month))
-      : promoterAnalytics.summaryRows.reduce(
-          (sum, r) => sum + toNumber(r.production_value),
-          0
-        );
+    // Produção do grupo do mês CORRENTE: mês ABERTO usa a MESMA fonte da tela
+    // Projeção (consolidarGrupoEquipe = atribuído + master, "bate ao centavo com
+    // Produção do grupo"). Ela recorta por vigência + refDate, então dá R$ 0
+    // quando nada foi importado na janela — eliminando o fallback silencioso de
+    // período do buildPromoterAnalytics (summaryRows caía em periods[0] = último
+    // mês com dados e rotulava errado). Mês FECHADO mantém o PMR/cms (byMonth +
+    // master do daily), comportamento inalterado.
+    const consEquipe = consolidarGrupoEquipe(projecaoRes);
+    const producaoGrupoCorrente = monthClosed
+      ? toNumber(byMonth.get(month)) + toNumber(unassignedByMonth.get(month))
+      : toNumber(consEquipe.producao_acumulada);
 
     // total[m] = atribuído (PMR no fechado/histórico; daily-live no corrente aberto)
     // + master não-atribuído (daily).
@@ -213,21 +219,30 @@ export async function GET() {
         mes: MES[m - 1],
         month: m,
         valor: roundMoney(
-          (m === month ? atribuidoMesCorrente : toNumber(byMonth.get(m))) +
-            toNumber(unassignedByMonth.get(m))
+          m === month
+            ? producaoGrupoCorrente
+            : toNumber(byMonth.get(m)) + toNumber(unassignedByMonth.get(m))
         ),
         // mês corrente = parcial (em andamento). Os anteriores são realizados.
         parcial: m === month,
       }));
 
-    // KPI "Produção do grupo · mês" = total do mês corrente (atribuído ao vivo no
-    // aberto + master pendente), coerente com o ponto do gráfico e com o portal.
-    const producaoGrupoMes = roundMoney(
-      atribuidoMesCorrente + toNumber(unassignedByMonth.get(month))
+    // KPI "Produção do grupo · mês" = total do mês corrente (atribuído + master
+    // pendente), coerente com o ponto do gráfico, com o portal e com a tela
+    // Projeção (mesma consolidarGrupoEquipe).
+    const producaoGrupoMes = roundMoney(producaoGrupoCorrente);
+    // Sublink "inclui R$ X em N não atribuídas" = parcela em chave master DENTRO
+    // do total acima (não subtraída). Mês ABERTO: mesma fonte recortada do total
+    // (consEquipe.nao_atribuido), garantindo subconjunto coerente. Mês FECHADO:
+    // daily (o cms já atribuiu, tende a 0).
+    const producaoNaoAtribuida = roundMoney(
+      monthClosed
+        ? toNumber(unassignedByMonth.get(month))
+        : toNumber(consEquipe.nao_atribuido.acumulada)
     );
-    // Aviso discreto: produção (net) ainda em chave master sem promotor.
-    const producaoNaoAtribuida = roundMoney(toNumber(unassignedByMonth.get(month)));
-    const producaoNaoAtribuidaCount = toNumber(unassignedCountByMonth.get(month));
+    const producaoNaoAtribuidaCount = monthClosed
+      ? toNumber(unassignedCountByMonth.get(month))
+      : toNumber(consEquipe.nao_atribuido.count);
 
     // ---- previsão de receita (ESTIMADO) ----
     const s = closingPayload.summary;

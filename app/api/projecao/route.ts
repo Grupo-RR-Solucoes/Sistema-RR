@@ -1,4 +1,5 @@
 import { apiGuardErrorResponse, withAuthenticatedAnon } from "@/lib/auth/guards";
+import { nowInFortaleza } from "@/lib/dateFortaleza";
 import {
   agruparPorCnpj,
   buildProjecaoMetas,
@@ -18,9 +19,12 @@ export async function GET(req: Request) {
     const role = user.session.appUser.role;
 
     const { searchParams } = new URL(req.url);
-    const now = new Date();
-    const year = Number(searchParams.get("year") || 0) || now.getUTCFullYear();
-    const month = Number(searchParams.get("month") || 0) || now.getUTCMonth() + 1;
+    // Competência corrente no fuso America/Fortaleza, NÃO UTC (mesma base do
+    // Dashboard) — senão às 21h BRT a Projeção pularia para o mês seguinte e
+    // divergiria do Dashboard. searchParams continua podendo sobrescrever.
+    const hoje = nowInFortaleza();
+    const year = Number(searchParams.get("year") || 0) || hoje.year;
+    const month = Number(searchParams.get("month") || 0) || hoje.month;
     // Promotor nao filtra por empresa (so ve a si mesmo).
     const companyId =
       role === "promotor" ? undefined : searchParams.get("companyId") || undefined;
