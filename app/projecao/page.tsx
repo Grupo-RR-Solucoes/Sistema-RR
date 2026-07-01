@@ -372,7 +372,7 @@ function EquipeView({ data }: { data: any }) {
                 <>
                   {jan ? `${jan.dias_uteis_decorridos} de ${jan.dias_uteis_totais} dias úteis` : ""}
                   {cons.nao_atribuido && cons.nao_atribuido.count > 0 ? (
-                    <Link className="pend" href="/promotores?tab=migracao">
+                    <Link className="pend" href="/promotores?tab=migracao&unassigned=1">
                       inclui {brl(cons.nao_atribuido.acumulada)} em {cons.nao_atribuido.count} não atribuída
                       {cons.nao_atribuido.count > 1 ? "s" : ""} →
                     </Link>

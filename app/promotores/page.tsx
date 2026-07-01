@@ -374,10 +374,14 @@ function PromotoresFullPage() {
   }, [activeSection, data.periods, data.selectedPeriod.key, selectedKey]);
 
   useEffect(() => {
+    // No modo agregado (balde) o promotor DEVE ficar vazio p/ showAllUnassigned
+    // valer; não readotar o data.selectedPromoterId stale, senão o clique do
+    // botão #3 (ou do link) não mostra o balde.
+    if (unassignedMode) return;
     if (!promoterId && data.selectedPromoterId) {
       setPromoterId(data.selectedPromoterId);
     }
-  }, [data.selectedPromoterId, promoterId]);
+  }, [data.selectedPromoterId, promoterId, unassignedMode]);
 
   useEffect(() => {
     const selectedSummary = data.summaryRows.find((row) => row.promoter_id === promoterId);
@@ -853,7 +857,16 @@ function PromotoresFullPage() {
                     <button
                       type="button"
                       className="pend"
-                      onClick={() => setActiveSection("migracao")}
+                      onClick={() => {
+                        // #3 — abre a Migração no MODO AGREGADO (balde), igual ao
+                        // link do Dashboard/Projeção. Limpa o promotor selecionado
+                        // porque showAllUnassigned só vale sem promotor
+                        // (allUnassigned && !selectedPromoterId). O efeito auto-set
+                        // de promotor é guardado em unassignedMode p/ não readotar.
+                        setActiveSection("migracao");
+                        setUnassignedRequested(true);
+                        setPromoterId("");
+                      }}
                       title="Abrir a aba Migração"
                     >
                       inclui {formatCurrency(data.summary.productionUnassigned)} em{" "}
