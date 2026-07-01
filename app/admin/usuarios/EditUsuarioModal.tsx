@@ -195,7 +195,7 @@ export default function EditUsuarioModal({
                 <label>Perfil de acesso</label>
                 <select value={role} onChange={(e) => { setRole(e.target.value as Role); setCnpjId(""); setPromoterId(""); }} disabled={submitting || !canChangeRole}>
                   <option value="socio">Sócio (acesso completo)</option>
-                  <option value="funcionario">Funcionário (operacional)</option>
+                  <option value="funcionario">Auxiliar Financeiro (operacional)</option>
                   <option value="promotor">Promotor (acesso aos próprios dados)</option>
                 </select>
                 {!canChangeRole ? (

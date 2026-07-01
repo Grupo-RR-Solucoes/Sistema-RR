@@ -374,7 +374,7 @@ export default function ImportacoesPage() {
           actions={
             <div className="role">
               <span className="d" />
-              {isFuncionario ? "Funcionário · leitura" : "Sócio · acesso total"}
+              {isFuncionario ? "Auxiliar Financeiro · leitura" : "Sócio · acesso total"}
             </div>
           }
         >
@@ -555,7 +555,7 @@ export default function ImportacoesPage() {
               </div>
               <div className="roles">
                 <span className="rp"><span className="d" />Sócio</span>
-                <span className="rp"><span className="d" />Funcionário</span>
+                <span className="rp"><span className="d" />Auxiliar Financeiro</span>
               </div>
             </div>
 

@@ -1,4 +1,9 @@
-export type UserRole = "socio" | "funcionario" | "promotor";
+export type UserRole =
+  | "socio"
+  | "funcionario"
+  | "promotor"
+  | "supervisor"
+  | "gerente_regional";
 
 export interface AppUserWithRole {
   id: string;
