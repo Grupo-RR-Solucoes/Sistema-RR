@@ -170,3 +170,15 @@ Este documento resume as regras de negocio confirmadas para a primeira fase do s
 - Importacoes
 - Relatorios
 - Configuracoes
+
+## 13. Decisao — Fallback em cascata da TRP
+
+Quando a TRP de uma competencia nao foi subida, o motor usa a TRP da competencia
+anterior mais recente que exista (fallback em cascata): percentuais/faixas do mes
+anterior, mas a JANELA DE VIGENCIA da competencia atual (holiday-aware),
+sinalizado como fallback nas telas. Vale para qualquer mes.
+
+Exemplo: sem TRP de julho subida, uma operacao de julho e calculada com os
+percentuais da TRP de junho, aplicados na vigencia de julho; as telas mostram
+"Julho usando TRP de junho — TRP de julho nao subida". Ao subir a TRP de julho
+pela tela de importacao, julho deixa de ser fallback e passa a usar a propria TRP.
