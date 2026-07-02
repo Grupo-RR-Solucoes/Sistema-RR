@@ -11,8 +11,8 @@
 //      holiday-aware: último dia útil de M-1 ao penúltimo de M) — NÃO o mês cru.
 //   2. seleciona daily na janela (por contract_date) e filtra elegíveis
 //      (status='Produção' + não-SRCC), mesma regra do painel de metas.
-//   3. roda o motor TRP (resolveAvistaTrpJunho2026) por contrato -> pctEmpresa
-//      (à vista capado no teto-empresa 6%).
+//   3. roda o motor TRP (resolveAvistaTrpDb ou resolveAvistaTrpJson, conforme a
+//      flag) por contrato -> pctEmpresa (à vista capado no teto-empresa 6%).
 //   4. à vista previsto = Σ pctEmpresa × net_value. Entra no caixa de M+1.
 //
 // READ-ONLY. NÃO extrapola.
@@ -22,7 +22,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { productionBusinessWindow } from "@/lib/projecaoMetas";
 import {
-  resolveAvistaTrpJunho2026,
+  resolveAvistaTrpJson,
   resolveAvistaTrpDb,
   type TrpAvistaRecord,
 } from "@/lib/trp/creditAvistaTrp";
@@ -165,7 +165,7 @@ export async function buildAvistaProducao(
   const elegiveis = rows.filter(isEligible);
 
   // TRP self-service F4: fonte da regra atrás da flag TRP_SOURCE (default json).
-  //   json => resolveAvistaTrpJunho2026 (legado hardcode junho — comportamento atual).
+  //   json => resolveAvistaTrpJson (genérico por competência, com fallback — F5).
   //   db   => resolveAvistaTrpDb (genérico por competência, com fallback). O
   //           preload async das competências da janela roda 1x aqui; o cálculo
   //           por contrato continua síncrono (preloader.getResolvedSync).
@@ -212,7 +212,7 @@ export async function buildAvistaProducao(
     };
     const trp = provider
       ? resolveAvistaTrpDb(record, provider)
-      : resolveAvistaTrpJunho2026(record);
+      : resolveAvistaTrpJson(record);
     if (!trp) {
       contratosSemTrp += 1;
       continue;

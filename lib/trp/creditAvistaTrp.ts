@@ -1,32 +1,25 @@
-// FRENTE 2 (TRP por PDF) — Etapa 3.4. Camada que resolve o % a vista do credito
-// pela TRP plugada no loader (getMatrizTRPParaContrato -> getRegra -> JSON),
-// ISOLADA por competencia: por ora SO junho/2026.
+// Camada que resolve o % a vista do credito pela TRP, GENERICA por competencia
+// (F5: o hardcode de junho foi removido). Dois caminhos simetricos:
+//   - resolveAvistaTrpJson (TRP_SOURCE=json): regra do JSON canonico (getRegra /
+//     MAPA_MES_REGRA), com fallback em cascata para a competencia anterior.
+//   - resolveAvistaTrpDb  (TRP_SOURCE=db):   regra do banco (trp_rule_versions),
+//     mesmo fallback. Ativo em producao desde F4.
+// Ambos usam a MESMA maquinaria (getMatrizTRPParaContrato -> lookupPctInRegra +
+// teto 6%) e a MESMA vigencia holiday-aware (competenciaDaData). Vigencia/fallback
+// identicos entre as fontes — provado nos gates F3 (db x json) e F5 (json x hardcode).
 //
-// Fonte da regra: o JSON ja carregado no loader (regras_promotiva/json +
-// MAPA_MES_REGRA), via getMatrizTRPParaContrato. Escolha deliberada (ver Etapa
-// 3.4): e a mesma maquinaria que a AUDITORIA usa, entao o que o motor passa a
-// pagar em junho = o que a auditoria considera devido (sem segunda fonte/segundo
-// caminho). A tabela trp_credit_rules + creditLookup.ts continuam como espelho
-// SQL/validacao, nao como fonte do calculo.
+// Fonte da regra: a mesma maquinaria que a AUDITORIA usa. trp_credit_rules +
+// creditLookup.ts continuam como espelho SQL/validacao, nao como fonte do calculo.
 //
-// Seguranca: fora da vigencia de junho OU sem match, retorna null e o chamador
-// MANTEM o comportamento atual (le o % do import diario). Nao mexe em mes
-// fechado (cms) nem em meses anteriores.
+// Seguranca: sem match / competencia sem regra, retorna null e o chamador MANTEM
+// o comportamento atual (le o % do import diario). Nao mexe em mes fechado (cms).
 
-import { getMatrizTRPParaContrato, getRegime } from "@/lib/regrasLoader";
+import { getMatrizTRPParaContrato, getRegime, getRegra } from "@/lib/regrasLoader";
 import type { ContratoAvistaInput } from "@/lib/regrasLoader";
 import type { RegraMes } from "@/lib/regrasData";
 import { getPrazoTrp } from "@/lib/prazoTrp";
 import { readRawPayloadValue } from "@/lib/proposalDetailing";
-import { competenciaDaData } from "@/lib/trp/vigencia";
-
-// Vigencia de junho/2026 (regra RR holiday-aware): ultimo dia util de maio ->
-// penultimo dia util de junho. Cravada nas Etapas 2/3.
-export const VIGENCIA_JUNHO_2026 = {
-  competencia: "2026-06",
-  validFrom: "2026-05-29",
-  validUntil: "2026-06-29",
-} as const;
+import { competenciaDaData, parseCompetencia, competenciaKey } from "@/lib/trp/vigencia";
 
 // Grupo RR opera no tier contratual Faixa 3 (confirmado nas TRPs / referencia).
 // A faixa por volume so seria usada se Diego decidir variar; aqui fixamos o
@@ -45,13 +38,6 @@ export interface TrpAvistaRecord {
   installments?: number | null;
   contract_date?: string | null;
   raw_payload?: Record<string, unknown> | null;
-}
-
-/** True se a data do contrato cai na janela de vigencia de junho/2026. */
-export function dentroVigenciaJunho2026(contractDateISO?: string | null): boolean {
-  if (!contractDateISO) return false;
-  const d = String(contractDateISO).slice(0, 10);
-  return d >= VIGENCIA_JUNHO_2026.validFrom && d <= VIGENCIA_JUNHO_2026.validUntil;
 }
 
 export interface TrpAvistaResultado {
@@ -74,8 +60,8 @@ export interface TrpAvistaResultado {
 /**
  * Extrai o contrato (produto/tipo/txJuros/prazo/convenio) de um record para
  * lookup na matriz. Retorna null se a taxa ou o prazo forem inválidos. É a
- * MESMA extração usada pelos dois caminhos (JSON junho e DB genérico) — fonte
- * única, para o cálculo ser idêntico ao provado no gate F3.
+ * MESMA extração usada pelos dois caminhos (JSON e DB, ambos genéricos) — fonte
+ * única, para o cálculo ser idêntico entre as fontes (provado nos gates F3/F5).
  */
 function extrairContratoAvista(
   record: TrpAvistaRecord,
@@ -105,32 +91,6 @@ function extrairContratoAvista(
   }
 
   return { mes: competencia, produto, tipo, convenio, txJuros, prazo };
-}
-
-/**
- * Resolve o % a vista (empresa) pela TRP plugada — SO para contratos de
- * junho/2026. Retorna null fora da vigencia OU quando nao ha match na TRP
- * (nesse caso o chamador mantem o % do import diario).
- */
-export function resolveAvistaTrpJunho2026(
-  record: TrpAvistaRecord,
-): TrpAvistaResultado | null {
-  if (!dentroVigenciaJunho2026(record.contract_date)) return null;
-
-  const contrato = extrairContratoAvista(record, VIGENCIA_JUNHO_2026.competencia);
-  if (!contrato) return null;
-
-  const m = getMatrizTRPParaContrato(contrato, "VOLUME_5_FAIXAS", FAIXA_GRUPO_RR);
-  if (m.pct == null) return null;
-
-  const pctEmpresa = Math.min(m.pct, TETO_EMPRESA_AVISTA);
-  return {
-    pctEmpresa,
-    pctTabela: m.pct,
-    capped: m.pct > TETO_EMPRESA_AVISTA,
-    categoria: m.categoriaProduto,
-    tabLabel: m.tabLabelUsado,
-  };
 }
 
 /**
@@ -177,6 +137,92 @@ export function resolveAvistaTrpDb(
     getRegime(competencia),
     FAIXA_GRUPO_RR,
     { regra: resolved.regra, jsonRegra: "db:trp_rule_versions", regraInferida: resolved.isFallback },
+  );
+  if (m.pct == null) return null;
+
+  const pctEmpresa = Math.min(m.pct, TETO_EMPRESA_AVISTA);
+  return {
+    pctEmpresa,
+    pctTabela: m.pct,
+    capped: m.pct > TETO_EMPRESA_AVISTA,
+    categoria: m.categoriaProduto,
+    tabLabel: m.tabLabelUsado,
+    competencia,
+    competenciaFornecedora: resolved.competenciaFornecedora,
+    isFallback: resolved.isFallback,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Caminho JSON GENÉRICO (F5) — substitui o hardcode de junho no modo json.
+// ---------------------------------------------------------------------------
+
+/** Competência (YYYY-MM) imediatamente anterior. */
+function competenciaAnterior(competencia: string): string {
+  const { year, month } = parseCompetencia(competencia);
+  return competenciaKey(month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 });
+}
+
+/**
+ * Resolve a RegraMes do JSON canônico (getRegra/MAPA_MES_REGRA) para a
+ * competência-alvo, com FALLBACK em cascata simétrico ao caminho DB: se a
+ * competência não tem JSON, cai na competência anterior mais recente que tenha,
+ * marcando isFallback. Retorna null se nenhuma competência (até 120 meses atrás)
+ * tiver JSON.
+ */
+function resolveRegraJsonComFallback(competenciaAlvo: string): {
+  regra: RegraMes;
+  jsonRegra: string;
+  competenciaFornecedora: string;
+  isFallback: boolean;
+} | null {
+  let comp = competenciaAlvo;
+  for (let i = 0; i < 120; i++) {
+    const r = getRegra(comp);
+    if (r) {
+      return {
+        regra: r.regra,
+        jsonRegra: r.jsonRegra,
+        competenciaFornecedora: comp,
+        isFallback: comp !== competenciaAlvo,
+      };
+    }
+    comp = competenciaAnterior(comp);
+  }
+  return null;
+}
+
+/**
+ * Caminho JSON GENÉRICO (F5) — modo TRP_SOURCE=json. Mesma máquina do caminho DB
+ * (extrairContratoAvista + getMatrizTRPParaContrato + teto 6%), com a MESMA
+ * semântica de vigência (competenciaDaData) e de fallback (competência anterior),
+ * mas a fonte da RegraMes é o JSON canônico (getRegra), não o banco.
+ *
+ * Resolução genérica por competência (vigenciaDaCompetencia + getRegra); substituiu
+ * o antigo caminho hardcoded de junho: onde antes só junho resolvia, agora QUALQUER
+ * competência com JSON resolve — rollback json vira rede de segurança real. Para
+ * contratos de junho, produz resultado IDÊNTICO ao caminho anterior (mesmo JSON
+ * TRP37, mesma janela 2026-05-29/2026-06-29) — provado no gate F5.
+ *
+ * Retorna null quando: sem contract_date, nenhuma competência com JSON, extração
+ * inválida ou sem match na matriz.
+ */
+export function resolveAvistaTrpJson(record: TrpAvistaRecord): TrpAvistaResultado | null {
+  const cd = record.contract_date ? String(record.contract_date).slice(0, 10) : null;
+  if (!cd) return null;
+
+  const competencia = competenciaDaData(cd);
+  const resolved = resolveRegraJsonComFallback(competencia);
+  if (!resolved) return null;
+
+  const contrato = extrairContratoAvista(record, competencia);
+  if (!contrato) return null;
+
+  const m = getMatrizTRPParaContrato(
+    contrato,
+    getRegime(competencia),
+    FAIXA_GRUPO_RR,
+    { regra: resolved.regra, jsonRegra: resolved.jsonRegra, regraInferida: resolved.isFallback },
   );
   if (m.pct == null) return null;
 

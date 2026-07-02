@@ -8,15 +8,15 @@
  * cujo contract_date cai na vigência da competência.
  *
  * COMO GARANTE "MESMO CÓDIGO, FONTE DIFERENTE" (sem duplicar lógica):
- *   Os dois cálculos passam pela MESMA função de produção resolveAvistaTrpJunho2026
+ *   Os dois cálculos passam pela MESMA função de produção resolveAvistaTrpJson
  *   -> getMatrizTRPParaContrato -> lookupPctInRegra. A ÚNICA coisa trocada entre
  *   OLD e NEW é a RegraMes que getRegra devolve:
- *     - OLD: MAPA_MES_REGRA[comp].regra (JSON estático — produção hoje).
+ *     - OLD: MAPA_MES_REGRA[comp].regra (JSON estático — a rede de rollback).
  *     - NEW: regra_json vinda de resolveTrpRegraDb(comp) (banco), injetada em
  *       MAPA_MES_REGRA[comp].regra APENAS neste processo (nunca persistido).
- *   Para rodar abr/mai/jun com a mesma função (que é hardcoded p/ junho),
- *   reaponto o objeto VIGENCIA_JUNHO_2026 (mesma referência usada internamente)
- *   para a janela da competência corrente. Tudo em memória, no OUT compilado.
+ *   resolveAvistaTrpJson é genérico por competência (F5: sem hardcode de junho),
+ *   então a competência sai de competenciaDaData(contract_date) — não precisa
+ *   reapontar janela. Tudo em memória, no OUT compilado.
  *
  * COBERTURA: junho/2026 é o GATE obrigatório (competência ativa em produção).
  *   abr/mai/2026 rodam como cobertura extra (também seedados).
@@ -150,9 +150,9 @@ function recordFrom(row) {
   };
 }
 
-// resolveAvistaTrpJunho2026 -> { pctEmpresa, pctTabela, categoria, tabLabel } | null
+// resolveAvistaTrpJson -> { pctEmpresa, pctTabela, categoria, tabLabel } | null
 function calcAvista(credit, row) {
-  const r = credit.resolveAvistaTrpJunho2026(recordFrom(row));
+  const r = credit.resolveAvistaTrpJson(recordFrom(row));
   if (!r) return { resolved: false, pctTabela: null, pctEmpresa: null, comissao: 0, categoria: null, tabLabel: null };
   const net = toNumber(row.net_value);
   return {
@@ -177,8 +177,6 @@ async function main() {
 
   const { credit, resolver, data, vig } = loadRepoLib();
   const MAPA = data.MAPA_MES_REGRA;
-  const VIG = credit.VIGENCIA_JUNHO_2026; // mesmo objeto usado internamente
-  const vigOrig = { ...VIG };
 
   let totalDiv = 0;
   let gateDiv = 0;
@@ -200,11 +198,6 @@ async function main() {
 
     if (!MAPA[comp]) { console.log(`  ERRO: MAPA_MES_REGRA['${comp}'] inexistente no JSON`); process.exit(1); }
     const jsonRegra = MAPA[comp].regra;
-
-    // reaponta a janela p/ a competência corrente (mesma função de produção)
-    VIG.competencia = comp;
-    VIG.validFrom = validFrom;
-    VIG.validUntil = validUntil;
 
     // OLD (JSON)
     MAPA[comp].regra = jsonRegra;
@@ -265,9 +258,6 @@ async function main() {
     totalDiv += divergencias.length;
     if (gate) gateDiv += divergencias.length;
   }
-
-  // restaura o objeto de vigência (higiene; processo vai encerrar de qualquer forma)
-  Object.assign(VIG, vigOrig);
 
   console.log("\n========================================");
   console.log(`GATE junho: ${gateDiv === 0 ? "PASSOU (0 divergências)" : `FALHOU (${gateDiv} divergências)`}`);
