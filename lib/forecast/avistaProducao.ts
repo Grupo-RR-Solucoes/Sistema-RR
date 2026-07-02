@@ -29,6 +29,7 @@ import {
 import { isTrpDbSource } from "@/lib/trp/trpSource";
 import { createTrpRegraDbPreloader } from "@/lib/trp/resolveTrpRegraDb";
 import { competenciaDaData } from "@/lib/trp/vigencia";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 const PAGE_SIZE = 1000;
 
@@ -171,7 +172,11 @@ export async function buildAvistaProducao(
   const dbSource = isTrpDbSource();
   let provider: ((competencia: string) => ReturnType<ReturnType<typeof createTrpRegraDbPreloader>["getResolvedSync"]>) | null = null;
   if (dbSource) {
-    const preloader = createTrpRegraDbPreloader(supabase);
+    // trp_rule_versions é RLS default-deny (F1) — SÓ o service_role lê. Passamos
+    // getSupabaseAdmin() (server-side), NÃO o client anon do request (que o RLS
+    // nega — causou o "permission denied" no flip). A leitura de produção
+    // (daily_production_records, acima) segue no client do request/RLS.
+    const preloader = createTrpRegraDbPreloader(getSupabaseAdmin());
     const comps = new Set<string>();
     for (const r of elegiveis) {
       const cd = r.contract_date ? String(r.contract_date).slice(0, 10) : null;

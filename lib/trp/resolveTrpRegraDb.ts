@@ -67,6 +67,28 @@ interface RuleVersionRow {
 
 const SELECT_COLS = "id, competencia, version_no, regra_json";
 
+/**
+ * Erro de INFRAESTRUTURA ao ler trp_rule_versions (RLS/permission denied,
+ * conexão, query malformada). É DISTINTO de "competência sem regra": este
+ * PROPAGA (deixa o Forecast falhar visível), NUNCA vira null nem cai no
+ * fallback. O fallback em cascata é só para "não subiram a TRP deste mês" —
+ * jamais para "não consegui ler o banco".
+ */
+export class TrpInfraError extends Error {
+  constructor(message: string, readonly cause?: unknown) {
+    super(message);
+    this.name = "TrpInfraError";
+  }
+}
+
+/**
+ * Client para ler trp_rule_versions. A tabela é RLS default-deny (F1): SÓ o
+ * service_role (getSupabaseAdmin) lê. NUNCA usar o client anon do request —
+ * ele é negado pelo RLS (foi a causa do "permission denied" no flip). Default =
+ * service_role. O parâmetro `client` existe só para testes/ferramentas (ex.: o
+ * gate F3 passa seu próprio service_role, os smokes passam stub) — produção
+ * NÃO deve passar o client do request.
+ */
 function resolveClient(client?: SupabaseClient): SupabaseClient {
   return client ?? (getSupabaseAdmin() as unknown as SupabaseClient);
 }
@@ -95,7 +117,11 @@ export async function resolveTrpRegraDb(
     .eq("is_active", true)
     .maybeSingle();
   if (exact.error) {
-    throw new Error(`resolveTrpRegraDb: erro ao buscar competência ${competenciaAlvo}: ${exact.error.message}`);
+    // ERRO DE INFRA (ex.: permission denied) -> PROPAGA, não vira fallback.
+    throw new TrpInfraError(
+      `resolveTrpRegraDb: erro ao buscar competência ${competenciaAlvo}: ${exact.error.message}`,
+      exact.error,
+    );
   }
   if (exact.data) {
     const row = exact.data as RuleVersionRow;
@@ -120,8 +146,14 @@ export async function resolveTrpRegraDb(
     .order("competencia", { ascending: false })
     .limit(1);
   if (prev.error) {
-    throw new Error(`resolveTrpRegraDb: erro no fallback de ${competenciaAlvo}: ${prev.error.message}`);
+    // ERRO DE INFRA na busca do fallback -> PROPAGA (não engole como "sem regra").
+    throw new TrpInfraError(
+      `resolveTrpRegraDb: erro no fallback de ${competenciaAlvo}: ${prev.error.message}`,
+      prev.error,
+    );
   }
+  // AUSÊNCIA REAL: query OK, mas nenhuma competência (nem alvo nem anterior) tem
+  // versão ativa. Aí sim retorna null (o chamador mantém o comportamento atual).
   const fallbackRow = (prev.data && prev.data[0]) as RuleVersionRow | undefined;
   if (!fallbackRow) return null;
 
