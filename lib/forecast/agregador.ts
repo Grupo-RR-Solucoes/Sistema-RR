@@ -179,10 +179,11 @@ export async function buildAgregadorForecast(
     if (previstoAvista !== null && avista.contratosSemTrp > 0) {
       aIncluir.push(`${avista.contratosSemTrp} contratos à vista sem match no motor TRP`);
     }
-    // TRP self-service F4: aviso de fallback JUNTO do número (indicador mínimo;
-    // badge visual por tela fica na F6). Só dispara quando a fonte é o banco e a
-    // competência usou a TRP de um mês anterior.
-    if (previstoAvista !== null && avista.fonte === "db" && avista.contratosFallback > 0) {
+    // TRP self-service F4/F5: aviso de fallback JUNTO do número (indicador mínimo;
+    // badge visual por tela fica na F6). Dispara em QUALQUER fonte (db ou json —
+    // ambas fazem fallback simétrico) quando a competência usou a TRP de um mês
+    // anterior.
+    if (previstoAvista !== null && avista.contratosFallback > 0) {
       aIncluir.push(
         `à vista de ${comp} calculado por FALLBACK da TRP de ${avista.competenciaFallback ?? "mês anterior"} ` +
           `(${avista.contratosFallback} contratos) — número provisório até a TRP própria ser publicada`,
