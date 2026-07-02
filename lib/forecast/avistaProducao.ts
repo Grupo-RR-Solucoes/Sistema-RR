@@ -23,8 +23,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { productionBusinessWindow } from "@/lib/projecaoMetas";
 import {
   resolveAvistaTrpJunho2026,
+  resolveAvistaTrpDb,
   type TrpAvistaRecord,
 } from "@/lib/trp/creditAvistaTrp";
+import { isTrpDbSource } from "@/lib/trp/trpSource";
+import { createTrpRegraDbPreloader } from "@/lib/trp/resolveTrpRegraDb";
+import { competenciaDaData } from "@/lib/trp/vigencia";
 
 const PAGE_SIZE = 1000;
 
@@ -56,6 +60,12 @@ export interface AvistaProducaoResult {
   contratosResolvidos: number;
   /** Contratos elegíveis sem match no motor TRP (não somados). */
   contratosSemTrp: number;
+  /** Fonte da regra usada: "json" (JSON estático) ou "db" (trp_rule_versions). */
+  fonte: "json" | "db";
+  /** Contratos resolvidos por FALLBACK (regra de competência anterior). Só fonte=db. */
+  contratosFallback: number;
+  /** Competência que forneceu a regra por fallback (ex.: "2026-06"), ou null. Só fonte=db. */
+  competenciaFallback: string | null;
   /** Maior contract_date processado — "atualizado até" (ISO ou null). */
   ultimoContractDate: string | null;
 }
@@ -151,15 +161,35 @@ export async function buildAvistaProducao(
   const fimISO = ymd(win.end);
 
   const rows = await fetchDailyNaJanela(supabase, inicioISO, fimISO);
+  const elegiveis = rows.filter(isEligible);
+
+  // TRP self-service F4: fonte da regra atrás da flag TRP_SOURCE (default json).
+  //   json => resolveAvistaTrpJunho2026 (legado hardcode junho — comportamento atual).
+  //   db   => resolveAvistaTrpDb (genérico por competência, com fallback). O
+  //           preload async das competências da janela roda 1x aqui; o cálculo
+  //           por contrato continua síncrono (preloader.getResolvedSync).
+  const dbSource = isTrpDbSource();
+  let provider: ((competencia: string) => ReturnType<ReturnType<typeof createTrpRegraDbPreloader>["getResolvedSync"]>) | null = null;
+  if (dbSource) {
+    const preloader = createTrpRegraDbPreloader(supabase);
+    const comps = new Set<string>();
+    for (const r of elegiveis) {
+      const cd = r.contract_date ? String(r.contract_date).slice(0, 10) : null;
+      if (cd) comps.add(competenciaDaData(cd));
+    }
+    await preloader.preload([...comps]);
+    provider = (competencia: string) => preloader.getResolvedSync(competencia);
+  }
 
   let avistaPrevisto = 0;
   let contratosElegiveis = 0;
   let contratosResolvidos = 0;
   let contratosSemTrp = 0;
+  let contratosFallback = 0;
+  let competenciaFallback: string | null = null;
   let ultimoContractDate: string | null = null;
 
-  for (const r of rows) {
-    if (!isEligible(r)) continue;
+  for (const r of elegiveis) {
     contratosElegiveis += 1;
 
     const cd = r.contract_date ? String(r.contract_date).slice(0, 10) : null;
@@ -175,13 +205,19 @@ export async function buildAvistaProducao(
       contract_date: r.contract_date,
       raw_payload: r.raw_payload,
     };
-    const trp = resolveAvistaTrpJunho2026(record);
+    const trp = provider
+      ? resolveAvistaTrpDb(record, provider)
+      : resolveAvistaTrpJunho2026(record);
     if (!trp) {
       contratosSemTrp += 1;
       continue;
     }
     avistaPrevisto += trp.pctEmpresa * toNumber(r.net_value);
     contratosResolvidos += 1;
+    if (trp.isFallback) {
+      contratosFallback += 1;
+      competenciaFallback = trp.competenciaFornecedora ?? competenciaFallback;
+    }
   }
 
   const caixa = addMonth(comp.year, comp.month, 1);
@@ -194,6 +230,9 @@ export async function buildAvistaProducao(
     contratosElegiveis,
     contratosResolvidos,
     contratosSemTrp,
+    fonte: dbSource ? "db" : "json",
+    contratosFallback,
+    competenciaFallback,
     ultimoContractDate,
   };
 }

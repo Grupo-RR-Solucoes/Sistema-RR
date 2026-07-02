@@ -762,10 +762,15 @@ export interface MatrizTRPLookup {
 export function getMatrizTRPParaContrato(
   contrato: ContratoAvistaInput,
   regime: Regime,
-  catCanonical: string | null
+  catCanonical: string | null,
+  // TRP self-service F4: fonte da RegraMes injetável. Sem override => getRegra
+  // (JSON estático, comportamento atual). Com override (caminho DB, atrás da
+  // flag TRP_SOURCE=db) usa a regra_json do banco. Só o caminho à-vista de
+  // crédito passa override; motor histórico/auditoria seguem no JSON.
+  regraOverride?: { regra: RegraMes; jsonRegra: string; regraInferida: boolean }
 ): MatrizTRPLookup {
   const motivos: string[] = [];
-  const r = getRegra(contrato.mes);
+  const r = regraOverride ?? getRegra(contrato.mes);
   if (!r) {
     motivos.push(`mes ${contrato.mes} sem cobertura em MAPA_MES_REGRA`);
     return {
