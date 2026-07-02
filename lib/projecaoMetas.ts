@@ -17,99 +17,26 @@ import { fetchAllRows } from "@/lib/queryHelpers";
 // acumulado / dias_uteis_decorridos * dias_uteis_totais.
 // ============================================================
 
-// ---------- Feriados nacionais ----------
+// ---------- Feriados nacionais / janela de produção ----------
+// O cálculo holiday-aware (calendário bancário nacional) foi extraído VERBATIM
+// para lib/trp/vigencia.ts para ser reusável fora do painel (Fase 2 TRP
+// self-service: resolvedor DB + seed). Aqui só re-importamos e re-exportamos —
+// MESMA função, um único lugar. Comportamento inalterado.
+import {
+  countBusinessDays,
+  productionBusinessWindow,
+  ymd,
+} from "@/lib/trp/vigencia";
+
+// Re-export da API pública que outros módulos importam de "@/lib/projecaoMetas".
+export {
+  easterSunday,
+  nationalHolidays,
+  productionBusinessWindow,
+} from "@/lib/trp/vigencia";
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
-}
-function ymd(d: Date): string {
-  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
-}
-function addDays(d: Date, n: number): Date {
-  const r = new Date(d.getTime());
-  r.setUTCDate(r.getUTCDate() + n);
-  return r;
-}
-
-// Domingo de Pascoa (algoritmo de Meeus/Jones/Butcher), em UTC.
-export function easterSunday(year: number): Date {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31); // 3=marco, 4=abril
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(Date.UTC(year, month - 1, day));
-}
-
-// Feriados NACIONAIS do ano (estaduais AL/PE ficam de backlog).
-export function nationalHolidays(year: number): Set<string> {
-  const s = new Set<string>();
-  // Fixos
-  for (const md of ["01-01", "04-21", "05-01", "09-07", "10-12", "11-02", "11-15", "12-25"]) {
-    s.add(`${year}-${md}`);
-  }
-  // Moveis (derivados da Pascoa)
-  const easter = easterSunday(year);
-  s.add(ymd(addDays(easter, -48))); // Carnaval (segunda)
-  s.add(ymd(addDays(easter, -47))); // Carnaval (terca)
-  s.add(ymd(addDays(easter, -2))); // Sexta-feira Santa
-  s.add(ymd(addDays(easter, 60))); // Corpus Christi
-  return s;
-}
-
-function holidaysForYears(...years: number[]): Set<string> {
-  const s = new Set<string>();
-  for (const y of new Set(years)) for (const h of nationalHolidays(y)) s.add(h);
-  return s;
-}
-
-function isBusinessDay(d: Date, holidays: Set<string>): boolean {
-  const wd = d.getUTCDay();
-  if (wd === 0 || wd === 6) return false;
-  return !holidays.has(ymd(d));
-}
-
-function lastBusinessDayOfMonth(year: number, month: number, holidays: Set<string>): Date {
-  // dia 0 do mes seguinte = ultimo dia do mes (month aqui e 1-based).
-  let d = new Date(Date.UTC(year, month, 0));
-  while (!isBusinessDay(d, holidays)) d = addDays(d, -1);
-  return d;
-}
-
-function penultimateBusinessDayOfMonth(year: number, month: number, holidays: Set<string>): Date {
-  const last = lastBusinessDayOfMonth(year, month, holidays);
-  let d = addDays(last, -1);
-  while (!isBusinessDay(d, holidays)) d = addDays(d, -1);
-  return d;
-}
-
-function countBusinessDays(start: Date, end: Date, holidays: Set<string>): number {
-  if (end < start) return 0;
-  let n = 0;
-  let d = new Date(start.getTime());
-  while (d <= end) {
-    if (isBusinessDay(d, holidays)) n++;
-    d = addDays(d, 1);
-  }
-  return n;
-}
-
-// Janela de producao (holiday-aware) da competencia.
-export function productionBusinessWindow(year: number, month: number) {
-  const prev = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
-  const holidays = holidaysForYears(prev.y, year);
-  const start = lastBusinessDayOfMonth(prev.y, prev.m, holidays);
-  const end = penultimateBusinessDayOfMonth(year, month, holidays);
-  const total = countBusinessDays(start, end, holidays);
-  return { start, end, total, holidays };
 }
 
 // ---------- Helpers de dado ----------
