@@ -1,11 +1,16 @@
 "use client";
 
-// F6b sub-fase 2 — Tela de upload + revisão assistida da TRP (SEM gravar).
-// Consome a rota read-only /api/trp/parse (F6b.1). O confirmar é NO-OP nesta
-// fase (gravação = F6b.3). Socio+funcionario sobem e revisam; só socio vê o
-// botão confirmar. Nada persiste.
+// F6b sub-fase 3 — Tela de upload + revisão + GRAVAÇÃO versionada da TRP.
+//
+// F6b.2 (base): consome /api/trp/parse (read-only) e renderiza a revisão.
+// F6b.3 (agora):
+//   - Sócio: "Confirmar e gravar" chama /api/trp/commit (grava a versão viva).
+//     Como as leituras são ao vivo, o Forecast já reflete a nova TRP.
+//   - Todos (socio+funcionario): "Salvar rascunho" chama /api/trp/staging.
+//   - Sócio: caixa "Rascunhos pendentes" (inbox) — abre um rascunho, revisa e confirma.
+// Só o sócio vê confirmar e a inbox; o funcionário só salva rascunho.
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button, Banner, Chip } from "@/components/ui";
 
@@ -21,6 +26,8 @@ type ParseMeta = {
   vigencia_inicio: string;
   vigencia_fim: string;
   source_filename: string | null;
+  sha256?: string | null;
+  trp_doc_ref?: string | null;
   parser_version: string;
   n_lines: number;
 };
@@ -29,6 +36,13 @@ type ParseOk = {
   meta: ParseMeta;
   confianca: Confianca;
   diff: { anterior: { competencia: string; version_no: number; regra_json: unknown } | null };
+};
+type PendItem = {
+  id: string;
+  competencia: string; // "YYYY-MM-DD"
+  source_filename: string | null;
+  parser_version: string | null;
+  uploaded_at: string;
 };
 
 function fileToBase64(f: File): Promise<string> {
@@ -64,13 +78,43 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
   const [erro, setErro] = useState<{ msg: string; detalhe?: string | null } | null>(null);
   const [result, setResult] = useState<ParseOk | null>(null);
 
+  // F6b.3 — gravação/staging
+  const [currentUploadId, setCurrentUploadId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [actionErr, setActionErr] = useState<{ msg: string; detalhe?: string | null } | null>(null);
+  const [pendentes, setPendentes] = useState<PendItem[]>([]);
+  const [loadingPend, setLoadingPend] = useState(false);
+
   const anterior = useMemo(() => (result?.diff.anterior ? anteriorVals(result.diff.anterior.regra_json) : null), [result]);
+
+  const loadPendentes = useCallback(async () => {
+    if (!canConfirm) return; // inbox é só do sócio
+    setLoadingPend(true);
+    try {
+      const resp = await fetch("/api/trp/staging?status=pendente");
+      const json = await resp.json();
+      if (resp.ok) setPendentes(Array.isArray(json.pendentes) ? json.pendentes : []);
+    } catch {
+      /* silencioso — inbox é auxiliar */
+    } finally {
+      setLoadingPend(false);
+    }
+  }, [canConfirm]);
+
+  useEffect(() => {
+    loadPendentes();
+  }, [loadPendentes]);
 
   async function onEnviar() {
     if (!file || !competencia) return;
     setLoading(true);
     setErro(null);
     setResult(null);
+    setActionMsg(null);
+    setActionErr(null);
+    setCurrentUploadId(null); // upload fresco: não é rascunho da inbox
     try {
       const base64 = await fileToBase64(file);
       const resp = await fetch("/api/trp/parse", {
@@ -91,6 +135,95 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
     }
   }
 
+  async function onAbrirRascunho(id: string) {
+    setLoading(true);
+    setErro(null);
+    setActionMsg(null);
+    setActionErr(null);
+    try {
+      const resp = await fetch(`/api/trp/staging/${id}`);
+      const json = await resp.json();
+      if (!resp.ok) {
+        setActionErr({ msg: json.error || "não consegui abrir o rascunho", detalhe: json.detalhe });
+        return;
+      }
+      setResult(json as ParseOk);
+      setCurrentUploadId(id);
+    } catch (e) {
+      setActionErr({ msg: "falha ao abrir o rascunho", detalhe: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onSalvarRascunho() {
+    if (!result) return;
+    setSaving(true);
+    setActionMsg(null);
+    setActionErr(null);
+    try {
+      const resp = await fetch("/api/trp/staging", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          competencia: result.meta.competencia,
+          regraDraft: result.regraDraft,
+          confianca: result.confianca,
+          meta: result.meta,
+        }),
+      });
+      const json = await resp.json();
+      if (!resp.ok) {
+        setActionErr({ msg: json.error || "não consegui salvar o rascunho", detalhe: json.detalhe });
+        return;
+      }
+      setActionMsg(
+        canConfirm
+          ? `Rascunho de ${result.meta.competencia} salvo. Você pode confirmar agora ou revisar depois pela caixa de rascunhos.`
+          : `Rascunho de ${result.meta.competencia} salvo — o sócio vai revisar e confirmar. Nada foi gravado ainda.`,
+      );
+      loadPendentes();
+    } catch (e) {
+      setActionErr({ msg: "falha ao salvar o rascunho", detalhe: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function onConfirmar() {
+    if (!result) return;
+    setCommitting(true);
+    setActionMsg(null);
+    setActionErr(null);
+    try {
+      const body = currentUploadId
+        ? { uploadId: currentUploadId }
+        : { regraDraft: result.regraDraft, meta: result.meta };
+      const resp = await fetch("/api/trp/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await resp.json();
+      if (!resp.ok) {
+        setActionErr({ msg: json.error || "não consegui gravar a TRP", detalhe: json.detalhe });
+        return;
+      }
+      setActionMsg(
+        `TRP de ${result.meta.competencia} gravada — versão ${json.version_no}. ` +
+          `As leituras são ao vivo: o Forecast já usa a nova TRP.`,
+      );
+      setCurrentUploadId(null);
+      loadPendentes();
+    } catch (e) {
+      setActionErr({ msg: "falha ao gravar a TRP", detalhe: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setCommitting(false);
+    }
+  }
+
+  const busy = saving || committing;
+
   return (
     <section className="trp-up">
       <header className="trp-up__head">
@@ -98,11 +231,36 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
           <span className="badge">TRP</span>
           <div>
             <h3>TRP do mês (Promotiva)</h3>
-            <p className="sub">Suba o PDF oficial; o servidor lê e você confere antes de confirmar. Não grava nada nesta etapa.</p>
+            <p className="sub">Suba o PDF oficial; o servidor lê e você confere antes de {canConfirm ? "gravar" : "salvar o rascunho"}.</p>
           </div>
         </div>
-        <Chip variant="neutral">upload + revisão</Chip>
+        <Chip variant="neutral">upload + revisão + gravação</Chip>
       </header>
+
+      {/* ---- inbox de rascunhos pendentes (só sócio) ---- */}
+      {canConfirm ? (
+        <div className="trp-inbox">
+          <div className="trp-inbox__h">
+            <span>Rascunhos pendentes</span>
+            <Chip variant={pendentes.length ? "warn" : "ok"}>{loadingPend ? "…" : `${pendentes.length}`}</Chip>
+          </div>
+          {pendentes.length === 0 ? (
+            <p className="trp-inbox__empty">Sem rascunhos aguardando confirmação.</p>
+          ) : (
+            <ul className="trp-inbox__list">
+              {pendentes.map((p) => (
+                <li key={p.id} className="trp-inbox__item">
+                  <span className="ci">{String(p.competencia).slice(0, 7)}</span>
+                  <span className="cf">{p.source_filename || "sem nome"}</span>
+                  <Button variant="secundario" onClick={() => onAbrirRascunho(p.id)} disabled={loading || busy}>
+                    Abrir e revisar
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
 
       {/* ---- upload ---- */}
       <div className="trp-up__form">
@@ -131,9 +289,9 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
       {result ? (
         <div className="trp-rev">
           <div className="trp-rev__meta">
-            <span><b>{result.meta.competencia}</b> · {result.meta.regime}</span>
+            <span><b>{result.meta.competencia}</b> · {result.meta.regime}{currentUploadId ? " · rascunho pendente" : ""}</span>
             <span>vigência {result.meta.vigencia_inicio} → {result.meta.vigencia_fim}</span>
-            <span>{result.meta.source_filename} · {result.meta.n_lines} linhas · {result.confianca.provado.totalPct} pct lidos</span>
+            <span>{result.meta.source_filename}{result.meta.n_lines ? ` · ${result.meta.n_lines} linhas` : ""} · {result.confianca.provado.totalPct} pct lidos</span>
           </div>
 
           {/* PROVADOS */}
@@ -190,17 +348,38 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
             <p className="trp-diff">Sem TRP anterior no banco — nada a comparar (primeira competência).</p>
           )}
 
-          {/* CONFIRMAR (no-op nesta sub-fase) */}
+          {/* MENSAGENS DE AÇÃO */}
+          {actionMsg ? (
+            <Banner variant="ok">
+              <b>{actionMsg}</b>
+              {actionMsg.includes("Forecast") ? (
+                <div className="det">Abra o <a href="/forecast">Forecast</a> para conferir. O recálculo do derivado persistido e o badge de fallback são a próxima fase (F6b.4).</div>
+              ) : null}
+            </Banner>
+          ) : null}
+          {actionErr ? (
+            <Banner variant="warn">
+              <b>{actionErr.msg}</b>
+              {actionErr.detalhe ? <div className="det">{actionErr.detalhe}</div> : null}
+            </Banner>
+          ) : null}
+
+          {/* AÇÕES: salvar rascunho (todos) + confirmar (só sócio) */}
           <div className="trp-rev__act">
+            {!currentUploadId ? (
+              <Button variant="secundario" disabled={busy} onClick={onSalvarRascunho}>
+                {saving ? "Salvando…" : "Salvar rascunho"}
+              </Button>
+            ) : null}
             {canConfirm ? (
               <>
-                <Button variant="acao" disabled title="Gravação entra na próxima fase (F6b.3)">
-                  Confirmar e gravar
+                <Button variant="acao" disabled={busy} onClick={onConfirmar}>
+                  {committing ? "Gravando…" : "Confirmar e gravar"}
                 </Button>
-                <span className="hint">Pronto para confirmar — a <b>gravação versionada + recálculo</b> entram na próxima fase. Nada é gravado agora.</span>
+                <span className="hint">Grava a versão viva da TRP. As leituras são ao vivo — o Forecast passa a usar a nova TRP na hora.</span>
               </>
             ) : (
-              <span className="hint">Revisão do auxiliar — a <b>confirmação/gravação é do sócio</b>. Você não grava.</span>
+              <span className="hint">Revisão do auxiliar — a <b>confirmação/gravação é do sócio</b>. Você salva o rascunho; ele confirma.</span>
             )}
           </div>
         </div>
@@ -213,12 +392,20 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
         .trp-up__head .badge { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; background: #101a33; color: var(--accent, #fff000); font-weight: 700; font-size: 13px; }
         .trp-up__head h3 { margin: 0; font-size: 16px; color: #101a33; }
         .trp-up__head .sub { margin: 2px 0 0; font-size: 12.5px; color: #5b6472; }
+        .trp-inbox { margin-top: 16px; border: 1px solid var(--bd-soft, #eef0f4); border-radius: 10px; background: #fafbfe; padding: 12px 14px; }
+        .trp-inbox__h { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: #101a33; margin-bottom: 8px; }
+        .trp-inbox__empty { margin: 0; font-size: 12.5px; color: #5b6472; }
+        .trp-inbox__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+        .trp-inbox__item { display: grid; grid-template-columns: 84px 1fr auto; gap: 10px; align-items: center; padding: 6px 8px; background: #fff; border: 1px solid var(--bd-soft, #eef0f4); border-radius: 8px; }
+        .trp-inbox__item .ci { font-family: var(--font-mono), monospace; font-weight: 700; font-size: 12px; color: #101a33; }
+        .trp-inbox__item .cf { font-size: 12px; color: #5b6472; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .trp-up__form { display: flex; align-items: flex-end; gap: 14px; margin-top: 16px; flex-wrap: wrap; }
         .fld { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: #5b6472; }
         .fld span { font-weight: 600; }
         .fld input { height: 36px; border: 1px solid var(--bd-soft, #d7dbe3); border-radius: 8px; padding: 0 10px; font: inherit; }
         .fld--file input { padding: 6px; }
         .det { font-size: 12px; opacity: .85; margin-top: 4px; }
+        .det a { color: #101a33; font-weight: 700; }
         .trp-rev { margin-top: 18px; border-top: 1px solid var(--bd-soft, #eef0f4); padding-top: 16px; }
         .trp-rev__meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: #5b6472; margin-bottom: 14px; }
         .trp-rev__h { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: #101a33; margin: 18px 0 10px; }
@@ -239,7 +426,7 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
         .chg-inline { background: var(--accent, #fff000); padding: 0 4px; border-radius: 3px; color: #101a33; }
         .trp-rev__act { margin-top: 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
         .trp-rev__act .hint { font-size: 12px; color: #5b6472; }
-        @media (max-width: 640px) { .conf { grid-template-columns: 1fr; } }
+        @media (max-width: 640px) { .conf { grid-template-columns: 1fr; } .trp-inbox__item { grid-template-columns: 64px 1fr; } }
       `}</style>
     </section>
   );
