@@ -494,26 +494,26 @@ export default function ImportacoesPage() {
               </section>
             </div>
 
-            {/* Conferencia TRP x planilha — CAMADA B (em breve, sem numeros inventados) */}
-            <section className="lcard soon-panel">
+            {/* Conferencia TRP x realizado — PONTEIRO: a conferência vive na Auditoria */}
+            <section className="lcard">
               <div className="conf-head">
                 <div className="lt">
                   <span className="ic"><IcoCheckSquare /></span>
                   <div>
-                    <h3>Conferência · TRP × planilha</h3>
-                    <p className="csub">Cruzamento automático dos percentuais oficiais com a planilha da RR.</p>
+                    <h3>Conferência · TRP × realizado</h3>
+                    <p className="csub">Cruzamento dos percentuais da TRP versionada com o que a Promotiva pagou, por contrato.</p>
                   </div>
                 </div>
-                <span className="seal soon"><IcoClock />Em breve</span>
+                <a className="seal" href="/auditoria#conferencia-trp" style={{ textDecoration: "none" }}>Abrir na Auditoria →</a>
               </div>
               <div className="soon-body">
                 <IcoSparkle />
                 <div>
-                  <div className="sb-t">Conferência automática em desenvolvimento (Frente 2)</div>
+                  <div className="sb-t">A conferência agora vive na Auditoria</div>
                   <div className="sb-s">
-                    Quando ativa, esta área vai comparar cada faixa da TRP oficial com a planilha importada
-                    e apontar divergências antes de arquivar. Por enquanto a planilha é importada direto e a
-                    conferência é feita manualmente.
+                    Compara, por competência e por contrato, o realizado (o que a Promotiva pagou à vista)
+                    contra a régua da TRP versionada — teto 6% liso — e sinaliza subpagamentos.
+                    Abra em <a href="/auditoria#conferencia-trp">Auditoria → Conferência TRP × realizado</a>.
                   </div>
                 </div>
               </div>
