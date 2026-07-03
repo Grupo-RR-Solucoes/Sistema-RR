@@ -6,6 +6,7 @@ import { useUser } from "../../lib/auth/useUser";
 import EmptyStatePanel from "../../components/EmptyStatePanel";
 import FeedbackBanner from "../../components/FeedbackBanner";
 import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+import TrpUploadReview from "@/components/trp/TrpUploadReview";
 
 // ============================================================
 // /importacoes — identidade .rrimp.
@@ -444,31 +445,14 @@ export default function ImportacoesPage() {
         {/* ===================== ABA BASE OPERACIONAL ===================== */}
         {activeSection === "base" ? (
           <>
+            {/* TRP self-service (F6b) — upload + revisão (socio+funcionario; confirmar só socio, no-op nesta fase) */}
+            <TrpUploadReview canConfirm={!isFuncionario} />
+
             {isFuncionario ? (
               <div className="lockbar"><IcoLock /><span><b>Disponível apenas para sócio.</b> Você pode consultar o histórico das cargas.</span></div>
             ) : null}
 
             <div className={`two-up${isFuncionario ? " locked" : ""}`}>
-              {/* CARD TRP — CAMADA B (em breve) */}
-              <section className="ucard soon">
-                <div className="ucard-head">
-                  <div className="tt">
-                    <span className="badge pdf"><IcoPdf /></span>
-                    <div>
-                      <h3>TRP do mês (Promotiva)</h3>
-                      <p className="csub">Documento oficial. A conferência automática TRP × planilha entra numa próxima etapa.</p>
-                    </div>
-                  </div>
-                  <span className="seal soon"><IcoClock />Em breve</span>
-                </div>
-                <Dropzone disabled pdf accept=".pdf" file={null} onFile={() => {}}
-                  title="selecione a TRP do mês" sub="Importação ainda não disponível" />
-                <div className="uact">
-                  <span className="uhint"><IcoInfo />Conferência da TRP em desenvolvimento (Frente 2).</span>
-                  <button type="button" className="btn-primary dis" disabled>Enviar e conferir TRP</button>
-                </div>
-              </section>
-
               {/* CARD PLANILHA REMUNERACAO — CAMADA A (real) */}
               <section className="ucard">
                 <div className="ucard-head">
