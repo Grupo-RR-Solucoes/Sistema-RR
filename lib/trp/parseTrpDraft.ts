@@ -267,4 +267,5 @@ export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOpt
 
 // evita "unused" do import parseConvenios/parseSec5 caso não usados aqui; a rota/
 // sub-fases podem consumi-los. Mantidos disponíveis via re-export.
-export { parseConvenios, parseSec5, TETO_AVISTA, MAX_PLAUSIVEL };
+// validarCompetencia exportado para reuso no commit (F6b.3, defesa em profundidade).
+export { parseConvenios, parseSec5, TETO_AVISTA, MAX_PLAUSIVEL, validarCompetencia };
