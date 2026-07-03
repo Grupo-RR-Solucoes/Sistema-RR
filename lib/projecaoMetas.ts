@@ -157,8 +157,19 @@ export async function buildProjecaoMetas(
   const refKey = ymd(refDate);
   const startKey = ymd(start);
   const elapsedEnd = refDate < start ? null : refDate > end ? end : refDate;
-  const diasDecorridos = elapsedEnd ? countBusinessDays(start, elapsedEnd, holidays) : 0;
   const periodoCompleto = closed || refDate >= end;
+  // Dias uteis DECORRIDOS = dias COMPLETOS. O dia corrente (nao-fechado) NAO conta
+  // no divisor: a producao de hoje so entra amanha (mesmo principio do Dashboard;
+  // sem isso o divisor conta 1 a mais e a projecao vem subestimada). Subtrai SO com
+  // o periodo ABERTO e hoje sendo dia util (fim de semana/feriado ja nao contam).
+  // countBusinessDays e inclusivo nas duas pontas; reusa a fn (== 1) para "hoje e
+  // dia util" em vez de exportar um isBusinessDay novo. NAO toca o numerador
+  // (acumPorPromotor), preservando a paridade com a "Producao do grupo" do Dashboard.
+  let diasDecorridos = elapsedEnd ? countBusinessDays(start, elapsedEnd, holidays) : 0;
+  const hojeEhDiaUtil = countBusinessDays(refDate, refDate, holidays) === 1;
+  if (!periodoCompleto && hojeEhDiaUtil) {
+    diasDecorridos = Math.max(0, diasDecorridos - 1);
+  }
 
   // Media dos 3 meses anteriores (production_value do PMR).
   const priors = [1, 2, 3].map((k) => {
