@@ -29,6 +29,7 @@ type AgMes = {
   previstoAvista: number | null;
   recebidoAvista: number | null;
   gapAvistaInformativo: number | null;
+  avistaFallback: { competenciaFornecedora: string; contratos: number } | null;
   cobertura: Cobertura;
 };
 type Agregador = {
@@ -68,6 +69,13 @@ const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "o
 function fmtComp(comp: string) {
   const [y, m] = comp.split("-").map(Number);
   return `${MESES[m - 1]}/${String(y).slice(-2)}`;
+}
+
+// F6b.4 — texto técnico do badge de fallback da régua TRP (tooltip + aria-label).
+// Semântica real (resolveTrpRegraDb): sem versão ativa da competência, usa a TRP
+// mais recente de competência anterior; número provisório até publicar a própria.
+function fallbackDesc(comp: string) {
+  return `Competência sem TRP própria publicada. À vista calculado com a régua vigente de ${fmtComp(comp)} (TRP mais recente anterior). Provisório até a TRP desta competência ser publicada.`;
 }
 
 export default function ForecastPage() {
@@ -259,6 +267,21 @@ export default function ForecastPage() {
                         <Num className={`gap ${gapTone}`}>{m.gapPrt == null ? "—" : brl2(m.gapPrt)}</Num>
                         <td className="cob" title={m.cobertura.nota}>
                           {m.cobertura.incluido.length > 0 ? m.cobertura.incluido.map((x) => x.split(" (")[0]).join(" + ") : "—"}
+                          {m.avistaFallback ? (
+                            <span
+                              className="fb-badge"
+                              role="note"
+                              title={fallbackDesc(m.avistaFallback.competenciaFornecedora)}
+                              aria-label={fallbackDesc(m.avistaFallback.competenciaFornecedora)}
+                            >
+                              <Chip variant="warn">
+                                Régua TRP · {fmtComp(m.avistaFallback.competenciaFornecedora)}
+                                {m.avistaFallback.contratos > 0 ? (
+                                  <span className="fb-n"> · {m.avistaFallback.contratos} contratos</span>
+                                ) : null}
+                              </Chip>
+                            </span>
+                          ) : null}
                           <span className="falta">+{m.cobertura.aIncluir.length} a incluir</span>
                         </td>
                       </tr>
@@ -366,6 +389,8 @@ const CSS = `
 .rrfc .gap.neg{color:var(--red);font-weight:700;}
 .rrfc .cob{font-size:12px;color:var(--ink-2);}
 .rrfc .cob .falta{display:inline-block;margin-left:8px;font-size:11px;color:var(--gold-deep);font-weight:600;}
+.rrfc .cob .fb-badge{display:inline-block;margin-left:8px;vertical-align:middle;}
+.rrfc .cob .fb-n{opacity:.75;font-weight:500;}
 .rrfc .inad-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}
 .rrfc .ik{background:#F7F8FB;border:1px solid var(--bd-soft);border-radius:var(--r-md);padding:14px 16px;display:flex;flex-direction:column;gap:4px;}
 .rrfc .ik .kl{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);}
