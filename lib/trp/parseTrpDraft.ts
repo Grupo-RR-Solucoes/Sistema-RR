@@ -87,6 +87,10 @@ export interface ConferirItem {
   campo: string;
   valorLido: string | null;
   motivo: string;
+  /** "conferir" (âmbar — pode afetar o cálculo, revise) | "informativo" (não
+   *  afeta cálculo, opcional). Ausente = "conferir" (default; não mexe nos
+   *  itens existentes). */
+  severidade?: "conferir" | "informativo";
 }
 
 export interface TrpDraftMeta {
@@ -243,8 +247,11 @@ export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOpt
   }
 
   // itens estruturais que o parser não prova (conferir na revisão)
-  conferir.push({ produto: "_meta", campo: "observacoes", valorLido: null, motivo: "não extraídas do PDF; adicione na revisão se desejado" });
-  conferir.push({ produto: "_meta", campo: "limites_categoria (prod_min/teto)", valorLido: null, motivo: "confira a tabela 'Perfil de Produção' do PDF" });
+  // _meta NÃO CONSUMIDO por cálculo (faixa vem de BAND_THRESHOLDS/FAIXA_GRUPO_RR
+  // fixos no motor; observacoes sem match de cálculo) → severidade informativa,
+  // não âmbar. É só rótulo: o parser e o cálculo seguem iguais.
+  conferir.push({ produto: "_meta", campo: "observacoes", valorLido: null, motivo: "não extraídas do PDF; adicione na revisão se desejado", severidade: "informativo" });
+  conferir.push({ produto: "_meta", campo: "limites_categoria (prod_min/teto)", valorLido: null, motivo: "confira a tabela 'Perfil de Produção' do PDF", severidade: "informativo" });
 
   return {
     regraDraft,

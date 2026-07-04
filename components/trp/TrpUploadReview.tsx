@@ -18,7 +18,7 @@ const FAIXA_LABELS = ["Faixa 1", "Faixa 2", "Faixa 3", "Faixa 4", "Faixa 5", "pc
 
 type Confianca = {
   provado: { totalPct: number; produtos: Record<string, number[][]> };
-  conferir: { produto: string; campo: string; valorLido: string | null; motivo: string }[];
+  conferir: { produto: string; campo: string; valorLido: string | null; motivo: string; severidade?: "conferir" | "informativo" }[];
 };
 type ParseMeta = {
   competencia: string;
@@ -326,17 +326,41 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
             })}
           </div>
 
-          {/* CONFERIR */}
-          <h4 className="trp-rev__h">Conferir contra o PDF <Chip variant="warn">{result.confianca.conferir.length} itens</Chip></h4>
-          <ul className="trp-conf">
-            {result.confianca.conferir.map((c, i) => (
-              <li key={i} className="conf">
-                <span className="conf__k">{c.produto} · {c.campo}</span>
-                {c.valorLido ? <span className="conf__v">lido: {c.valorLido}</span> : <span className="conf__v conf__v--none">não lido</span>}
-                <span className="conf__m">{c.motivo}</span>
-              </li>
-            ))}
-          </ul>
+          {/* CONFERIR — só os âmbar (severidade "conferir"; ausente = default âmbar).
+              Os "informativo" (não afetam cálculo) saem do contador e vão pro bloco abaixo. */}
+          {(() => {
+            const ambar = result.confianca.conferir.filter((c) => c.severidade !== "informativo");
+            const info = result.confianca.conferir.filter((c) => c.severidade === "informativo");
+            return (
+              <>
+                <h4 className="trp-rev__h">Conferir contra o PDF <Chip variant="warn">{ambar.length} itens</Chip></h4>
+                <ul className="trp-conf">
+                  {ambar.map((c, i) => (
+                    <li key={i} className="conf">
+                      <span className="conf__k">{c.produto} · {c.campo}</span>
+                      {c.valorLido ? <span className="conf__v">lido: {c.valorLido}</span> : <span className="conf__v conf__v--none">não lido</span>}
+                      <span className="conf__m">{c.motivo}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                {info.length > 0 ? (
+                  <>
+                    <h4 className="trp-rev__h">Informativo <Chip variant="neutral">não afeta cálculo</Chip></h4>
+                    <ul className="trp-conf trp-conf--info">
+                      {info.map((c, i) => (
+                        <li key={i} className="conf conf--info">
+                          <span className="conf__k">{c.produto} · {c.campo}</span>
+                          {c.valorLido ? <span className="conf__v">lido: {c.valorLido}</span> : <span className="conf__v conf__v--none">opcional</span>}
+                          <span className="conf__m">{c.motivo}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+              </>
+            );
+          })()}
 
           {/* DIFF */}
           <h4 className="trp-rev__h">Mudanças vs TRP anterior</h4>
@@ -418,6 +442,10 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
         .pt td.chg { background: var(--accent, #fff000); color: #101a33; font-weight: 700; }
         .trp-conf { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
         .conf { display: grid; grid-template-columns: 220px auto 1fr; gap: 10px; align-items: baseline; padding: 8px 10px; border-radius: 8px; background: #fffdf0; border: 1px solid #f5e7a8; font-size: 12px; }
+        .conf--info { background: #f6f8fc; border-color: #e6e8ee; }
+        .conf--info .conf__k { color: #3b4657; }
+        .conf--info .conf__v { color: #6b7280; }
+        .conf--info .conf__m { color: #6b7280; }
         .conf__k { font-weight: 700; color: #101a33; }
         .conf__v { font-family: var(--font-mono), monospace; color: #7a5b00; }
         .conf__v--none { opacity: .6; }
