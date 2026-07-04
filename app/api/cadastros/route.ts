@@ -32,7 +32,17 @@ type PromoterRow = {
   hired_at?: string | null;
   dismissed_at?: string | null;
   notes?: string | null;
+  estado?: string | null;
+  estado_confirmado?: boolean | null;
 };
+
+// Estado gerencial valido (espelha o CHECK da migration 20260704_000001). Defesa
+// server-side: qualquer coisa fora de AL/SE/PE/BA vira null ("nao classificado").
+const ESTADOS_VALIDOS = new Set(["AL", "SE", "PE", "BA"]);
+function normalizeEstado(v: unknown): string | null {
+  const s = typeof v === "string" ? v.trim().toUpperCase() : "";
+  return ESTADOS_VALIDOS.has(s) ? s : null;
+}
 
 type JKeyRow = {
   id: string;
@@ -113,7 +123,7 @@ export async function GET() {
       fetchAllRows<PromoterRow>(() =>
         supabase
           .from("promoters")
-          .select("id, company_id, name, status, active, is_master, hired_at, dismissed_at, notes")
+          .select("id, company_id, name, status, active, is_master, hired_at, dismissed_at, notes, estado, estado_confirmado")
           .order("name", { ascending: true })
       ),
       fetchAllRows<JKeyRow>(() =>
@@ -300,7 +310,7 @@ export async function POST(req: Request) {
         );
       }
 
-      const payload = {
+      const payload: Record<string, unknown> = {
         company_id: companyId,
         name,
         status,
@@ -313,6 +323,14 @@ export async function POST(req: Request) {
         notes: body.notes || null,
         updated_at: new Date().toISOString(),
       };
+      // Estado gerencial: o form lateral (novo/edicao) envia `estado`. Save via form
+      // e deliberado -> confirma (estado_confirmado=true). Se `estado` nao vier no
+      // body (chamador que nao mexe em estado), as colunas ficam INTOCADAS. A
+      // varredura inline dos 62 usa a action dedicada `promoter_estado_upsert`.
+      if (body.estado !== undefined) {
+        payload.estado = normalizeEstado(body.estado);
+        payload.estado_confirmado = true;
+      }
 
       if (id) {
         const { error } = await supabase
@@ -344,6 +362,54 @@ export async function POST(req: Request) {
         auditActor
       );
       return NextResponse.json({ success: true, id: data.id, updated: false });
+    }
+
+    // Edicao INLINE do estado gerencial (varredura dos 62). Atualiza SO estado +
+    // estado_confirmado (nao toca nome/empresa/etc. -> sem risco de clobber de campo
+    // stale). estado_confirmado=true porque editar inline e o ato de confirmar.
+    if (action === "promoter_estado_upsert") {
+      const id = body.id ? String(body.id) : null;
+      if (!id) {
+        return NextResponse.json({ error: "Informe o promotor." }, { status: 400 });
+      }
+      const estado = normalizeEstado(body.estado);
+      const { error } = await supabase
+        .from("promoters")
+        .update({ estado, estado_confirmado: true, updated_at: new Date().toISOString() })
+        .eq("id", id);
+
+      if (error) throw error;
+
+      await writeAudit(
+        "Atualizacao de estado gerencial de promotor",
+        { promoter_id: id, estado },
+        auditActor
+      );
+      return NextResponse.json({ success: true });
+    }
+
+    // Confirmacao em LOTE: SO flipa estado_confirmado=true nos ids dados. NAO altera
+    // nenhum valor de estado. A UI so passa os ids visiveis/filtrados nao-confirmados.
+    if (action === "promoter_estado_confirmar_lote") {
+      const ids = Array.isArray(body.ids)
+        ? body.ids.map((x: unknown) => String(x)).filter(Boolean)
+        : [];
+      if (ids.length === 0) {
+        return NextResponse.json({ error: "Nenhum promotor selecionado." }, { status: 400 });
+      }
+      const { error } = await supabase
+        .from("promoters")
+        .update({ estado_confirmado: true, updated_at: new Date().toISOString() })
+        .in("id", ids);
+
+      if (error) throw error;
+
+      await writeAudit(
+        "Confirmacao em lote de estado gerencial",
+        { promoter_ids: ids, total: ids.length },
+        auditActor
+      );
+      return NextResponse.json({ success: true, total: ids.length });
     }
 
     if (action === "jkey_upsert") {

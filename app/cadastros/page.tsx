@@ -51,6 +51,8 @@ type Promoter = {
   hired_at?: string | null;
   dismissed_at?: string | null;
   notes?: string | null;
+  estado?: "AL" | "SE" | "PE" | "BA" | null;
+  estado_confirmado?: boolean | null;
   keys: Array<{ id: string; j_key: string; key_type?: string | null; active?: boolean | null }>;
 };
 
@@ -150,6 +152,7 @@ export default function CadastrosPage() {
     active: true,
     status: "ACTIVE",
     dismissedAt: "" as string | null,
+    estado: "" as string,
   };
   const blankJKey = {
     id: "" as string,
@@ -293,6 +296,7 @@ export default function CadastrosPage() {
       active: isActive(p.active),
       status: p.status || (isActive(p.active) ? "ACTIVE" : "DISMISSED"),
       dismissedAt: p.dismissed_at ? String(p.dismissed_at).slice(0, 10) : null,
+      estado: p.estado ?? "",
     });
   }
   async function submitPromoter(e: FormEvent) {
@@ -310,12 +314,39 @@ export default function CadastrosPage() {
         hiredAt: promoterForm.hiredAt || null,
         dismissedAt: promoterForm.dismissedAt || null,
         notes: promoterForm.notes || null,
+        estado: promoterForm.estado || null,
       },
       editing ? "Promotor atualizado com sucesso." : "Promotor salvo com sucesso.",
       editing ? "Promotor atualizado" : "Promotor cadastrado"
     );
     if (ok) newPromoter();
   }
+
+  // ---------- ESTADO GERENCIAL (revisao dos promotores) ----------
+  const [soRevisar, setSoRevisar] = useState(false);
+  const ESTADOS = [
+    { v: "AL", l: "Alagoas" },
+    { v: "SE", l: "Sergipe" },
+    { v: "PE", l: "Pernambuco" },
+    { v: "BA", l: "Bahia" },
+  ] as const;
+  // Estado IMPLICITO pelo CNPJ (nome da empresa) — SO para o selo "≠ CNPJ". AL/PE apenas.
+  function estadoDaEmpresa(companyName: string | null | undefined): string | null {
+    const n = String(companyName ?? "").toUpperCase();
+    if (n.includes("ALAGOAS")) return "AL";
+    if (n.includes("PERNAMBUCO")) return "PE";
+    return null;
+  }
+  // Salva o estado de UM promotor (edicao inline = confirma aquele; action dedicada).
+  async function saveEstado(p: Promoter, novo: string) {
+    await postAction(
+      { action: "promoter_estado_upsert", id: p.id, estado: novo || null },
+      "Estado atualizado.",
+    );
+  }
+  // Contador de revisao: so promotores (exclui chaves master, que nao tem estado gerencial).
+  const estRevisaveis = useMemo(() => data.promoters.filter((p) => p.is_master !== true), [data.promoters]);
+  const estConfirmados = estRevisaveis.filter((p) => p.estado_confirmado === true).length;
 
   // ---------- JKEY ----------
   function newJKey() {
@@ -433,6 +464,27 @@ export default function CadastrosPage() {
 
   const companiesView = byStatus(companiesSearched);
   const promotersView = byStatus(promotersSearched);
+  // Filtro "so a revisar" (estado_confirmado=false) sobre a lista ja filtrada.
+  const promotersRender = soRevisar
+    ? promotersView.filter((p) => p.estado_confirmado !== true)
+    : promotersView;
+  // Confirmacao em LOTE: so os visiveis/filtrados nao-confirmados (exclui master).
+  // Passo deliberado (window.confirm com contagem por estado). NAO muda valor de estado.
+  async function confirmarDerivadosLote() {
+    const alvo = promotersRender.filter((p) => p.estado_confirmado !== true && p.is_master !== true);
+    if (alvo.length === 0) return;
+    const porEstado = new Map<string, number>();
+    for (const p of alvo) {
+      const k = p.estado ?? "Nao classificado";
+      porEstado.set(k, (porEstado.get(k) ?? 0) + 1);
+    }
+    const resumo = Array.from(porEstado.entries()).map(([k, n]) => `${k}: ${n}`).join(", ");
+    if (!window.confirm(`Confirmar o estado derivado de ${alvo.length} promotores? ${resumo}`)) return;
+    await postAction(
+      { action: "promoter_estado_confirmar_lote", ids: alvo.map((p) => p.id) },
+      `${alvo.length} estados confirmados.`,
+    );
+  }
   const jKeysView = byStatus(jKeysSearched);
 
   const newLabel =
@@ -549,12 +601,29 @@ export default function CadastrosPage() {
                   <h2>Promotores</h2>
                   <p className="csub">{counts.ativos} ativos · clique no lápis para editar o cadastro</p>
                 </div>
+                <div className="est-review">
+                  <span className={`est-count${estConfirmados >= estRevisaveis.length ? " done" : ""}`}>
+                    Estado: <b>{estConfirmados}</b> / {estRevisaveis.length} confirmados
+                  </span>
+                  <button type="button" className={`est-filter${soRevisar ? " on" : ""}`} onClick={() => setSoRevisar((v) => !v)}>
+                    {soRevisar ? "Mostrando só a revisar" : "Só a revisar"}
+                  </button>
+                  {(() => {
+                    const pend = promotersRender.filter((p) => p.estado_confirmado !== true && p.is_master !== true).length;
+                    return pend > 0 ? (
+                      <button type="button" className="est-bulk" onClick={confirmarDerivadosLote} disabled={submitting === "promoter_estado_confirmar_lote"}>
+                        Confirmar derivados ({pend})
+                      </button>
+                    ) : null;
+                  })()}
+                </div>
               </div>
               <Table scrollable minWidth={600}>
                   <thead>
                     <tr>
                       <th className="rr-sticky-col">Nome</th>
                       <th>Empresa</th>
+                      <th>Estado (gerencial)</th>
                       <th className="c">Chaves J</th>
                       <th>Admissão</th>
                       <th>Tipo</th>
@@ -564,12 +633,14 @@ export default function CadastrosPage() {
                   </thead>
                   <tbody>
                     {loading ? (
-                      <TableState colSpan={7} loading />
-                    ) : promotersView.length === 0 ? (
-                      <TableState colSpan={7} query={query} empty="Nenhum promotor nesta aba. Cadastre manualmente pelo botão Novo promotor." />
+                      <TableState colSpan={8} loading />
+                    ) : promotersRender.length === 0 ? (
+                      <TableState colSpan={8} query={query} empty={soRevisar ? "Nenhum promotor a revisar — todos confirmados." : "Nenhum promotor nesta aba. Cadastre manualmente pelo botão Novo promotor."} />
                     ) : (
-                      promotersView.map((p) => {
+                      promotersRender.map((p) => {
                         const active = isActive(p.active);
+                        const fiscal = estadoDaEmpresa(p.company_name);
+                        const diverge = p.estado != null && fiscal != null && p.estado !== fiscal;
                         return (
                           <tr key={p.id} className={active ? "" : "inactive"}>
                             <td className="nm rr-sticky-col">
@@ -577,6 +648,32 @@ export default function CadastrosPage() {
                               <small>{p.keys[0]?.j_key || "Sem chave"}</small>
                             </td>
                             <td>{p.company_name}</td>
+                            <td className="estcell">
+                              {p.is_master ? (
+                                <span className="est-na">—</span>
+                              ) : (
+                                <div className="estwrap">
+                                  <select
+                                    className="estsel"
+                                    aria-label={`Estado gerencial de ${p.name}`}
+                                    value={p.estado ?? ""}
+                                    onChange={(e) => saveEstado(p, e.target.value)}
+                                    disabled={submitting === "promoter_estado_upsert"}
+                                  >
+                                    <option value="">Não classificado</option>
+                                    {ESTADOS.map((x) => (
+                                      <option key={x.v} value={x.v}>{x.v} · {x.l}</option>
+                                    ))}
+                                  </select>
+                                  <span className={`estchip ${p.estado_confirmado ? "ok" : "warn"}`}>
+                                    {p.estado_confirmado ? "confirmado" : "derivado (revisar)"}
+                                  </span>
+                                  {diverge ? (
+                                    <span className="estdiv" title={`Estado gerencial (${p.estado}) difere do implícito pelo CNPJ (${fiscal})`}>≠ CNPJ</span>
+                                  ) : null}
+                                </div>
+                              )}
+                            </td>
                             <td className="c"><span className="cntpill">{p.keys.length}</span></td>
                             <td className="num">{fmtDate(p.hired_at)}</td>
                             <td>{p.is_master ? <MasterBadge /> : <span className="badge indiv">Individual</span>}</td>
@@ -620,6 +717,15 @@ export default function CadastrosPage() {
                       <option value="">Sem empresa</option>
                       {data.companies.map((co) => (
                         <option key={co.id} value={co.id}>{co.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Estado (gerencial)</label>
+                    <select value={promoterForm.estado} onChange={(e) => setPromoterForm((c) => ({ ...c, estado: e.target.value }))}>
+                      <option value="">Não classificado</option>
+                      {ESTADOS.map((x) => (
+                        <option key={x.v} value={x.v}>{x.v} · {x.l}</option>
                       ))}
                     </select>
                   </div>
@@ -1085,6 +1191,23 @@ const CSS = `
 .rrcad .nm{font-weight:600;color:var(--ink);}
 .rrcad .nm small{display:block;font-weight:500;font-size:11px;color:var(--ink-3);margin-top:1px;}
 .rrcad .cntpill{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 7px;border-radius:999px;background:var(--neu);border:1px solid var(--bd);font-size:11.5px;font-weight:600;color:var(--ink-2);}
+/* Estado gerencial — revisao dos promotores */
+.rrcad .est-review{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.rrcad .est-count{font-size:12px;color:var(--ink-2);white-space:nowrap;}
+.rrcad .est-count b{color:var(--ink);}
+.rrcad .est-count.done b{color:var(--green,#2F855A);}
+.rrcad .est-filter{font-size:11.5px;font-weight:600;color:var(--ink-2);border:1px solid var(--bd);border-radius:8px;padding:6px 10px;background:#fff;cursor:pointer;}
+.rrcad .est-filter.on{background:var(--navy,#0F1F4A);border-color:var(--navy,#0F1F4A);color:#fff;}
+.rrcad .est-bulk{font-size:11.5px;font-weight:600;color:#fff;border:1px solid var(--navy,#0F1F4A);border-radius:8px;padding:6px 10px;background:var(--navy,#0F1F4A);cursor:pointer;}
+.rrcad .est-bulk:disabled{opacity:.6;cursor:not-allowed;}
+.rrcad .estcell .estwrap{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.rrcad .estsel{height:30px;border:1px solid var(--bd);border-radius:8px;padding:0 8px;font:inherit;font-size:12px;background:#fff;color:var(--ink);cursor:pointer;}
+.rrcad .estsel:disabled{opacity:.6;}
+.rrcad .estchip{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap;}
+.rrcad .estchip.warn{background:#fffdf0;border:1px solid #f5e7a8;color:#7a5b00;}
+.rrcad .estchip.ok{background:#f2fbf5;border:1px solid #cdeed8;color:#14532d;}
+.rrcad .estdiv{font-size:10.5px;font-weight:700;color:#8a1c1c;background:#fdece9;border:1px solid #f4c6bd;border-radius:999px;padding:2px 7px;white-space:nowrap;}
+.rrcad .est-na{color:var(--ink-3);}
 .rrcad tr.inactive td{background:#FCFCFD;}
 .rrcad tr.inactive .nm{color:var(--ink-3);}
 .rrcad tr.inactive td:not(.actcell){opacity:.72;}
