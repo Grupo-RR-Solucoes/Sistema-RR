@@ -13,6 +13,7 @@
  */
 
 import type { LookupPctResult, Regime } from "./types/blocos.ts";
+import { normConvenio } from "./convenioSegmento.ts";
 import {
   MAPA_MES_REGRA,
   CONVENIOS_OFICIAIS,
@@ -570,7 +571,11 @@ export function categoriasCandidatasFor(
 ): string[] {
   const p = String(produto ?? "").toUpperCase();
   const t = String(tipo ?? "").toUpperCase();
-  const cv = String(convenio ?? "");
+  // Normaliza pelo util canonico (convenioSegmento): "000001640" -> "1640". Espelha o
+  // normalizeConvenioCode do motor, corrigindo o mismatch de zero-padding que fazia
+  // INSS/SIAPE caírem para Público quando o convenio chegava como string padded (forma
+  // do banco). No-op para o dado vivo (callers ja passam numero).
+  const cv = normConvenio(convenio) ?? "";
 
   // FGTS (raro — 17 contratos)
   if (p.includes("FGTS")) return ["FGTS"];
