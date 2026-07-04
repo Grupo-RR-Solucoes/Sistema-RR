@@ -62,12 +62,17 @@ function isEligibleRecord(r: any): boolean {
 export type Semaforo = "verde" | "amarelo" | "vermelho" | "sem_meta";
 export type Tendencia = "crescimento" | "queda" | "estavel" | "sem_historico";
 
+// Estado gerencial do promotor (dimensao da hierarquia, ver migration
+// 20260704_000001). Fonte do agrupamento da /projecao. null = "nao classificado".
+export type Estado = "AL" | "SE" | "PE" | "BA";
+
 export type ProjecaoPromotor = {
   promoter_id: string;
   promoter_name: string;
   company_id: string;
   company_name: string;
   company_cnpj: string;
+  estado: Estado | null;
   producao_acumulada: number;
   dias_uteis_decorridos: number;
   dias_uteis_totais: number;
@@ -324,6 +329,7 @@ export async function buildProjecaoMetas(
       company_id: row.company_id || "",
       company_name: row.company_name || "-",
       company_cnpj: row.company_cnpj || "",
+      estado: asEstado(row.estado),
       producao_acumulada: acumulada,
       dias_uteis_decorridos: diasDecorridos,
       dias_uteis_totais: total,
@@ -497,6 +503,84 @@ export function agruparPorCnpj(res: ProjecaoResultado): ProjecaoGrupoCnpj[] {
     return pa - pb;
   });
   return groups;
+}
+
+// ---------- Agrupamento por ESTADO (dimensao gerencial) — sub-PR 3 ----------
+// Espelha agruparPorCnpj, mas particiona por promoter.estado. TOTAL INVARIANTE:
+// re-particiona os MESMOS promotores + o MESMO master, so muda o bucket (a soma
+// nao muda). Meta por estado = soma dos target_value dos promotores (derivada).
+
+/** Narrowing seguro: string do banco -> Estado | null (o CHECK garante o dominio). */
+function asEstado(v: unknown): Estado | null {
+  return v === "AL" || v === "SE" || v === "PE" || v === "BA" ? v : null;
+}
+/** Estado IMPLICITO pela empresa-operacao (nome). SO para bucketar o master. AL/PE. */
+function estadoDaEmpresa(companyName: string | null | undefined): Estado | null {
+  const n = String(companyName ?? "").toUpperCase();
+  if (n.includes("ALAGOAS")) return "AL";
+  if (n.includes("PERNAMBUCO")) return "PE";
+  return null;
+}
+const ESTADO_LABEL: Record<Estado, string> = {
+  AL: "Alagoas",
+  SE: "Sergipe",
+  PE: "Pernambuco",
+  BA: "Bahia",
+};
+const ESTADO_ORDEM: Estado[] = ["AL", "SE", "PE", "BA"];
+
+export type ProjecaoGrupoEstado = ProjecaoGrupoTotais & {
+  estado: Estado | null; // null = "Nao classificado"
+  estado_label: string;
+  promotores: ProjecaoPromotor[];
+  // Producao em chave master (nao atribuida a promotor) da empresa-operacao daquele
+  // estado. Conceito SEPARADO do promotor sem estado. NAO entra no header (so
+  // promotores); linha visivel adicional p/ o total bater com o consolidado.
+  nao_atribuido?: NaoAtribuidoTotais | null;
+};
+
+export function agruparPorEstado(res: ProjecaoResultado): ProjecaoGrupoEstado[] {
+  const NULO = "__NULL__";
+  // 1) promotores por estado (null -> NULO).
+  const porEstado = new Map<string, ProjecaoPromotor[]>();
+  for (const p of res.promotores) {
+    const key = p.estado ?? NULO;
+    const arr = porEstado.get(key) || [];
+    arr.push(p);
+    porEstado.set(key, arr);
+  }
+  // 2) master (naoAtribuido.porCnpj) por estado da empresa-operacao. Preserva a soma
+  //    total do master (empresas sao AL/PE; empresa nao mapeada -> NULO).
+  const masterPorEstado = new Map<string, NaoAtribuidoTotais>();
+  for (const na of Object.values(res.naoAtribuido?.porCnpj ?? {})) {
+    const key = estadoDaEmpresa(na.company_name) ?? NULO;
+    const cur = masterPorEstado.get(key) ?? { acumulada: 0, projecao: 0, count: 0 };
+    masterPorEstado.set(key, {
+      acumulada: cur.acumulada + na.acumulada,
+      projecao: cur.projecao + na.projecao,
+      count: cur.count + na.count,
+    });
+  }
+  // 3) monta na ORDEM fixa AL, SE, PE, BA e "Nao classificado" por ultimo.
+  const grupos: ProjecaoGrupoEstado[] = [];
+  const push = (estado: Estado | null, key: string) => {
+    const promotores = porEstado.get(key) ?? [];
+    const master = masterPorEstado.get(key) ?? null;
+    const masterVisivel = master && (master.acumulada > 0 || master.count > 0) ? master : null;
+    // so aparece se houver promotor OU master com producao ("Nao classificado" so
+    // surge quando existir promotor sem estado ou master de empresa nao mapeada).
+    if (promotores.length === 0 && !masterVisivel) return;
+    grupos.push({
+      estado,
+      estado_label: estado ? ESTADO_LABEL[estado] : "Não classificado",
+      promotores,
+      nao_atribuido: masterVisivel,
+      ...totaliza(promotores),
+    });
+  };
+  for (const e of ESTADO_ORDEM) push(e, e);
+  push(null, NULO);
+  return grupos;
 }
 
 // Promotores em VERMELHO (projecao < 80% da meta), do pior pro melhor.

@@ -1,7 +1,7 @@
 import { apiGuardErrorResponse, withAuthenticatedAnon } from "@/lib/auth/guards";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
 import {
-  agruparPorCnpj,
+  agruparPorEstado,
   buildProjecaoMetas,
   consolidarGrupoEquipe,
   promotoresEmRisco,
@@ -103,7 +103,7 @@ export async function GET(req: Request) {
       companies: companies || [],
       consolidado,
       seguro_comissao_grupo_empresa: seguroComissaoGrupoEmpresa,
-      grupos: agruparPorCnpj(res),
+      grupos: agruparPorEstado(res),
       risco: promotoresEmRisco(res),
       total_promotores: res.promotores.length,
     });
