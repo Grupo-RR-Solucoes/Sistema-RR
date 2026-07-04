@@ -26,6 +26,7 @@ type PromoterRow = {
   status?: string | null;
   active?: boolean | null;
   is_master?: boolean | null;
+  estado?: string | null;
 };
 
 type JKeyRow = {
@@ -459,7 +460,7 @@ export async function loadPromoterAnalyticsBase(
       fetchAllRows<PromoterRow>(() => {
         let query = supabase
           .from("promoters")
-          .select("id, company_id, name, status, active, is_master")
+          .select("id, company_id, name, status, active, is_master, estado")
           .order("name", { ascending: true });
 
         if (companyId) {
@@ -676,6 +677,7 @@ export async function loadPromoterAnalyticsBase(
       company_id: promoter.company_id,
       company_name: companyById.get(promoter.company_id || "")?.name || "-",
       company_cnpj: companyById.get(promoter.company_id || "")?.cnpj || "",
+      estado: promoter.estado ?? null,
       active: promoter.active !== false,
       status: promoter.status || (promoter.active === false ? "DISMISSED" : "ACTIVE"),
       j_keys_count: jKeys.filter((jKey) => jKey.promoter_id === promoter.id).length,

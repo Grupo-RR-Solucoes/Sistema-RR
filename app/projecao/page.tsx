@@ -53,9 +53,8 @@ type Promotor = {
 };
 type NaoAtribuido = { acumulada: number; projecao: number; count: number };
 type Grupo = {
-  company_id: string;
-  company_name: string;
-  company_cnpj: string;
+  estado: "AL" | "SE" | "PE" | "BA" | null;
+  estado_label: string;
   producao_acumulada: number;
   projecao: number;
   meta: number;
@@ -444,13 +443,13 @@ function EquipeView({ data }: { data: any }) {
 
       {/* TABELAS POR CNPJ */}
       {grupos.map((g) => (
-        <section key={g.company_id || g.company_cnpj} className="card">
+        <section key={g.estado ?? "nao-classificado"} className="card">
           <div className="emp-head">
             <div className="left">
               <span className={`st ${CHIP[g.semaforo]}`} />
               <div>
-                <div className="nm">{g.company_name}</div>
-                <div className="cnpj">{g.company_cnpj ? `CNPJ ${g.company_cnpj}` : "—"}</div>
+                <div className="nm">{g.estado_label}</div>
+                <div className="cnpj">{g.estado ? `Estado ${g.estado}` : "sem estado atribuído"} · {g.promotores.length} promotor{g.promotores.length === 1 ? "" : "es"}</div>
               </div>
             </div>
             <div className="right">
