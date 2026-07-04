@@ -56,6 +56,18 @@ export interface AgregadorMes {
   /** recebido − previsto à vista (INFORMATIVO; base com arestas). */
   gapAvistaInformativo: number | null;
 
+  // ---- Previsão CONGELADA (sub-PR 1, ADITIVO — não altera os campos acima) ----
+  /** previsto PRT congelado num snapshot ANTERIOR a esta competência (o que se
+   *  previu ENTÃO, não o re-derivado). null se não há snapshot com lead. */
+  previstoPrtCongelado: number | null;
+  /** previsto à vista congelado (idem). */
+  previstoAvistaCongelado: number | null;
+  /** recebidoPrt − previstoPrtCongelado (só fechado + com congelado). O confronto
+   *  contra a previsão de VERDADE (não a re-derivada). */
+  gapVsCongelado: number | null;
+  /** competência do snapshot usado (rastreabilidade do lead). */
+  competenciaSnapshotUsado: string | null;
+
   /** Régua TRP em fallback: à vista calculado com a TRP de uma competência
    *  anterior (esta competência não tem TRP própria publicada). null quando a
    *  competência tem TRP própria. competenciaFornecedora = competência da régua
@@ -106,6 +118,49 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+interface CongeladoAlvo {
+  previstoPrt: number | null;
+  previstoAvista: number | null;
+  competenciaSnapshot: string;
+}
+
+/** Lê previsao_snapshot e, por competência-alvo, escolhe o snapshot mais recente
+ *  ANTERIOR ao alvo (o LEAD: previsão feita ANTES do mês previsto). Tolera a tabela
+ *  ausente (migration manual ainda não aplicada) => mapa vazio, sem campos
+ *  congelados, comportamento atual preservado. ADITIVO. */
+async function fetchPrevisaoCongelada(
+  supabase: SupabaseClient,
+): Promise<Map<string, CongeladoAlvo>> {
+  const out = new Map<string, CongeladoAlvo>();
+  try {
+    const { data, error } = await supabase
+      .from("previsao_snapshot")
+      .select("competencia_snapshot, competencia_alvo, previsto_prt, previsto_avista");
+    if (error || !data) return out;
+    for (const r of data as Array<{
+      competencia_snapshot: string;
+      competencia_alvo: string;
+      previsto_prt: number | null;
+      previsto_avista: number | null;
+    }>) {
+      // LEAD: só previsões feitas ANTES do alvo (snapshot < alvo). Exclui o próprio
+      // snapshot (gap ~0 por construção), que não é um teste de previsão forward.
+      if (!(r.competencia_snapshot < r.competencia_alvo)) continue;
+      const cur = out.get(r.competencia_alvo);
+      if (!cur || r.competencia_snapshot > cur.competenciaSnapshot) {
+        out.set(r.competencia_alvo, {
+          previstoPrt: r.previsto_prt,
+          previstoAvista: r.previsto_avista,
+          competenciaSnapshot: r.competencia_snapshot,
+        });
+      }
+    }
+  } catch {
+    return out;
+  }
+  return out;
+}
+
 /** Conjunto de competências (YYYY-MM) com fechamento. */
 async function fetchClosedMonths(supabase: SupabaseClient): Promise<Set<string>> {
   const { data, error } = await supabase
@@ -128,10 +183,11 @@ export async function buildAgregadorRecebiveis(
   const horizonteMeses = options.horizonteMeses ?? 6;
   const refDate = options.refDate ?? new Date();
 
-  const [agenda, avista, closedSet] = await Promise.all([
+  const [agenda, avista, closedSet, congeladoByAlvo] = await Promise.all([
     buildPrtAgenda(supabase, { horizonteMeses: horizonteMeses + 2 }),
     buildAvistaProducao(supabase, { refDate }),
     fetchClosedMonths(supabase),
+    fetchPrevisaoCongelada(supabase),
   ]);
 
   // PRT previsto por competência: snapshot (base) + a série projetada.
@@ -213,6 +269,15 @@ export async function buildAgregadorRecebiveis(
         ". Gap só após o fechamento.";
     }
 
+    // ---- Previsão CONGELADA (sub-PR 1, ADITIVO) ----
+    const cong = congeladoByAlvo.get(comp) ?? null;
+    const previstoPrtCongelado = cong ? cong.previstoPrt : null;
+    const previstoAvistaCongelado = cong ? cong.previstoAvista : null;
+    const gapVsCongelado =
+      fechado && recebidoPrt !== null && previstoPrtCongelado !== null
+        ? round2(recebidoPrt - previstoPrtCongelado)
+        : null;
+
     meses.push({
       competencia: comp,
       fechado,
@@ -222,6 +287,10 @@ export async function buildAgregadorRecebiveis(
       previstoAvista: previstoAvista === null ? null : round2(previstoAvista),
       recebidoAvista,
       gapAvistaInformativo,
+      previstoPrtCongelado,
+      previstoAvistaCongelado,
+      gapVsCongelado,
+      competenciaSnapshotUsado: cong ? cong.competenciaSnapshot : null,
       avistaFallback,
       cobertura: { incluido, aIncluir, nota },
     });
