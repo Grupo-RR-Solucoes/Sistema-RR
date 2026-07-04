@@ -1,5 +1,5 @@
 // ============================================================
-// FORECAST — Camada 1: AGENDA DE RECEBÍVEIS do PRT diferido.
+// RECEBIVEIS — Camada 1: AGENDA DE RECEBÍVEIS do PRT diferido.
 //
 // Isto NÃO é previsão estatística: é a AGENDA de direitos já contratados.
 // Cada contrato vivo da carteira PRT (monthly_closing_entries, entry_type=

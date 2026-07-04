@@ -1,5 +1,5 @@
 // ============================================================
-// FORECAST — Camada 2: À VISTA da produção ABERTA (só o realizado).
+// RECEBIVEIS — Camada 2: À VISTA da produção ABERTA (só o realizado).
 //
 // Projeta o à vista que a produção JÁ REALIZADA do mês corrente vai liberar no
 // caixa M+1. SÓ o que existe em daily_production_records — SEM extrapolação,

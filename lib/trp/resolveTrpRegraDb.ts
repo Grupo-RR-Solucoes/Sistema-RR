@@ -70,7 +70,7 @@ const SELECT_COLS = "id, competencia, version_no, regra_json";
 /**
  * Erro de INFRAESTRUTURA ao ler trp_rule_versions (RLS/permission denied,
  * conexão, query malformada). É DISTINTO de "competência sem regra": este
- * PROPAGA (deixa o Forecast falhar visível), NUNCA vira null nem cai no
+ * PROPAGA (deixa os Recebíveis falharem visível), NUNCA vira null nem cai no
  * fallback. O fallback em cascata é só para "não subiram a TRP deste mês" —
  * jamais para "não consegui ler o banco".
  */

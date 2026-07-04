@@ -5,7 +5,7 @@
 // F6b.2 (base): consome /api/trp/parse (read-only) e renderiza a revisão.
 // F6b.3 (agora):
 //   - Sócio: "Confirmar e gravar" chama /api/trp/commit (grava a versão viva).
-//     Como as leituras são ao vivo, o Forecast já reflete a nova TRP.
+//     Como as leituras são ao vivo, os Recebíveis já refletem a nova TRP.
 //   - Todos (socio+funcionario): "Salvar rascunho" chama /api/trp/staging.
 //   - Sócio: caixa "Rascunhos pendentes" (inbox) — abre um rascunho, revisa e confirma.
 // Só o sócio vê confirmar e a inbox; o funcionário só salva rascunho.
@@ -211,7 +211,7 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
       }
       setActionMsg(
         `TRP de ${result.meta.competencia} gravada — versão ${json.version_no}. ` +
-          `As leituras são ao vivo: o Forecast já usa a nova TRP.`,
+          `As leituras são ao vivo: os Recebíveis já usam a nova TRP.`,
       );
       setCurrentUploadId(null);
       loadPendentes();
@@ -376,8 +376,8 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
           {actionMsg ? (
             <Banner variant="ok">
               <b>{actionMsg}</b>
-              {actionMsg.includes("Forecast") ? (
-                <div className="det">Abra o <a href="/forecast">Forecast</a> para conferir. O recálculo do derivado persistido e o badge de fallback são a próxima fase (F6b.4).</div>
+              {actionMsg.includes("Recebíveis") ? (
+                <div className="det">Abra os <a href="/recebiveis">Recebíveis</a> para conferir. O recálculo do derivado persistido e o badge de fallback são a próxima fase (F6b.4).</div>
               ) : null}
             </Banner>
           ) : null}
@@ -400,7 +400,7 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
                 <Button variant="acao" disabled={busy} onClick={onConfirmar}>
                   {committing ? "Gravando…" : "Confirmar e gravar"}
                 </Button>
-                <span className="hint">Grava a versão viva da TRP. As leituras são ao vivo — o Forecast passa a usar a nova TRP na hora.</span>
+                <span className="hint">Grava a versão viva da TRP. As leituras são ao vivo — os Recebíveis passam a usar a nova TRP na hora.</span>
               </>
             ) : (
               <span className="hint">Revisão do auxiliar — a <b>confirmação/gravação é do sócio</b>. Você salva o rascunho; ele confirma.</span>

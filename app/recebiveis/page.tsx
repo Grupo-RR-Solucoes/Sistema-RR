@@ -14,7 +14,7 @@ import {
   EmptyState,
 } from "@/components/ui";
 
-// Forecast (Camada 4) — tela navy. Consome /api/forecast (agregador Camada 3 +
+// Recebiveis (Camada 4) — tela navy. Consome /api/recebiveis (agregador Camada 3 +
 // inadimplência Camada 1). Previsto = direito contratado (PRT) + à vista crédito
 // PF da produção aberta. Recebido = realizado por produto. Tudo com cobertura
 // explícita (o previsto é PARCIAL — a tela não esconde isso).
@@ -78,7 +78,7 @@ function fallbackDesc(comp: string) {
   return `Competência sem TRP própria publicada. À vista calculado com a régua vigente de ${fmtComp(comp)} (TRP mais recente anterior). Provisório até a TRP desta competência ser publicada.`;
 }
 
-export default function ForecastPage() {
+export default function RecebiveisPage() {
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -89,9 +89,9 @@ export default function ForecastPage() {
       try {
         setLoading(true);
         setError("");
-        const res = await fetch("/api/forecast");
+        const res = await fetch("/api/recebiveis");
         const j = await res.json();
-        if (!res.ok) throw new Error(j?.error || "Erro ao carregar o forecast.");
+        if (!res.ok) throw new Error(j?.error || "Erro ao carregar os recebíveis.");
         if (!cancelled) setData(j as Payload);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Erro ao carregar.");
@@ -163,10 +163,10 @@ export default function ForecastPage() {
         <nav className="crumb">
           <Link href="/dashboard">Dashboard</Link>
           <span className="sep">/</span>
-          <span>Forecast</span>
+          <span>Recebíveis</span>
         </nav>
 
-        <HeaderNavy brand="GRUPO RR CRED" title="Forecast" subtitle="Previsão de Recebíveis — direito contratado vs realizado">
+        <HeaderNavy brand="GRUPO RR CRED" title="Recebíveis" subtitle="Previsão — direito contratado vs realizado">
           {ag && kpis ? (
             <KpiBand
               valueSize={26}
@@ -180,7 +180,7 @@ export default function ForecastPage() {
         </HeaderNavy>
 
         {error ? <Banner variant="warn">{error}</Banner> : null}
-        {loading ? <div className="state">Carregando forecast…</div> : null}
+        {loading ? <div className="state">Carregando recebíveis…</div> : null}
 
         {!loading && ag ? (
           <>
