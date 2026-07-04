@@ -249,7 +249,7 @@ export default function ProjecaoPage() {
           subtitle={
             isPromotor
               ? `${prom?.company_name ?? "—"} · projeção individual · ${mes(year, month)}`
-              : "Estimativa de fechamento por ritmo linear · todos os CNPJ"
+              : "Estimativa de fechamento por ritmo linear · todos os estados"
           }
           badge={
             isPromotor && prom ? (
@@ -380,7 +380,7 @@ function EquipeView({ data }: { data: any }) {
               ),
             },
             { label: "Projeção do grupo", value: brl(cons.projecao), sub: "estimativa de fechamento", accent: true },
-            { label: "Meta do grupo", value: brl(cons.meta), sub: "soma das metas por CNPJ" },
+            { label: "Meta do grupo", value: brl(cons.meta), sub: "soma das metas por estado" },
             { label: "% projetado do grupo", value: pctTxt(cons.percent_projetado), sub: <Chip s={cons.semaforo} onNavy /> },
           ]}
         />
@@ -441,7 +441,7 @@ function EquipeView({ data }: { data: any }) {
         )}
       </section>
 
-      {/* TABELAS POR CNPJ */}
+      {/* TABELAS POR ESTADO */}
       {grupos.map((g) => (
         <section key={g.estado ?? "nao-classificado"} className="card">
           <div className="emp-head">
