@@ -56,6 +56,12 @@ export interface AgregadorMes {
   /** recebido − previsto à vista (INFORMATIVO; base com arestas). */
   gapAvistaInformativo: number | null;
 
+  /** Régua TRP em fallback: à vista calculado com a TRP de uma competência
+   *  anterior (esta competência não tem TRP própria publicada). null quando a
+   *  competência tem TRP própria. competenciaFornecedora = competência da régua
+   *  usada (mais recente anterior); contratos = nº de contratos à vista afetados. */
+  avistaFallback: { competenciaFornecedora: string; contratos: number } | null;
+
   cobertura: CoberturaMes;
 }
 
@@ -179,16 +185,17 @@ export async function buildAgregadorForecast(
     if (previstoAvista !== null && avista.contratosSemTrp > 0) {
       aIncluir.push(`${avista.contratosSemTrp} contratos à vista sem match no motor TRP`);
     }
-    // TRP self-service F4/F5: aviso de fallback JUNTO do número (indicador mínimo;
-    // badge visual por tela fica na F6). Dispara em QUALQUER fonte (db ou json —
+    // TRP self-service F6b.4: sinal de fallback ESTRUTURADO (badge por tela, no
+    // lugar do texto solto em aIncluir). Dispara em QUALQUER fonte (db ou json —
     // ambas fazem fallback simétrico) quando a competência usou a TRP de um mês
-    // anterior.
-    if (previstoAvista !== null && avista.contratosFallback > 0) {
-      aIncluir.push(
-        `à vista de ${comp} calculado por FALLBACK da TRP de ${avista.competenciaFallback ?? "mês anterior"} ` +
-          `(${avista.contratosFallback} contratos) — número provisório até a TRP própria ser publicada`,
-      );
-    }
+    // anterior. Só estrutura a saída; a lógica de fallback (avistaProducao) não muda.
+    const avistaFallback =
+      previstoAvista !== null && avista.contratosFallback > 0 && avista.competenciaFallback
+        ? {
+            competenciaFornecedora: avista.competenciaFallback,
+            contratos: avista.contratosFallback,
+          }
+        : null;
     if (previstoAvista === null) {
       aIncluir.push("à vista crédito PF (sem produção importada para esta competência ainda)");
     }
@@ -215,6 +222,7 @@ export async function buildAgregadorForecast(
       previstoAvista: previstoAvista === null ? null : round2(previstoAvista),
       recebidoAvista,
       gapAvistaInformativo,
+      avistaFallback,
       cobertura: { incluido, aIncluir, nota },
     });
   }
