@@ -165,6 +165,116 @@ function validarProdutos(produtos: Record<string, ProdutoExtraido>): void {
   }
 }
 
+// --- A1: herança semântica-GUARDADA de prazo (SÓ CONSIG_PRIVADO) --------------
+// A célula de prazo mesclada "A partir de N" cobre um bloco de linhas, mas o texto
+// cai só no centro (ord3), deixando topo/base (ord2/ord4) sem prazo. Herança: a
+// linha SEM prazo cuja taxa é CONTÍGUA ao bloco de prazo ABERTO ("A partir de N")
+// herda esse prazo. É PROPOSTA — só grava se passar nos 3 guards; senão o produto
+// fica como hoje (prazo parcial + âmbar), NUNCA herança não-validada. Não há número
+// quebrado (RAW ≡ FIXED p/ prazo≥18): é higiene (tirar o SQL manual mensal).
+
+const PRAZO_ABERTO = 999;
+/** Contíguo = adjacente em taxa (um passo ~0.0001), sem overlap. */
+function txContiguo(prev: Record<string, unknown>, next: Record<string, unknown>): boolean {
+  const gap = (next.tx_min as number) - (prev.tx_max as number);
+  return gap > 0 && gap < 0.0002;
+}
+function temPrazoCell(c: Record<string, unknown>): boolean {
+  return typeof c.prazo_min === "number";
+}
+
+export interface HerancaPrazoResult {
+  ok: boolean;
+  razao?: string;
+}
+
+/**
+ * Resolve o prazo faltante do CONSIG_PRIVADO por herança semântica-GUARDADA.
+ * Muta `cells` (preenche prazo nas herdeiras) SOMENTE se os 3 guards passarem;
+ * caso contrário deixa `cells` intacto e devolve { ok:false, razao }.
+ * Exportado para teste headless do guard sintético.
+ */
+export function resolverPrazoSemanticoConsigPrivado(
+  cells: Record<string, unknown>[],
+): HerancaPrazoResult {
+  // Precisa de taxa em todas as células para raciocinar contiguidade.
+  if (cells.some((c) => typeof c.tx_min !== "number" || typeof c.tx_max !== "number")) {
+    return { ok: false, razao: "célula sem faixa de taxa — herança de prazo não aplicável" };
+  }
+  const abertas = cells.filter((c) => temPrazoCell(c) && c.prazo_max === PRAZO_ABERTO);
+  if (abertas.length !== 1) {
+    return { ok: false, razao: `esperava 1 bloco de prazo aberto ("A partir de N"), achei ${abertas.length}` };
+  }
+  const aberta = abertas[0];
+  const pMin = aberta.prazo_min as number;
+  const pMax = aberta.prazo_max as number;
+
+  // Bloco aberto = célula aberta + células SEM prazo, contíguas em taxa. Exclui as
+  // com prazo fechado próprio (ex.: ord1 "18-35", cuja taxa aberta sobrepõe o bloco).
+  const elegiveis = cells.filter((c) => c === aberta || !temPrazoCell(c));
+  const ordenadas = [...elegiveis].sort((a, b) => (a.tx_min as number) - (b.tx_min as number));
+  const oi = ordenadas.indexOf(aberta);
+  const bloco = new Set<Record<string, unknown>>([aberta]);
+  for (let i = oi - 1; i >= 0; i--) {
+    if (txContiguo(ordenadas[i], ordenadas[i + 1])) bloco.add(ordenadas[i]);
+    else break;
+  }
+  for (let i = oi + 1; i < ordenadas.length; i++) {
+    if (txContiguo(ordenadas[i - 1], ordenadas[i])) bloco.add(ordenadas[i]);
+    else break;
+  }
+
+  // Proposta: células SEM prazo dentro do bloco herdam o prazo aberto.
+  const proposta = new Map<Record<string, unknown>, { prazo_min: number; prazo_max: number }>();
+  for (const c of cells) {
+    if (!temPrazoCell(c) && bloco.has(c)) proposta.set(c, { prazo_min: pMin, prazo_max: pMax });
+  }
+
+  // GUARD (a) COBERTURA: toda célula fica com prazo (própria ou herdada).
+  for (const c of cells) {
+    if (!temPrazoCell(c) && !proposta.has(c)) {
+      return { ok: false, razao: "prazo não resolvido em alguma célula (fora do bloco contíguo) — confira" };
+    }
+  }
+
+  const prazoFinal = (c: Record<string, unknown>) =>
+    temPrazoCell(c)
+      ? { prazo_min: c.prazo_min as number, prazo_max: c.prazo_max as number }
+      : (proposta.get(c) as { prazo_min: number; prazo_max: number });
+
+  // GUARD (b) PARTIÇÃO DE TAXA: dentro de cada grupo de prazo, taxas contíguas (sem gap/overlap).
+  const grupos = new Map<string, Record<string, unknown>[]>();
+  for (const c of cells) {
+    const pf = prazoFinal(c);
+    const k = `${pf.prazo_min}-${pf.prazo_max}`;
+    if (!grupos.has(k)) grupos.set(k, []);
+    grupos.get(k)!.push(c);
+  }
+  for (const [k, grp] of grupos) {
+    const s = [...grp].sort((a, b) => (a.tx_min as number) - (b.tx_min as number));
+    for (let i = 1; i < s.length; i++) {
+      if (!txContiguo(s[i - 1], s[i])) {
+        return { ok: false, razao: `faixas de taxa não particionam dentro da célula de prazo ${k} — herança rejeitada` };
+      }
+    }
+  }
+
+  // GUARD (c) CROSS-CHECK COM O TEXTO: o herdado == prazo (texto) da célula aberta;
+  // células com prazo do texto NÃO entram na proposta (ficam byte-idênticas).
+  for (const [, pr] of proposta) {
+    if (pr.prazo_min !== pMin || pr.prazo_max !== pMax) {
+      return { ok: false, razao: `herança diverge do texto (herdado=${pr.prazo_min}-${pr.prazo_max}, texto=${pMin}-${pMax})` };
+    }
+  }
+
+  // Todos os guards passaram → aplica a herança (só nas células propostas).
+  for (const [c, pr] of proposta) {
+    c.prazo_min = pr.prazo_min;
+    c.prazo_max = pr.prazo_max;
+  }
+  return { ok: true };
+}
+
 // --- montagem do draft --------------------------------------------------------
 
 function montarProdutoDraft(key: string, p: ProdutoExtraido, conferir: ConferirItem[]): Record<string, unknown> {
@@ -195,12 +305,18 @@ function montarProdutoDraft(key: string, p: ProdutoExtraido, conferir: ConferirI
     motivo: `tipo/faixas de tx/prazo inferidos dos tokens (${JSON.stringify(p.tokens)}); confira contra o PDF`,
   });
   if (key === "CONSIG_PRIVADO") {
-    conferir.push({
-      produto: key,
-      campo: "prazo por célula",
-      valorLido: null,
-      motivo: "a Promotiva popula o prazo por célula à mão (observação do TRP); confira célula a célula no PDF",
-    });
+    // A1: tenta resolver o prazo faltante (célula mesclada) por herança guardada.
+    // Só grava se passar nos 3 guards; senão volta ao comportamento de hoje (âmbar).
+    const h = resolverPrazoSemanticoConsigPrivado(cells);
+    if (!h.ok) {
+      conferir.push({
+        produto: key,
+        campo: "prazo por célula",
+        valorLido: null,
+        motivo: `herança de prazo NÃO validada (${h.razao}); prazo parcial — confira célula a célula no PDF`,
+      });
+    }
+    // h.ok => prazo resolvido e validado; não empurra âmbar (fica silencioso/resolvido).
   }
   return { [cellType]: cells };
 }
