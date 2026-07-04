@@ -1,5 +1,5 @@
 // ============================================================
-// FORECAST — Camada 1: DETECÇÃO DE INADIMPLÊNCIA / parada antecipada do PRT.
+// RECEBIVEIS — Camada 1: DETECÇÃO DE INADIMPLÊNCIA / parada antecipada do PRT.
 //
 // Compara os DOIS snapshots mais recentes da carteira PRT (COD EST=1).
 // Identifica contratos que estavam VIVOS no snapshot anterior (parcelas

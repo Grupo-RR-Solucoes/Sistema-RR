@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
-import { buildAgregadorForecast } from "@/lib/forecast/agregador";
-import { buildPrtInadimplencia } from "@/lib/forecast/prtInadimplencia";
+import { buildAgregadorRecebiveis } from "@/lib/recebiveis/agregador";
+import { buildPrtInadimplencia } from "@/lib/recebiveis/prtInadimplencia";
 
-// Forecast (Camada 4): serve o agregador previsto-vs-recebido (Camada 3) +
+// Recebiveis (Camada 4): serve o agregador previsto-vs-recebido (Camada 3) +
 // a detecção de inadimplência (Camada 1). Sócio-only (ferramenta financeira),
 // igual ao /financeiro pelo menu. READ-ONLY.
 //
@@ -20,7 +20,7 @@ export async function GET(req: Request) {
     const refDate = ref ? new Date(`${ref}T00:00:00Z`) : undefined;
 
     const [agregador, inadimplencia] = await Promise.all([
-      buildAgregadorForecast(supabase, { refDate, lookbackMeses: 5, horizonteMeses: 6 }),
+      buildAgregadorRecebiveis(supabase, { refDate, lookbackMeses: 5, horizonteMeses: 6 }),
       buildPrtInadimplencia(supabase),
     ]);
 

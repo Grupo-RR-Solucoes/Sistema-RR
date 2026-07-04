@@ -1,5 +1,5 @@
 // ============================================================
-// FORECAST — Camada 3: AGREGADOR previsto-vs-recebido, GAP like-for-like.
+// RECEBIVEIS — Camada 3: AGREGADOR previsto-vs-recebido, GAP like-for-like.
 //
 // Quadro por COMPETÊNCIA juntando os componentes existentes, comparando
 // PRODUTO A PRODUTO (não total-vs-parte) e com cobertura explícita.
@@ -121,7 +121,7 @@ async function fetchClosedMonths(supabase: SupabaseClient): Promise<Set<string>>
 
 // ----------------------------------------------------------- orquestrador --
 
-export async function buildAgregadorForecast(
+export async function buildAgregadorRecebiveis(
   supabase: SupabaseClient,
   options: AgregadorOptions = {},
 ): Promise<AgregadorResult> {

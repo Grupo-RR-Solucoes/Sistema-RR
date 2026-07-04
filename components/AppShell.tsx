@@ -142,7 +142,7 @@ const navGroups: NavGroup[] = [
     label: "Controle",
     items: [
       { href: "/financeiro", label: "Financeiro", icon: "wallet", visibleTo: ["socio"] },
-      { href: "/forecast", label: "Forecast", icon: "linechart", visibleTo: ["socio"] },
+      { href: "/recebiveis", label: "Recebíveis", icon: "linechart", visibleTo: ["socio"] },
       { href: "/receitas", label: "Receita & Simples", icon: "percent", visibleTo: ["socio", "funcionario"] },
       { href: "/despesas", label: "Despesas", icon: "arrowdown", visibleTo: ["socio", "funcionario"] },
       { href: "/auditoria", label: "Auditoria", icon: "shield", visibleTo: ["socio"] },
