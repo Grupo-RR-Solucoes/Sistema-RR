@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   apiGuardErrorResponse,
+  requireSocio,
   withAuthenticatedAnon,
   withSocioOrFuncionarioAnon,
 } from "@/lib/auth/guards";
@@ -474,6 +475,86 @@ export async function POST(req: Request) {
       );
 
       return NextResponse.json({ success: true });
+    }
+
+    if (action === "prefixar_metas") {
+      // Prefixacao de metas: a competencia ALVO (year/month) nasce com as metas do
+      // mes IMEDIATAMENTE anterior (M-1), editavel depois. SOCIO-ONLY (escrita em
+      // massa). ON CONFLICT (promoter_id, year, month) DO NOTHING -> NUNCA sobrescreve
+      // meta ja editada. Cadeia quebrada (M-1 sem metas) -> AVISA, nao insere nada
+      // (NUNCA pula para M-2 silenciosamente).
+      await requireSocio();
+
+      const year = Number(body.year);
+      const month = Number(body.month);
+      if (!year || !month || month < 1 || month > 12) {
+        return NextResponse.json(
+          { error: "Informe a competencia alvo (year, month)." },
+          { status: 400 }
+        );
+      }
+
+      // M-1: mes anterior; dezembro do ano anterior se month=1 (virada de ano).
+      const prevMonth = month === 1 ? 12 : month - 1;
+      const prevYear = month === 1 ? year - 1 : year;
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const mesAnterior = `${prevYear}-${pad(prevMonth)}`;
+      const alvo = `${year}-${pad(month)}`;
+
+      const admin = getSupabaseAdmin();
+
+      const { data: origem, error: selErr } = await admin
+        .from("monthly_targets")
+        .select("promoter_id, company_id, meta, meta_1, meta_2")
+        .eq("year", prevYear)
+        .eq("month", prevMonth);
+      if (selErr) throw selErr;
+
+      if (!origem || origem.length === 0) {
+        return NextResponse.json({
+          success: false,
+          motivo: "mes anterior sem metas",
+          mesAnterior,
+          alvo,
+        });
+      }
+
+      const rows = origem.map((r) => ({
+        promoter_id: r.promoter_id,
+        company_id: r.company_id,
+        year,
+        month,
+        meta: toNumber(r.meta),
+        meta_1: toNumber(r.meta_1),
+        meta_2: toNumber(r.meta_2),
+      }));
+
+      // ON CONFLICT DO NOTHING: insere so o que nao existe; .select() devolve apenas
+      // as linhas realmente inseridas -> prefixadas = novas, mantidas = ja existiam.
+      const { data: inseridas, error: insErr } = await admin
+        .from("monthly_targets")
+        .upsert(rows, { onConflict: "promoter_id,year,month", ignoreDuplicates: true })
+        .select("id");
+      if (insErr) throw insErr;
+
+      const prefixadas = (inseridas ?? []).length;
+      const mantidas = rows.length - prefixadas;
+
+      clearPromoterReadCaches();
+      await writeAudit(
+        "Prefixacao de metas a partir do mes anterior",
+        { origem: mesAnterior, alvo, prefixadas, mantidas, total_origem: rows.length },
+        auditActor
+      );
+
+      return NextResponse.json({
+        success: true,
+        origem: mesAnterior,
+        alvo,
+        prefixadas,
+        mantidas,
+        total_origem: rows.length,
+      });
     }
 
     return NextResponse.json({ error: "Acao invalida." }, { status: 400 });
