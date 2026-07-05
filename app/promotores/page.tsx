@@ -172,6 +172,7 @@ export default function PromotoresPage() {
 }
 
 function PromotoresFullPage() {
+  const { user } = useUser();
   const [activeSection, setActiveSection] = useState<
     "resumo" | "metas" | "descontos" | "detalhamento" | "migracao"
   >("resumo");
@@ -221,6 +222,8 @@ function PromotoresFullPage() {
   const [metasDrafts, setMetasDrafts] = useState<Record<string, MetaDraft>>({});
   const [metasLoading, setMetasLoading] = useState(false);
   const [savingMetaId, setSavingMetaId] = useState("");
+  const [prefixando, setPrefixando] = useState(false);
+  const MES_ABREV = ["", "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
   const specialistQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -737,6 +740,55 @@ function PromotoresFullPage() {
     setMetasDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   }
 
+  // Prefixacao de metas: a competencia selecionada nasce com as metas do mes anterior
+  // (M-1). Idempotente no servidor (ON CONFLICT DO NOTHING) — metas ja editadas sao
+  // MANTIDAS. Socio-only (o botao so aparece para socio). Feedback explicito pos-acao.
+  async function prefixarMetas() {
+    const key = selectedKey || data.selectedPeriod.key || "";
+    const [ys, ms] = key.split("-");
+    const year = Number(ys);
+    const month = Number(ms);
+    if (!year || !month) {
+      setError("Selecione uma competência para prefixar.");
+      return;
+    }
+    const prevMonth = month === 1 ? 12 : month - 1;
+    const prevYear = month === 1 ? year - 1 : year;
+    const anterior = `${MES_ABREV[prevMonth]}/${prevYear}`;
+    const alvo = `${MES_ABREV[month]}/${year}`;
+    if (
+      !window.confirm(
+        `Prefixar as metas de ${anterior} para ${alvo}? Metas já editadas em ${alvo} são mantidas (não sobrescritas).`
+      )
+    ) {
+      return;
+    }
+    try {
+      setPrefixando(true);
+      setError("");
+      setNotice("");
+      const res = await fetch("/api/promotores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "prefixar_metas", year, month }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || "Falha ao prefixar metas.");
+      if (payload.success === false) {
+        setError(`${anterior} não tem metas cadastradas — nada a prefixar.`);
+        return;
+      }
+      setNotice(
+        `${payload.prefixadas} metas prefixadas de ${anterior}; ${payload.mantidas} mantidas (já existiam).`
+      );
+      await loadMetas();
+    } catch (err: any) {
+      setError(err.message || "Erro ao prefixar metas.");
+    } finally {
+      setPrefixando(false);
+    }
+  }
+
   async function saveMetaRow(row: MetaRow) {
     const d = metasDrafts[row.promoter_id];
     if (!d) return;
@@ -1178,7 +1230,31 @@ function PromotoresFullPage() {
                     (Frente C): grava em promoter_goal_repasse, a mesma fonte que o cálculo lê.
                   </p>
                 </div>
-                <span className="chip soft">{metasRows.length} promotores</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {user?.role === "socio"
+                    ? (() => {
+                        const key = selectedKey || data.selectedPeriod.key || "";
+                        const [ys, ms] = key.split("-");
+                        const m = Number(ms);
+                        const y = Number(ys);
+                        const pm = m === 1 ? 12 : m - 1;
+                        const py = m === 1 ? y - 1 : y;
+                        const anterior = m ? `${MES_ABREV[pm]}/${py}` : "—";
+                        return (
+                          <button
+                            type="button"
+                            className="fbtn primary"
+                            onClick={prefixarMetas}
+                            disabled={prefixando || !m}
+                            title="Copia as metas do mês anterior para esta competência. Não sobrescreve metas já editadas."
+                          >
+                            {prefixando ? "Prefixando…" : `Prefixar metas de ${anterior}`}
+                          </button>
+                        );
+                      })()
+                    : null}
+                  <span className="chip soft">{metasRows.length} promotores</span>
+                </div>
               </div>
               {metasLoading ? (
                 <div className="state">Carregando metas…</div>
