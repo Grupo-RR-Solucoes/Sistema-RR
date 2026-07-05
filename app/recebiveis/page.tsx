@@ -193,14 +193,18 @@ export default function RecebiveisPage() {
               {fmtComp(ag.competenciaProducaoAberta)} → caixa {fmtComp(ag.competenciaCaixaAvista)}, só o já
               realizado, cresce com novas diárias). <b>A incluir:</b> outros produtos (consórcio, bbcap,
               conta corrente, dental, lob) e {ag.avistaContratosSemTrp} contratos à vista sem match no
-              motor TRP. O <b>gap PRT</b> é like-for-like (recebido vs agenda da mesma competência).
+              motor TRP. O <b>gap PRT</b> é like-for-like (recebido vs agenda da mesma competência).{" "}
+              <b>A curva de previsto é DIREITO JÁ CONTRATADO:</b> decai naturalmente conforme os
+              contratos quitam e <b>NÃO projeta vendas futuras</b>. Só o mês da produção aberta
+              ({fmtComp(ag.competenciaProducaoAberta)}) tem venda em curso; de {fmtComp(ag.competenciaProducaoAberta)}{" "}
+              em diante é puro <i>runoff</i> das vendas já realizadas — por isso não "sobe" no futuro.
             </Banner>
 
             <section className="card">
               <div className="card-head">
                 <div>
                   <h2>PRT — realizado &amp; previsto</h2>
-                  <p className="csub">Direito contratado da carteira mês a mês · snapshot {fmtComp(ag.snapshotPrt)}</p>
+                  <p className="csub">Direito já contratado, mês a mês · snapshot {fmtComp(ag.snapshotPrt)} · a parte futura é o runoff das vendas já realizadas (decai conforme quita; sem vendas futuras)</p>
                 </div>
                 <span className="socio">SÓCIOS</span>
               </div>
@@ -228,7 +232,7 @@ export default function RecebiveisPage() {
                   </svg>
                   <div className="legend">
                     <span><i className="re" />Realizado (recebido)</span>
-                    <span><i className="pv" />Previsto (direito contratado)</span>
+                    <span><i className="pv" />Previsto (direito contratado — runoff, sem vendas futuras)</span>
                   </div>
                 </>
               ) : (
