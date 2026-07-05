@@ -9,6 +9,7 @@ import {
   formatCurrency,
   getCompanyShortName,
 } from "@/lib/historicalAuditClient";
+import { prtStatusLabel } from "@/lib/auditoria/prtStatusLabel";
 
 const PAGE_SIZE = 10;
 
@@ -206,20 +207,8 @@ function PaginationBar({
 }
 
 function labelOfStatus(s: PrtStatus): string {
-  switch (s) {
-    case "OK":
-      return "OK";
-    case "OK_DEBITADO":
-      return "Justificado (débito/quitação)";
-    case "INTERROMPIDO_SUSPEITO":
-      return "Interrompido (suspeito, <12)";
-    case "INTERROMPIDO_LEGITIMO":
-      return "Interrompido (≥12 parcelas)";
-    case "NUNCA_PAGO":
-      return "Nunca pago";
-    case "AUSENTE":
-      return "Ausente";
-  }
+  // Delega ao helper compartilhado p/ nao divergir da fila da Inadimplencia.
+  return prtStatusLabel(s);
 }
 
 function statusBadge(s: PrtStatus): CSSProperties {
