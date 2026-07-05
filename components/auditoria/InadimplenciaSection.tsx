@@ -13,6 +13,7 @@ import {
   Table,
   type ChipVariant,
 } from "@/components/ui";
+import { prtStatusLabel } from "@/lib/auditoria/prtStatusLabel";
 
 // ============================================================
 // MONITOR DE INADIMPLÊNCIA PRT — Camada 4: seção da Auditoria.
@@ -72,10 +73,6 @@ function acomp(s: string) {
   return ACOMP[s] ?? { variant: "neutral" as ChipVariant, label: s };
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  INTERROMPIDO_SUSPEITO: "Interrompido",
-  AUSENTE: "Ausente do PRT (nunca listado)",
-};
 
 // Fases exportáveis: A_COBRAR (status NOVO) vão pra cobrança direta;
 // AGUARDANDO_EXPLICACAO (≥12 parcelas) vão pra questionamento; TODOS = a fila inteira.
@@ -292,7 +289,7 @@ export default function InadimplenciaSection() {
                 return (
                   <tr key={r.operation_number}>
                     <td className="mono">{r.operation_number}</td>
-                    <td>{STATUS_LABEL[r.status] ?? r.status}</td>
+                    <td>{prtStatusLabel(r.status)}</td>
                     <Num>
                       {r.parcelas_pagas}/{r.parcelas_total}
                     </Num>
