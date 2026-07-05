@@ -79,10 +79,10 @@ export default function AuditoriaPage() {
           <KpiHero
             valueTone="gold"
             valueSize={52}
-            label={<><span className="tag">A recuperar</span> Recuperável novo</>}
+            label={<><span className="tag">A cobrar</span> Total a cobrar da Promotiva</>}
             value={brl2(rec?.total)}
-            sub={nada ? `nada novo a recuperar — tudo até ${data?.curadoAteLabel ?? "abril"} já cobrado` : `${rec?.contratos} contratos curados não cobrados`}
-            aside={<>Recuperável = auditoria curada (v9) que ainda <b>não</b> entrou em nenhuma cobrança emitida. Exclui por contrato o que já foi cobrado.</>}
+            sub={nada ? `nada novo a cobrar — tudo até ${data?.curadoAteLabel ?? "abril"} já cobrado` : `À-vista ${brl2(rec?.avista)} + PRT parado ${brl2(rec?.prt)} · ${rec?.contratos} contratos`}
+            aside={<>Total = <b>à-vista</b> (subpagamento no ato) + <b>PRT parado</b> (parcela vencida não paga). Auditoria curada (v9) que ainda <b>não</b> entrou em cobrança emitida — exclui por contrato o já cobrado. A régua TRP é conferida na seção própria.</>}
           />
         </HeaderNavy>
 

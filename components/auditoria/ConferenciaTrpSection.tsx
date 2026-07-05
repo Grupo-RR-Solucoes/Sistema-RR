@@ -165,6 +165,7 @@ export default function ConferenciaTrpSection() {
       <HeaderNavy
         brand="AUDITORIA"
         title="Conferência TRP × realizado"
+        subtitle="Régua TRP × pago por competência → pagou menos que devido → R$ a cobrar."
         actions={
           <div className="ctrp-comp">
             <select aria-label="Mês" value={month} onChange={(e) => setMonth(Number(e.target.value))}>

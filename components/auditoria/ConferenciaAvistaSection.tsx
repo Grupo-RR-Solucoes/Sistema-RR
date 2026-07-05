@@ -157,6 +157,7 @@ export default function ConferenciaAvistaSection() {
       <HeaderNavy
         brand="AUDITORIA"
         title="Conferência mensal à vista"
+        subtitle="Comissão à vista (6% no ato) × pago → subpagamento → R$ a cobrar."
         actions={
           <div className="cav-comp">
             <select aria-label="Mês" value={month} onChange={(e) => setMonth(Number(e.target.value))}>

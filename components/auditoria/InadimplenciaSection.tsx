@@ -74,7 +74,7 @@ function acomp(s: string) {
 
 const STATUS_LABEL: Record<string, string> = {
   INTERROMPIDO_SUSPEITO: "Interrompido",
-  AUSENTE: "Ausente",
+  AUSENTE: "Ausente do PRT (nunca listado)",
 };
 
 // Fases exportáveis: A_COBRAR (status NOVO) vão pra cobrança direta;
@@ -180,7 +180,7 @@ export default function InadimplenciaSection() {
       <HeaderNavy
         brand="MONITOR PRT"
         title="Inadimplência — fila de cobrança"
-        subtitle="PRT interrompido não cobrado, detectado a cada fechamento."
+        subtitle="Contratos que pararam antes de quitar → parcela vencida não paga → R$ a cobrar."
         actions={
           <div className="comp">
             <select
@@ -232,7 +232,9 @@ export default function InadimplenciaSection() {
       <Banner variant="info">
         Lista de <b>PRT interrompido não cobrado</b>, detectada automaticamente a cada
         fechamento. À vista e PRT são cobranças <b>complementares</b> — esta fila cobre só a
-        parte PRT que parou e ainda não entrou em nenhuma cobrança emitida.
+        parte PRT que parou e ainda não entrou em nenhuma cobrança emitida. O{" "}
+        <b>recuperável</b> são <b>parcelas já vencidas e não pagas</b> — não inclui o diferido
+        futuro do contrato.
       </Banner>
 
       {error ? <Banner variant="warn">{error}</Banner> : null}
