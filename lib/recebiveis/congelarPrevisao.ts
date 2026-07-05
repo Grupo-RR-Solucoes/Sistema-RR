@@ -52,15 +52,23 @@ export async function congelarPrevisao(
   previstoPrtByAlvo.set(agenda.snapshot.competencia, agenda.baseComissao);
   for (const p of agenda.serie) previstoPrtByAlvo.set(p.competencia, p.previsto);
 
-  // à-vista previsto só existe na competência da produção aberta.
-  const rows = Array.from(previstoPrtByAlvo.entries()).map(([alvo, previstoPrt]) => {
+  // diferido de produção nova por competência-alvo (sub-PR 2).
+  const diferidoByAlvo = new Map<string, number>(
+    avista.diferidoSerie.map((d) => [d.competencia, d.diferido]),
+  );
+
+  // à-vista previsto só existe na competência da produção aberta. O diferido pode
+  // cair em qualquer competência-alvo da cauda; unimos as chaves das duas fontes.
+  const alvos = new Set<string>([...previstoPrtByAlvo.keys(), ...diferidoByAlvo.keys()]);
+  const rows = Array.from(alvos).map((alvo) => {
     const ehProducaoAberta = avista.competenciaProducao === alvo;
+    const previstoPrt = previstoPrtByAlvo.has(alvo) ? (previstoPrtByAlvo.get(alvo) as number) : null;
     return {
       competencia_snapshot: competenciaSnapshot,
       competencia_alvo: alvo,
-      previsto_prt: round2(previstoPrt),
+      previsto_prt: previstoPrt === null ? null : round2(previstoPrt),
       previsto_avista: ehProducaoAberta ? round2(avista.avistaPrevisto) : null,
-      previsto_diferido: null as number | null, // sub-PR 2
+      previsto_diferido: diferidoByAlvo.has(alvo) ? round2(diferidoByAlvo.get(alvo) as number) : null,
       base_snapshot_prt: agenda.snapshot.competencia,
       contratos_avista_fallback:
         ehProducaoAberta && avista.competenciaFallback ? avista.contratosFallback : null,
