@@ -210,11 +210,11 @@ function labelOfStatus(s: PrtStatus): string {
     case "OK":
       return "OK";
     case "OK_DEBITADO":
-      return "Débito justificou";
+      return "Justificado (débito/quitação)";
     case "INTERROMPIDO_SUSPEITO":
-      return "Suspeito";
+      return "Interrompido (suspeito, <12)";
     case "INTERROMPIDO_LEGITIMO":
-      return "Legítimo";
+      return "Interrompido (≥12 parcelas)";
     case "NUNCA_PAGO":
       return "Nunca pago";
     case "AUSENTE":

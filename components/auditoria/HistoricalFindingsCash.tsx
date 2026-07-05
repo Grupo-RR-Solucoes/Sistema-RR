@@ -23,10 +23,10 @@ type Filter =
 
 const FILTER_OPTIONS: Array<{ key: Filter; label: string }> = [
   { key: "DIVERGENT", label: "Todas com divergência" },
-  { key: "INTERNAL_DIVERGENCE", label: "Internal" },
-  { key: "WRONG_BRACKET", label: "Wrong Bracket" },
-  { key: "PROBABLY_WRONG_BRACKET", label: "Probably Wrong" },
-  { key: "OTHER", label: "Other" },
+  { key: "INTERNAL_DIVERGENCE", label: "Divergência interna" },
+  { key: "WRONG_BRACKET", label: "Faixa errada" },
+  { key: "PROBABLY_WRONG_BRACKET", label: "Provável faixa errada" },
+  { key: "OTHER", label: "Outro" },
   { key: "ALL", label: "Todos" },
 ];
 
