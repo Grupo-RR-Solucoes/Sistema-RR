@@ -68,6 +68,12 @@ export interface AgregadorMes {
   /** competência do snapshot usado (rastreabilidade do lead). */
   competenciaSnapshotUsado: string | null;
 
+  // ---- Diferido de PRODUÇÃO NOVA (sub-PR 2, ADITIVO — não altera os campos acima) ----
+  /** cauda do diferido (excedente acima do teto 6% da produção aberta) previsto para
+   *  esta competência. Contratos da produção aberta, DISJUNTOS do prtAgenda (estoque)
+   *  => sem dupla contagem. null quando não há cauda nesta competência. */
+  previstoDiferido: number | null;
+
   /** Régua TRP em fallback: à vista calculado com a TRP de uma competência
    *  anterior (esta competência não tem TRP própria publicada). null quando a
    *  competência tem TRP própria. competenciaFornecedora = competência da régua
@@ -190,6 +196,11 @@ export async function buildAgregadorRecebiveis(
     fetchPrevisaoCongelada(supabase),
   ]);
 
+  // Diferido de produção nova por competência (sub-PR 2, aditivo).
+  const diferidoByComp = new Map<string, number>(
+    avista.diferidoSerie.map((d) => [d.competencia, d.diferido]),
+  );
+
   // PRT previsto por competência: snapshot (base) + a série projetada.
   const previstoPrtByComp = new Map<string, number>();
   previstoPrtByComp.set(agenda.snapshot.competencia, agenda.baseComissao);
@@ -291,6 +302,7 @@ export async function buildAgregadorRecebiveis(
       previstoAvistaCongelado,
       gapVsCongelado,
       competenciaSnapshotUsado: cong ? cong.competenciaSnapshot : null,
+      previstoDiferido: diferidoByComp.has(comp) ? round2(diferidoByComp.get(comp) as number) : null,
       avistaFallback,
       cobertura: { incluido, aIncluir, nota },
     });

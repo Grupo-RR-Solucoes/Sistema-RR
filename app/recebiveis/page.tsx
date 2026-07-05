@@ -29,6 +29,7 @@ type AgMes = {
   previstoAvista: number | null;
   recebidoAvista: number | null;
   gapAvistaInformativo: number | null;
+  previstoDiferido: number | null;
   avistaFallback: { competenciaFornecedora: string; contratos: number } | null;
   cobertura: Cobertura;
 };
@@ -114,7 +115,9 @@ export default function RecebiveisPage() {
     const ultimo = fechados[fechados.length - 1] ?? null;
     const proximo = ag.meses.find((m) => !m.fechado) ?? null;
     const recebido = ultimo ? (ultimo.recebidoPrt ?? 0) + (ultimo.recebidoAvista ?? 0) : null;
-    const previsto = proximo ? (proximo.previstoPrt ?? 0) + (proximo.previstoAvista ?? 0) : null;
+    const previsto = proximo
+      ? (proximo.previstoPrt ?? 0) + (proximo.previstoAvista ?? 0) + (proximo.previstoDiferido ?? 0)
+      : null;
     // "Carteira PRT" = direito contratado mensal da competência do snapshot.
     const carteira = ag.meses.find((m) => m.competencia === ag.snapshotPrt)?.previstoPrt ?? null;
     return {
@@ -172,7 +175,7 @@ export default function RecebiveisPage() {
               valueSize={26}
               items={[
                 { label: "Recebido", value: brl(kpis.recebido), sub: kpis.recebidoComp ? `realizado · ${fmtComp(kpis.recebidoComp)}` : "—" },
-                { label: "Previsto (próx. mês)", value: brl(kpis.previsto), sub: kpis.previstoComp ? `PRT + à vista · ${fmtComp(kpis.previstoComp)}` : "—", subTone: "gold" },
+                { label: "Previsto (próx. mês)", value: brl(kpis.previsto), sub: kpis.previstoComp ? `PRT + à vista + diferido · ${fmtComp(kpis.previstoComp)}` : "—", subTone: "gold" },
                 { label: "Carteira PRT", value: brl(kpis.carteira), sub: "direito contratado mensal", subTone: "ok", accent: true },
               ]}
             />
@@ -247,6 +250,7 @@ export default function RecebiveisPage() {
                     <th className="r">Recebido</th>
                     <th className="r">Prev. PRT</th>
                     <th className="r">Prev. à vista</th>
+                    <th className="r">Prev. diferido</th>
                     <th className="r">Gap PRT</th>
                     <th>Cobertura</th>
                   </tr>
@@ -264,6 +268,7 @@ export default function RecebiveisPage() {
                         <Num>{brl(recebido)}</Num>
                         <Num>{brl(m.previstoPrt)}</Num>
                         <Num>{brl(m.previstoAvista)}</Num>
+                        <Num>{brl(m.previstoDiferido)}</Num>
                         <Num className={`gap ${gapTone}`}>{m.gapPrt == null ? "—" : brl2(m.gapPrt)}</Num>
                         <td className="cob" title={m.cobertura.nota}>
                           {m.cobertura.incluido.length > 0 ? m.cobertura.incluido.map((x) => x.split(" (")[0]).join(" + ") : "—"}

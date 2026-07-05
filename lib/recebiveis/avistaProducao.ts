@@ -35,6 +35,8 @@ const PAGE_SIZE = 1000;
 
 /** Linha mínima lida de daily_production_records. */
 interface DailyRow {
+  proposal_number: string | null;
+  contract_number: string | null;
   product_description: string | null;
   interest_rate: number | null;
   term_months: number | null;
@@ -69,6 +71,16 @@ export interface AvistaProducaoResult {
   competenciaFallback: string | null;
   /** Maior contract_date processado — "atualizado até" (ISO ou null). */
   ultimoContractDate: string | null;
+
+  // ---- Diferido de PRODUÇÃO NOVA (sub-PR 2, ADITIVO — não altera avistaPrevisto) ----
+  /** Cauda do diferido por competência: excedente (acima do teto 6%) × net_value ÷
+   *  prazo, distribuído por `prazo` meses a partir do caixa (M+1). Agenda aritmética.
+   *  Contratos da produção ABERTA (∉ estoque PRT) => disjunto do prtAgenda. */
+  diferidoSerie: Array<{ competencia: string; diferido: number }>;
+  /** Σ da cauda de diferido (R$). */
+  diferidoTotal: number;
+  /** contract_numbers com diferido > 0 — usados para provar não-dupla-contagem. */
+  operacoesDiferido: string[];
 }
 
 // ------------------------------------------------------------------ helpers --
@@ -132,7 +144,7 @@ async function fetchDailyNaJanela(
     const { data, error } = await supabase
       .from("daily_production_records")
       .select(
-        "product_description, interest_rate, term_months, installments, contract_date, net_value, status, is_srcc_restricted, raw_payload",
+        "proposal_number, contract_number, product_description, interest_rate, term_months, installments, contract_date, net_value, status, is_srcc_restricted, raw_payload",
       )
       .gte("contract_date", inicioISO)
       .lte("contract_date", fimISO)
@@ -186,6 +198,9 @@ export async function buildAvistaProducao(
     provider = (competencia: string) => preloader.getResolvedSync(competencia);
   }
 
+  // caixa (M+1) — início da cauda de diferido e destino do à-vista.
+  const caixa = addMonth(comp.year, comp.month, 1);
+
   let avistaPrevisto = 0;
   let contratosElegiveis = 0;
   let contratosResolvidos = 0;
@@ -193,6 +208,9 @@ export async function buildAvistaProducao(
   let contratosFallback = 0;
   let competenciaFallback: string | null = null;
   let ultimoContractDate: string | null = null;
+  // Cauda do diferido de produção nova (sub-PR 2).
+  const diferidoByComp = new Map<string, number>();
+  const operacoesDiferido = new Set<string>();
 
   for (const r of elegiveis) {
     contratosElegiveis += 1;
@@ -223,9 +241,34 @@ export async function buildAvistaProducao(
       contratosFallback += 1;
       competenciaFallback = trp.competenciaFornecedora ?? competenciaFallback;
     }
+
+    // --- Diferido de PRODUÇÃO NOVA (sub-PR 2, ADITIVO). excedentePct = o que a
+    //     tabela TRP dá ACIMA do teto 6% (vira diferido/PRT). > 0 só quando capado.
+    //     Distribui excedentePct × net_value ÷ prazo por `prazo` meses a partir do
+    //     caixa (M+1). Estes são contratos da produção ABERTA (competência M) — NÃO
+    //     estão no estoque PRT (competências fechadas), então o prtAgenda não os
+    //     projeta: sem dupla contagem (contratos disjuntos). ---
+    const excedentePct = Math.max(0, trp.pctTabela - trp.pctEmpresa);
+    const prazo = r.term_months != null && r.term_months > 0 ? Math.trunc(r.term_months) : null;
+    if (excedentePct > 0 && prazo) {
+      const diferidoMensal = (excedentePct * toNumber(r.net_value)) / prazo;
+      for (let k = 0; k < prazo; k++) {
+        const cm = addMonth(caixa.year, caixa.month, k);
+        const lab = competenciaLabel(cm.year, cm.month);
+        diferidoByComp.set(lab, (diferidoByComp.get(lab) ?? 0) + diferidoMensal);
+      }
+      const opId = r.proposal_number ?? r.contract_number;
+      if (opId) operacoesDiferido.add(String(opId));
+    }
   }
 
-  const caixa = addMonth(comp.year, comp.month, 1);
+  const diferidoSerie = Array.from(diferidoByComp.entries())
+    .map(([competencia, diferido]) => ({ competencia, diferido: Math.round(diferido * 100) / 100 }))
+    .sort((a, b) => a.competencia.localeCompare(b.competencia));
+  // total = Σ da SÉRIE arredondada (consistente com o que a tela soma; evita drift de
+  // arredondamento entre Σ(raw) e Σ(parcelas exibidas)).
+  const diferidoTotal =
+    Math.round(diferidoSerie.reduce((s, d) => s + d.diferido, 0) * 100) / 100;
 
   return {
     competenciaProducao: competenciaLabel(comp.year, comp.month),
@@ -239,5 +282,8 @@ export async function buildAvistaProducao(
     contratosFallback,
     competenciaFallback,
     ultimoContractDate,
+    diferidoSerie,
+    diferidoTotal,
+    operacoesDiferido: [...operacoesDiferido],
   };
 }
