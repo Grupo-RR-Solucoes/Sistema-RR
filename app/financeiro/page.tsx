@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
-import CobrancaSection from "@/components/financeiro/CobrancaSection";
 
 // Etapa 8 (enxugar menu) Fase 3 — Tela A "Financeiro" (socio): consolida o antigo
 // /financeiro (Caixa & Resultado) + /dre numa tela de 2 abas. Reusa /api/financeiro
@@ -75,7 +74,7 @@ function pick(o: Record<string, unknown>, keys: string[]): number | string | und
 }
 
 export default function FinanceiroPage() {
-  const [tab, setTab] = useState<"caixa" | "dre" | "cobranca">("caixa");
+  const [tab, setTab] = useState<"caixa" | "dre">("caixa");
   const [selectedKey, setSelectedKey] = useState("");
   const [fin, setFin] = useState<FinPayload | null>(null);
   const [dre, setDre] = useState<DrePayload | null>(null);
@@ -251,9 +250,6 @@ export default function FinanceiroPage() {
             </button>
             <button className="tab" role="tab" aria-selected={tab === "dre"} onClick={() => setTab("dre")}>
               DRE
-            </button>
-            <button className="tab" role="tab" aria-selected={tab === "cobranca"} onClick={() => setTab("cobranca")}>
-              Cobrança
             </button>
           </div>
           {tab === "caixa" && fin ? (
@@ -484,8 +480,6 @@ export default function FinanceiroPage() {
             )}
           </div>
         ) : null}
-
-        {tab === "cobranca" ? <CobrancaSection /> : null}
       </main>
     </div>
   );
