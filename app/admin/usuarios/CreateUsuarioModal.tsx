@@ -89,7 +89,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
     // CPF obrigatório/validado para funcionário e promotor (login por CPF).
     // Sócio loga por e-mail → não valida nem envia CPF.
     const cpfDigits = onlyDigits(cpf);
-    if (role === "funcionario" || role === "promotor") {
+    if (role !== "socio") {
       if (!isValidCPF(cpfDigits)) {
         setError("CPF inválido");
         return;
@@ -101,7 +101,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
       full_name: fullName.trim() || null,
       role,
     };
-    if (role === "funcionario" || role === "promotor") {
+    if (role !== "socio") {
       body.cpf = cpfDigits;
     }
     if (role === "promotor") {
@@ -181,7 +181,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
                 </div>
                 <div className={`field${roleLocked ? " locked" : ""}`}>
                   <label>Perfil de acesso <span className="req">*</span></label>
-                  <select value={role} onChange={(e) => { const r = e.target.value as Role; setRole(r); if (r !== "funcionario" && r !== "promotor") setCpf(""); }} disabled={submitting || roleLocked}>
+                  <select value={role} onChange={(e) => { const r = e.target.value as Role; setRole(r); if (r === "socio") setCpf(""); }} disabled={submitting || roleLocked}>
                     {targetRoles.includes("socio") ? <option value="socio">Sócio (acesso completo)</option> : null}
                     {targetRoles.includes("funcionario") ? <option value="funcionario">Auxiliar Financeiro (operacional)</option> : null}
                     {targetRoles.includes("promotor") ? <option value="promotor">Promotor (acesso aos próprios dados)</option> : null}
@@ -191,7 +191,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
                   {roleLocked ? <span className="hint">Como auxiliar financeiro, você só cadastra promotores.</span> : null}
                 </div>
 
-                {role === "funcionario" || role === "promotor" ? (
+                {role !== "socio" ? (
                   <div className="field">
                     <label>CPF <span className="req">*</span></label>
                     <input
@@ -235,7 +235,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
                   </div>
                 ) : null}
 
-                {currentUserRole === "socio" ? (
+                {roleLocked ? (
                   <div className="infobanner"><IcoInfo />Auxiliar Financeiro só cadastra promotores — para ele o perfil fica travado em Promotor.</div>
                 ) : null}
 

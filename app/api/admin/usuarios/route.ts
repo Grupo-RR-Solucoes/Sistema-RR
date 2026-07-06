@@ -120,7 +120,7 @@ export async function POST(req: Request) {
     // CPF: login por CPF é exclusivo de funcionario/promotor — obrigatório e
     // validado. Socio loga por e-mail → cpf sempre NULL (ignorado se enviado).
     let cpf: string | null = null;
-    if (role === "funcionario" || role === "promotor") {
+    if (role !== "socio") {
       const digits = onlyDigits(body.cpf ?? "");
       if (!isValidCPF(digits)) {
         return NextResponse.json(
