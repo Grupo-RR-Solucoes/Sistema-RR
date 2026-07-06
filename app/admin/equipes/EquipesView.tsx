@@ -21,11 +21,20 @@ const EMPTY_MODEL: EquipesModel = {
   gerentes: [],
   supervisores: [],
   promotores: [],
+  supervisorOptions: [],
+  gerenteOptions: [],
   tree: { gerentes: [], supervisoresSemGerente: [], promotoresSemSupervisor: [] },
 };
 
 function gestorName(full_name: string | null, email: string): string {
   return (full_name && full_name.trim()) || email;
+}
+
+// Rótulo do gestor nos selects/árvore: sócio ganha sufixo "(sócio)" para
+// distinguir de supervisores/gerentes de verdade (sócio-como-gestor).
+function gestorLabel(g: { full_name: string | null; email: string; role: string }): string {
+  const base = gestorName(g.full_name, g.email);
+  return g.role === "socio" ? `${base} (sócio)` : base;
 }
 
 export default function EquipesView({
@@ -173,8 +182,8 @@ export default function EquipesView({
                           aria-label={`Supervisor de ${p.name}`}
                         >
                           <option value="">— Sem supervisor —</option>
-                          {model.supervisores.map((s) => (
-                            <option key={s.id} value={s.id}>{gestorName(s.full_name, s.email)}</option>
+                          {model.supervisorOptions.map((s) => (
+                            <option key={s.id} value={s.id}>{gestorLabel(s)}</option>
                           ))}
                         </select>
                       </td>
@@ -219,13 +228,13 @@ export default function EquipesView({
                         <select
                           className={`linksel${s.manager_user_id ? "" : " unset"}`}
                           value={s.manager_user_id ?? ""}
-                          disabled={busyKey === key || model.gerentes.length === 0}
+                          disabled={busyKey === key || model.gerenteOptions.length === 0}
                           onChange={(e) => patchLink("supervisor", s.id, e.target.value || null)}
                           aria-label={`Gerente de ${gestorName(s.full_name, s.email)}`}
                         >
                           <option value="">— Sem gerente —</option>
-                          {model.gerentes.map((g) => (
-                            <option key={g.id} value={g.id}>{gestorName(g.full_name, g.email)}</option>
+                          {model.gerenteOptions.map((g) => (
+                            <option key={g.id} value={g.id}>{gestorLabel(g)}</option>
                           ))}
                         </select>
                       </td>
@@ -264,7 +273,7 @@ export default function EquipesView({
                   <div className="tnode-head">
                     <span className="tav">{initials(g.full_name, g.email)}</span>
                     <span className="tinfo">
-                      <span className="tnm">{gestorName(g.full_name, g.email)}</span>
+                      <span className="tnm">{gestorLabel(g)}</span>
                       <span className="tem">{g.email}</span>
                     </span>
                     <span className="tcount">{g.supervisores.length} sup · {promCount} prom</span>
@@ -330,7 +339,7 @@ function SupervisorBlock({ s }: { s: EquipesModel["tree"]["gerentes"][number]["s
     <div className="tsup">
       <div className="tsup-head">
         <span className="sdot" />
-        <span className="snm">{gestorName(s.full_name, s.email)}</span>
+        <span className="snm">{gestorLabel(s)}</span>
         <span className="sem"> · {s.email}</span>
         <span className="scount">{s.promoters.length} promotor{s.promoters.length === 1 ? "" : "es"}</span>
       </div>
