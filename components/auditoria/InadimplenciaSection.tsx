@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   Banner,
@@ -20,7 +20,16 @@ import { prtStatusLabel } from "@/lib/auditoria/prtStatusLabel";
 // Lista acionável (e exportável) da fila de PRT interrompido não cobrado,
 // lida de prt_inadimplencia_monitor via /api/auditoria/inadimplencia. Usa os
 // primitivos navy do kit (HeaderNavy + KpiBand + Card + Table/Num + Chip +
-// Banner). Sem gráfico — fluxo enxuto. socio-only (guard na rota).
+// Banner). socio-only (guard na rota GET e na rota de escrita).
+//
+// Fatia A — filtro/agrupamento por "parou em" (ultimo_mes_pago), 100% client.
+// Fatia B — RESOLUÇÃO MANUAL (SOLUCIONADO): o sócio marca um contrato como
+// resolvido (1 clique, sem motivo). Ele SAI da fila principal e vai pra aba
+// "Solucionados" (mesma tabela, filtrada por resolucao_status; registro NÃO é
+// movido nem apagado) e SAI do "Recuperável aberto". "Reabrir" volta pra fila.
+// Escreve via POST /api/auditoria/inadimplencia/resolver. Como toda a seção já
+// é socio-only (GET 403 p/ não-sócio), o botão só aparece pra sócio.
+// O filtro "parou em" (Fatia A) opera sobre a fila principal (não-solucionados).
 // ============================================================
 
 type FilaItem = {
@@ -34,6 +43,9 @@ type FilaItem = {
   meses_parado: number | null;
   recuperavel_estimado: number;
   primeira_deteccao: string;
+  resolucao_status: string;
+  resolucao_por: string | null;
+  resolucao_em: string | null;
 };
 
 type Payload = {
@@ -45,6 +57,7 @@ type Payload = {
     emCobranca: number;
     recuperado: number;
     recuperavelAberto: number;
+    solucionado: { contagem: number; valor: number };
   };
 };
 
@@ -56,6 +69,18 @@ function compLabel(iso: string | null): string {
 }
 function brl2(v?: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v || 0));
+}
+function dataHora(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 // status_acompanhamento → Chip. NOVO = risco (ação pendente), EM_COBRANCA =
@@ -128,6 +153,8 @@ function exportCsv(comp: string | null, fila: FilaItem[], fase: ExportFase, paro
   URL.revokeObjectURL(url);
 }
 
+type Aba = "fila" | "solucionados";
+
 export default function InadimplenciaSection() {
   const [selectedComp, setSelectedComp] = useState("");
   const [data, setData] = useState<Payload | null>(null);
@@ -136,43 +163,64 @@ export default function InadimplenciaSection() {
   // Fatia A — filtro/agrupamento por "parou em" (ultimo_mes_pago). 100% client-side.
   const [parouEm, setParouEm] = useState(""); // "" = todos os meses de parada
   const [agrupar, setAgrupar] = useState(false);
+  // Fatia B — aba fila/solucionados + estado das ações por linha.
+  const [aba, setAba] = useState<Aba>("fila");
+  // operation_number em trânsito (marcar/reabrir) → desabilita o botão da linha.
+  const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
 
-  useEffect(() => {
-    let cancel = false;
-    setLoading(true);
-    setError("");
-    const qs = selectedComp ? `?competencia=${encodeURIComponent(selectedComp)}` : "";
-    fetch(`/api/auditoria/inadimplencia${qs}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Erro ao carregar a inadimplência."))))
-      .then((j: Payload) => {
-        if (!cancel) setData(j);
-      })
-      .catch((e) => {
-        if (!cancel) setError(e.message);
-      })
-      .finally(() => {
-        if (!cancel) setLoading(false);
-      });
-    return () => {
-      cancel = true;
-    };
-  }, [selectedComp]);
+  const load = useCallback(
+    (comp: string, opts?: { silent?: boolean }) => {
+      let cancel = false;
+      if (!opts?.silent) setLoading(true);
+      setError("");
+      const qs = comp ? `?competencia=${encodeURIComponent(comp)}` : "";
+      fetch(`/api/auditoria/inadimplencia${qs}`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Erro ao carregar a inadimplência."))))
+        .then((j: Payload) => {
+          if (!cancel) setData(j);
+        })
+        .catch((e) => {
+          if (!cancel) setError(e.message);
+        })
+        .finally(() => {
+          if (!cancel) setLoading(false);
+        });
+      return () => {
+        cancel = true;
+      };
+    },
+    [],
+  );
+
+  useEffect(() => load(selectedComp), [selectedComp, load]);
 
   const ag = data?.agregados;
-  const fila = data?.fila ?? [];
+  const fila = useMemo(() => data?.fila ?? [], [data]);
   const compValue = selectedComp || data?.competencia || "";
 
-  // Meses de parada distintos presentes na fila (recentes primeiro) → popula o seletor.
+  // Fatia B — fila principal = tudo que NÃO está solucionado. Solucionados = a aba.
+  const filaPrincipal = useMemo(
+    () => fila.filter((r) => r.resolucao_status !== "SOLUCIONADO"),
+    [fila],
+  );
+  const solucionadas = useMemo(
+    () => fila.filter((r) => r.resolucao_status === "SOLUCIONADO"),
+    [fila],
+  );
+
+  // Fatia A — o filtro "parou em" opera sobre a fila principal (não-solucionados).
+  // Meses de parada distintos na fila principal (recentes primeiro) → seletor.
   const mesesParada = useMemo(() => {
     const set = new Set<string>();
-    for (const r of fila) if (r.ultimo_mes_pago) set.add(r.ultimo_mes_pago);
+    for (const r of filaPrincipal) if (r.ultimo_mes_pago) set.add(r.ultimo_mes_pago);
     return Array.from(set).sort().reverse();
-  }, [fila]);
+  }, [filaPrincipal]);
 
-  // Fila após o filtro "parou em" — é a base de TUDO (tabela, totais, export).
+  // Fila principal após o filtro "parou em" — base da tabela, totais e export da aba fila.
   const filaFiltrada = useMemo(
-    () => (parouEm ? fila.filter((r) => r.ultimo_mes_pago === parouEm) : fila),
-    [fila, parouEm],
+    () => (parouEm ? filaPrincipal.filter((r) => r.ultimo_mes_pago === parouEm) : filaPrincipal),
+    [filaPrincipal, parouEm],
   );
 
   // Agrupamento por mês de parada (recentes primeiro), com subtotal por grupo.
@@ -200,6 +248,33 @@ export default function InadimplenciaSection() {
     [filaFiltrada],
   );
 
+  // Marca / reabre e recarrega em silêncio (não pisca a tela inteira).
+  const resolver = useCallback(
+    async (op: string, reabrir: boolean) => {
+      const comp = data?.competencia;
+      if (!comp) return;
+      setBusy(op);
+      setActionError("");
+      try {
+        const res = await fetch("/api/auditoria/inadimplencia/resolver", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ competencia: comp, operation_number: op, reabrir }),
+        });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j?.error || "Falha ao atualizar a resolução.");
+        }
+        load(selectedComp, { silent: true });
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : "Falha ao atualizar.");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [data?.competencia, selectedComp, load],
+  );
+
   const renderRow = (r: FilaItem) => {
     const a = acomp(r.status_acompanhamento);
     return (
@@ -214,6 +289,17 @@ export default function InadimplenciaSection() {
         <Num>{brl2(r.recuperavel_estimado)}</Num>
         <td>
           <Chip variant={a.variant}>{a.label}</Chip>
+        </td>
+        <td>
+          <button
+            type="button"
+            className="inad-mark"
+            onClick={() => resolver(r.operation_number, false)}
+            disabled={busy === r.operation_number}
+            title="Marcar como solucionado — sai da fila e do recuperável"
+          >
+            {busy === r.operation_number ? "…" : "Marcar solucionado"}
+          </button>
         </td>
       </tr>
     );
@@ -233,6 +319,7 @@ export default function InadimplenciaSection() {
               onChange={(e) => {
                 setSelectedComp(e.target.value);
                 setParouEm("");
+                setAba("fila");
               }}
             >
               {(data?.competencias ?? []).map((c) => (
@@ -246,8 +333,8 @@ export default function InadimplenciaSection() {
         }
       >
         <KpiBand
-          columns={4}
-          valueSize={28}
+          columns={5}
+          valueSize={26}
           items={[
             {
               label: "Na fila (novos)",
@@ -258,7 +345,7 @@ export default function InadimplenciaSection() {
             {
               label: "Recuperável aberto",
               value: ag ? brl2(ag.recuperavelAberto) : "—",
-              sub: "novos + em cobrança",
+              sub: "exclui solucionados",
               subTone: "gold",
             },
             {
@@ -272,6 +359,12 @@ export default function InadimplenciaSection() {
               sub: "voltou a pagar",
               subTone: "ok",
             },
+            {
+              label: "Solucionado",
+              value: ag ? String(ag.solucionado.contagem) : "—",
+              sub: ag ? `${brl2(ag.solucionado.valor)} resolvidos` : "resolvidos pelo sócio",
+              subTone: "amber",
+            },
           ]}
         />
       </HeaderNavy>
@@ -281,79 +374,151 @@ export default function InadimplenciaSection() {
         fechamento. À vista e PRT são cobranças <b>complementares</b> — esta fila cobre só a
         parte PRT que parou e ainda não entrou em nenhuma cobrança emitida. O{" "}
         <b>recuperável</b> são <b>parcelas já vencidas e não pagas</b> — não inclui o diferido
-        futuro do contrato.
+        futuro do contrato. <b>Solucionar</b> tira o contrato da fila e do recuperável (resolvido
+        = não é mais a cobrar); nada é apagado — fica na aba <b>Solucionados</b>.
       </Banner>
 
       {error ? <Banner variant="warn">{error}</Banner> : null}
+      {actionError ? <Banner variant="warn">{actionError}</Banner> : null}
 
       <Card title={`Fila ${compLabel(data?.competencia ?? null)}`}>
-        <div className="inad-filtros">
-          <label className="inad-filtros__grp">
-            <span className="inad-filtros__lbl">Parou em:</span>
-            <div className="comp comp--light">
-              <select
-                aria-label="Filtrar por mês de parada"
-                value={parouEm}
-                onChange={(e) => setParouEm(e.target.value)}
-              >
-                <option value="">Todos ({fila.length})</option>
-                {mesesParada.map((m) => (
-                  <option key={m} value={m}>
-                    {compLabel(m)} ({fila.filter((r) => r.ultimo_mes_pago === m).length})
-                  </option>
-                ))}
-              </select>
-              <span className="chev">▾</span>
-            </div>
-          </label>
-          <label className="inad-toggle">
-            <input
-              type="checkbox"
-              checked={agrupar}
-              onChange={(e) => setAgrupar(e.target.checked)}
-            />
-            <span>Agrupar por mês de parada</span>
-          </label>
+        <div className="inad-tabs">
+          <button
+            type="button"
+            className={"inad-tab" + (aba === "fila" ? " inad-tab--on" : "")}
+            onClick={() => setAba("fila")}
+          >
+            Fila ({filaPrincipal.length})
+          </button>
+          <button
+            type="button"
+            className={"inad-tab" + (aba === "solucionados" ? " inad-tab--on" : "")}
+            onClick={() => setAba("solucionados")}
+          >
+            Solucionados ({solucionadas.length})
+          </button>
         </div>
 
-        <div className="inad-toolbar">
-          <span className="inad-toolbar__lbl">
-            Exportar CSV{parouEm ? ` · parou em ${compLabel(parouEm)}` : ""}:
-          </span>
-          <Button
-            variant="secundario"
-            onClick={() => exportCsv(data?.competencia ?? null, filaFiltrada, "NOVO", parouEm)}
-            disabled={nACobrar === 0}
-            title={nACobrar === 0 ? "Nada a cobrar neste recorte" : "CSV dos A_COBRAR (cobrança direta)"}
-          >
-            A cobrar ({nACobrar})
-          </Button>
-          <Button
-            variant="secundario"
-            onClick={() => exportCsv(data?.competencia ?? null, filaFiltrada, "AGUARDANDO_EXPLICACAO", parouEm)}
-            disabled={nAguardando === 0}
-            title={nAguardando === 0 ? "Nada aguardando explicação" : "CSV dos ≥12 parcelas (pedido de explicação)"}
-          >
-            Aguardando explicação ({nAguardando})
-          </Button>
-          <Button
-            variant="secundario"
-            onClick={() => exportCsv(data?.competencia ?? null, filaFiltrada, "TODOS", parouEm)}
-            disabled={filaFiltrada.length === 0}
-            title={filaFiltrada.length === 0 ? "Recorte vazio" : "CSV do recorte inteiro"}
-          >
-            Todos ({filaFiltrada.length})
-          </Button>
-        </div>
-        {loading ? (
+        {aba === "fila" ? (
+          <>
+            <div className="inad-filtros">
+              <label className="inad-filtros__grp">
+                <span className="inad-filtros__lbl">Parou em:</span>
+                <div className="comp comp--light">
+                  <select
+                    aria-label="Filtrar por mês de parada"
+                    value={parouEm}
+                    onChange={(e) => setParouEm(e.target.value)}
+                  >
+                    <option value="">Todos ({filaPrincipal.length})</option>
+                    {mesesParada.map((m) => (
+                      <option key={m} value={m}>
+                        {compLabel(m)} ({filaPrincipal.filter((r) => r.ultimo_mes_pago === m).length})
+                      </option>
+                    ))}
+                  </select>
+                  <span className="chev">▾</span>
+                </div>
+              </label>
+              <label className="inad-toggle">
+                <input
+                  type="checkbox"
+                  checked={agrupar}
+                  onChange={(e) => setAgrupar(e.target.checked)}
+                />
+                <span>Agrupar por mês de parada</span>
+              </label>
+            </div>
+
+            <div className="inad-toolbar">
+              <span className="inad-toolbar__lbl">
+                Exportar CSV{parouEm ? ` · parou em ${compLabel(parouEm)}` : ""}:
+              </span>
+              <Button
+                variant="secundario"
+                onClick={() => exportCsv(data?.competencia ?? null, filaFiltrada, "NOVO", parouEm)}
+                disabled={nACobrar === 0}
+                title={nACobrar === 0 ? "Nada a cobrar neste recorte" : "CSV dos A_COBRAR (cobrança direta)"}
+              >
+                A cobrar ({nACobrar})
+              </Button>
+              <Button
+                variant="secundario"
+                onClick={() => exportCsv(data?.competencia ?? null, filaFiltrada, "AGUARDANDO_EXPLICACAO", parouEm)}
+                disabled={nAguardando === 0}
+                title={nAguardando === 0 ? "Nada aguardando explicação" : "CSV dos ≥12 parcelas (pedido de explicação)"}
+              >
+                Aguardando explicação ({nAguardando})
+              </Button>
+              <Button
+                variant="secundario"
+                onClick={() => exportCsv(data?.competencia ?? null, filaFiltrada, "TODOS", parouEm)}
+                disabled={filaFiltrada.length === 0}
+                title={filaFiltrada.length === 0 ? "Recorte vazio" : "CSV do recorte inteiro"}
+              >
+                Todos ({filaFiltrada.length})
+              </Button>
+            </div>
+            {loading ? (
+              <p className="inad-empty">Carregando…</p>
+            ) : filaPrincipal.length === 0 ? (
+              <p className="inad-empty">
+                Nenhum PRT interrompido não cobrado em aberto nesta competência. Fila limpa.
+              </p>
+            ) : filaFiltrada.length === 0 ? (
+              <p className="inad-empty">
+                Nenhum contrato parou em {compLabel(parouEm)} nesta competência.
+              </p>
+            ) : (
+              <Table scrollable>
+                <thead>
+                  <tr>
+                    <th>Operação</th>
+                    <th>Status</th>
+                    <th>Parcelas</th>
+                    <th>Parou em</th>
+                    <th>Meses parado</th>
+                    <th style={{ textAlign: "right" }}>Recuperável</th>
+                    <th>Acompanhamento</th>
+                    <th>Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {agrupar
+                    ? grupos.map(([mes, rows]) => {
+                        const sub = rows.reduce((s, r) => s + r.recuperavel_estimado, 0);
+                        return (
+                          <Fragment key={mes}>
+                            <tr className="inad-grp">
+                              <td colSpan={5}>
+                                Parou em {compLabel(mes === "—" ? null : mes)} · {rows.length} contrato(s)
+                              </td>
+                              <Num>{brl2(sub)}</Num>
+                              <td colSpan={2} />
+                            </tr>
+                            {rows.map(renderRow)}
+                          </Fragment>
+                        );
+                      })
+                    : filaFiltrada.map(renderRow)}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={5}>
+                      {filaFiltrada.length} contrato(s){parouEm ? ` · parou em ${compLabel(parouEm)}` : " na fila"}
+                    </td>
+                    <Num>{brl2(totalRecuperavel)}</Num>
+                    <td colSpan={2} />
+                  </tr>
+                </tfoot>
+              </Table>
+            )}
+          </>
+        ) : loading ? (
           <p className="inad-empty">Carregando…</p>
-        ) : fila.length === 0 ? (
+        ) : solucionadas.length === 0 ? (
           <p className="inad-empty">
-            Nenhum PRT interrompido não cobrado nesta competência. Fila limpa.
-          </p>
-        ) : filaFiltrada.length === 0 ? (
-          <p className="inad-empty">
-            Nenhum contrato parou em {compLabel(parouEm)} nesta competência.
+            Nenhum contrato solucionado nesta competência.
           </p>
         ) : (
           <Table scrollable>
@@ -363,37 +528,43 @@ export default function InadimplenciaSection() {
                 <th>Status</th>
                 <th>Parcelas</th>
                 <th>Parou em</th>
-                <th>Meses parado</th>
                 <th style={{ textAlign: "right" }}>Recuperável</th>
-                <th>Acompanhamento</th>
+                <th>Resolvido por</th>
+                <th>Quando</th>
+                <th>Ação</th>
               </tr>
             </thead>
             <tbody>
-              {agrupar
-                ? grupos.map(([mes, rows]) => {
-                    const sub = rows.reduce((s, r) => s + r.recuperavel_estimado, 0);
-                    return (
-                      <Fragment key={mes}>
-                        <tr className="inad-grp">
-                          <td colSpan={5}>
-                            Parou em {compLabel(mes === "—" ? null : mes)} · {rows.length} contrato(s)
-                          </td>
-                          <Num>{brl2(sub)}</Num>
-                          <td />
-                        </tr>
-                        {rows.map(renderRow)}
-                      </Fragment>
-                    );
-                  })
-                : filaFiltrada.map(renderRow)}
+              {solucionadas.map((r) => (
+                <tr key={r.operation_number}>
+                  <td className="mono">{r.operation_number}</td>
+                  <td>{prtStatusLabel(r.status)}</td>
+                  <Num>
+                    {r.parcelas_pagas}/{r.parcelas_total}
+                  </Num>
+                  <td>{compLabel(r.ultimo_mes_pago)}</td>
+                  <Num>{brl2(r.recuperavel_estimado)}</Num>
+                  <td>{r.resolucao_por ?? "—"}</td>
+                  <td>{dataHora(r.resolucao_em)}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="inad-reopen"
+                      onClick={() => resolver(r.operation_number, true)}
+                      disabled={busy === r.operation_number}
+                      title="Reabrir — volta pra fila e ao recuperável"
+                    >
+                      {busy === r.operation_number ? "…" : "Reabrir"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={5}>
-                  {filaFiltrada.length} contrato(s){parouEm ? ` · parou em ${compLabel(parouEm)}` : " na fila"}
-                </td>
-                <Num>{brl2(totalRecuperavel)}</Num>
-                <td />
+                <td colSpan={4}>{solucionadas.length} contrato(s) solucionado(s)</td>
+                <Num>{brl2(solucionadas.reduce((s, r) => s + r.recuperavel_estimado, 0))}</Num>
+                <td colSpan={3} />
               </tr>
             </tfoot>
           </Table>
@@ -421,6 +592,16 @@ export default function InadimplenciaSection() {
 .inad .inad-toggle{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2);cursor:pointer;user-select:none;}
 .inad .inad-toggle input{accent-color:var(--gold);width:15px;height:15px;cursor:pointer;}
 .inad .inad-grp td{background:rgba(214,161,63,.10);font-weight:700;font-size:12.5px;color:var(--ink-1);border-top:2px solid rgba(214,161,63,.35);}
+.inad .inad-tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--bd);}
+.inad .inad-tab{appearance:none;background:none;border:none;border-bottom:2px solid transparent;color:var(--ink-3);font-family:inherit;font-size:13px;font-weight:600;padding:8px 12px;margin-bottom:-1px;cursor:pointer;}
+.inad .inad-tab:hover{color:var(--ink-2);}
+.inad .inad-tab--on{color:var(--navy);border-bottom-color:var(--gold);}
+.inad .inad-mark{appearance:none;background:var(--navy);color:#fff;border:none;border-radius:8px;padding:6px 12px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s;}
+.inad .inad-mark:hover{background:#16285C;}
+.inad .inad-mark[disabled]{opacity:.5;cursor:default;}
+.inad .inad-reopen{appearance:none;background:#fff;color:var(--ink-2);border:1px solid var(--bd);border-radius:8px;padding:6px 12px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:border-color .15s,color .15s;}
+.inad .inad-reopen:hover{border-color:var(--gold);color:var(--navy);}
+.inad .inad-reopen[disabled]{opacity:.5;cursor:default;}
 `,
         }}
       />
