@@ -358,8 +358,12 @@ export default function EquipeVisao({ role, email, fullName }: Props) {
     return list;
   }, [data?.periods, period]);
 
-  const projPercent = totals && totals.meta > 0 ? (data!.period_projection.production_value / totals.meta) * 100 : null;
-  const realizadoPercent = totals && totals.meta > 0 ? (totals.production_value / totals.meta) * 100 : null;
+  // Entrega 2 — meta EFETIVA do gestor (override ?? derivada). Sem override,
+  // efetiva === totals.meta → % e projeção idênticos ao anterior (não-regressão).
+  const efetiva = data?.gestor_meta?.efetiva ?? totals?.meta ?? 0;
+  const overrideMeta = data?.gestor_meta?.override ?? null;
+  const projPercent = totals && efetiva > 0 ? (data!.period_projection.production_value / efetiva) * 100 : null;
+  const realizadoPercent = totals && efetiva > 0 ? (totals.production_value / efetiva) * 100 : null;
 
   const anualPts: Array<{ label: string; value: number }> = (data?.monthlySeries ?? []).map((m: MonthPoint) => ({
     label: m.label,
@@ -451,7 +455,7 @@ export default function EquipeVisao({ role, email, fullName }: Props) {
               {
                 label: "% da meta",
                 value: pct(realizadoPercent),
-                sub: totals?.meta ? `meta ${brl0(totals.meta)}` : "sem meta",
+                sub: efetiva > 0 ? `meta ${brl0(efetiva)}${overrideMeta != null ? " · ajustada" : ""}` : "sem meta",
               },
               {
                 label: "Projeção fim do mês",
@@ -494,9 +498,10 @@ export default function EquipeVisao({ role, email, fullName }: Props) {
               ) : null}
             </div>
             <p className="mb-cap">
-              {totals?.meta ? (
+              {efetiva > 0 ? (
                 <>
-                  Realizado <b>{brl(totals.production_value)}</b> de <b>{brl(totals.meta)}</b> (
+                  Realizado <b>{brl(totals?.production_value ?? 0)}</b> de <b>{brl(efetiva)}</b>
+                  {overrideMeta != null ? <span className="metatag">meta ajustada</span> : null} (
                   {pct(realizadoPercent)}). No ritmo atual, {isGerente ? "a regional" : "o time"} fecha em{" "}
                   <b>{brl(data?.period_projection.production_value ?? 0)}</b>
                   {projPercent != null ? <> ({pct(projPercent)} da meta)</> : null}.
@@ -603,6 +608,7 @@ const EXTRA_CSS = `
 .rrteam .mb-proj-dot{position:absolute;top:0;bottom:0;left:-1px;width:2.5px;background:var(--gold);box-shadow:0 0 0 2px rgba(214,161,63,.22);border-radius:2px;}
 .rrteam .mb-cap{font-size:13px;color:var(--ink-2);margin:14px 0 0;line-height:1.5;}
 .rrteam .mb-cap b{color:var(--ink);font-weight:600;}
+.rrteam .metatag{display:inline-block;margin-left:7px;font-size:10px;font-weight:600;color:var(--gold-deep);background:rgba(214,161,63,.14);border:1px solid rgba(214,161,63,.34);padding:1px 7px;border-radius:999px;vertical-align:middle;}
 .rrteam .chartwrap,.rrteam .suplist{padding:14px 20px 20px;}
 .rrteam .loadmsg{display:flex;align-items:center;gap:9px;justify-content:center;color:var(--ink-3);font-size:13px;padding:22px 0;}
 .rrteam .lc svg{width:100%;height:auto;display:block;}
