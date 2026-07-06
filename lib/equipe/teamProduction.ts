@@ -135,6 +135,30 @@ export interface TeamProductionPayload {
   monthlySeries: MonthPoint[];
   /** Série mensal por promotor (mesma janela). */
   perPromoterMonthly: PromoterMonthly[];
+  /** Entrega 2 — meta própria do gestor (override ?? derivada) na competência. */
+  gestor_meta: GestorMeta;
+}
+
+/** Meta do gestor: derivada (Σ time), override manual (nullable) e efetiva. */
+export interface GestorMeta {
+  derivada: number;
+  override: number | null;
+  efetiva: number;
+}
+
+/**
+ * Resolve a meta efetiva do gestor numa competência: override (se houver linha
+ * em gestor_targets para year/month) senão a meta derivada. Pura/testável.
+ */
+export function resolveGestorMeta(
+  derivada: number,
+  overrides: Array<{ year: number; month: number; meta: number }>,
+  year: number,
+  month: number,
+): GestorMeta {
+  const o = overrides.find((x) => x.year === year && x.month === month);
+  const override = o ? toNumber(o.meta) : null;
+  return { derivada, override, efetiva: override ?? derivada };
 }
 
 function toNumber(value: unknown): number {
@@ -240,6 +264,7 @@ export function assembleTeamProduction(
   supById: Map<string, { id: string | null; name: string | null }>,
   opts: { year?: number; month?: number },
   refDate: Date,
+  gestorOverrides: Array<{ year: number; month: number; meta: number }> = [],
 ): TeamProductionPayload {
   // ---- competências disponíveis (dos registros + das metas) ----
   const periodsMap = new Map<string, TeamPeriod>();
@@ -427,6 +452,8 @@ export function assembleTeamProduction(
     period_projection: { production_value: projetar(tNet) },
     monthlySeries,
     perPromoterMonthly,
+    // meta_efetiva = override do gestor (se houver) senão a derivada (tMeta).
+    gestor_meta: resolveGestorMeta(tMeta, gestorOverrides, period.year, period.month),
   };
 }
 
@@ -435,7 +462,7 @@ export async function buildTeamProduction(
   admin: SupabaseClient, // service_role — só p/ nomes/supervisor dos ids já autorizados
   opts: { year?: number; month?: number }
 ): Promise<TeamProductionPayload> {
-  const [viewRes, targetRes] = await Promise.all([
+  const [viewRes, targetRes, gestorRes] = await Promise.all([
     db
       .from("vw_team_production")
       .select(
@@ -444,6 +471,10 @@ export async function buildTeamProduction(
     db
       .from("monthly_targets")
       .select("promoter_id, year, month, meta, meta_1, meta_2"),
+    // Override de meta do gestor logado. RLS (gestor_select) devolve SÓ as linhas
+    // do próprio usuário. Tolerante: se a tabela ainda não existe (migration
+    // manual não aplicada), cai para [] e a meta segue a derivada.
+    db.from("gestor_targets").select("year, month, meta"),
   ]);
 
   if (viewRes.error) throw viewRes.error;
@@ -451,6 +482,9 @@ export async function buildTeamProduction(
 
   const rows = (viewRes.data ?? []) as ViewRow[];
   const targets = (targetRes.data ?? []) as TargetRow[];
+  const gestorOverrides = gestorRes.error
+    ? []
+    : ((gestorRes.data ?? []) as Array<{ year: number; month: number; meta: number }>);
 
   // ids de TODOS os promotores que aparecem (produção em qualquer mês OU meta) —
   // para resolver nome + supervisor via service_role. O escopo continua limitado
@@ -493,5 +527,5 @@ export async function buildTeamProduction(
   }
 
   const refDate = todayInFortaleza();
-  return assembleTeamProduction(rows, targets, nameById, supById, opts, refDate);
+  return assembleTeamProduction(rows, targets, nameById, supById, opts, refDate, gestorOverrides);
 }

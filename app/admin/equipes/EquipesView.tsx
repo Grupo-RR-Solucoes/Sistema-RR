@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { UiStyles, HeaderNavy, KpiBand, Table } from "@/components/ui";
 import type { UserRole } from "@/lib/auth/types";
 import type { EquipesModel } from "@/lib/equipes/model";
+import type { GestorMetaEditorRow } from "@/lib/equipe/gestorMeta";
 
 import { RRADMIN_CSS, initials } from "../usuarios/usuariosStyles";
 import { IcoAlertTri, IcoInfo, IcoUsers } from "../usuarios/icons";
@@ -324,6 +325,9 @@ export default function EquipesView({
             ) : null}
           </div>
         </div>
+
+        {/* ---- META DO GESTOR (Entrega 2) — edição socio-only ---- */}
+        {currentUserRole === "socio" ? <GestorMetaEditor /> : null}
       </div>
 
       <div className={`toast${toast ? " show" : ""}`}>
@@ -333,6 +337,214 @@ export default function EquipesView({
     </div>
   );
 }
+
+// ---------- Editor de META DO GESTOR (socio-only; grava via /api/equipe/meta) ----------
+const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+function brlMeta(n: number) {
+  return "R$ " + new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(n || 0);
+}
+function ROLE_PT(role: string) {
+  return role === "gerente_regional" ? "Gerente Regional" : "Supervisor";
+}
+
+function GestorMetaEditor() {
+  const [comp, setComp] = useState<{ year: number; month: number } | null>(null);
+  const [rows, setRows] = useState<GestorMetaEditorRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [toast, setToast] = useState("");
+
+  // competência atual só no cliente (evita mismatch de SSR com Date).
+  useEffect(() => {
+    const d = new Date();
+    setComp({ year: d.getFullYear(), month: d.getMonth() + 1 });
+  }, []);
+
+  const options = useMemo(() => {
+    if (!comp) return [];
+    const out: Array<{ year: number; month: number }> = [];
+    let y = 2026;
+    let m = 1;
+    for (let g = 0; g < 240; g++) {
+      out.push({ year: y, month: m });
+      if (y === comp.year && m === comp.month) break;
+      m += 1;
+      if (m > 12) {
+        m = 1;
+        y += 1;
+      }
+    }
+    return out.reverse();
+  }, [comp]);
+
+  function load(c: { year: number; month: number }) {
+    setLoading(true);
+    setError("");
+    fetch(`/api/equipe/meta?year=${c.year}&month=${c.month}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : r.json().then((j) => Promise.reject(new Error(j?.error || "Falha ao carregar metas.")))))
+      .then((j: { gestores: GestorMetaEditorRow[] }) => {
+        setRows(j.gestores ?? []);
+        setDrafts({});
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Falha ao carregar."))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    if (comp) load(comp);
+  }, [comp]);
+
+  function showToast(msg: string) {
+    setToast(msg);
+    window.setTimeout(() => setToast(""), 2200);
+  }
+
+  async function save(userId: string, meta: string | null) {
+    if (!comp) return;
+    setBusy(userId);
+    setError("");
+    try {
+      const res = await fetch("/api/equipe/meta", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ user_id: userId, year: comp.year, month: comp.month, meta }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || "Falha ao gravar a meta.");
+      }
+      load(comp);
+      showToast(meta === null ? "Override removido" : "Meta ajustada");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao gravar.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const compLabel = (c: { year: number; month: number }) => `${MESES[c.month - 1]}/${String(c.year).slice(-2)}`;
+
+  return (
+    <div className="tcard lnkcard">
+      <div className="tcard-head">
+        <div>
+          <h2>Meta do gestor</h2>
+          <p className="csub">
+            Padrão = soma das metas dos promotores do time (derivada). Ajuste um override por gestor/competência; limpar volta à derivada.
+          </p>
+        </div>
+        <div className="comp comp--light" style={{ position: "relative" }}>
+          <select
+            aria-label="Competência da meta do gestor"
+            value={comp ? `${comp.year}-${comp.month}` : ""}
+            onChange={(e) => {
+              const [y, m] = e.target.value.split("-").map(Number);
+              setComp({ year: y, month: m });
+            }}
+          >
+            {options.map((o) => (
+              <option key={`${o.year}-${o.month}`} value={`${o.year}-${o.month}`}>
+                {compLabel(o)}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="errbar" role="alert" style={{ margin: "0 16px 12px" }}>
+          <span className="bic"><IcoAlertTri /></span>
+          <div>{error}</div>
+        </div>
+      ) : null}
+
+      <Table scrollable minWidth={720}>
+        <thead>
+          <tr>
+            <th className="rr-sticky-col">Gestor</th>
+            <th>Papel</th>
+            <th className="r">Meta derivada</th>
+            <th className="r">Meta efetiva</th>
+            <th>Override (R$)</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {loading ? (
+            <tr><td colSpan={6} className="emptyrow">Carregando…</td></tr>
+          ) : rows.length === 0 ? (
+            <tr><td colSpan={6} className="emptyrow">Nenhum gestor cadastrado.</td></tr>
+          ) : (
+            rows.map((g) => {
+              const efetiva = g.meta_override ?? g.meta_derivada;
+              const draft = drafts[g.user_id] ?? (g.meta_override != null ? String(g.meta_override) : "");
+              return (
+                <tr key={g.user_id}>
+                  <td className="rr-sticky-col"><div className="nm"><span className="av">{initials(g.name)}</span>{g.name}</div></td>
+                  <td>{ROLE_PT(g.role)}</td>
+                  <td className="r">{brlMeta(g.meta_derivada)}</td>
+                  <td className="r">
+                    {brlMeta(efetiva)}
+                    {g.meta_override != null ? <span className="metatag">ajustada</span> : null}
+                  </td>
+                  <td>
+                    <input
+                      className="metainput"
+                      inputMode="numeric"
+                      placeholder={brlMeta(g.meta_derivada)}
+                      value={draft}
+                      disabled={busy === g.user_id}
+                      onChange={(e) => setDrafts((d) => ({ ...d, [g.user_id]: e.target.value.replace(/[^\d]/g, "") }))}
+                    />
+                  </td>
+                  <td>
+                    <div className="metaacts">
+                      <button
+                        className="mbtn save"
+                        disabled={busy === g.user_id || draft === ""}
+                        onClick={() => save(g.user_id, draft)}
+                      >
+                        Salvar
+                      </button>
+                      <button
+                        className="mbtn clear"
+                        disabled={busy === g.user_id || g.meta_override == null}
+                        onClick={() => save(g.user_id, null)}
+                      >
+                        Limpar
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </Table>
+
+      <div className={`toast${toast ? " show" : ""}`}>
+        <span className="ck-i"><IcoInfo /></span>
+        <span>{toast}</span>
+      </div>
+
+      <style dangerouslySetInnerHTML={{ __html: METAEDITOR_CSS }} />
+    </div>
+  );
+}
+
+const METAEDITOR_CSS = `
+.rradmin .metatag{margin-left:8px;font-size:10px;font-weight:600;color:var(--gold-deep,#B9842A);background:rgba(214,161,63,.14);border:1px solid rgba(214,161,63,.34);padding:1px 6px;border-radius:999px;vertical-align:middle;}
+.rradmin .metainput{width:130px;border:1px solid var(--bd,#E4E7EC);border-radius:8px;padding:6px 10px;font-family:inherit;font-size:12.5px;font-variant-numeric:tabular-nums;}
+.rradmin .metainput:focus{outline:none;border-color:var(--gold,#D6A13F);}
+.rradmin .metaacts{display:flex;gap:6px;}
+.rradmin .mbtn{appearance:none;border-radius:8px;padding:6px 12px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--bd,#E4E7EC);background:#fff;}
+.rradmin .mbtn.save{background:var(--navy,#0F1F4A);color:#fff;border-color:var(--navy,#0F1F4A);}
+.rradmin .mbtn.save:hover{background:#16285C;}
+.rradmin .mbtn.clear:hover{border-color:var(--red,#DC2626);color:var(--red,#DC2626);}
+.rradmin .mbtn[disabled]{opacity:.45;cursor:default;}
+`;
 
 function SupervisorBlock({ s }: { s: EquipesModel["tree"]["gerentes"][number]["supervisores"][number] }) {
   return (
