@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
+  ApiGuardError,
   apiGuardErrorResponse,
   requireSocio,
   withAuthenticatedAnon,
@@ -86,6 +87,17 @@ function clearPromoterReadCaches() {
 export async function GET(req: Request) {
   try {
     const { user, supabase } = await withAuthenticatedAnon();
+
+    // Defesa em profundidade: gestores têm a própria tela (/equipe, guard
+    // requireGestor). /promotores é do sócio (comissão bruta/a pagar) — a RLS
+    // já não expõe o dado a eles; aqui a aplicação também barra com 403.
+    // socio/funcionario/promotor seguem pelo fluxo original abaixo, intactos.
+    if (
+      user.session.appUser.role === "supervisor" ||
+      user.session.appUser.role === "gerente_regional"
+    ) {
+      throw new ApiGuardError(403, "Gestores acessam /equipe, nao /promotores");
+    }
 
     const { searchParams } = new URL(req.url);
 
