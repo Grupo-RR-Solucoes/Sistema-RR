@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
+import { buildInadimplenciaAgregados } from "@/lib/auditoria/inadimplenciaAgregados";
 import { fetchAllRows } from "@/lib/queryHelpers";
 
 export const runtime = "nodejs";
@@ -29,12 +30,16 @@ type MonitorRow = {
   recuperavel_estimado: number;
   primeira_deteccao: string;
   status_acompanhamento: string;
+  resolucao_status: string | null;
+  resolucao_por: string | null;
+  resolucao_em: string | null;
 };
 
 const COLUMNS =
   "competencia, operation_number, company_cnpj, status, parcelas_pagas, " +
   "parcelas_total, ultimo_mes_pago, meses_parado, recuperavel_estimado, " +
-  "primeira_deteccao, status_acompanhamento";
+  "primeira_deteccao, status_acompanhamento, resolucao_status, " +
+  "resolucao_por, resolucao_em";
 
 const COMPETENCIA_RE = /^\d{4}-\d{2}$/;
 
@@ -74,6 +79,10 @@ export async function GET(req: Request) {
         meses_parado: r.meses_parado == null ? null : Number(r.meses_parado),
         recuperavel_estimado: Number(r.recuperavel_estimado ?? 0),
         primeira_deteccao: r.primeira_deteccao,
+        // Fatia B — resolução manual (mecanismo separado do motor).
+        resolucao_status: r.resolucao_status ?? "PENDENTE",
+        resolucao_por: r.resolucao_por,
+        resolucao_em: r.resolucao_em,
       }))
       // recuperável desc; empate → parou há mais tempo primeiro.
       .sort(
@@ -82,29 +91,10 @@ export async function GET(req: Request) {
           (b.meses_parado ?? 0) - (a.meses_parado ?? 0),
       );
 
-    // Aberto = recebível em aberto: A_COBRAR (NOVO) + AGUARDANDO_EXPLICACAO +
-    // EM_COBRANCA. Nada é descartado automaticamente (decisão do Diego).
-    const aberta = fila.filter(
-      (r) =>
-        r.status_acompanhamento === "NOVO" ||
-        r.status_acompanhamento === "AGUARDANDO_EXPLICACAO" ||
-        r.status_acompanhamento === "EM_COBRANCA",
-    );
-
-    const agregados = {
-      novo: fila.filter((r) => r.status_acompanhamento === "NOVO").length,
-      aguardandoExplicacao: fila.filter(
-        (r) => r.status_acompanhamento === "AGUARDANDO_EXPLICACAO",
-      ).length,
-      emCobranca: fila.filter((r) => r.status_acompanhamento === "EM_COBRANCA")
-        .length,
-      recuperado: fila.filter((r) => r.status_acompanhamento === "RECUPERADO")
-        .length,
-      recuperavelAberto: aberta.reduce(
-        (acc, r) => acc + r.recuperavel_estimado,
-        0,
-      ),
-    };
+    // Fatia B — SOLUCIONADO (resolução manual) sai da fila e de TODO agregado
+    // de fila (não conta em novo/emCobranca/recuperado nem no recuperável
+    // aberto); vira agregado informativo próprio. Lógica pura e testável.
+    const agregados = buildInadimplenciaAgregados(fila);
 
     return NextResponse.json({ competencia, competencias, fila, agregados });
   } catch (error) {
