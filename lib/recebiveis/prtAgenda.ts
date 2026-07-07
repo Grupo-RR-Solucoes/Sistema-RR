@@ -153,7 +153,10 @@ export function projectPrtAgenda(
     let previsto = 0;
     let contratosComParcela = 0;
     for (const c of contracts) {
-      if (c.parcelasRestantes > h) {
+      // >= h (NÃO > h): inclui a ÚLTIMA parcela a vencer. Um contrato com
+      // parcelasRestantes = R tem parcela a vencer nos meses h = 1..R; o antigo
+      // "> h" dropava o mês R (off-by-one, subestimava a curva).
+      if (c.parcelasRestantes >= h) {
         previsto += c.comissao;
         contratosComParcela += 1;
       }
@@ -228,18 +231,96 @@ export async function fetchPrtSnapshot(
   return contracts;
 }
 
+// ------------------------------------------------- IO (carteira_contrato) --
+// Fonte RECONCILIADA da Camada 1: carteira_contrato tem 1 linha por
+// (numero_operacao × competencia), colunas TIPADAS (sem parse de metadata) e
+// `restantes` já materializado. Substitui o par metadata (findLatestPrtSnapshot
+// Month/fetchPrtSnapshot) SÓ para o buildPrtAgenda (Recebíveis). O par metadata
+// permanece INTACTO — a Fatia B (prtInadimplencia) depende dele.
+
+const CARTEIRA_TABLE = "carteira_contrato";
+const CARTEIRA_STATUS_ATIVO = "ativo";
+
 /**
- * Orquestra: acha o snapshot mais recente, carrega a carteira e monta a
- * agenda. Ponto de entrada da Camada 1.
+ * Competência (YYYY-MM) mais recente com contratos ATIVOS em carteira_contrato.
+ * Análogo a findLatestPrtSnapshotMonth, na fonte reconciliada.
+ */
+export async function findLatestCarteiraMonth(
+  supabase: SupabaseClient,
+): Promise<{ ano: number; mes: number } | null> {
+  const { data, error } = await supabase
+    .from(CARTEIRA_TABLE)
+    .select("competencia")
+    .eq("status", CARTEIRA_STATUS_ATIVO)
+    .order("competencia", { ascending: false })
+    .limit(1);
+  if (error) throw new Error(error.message);
+  const comp = String(data?.[0]?.competencia ?? "").trim();
+  const m = /^(\d{4})-(\d{2})$/.exec(comp);
+  if (!m) return null;
+  return { ano: Number(m[1]), mes: Number(m[2]) };
+}
+
+/**
+ * Carrega a carteira PRT ATIVA de uma competência de carteira_contrato,
+ * paginando. Mesmo shape PrtContract do caminho metadata — mas comissão vem da
+ * coluna tipada e parcelasRestantes vem da coluna `restantes` (NÃO derivado, e
+ * NÃO recalculado por fórmula: comissão é a observada/contratada).
+ */
+export async function fetchCarteiraSnapshot(
+  supabase: SupabaseClient,
+  ano: number,
+  mes: number,
+): Promise<PrtContract[]> {
+  const competencia = `${ano}-${pad2(mes)}`;
+  const contracts: PrtContract[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from(CARTEIRA_TABLE)
+      .select("numero_operacao, comissao, parcelas_pagas, prazo, restantes")
+      .eq("competencia", competencia)
+      .eq("status", CARTEIRA_STATUS_ATIVO)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as Array<{
+      numero_operacao: unknown;
+      comissao: unknown;
+      parcelas_pagas: unknown;
+      prazo: unknown;
+      restantes: unknown;
+    }>;
+    for (const r of rows) {
+      const operacao = String(r.numero_operacao ?? "").trim();
+      if (!operacao) continue;
+      contracts.push({
+        operacao,
+        comissao: toNumberBR(r.comissao),
+        parcelasPagas: Math.trunc(toNumberBR(r.parcelas_pagas)),
+        parcelasTotal: Math.trunc(toNumberBR(r.prazo)),
+        parcelasRestantes: Math.max(0, Math.trunc(toNumberBR(r.restantes))),
+      });
+    }
+    if (rows.length < PAGE_SIZE) break;
+  }
+  return contracts;
+}
+
+/**
+ * Orquestra: acha a competência ativa mais recente da CARTEIRA (reconciliada),
+ * carrega a carteira e monta a agenda. Ponto de entrada da Camada 1.
+ *
+ * Forward-only: NÃO re-seeda previsao_snapshot já congelado — o congelamento
+ * (congelarPrevisao) passa a usar esta fonte daqui pra frente; snapshots
+ * antigos permanecem como estão.
  */
 export async function buildPrtAgenda(
   supabase: SupabaseClient,
   options: PrtAgendaOptions = {},
 ): Promise<PrtAgenda> {
-  const snap = await findLatestPrtSnapshotMonth(supabase);
+  const snap = await findLatestCarteiraMonth(supabase);
   if (!snap) {
-    throw new Error("Nenhuma linha PRT encontrada em monthly_closing_entries.");
+    throw new Error("Nenhuma competência ativa encontrada em carteira_contrato.");
   }
-  const contracts = await fetchPrtSnapshot(supabase, snap.ano, snap.mes);
+  const contracts = await fetchCarteiraSnapshot(supabase, snap.ano, snap.mes);
   return projectPrtAgenda(contracts, snap, options);
 }
