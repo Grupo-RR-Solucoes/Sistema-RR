@@ -93,9 +93,19 @@ export async function PATCH(
     }
 
     if (body.role !== undefined) {
-      if (!["socio", "funcionario", "promotor"].includes(body.role)) {
+      // Mesma lista/validação do POST (/api/admin/usuarios) — inclui os roles de
+      // gestão supervisor/gerente_regional. Sem isto o PATCH rejeitaria a troca
+      // de perfil pela tela de edição com 400.
+      if (
+        !["socio", "funcionario", "promotor", "supervisor", "gerente_regional"].includes(
+          body.role
+        )
+      ) {
         return NextResponse.json(
-          { error: "Role invalido" },
+          {
+            error:
+              "Role invalido (socio|funcionario|promotor|supervisor|gerente_regional)",
+          },
           { status: 400 }
         );
       }

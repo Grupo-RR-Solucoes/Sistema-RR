@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import type { UserRole } from "@/lib/auth/types";
-import { canManageUserRole } from "@/lib/auth/permissions";
+import { allowedTargetRoles, canManageUserRole } from "@/lib/auth/permissions";
 import { isValidCPF, maskCPF, onlyDigits } from "@/lib/validators/cpf";
 
 import type { UsuarioRow } from "./UsuariosList";
@@ -17,7 +17,7 @@ interface Props {
   onSaved: () => void | Promise<void>;
 }
 
-type Role = "socio" | "funcionario" | "promotor";
+type Role = UserRole;
 type CompanyOption = { id: string; name: string; cnpj: string };
 type PromoterOption = { id: string; company_id: string | null; name: string };
 
@@ -41,6 +41,10 @@ export default function EditUsuarioModal({
   // Sócio edita e-mail de qualquer um; funcionário só de promotor.
   // (canManageUserRole: socio→todos, funcionario→promotor, promotor→nada.)
   const canEditEmail = canManageUserRole(currentUserRole, target.role);
+  // Perfis atribuíveis — MESMA fonte do CreateUsuarioModal (allowedTargetRoles):
+  // socio → os 5 (inclui supervisor/gerente_regional); funcionario → [promotor].
+  // Popular o dropdown daqui evita divergência com o modal de criação.
+  const targetRoles = useMemo(() => allowedTargetRoles(currentUserRole), [currentUserRole]);
 
   const [fullName, setFullName] = useState(target.full_name ?? "");
   const [email, setEmail] = useState(target.email ?? "");
@@ -123,9 +127,10 @@ export default function EditUsuarioModal({
       }
     }
 
-    // CPF — funcionário/promotor (role final): valida e envia. Sócio não envia
-    // (a rota zera o cpf ao virar sócio). Mensagem genérica.
-    if (role === "funcionario" || role === "promotor") {
+    // CPF — todo perfil que loga por CPF (funcionário, promotor, supervisor,
+    // gerente_regional) valida e envia. Sócio loga por e-mail → não envia (a
+    // rota zera o cpf ao virar sócio). MESMA regra do CreateUsuarioModal.
+    if (role !== "socio") {
       const cpfDigits = onlyDigits(cpf);
       if (!isValidCPF(cpfDigits)) {
         setError("CPF inválido");
@@ -193,10 +198,12 @@ export default function EditUsuarioModal({
 
               <div className="field">
                 <label>Perfil de acesso</label>
-                <select value={role} onChange={(e) => { setRole(e.target.value as Role); setCnpjId(""); setPromoterId(""); }} disabled={submitting || !canChangeRole}>
-                  <option value="socio">Sócio (acesso completo)</option>
-                  <option value="funcionario">Auxiliar Financeiro (operacional)</option>
-                  <option value="promotor">Promotor (acesso aos próprios dados)</option>
+                <select value={role} onChange={(e) => { const r = e.target.value as Role; setRole(r); setCnpjId(""); setPromoterId(""); if (r === "socio") setCpf(""); }} disabled={submitting || !canChangeRole}>
+                  {targetRoles.includes("socio") ? <option value="socio">Sócio (acesso completo)</option> : null}
+                  {targetRoles.includes("funcionario") ? <option value="funcionario">Auxiliar Financeiro (operacional)</option> : null}
+                  {targetRoles.includes("promotor") ? <option value="promotor">Promotor (acesso aos próprios dados)</option> : null}
+                  {targetRoles.includes("supervisor") ? <option value="supervisor">Supervisor (produção/desempenho da equipe)</option> : null}
+                  {targetRoles.includes("gerente_regional") ? <option value="gerente_regional">Gerente Regional (produção/desempenho da regional)</option> : null}
                 </select>
                 {!canChangeRole ? (
                   <span className="hint">Apenas sócios podem alterar o perfil. Você pode editar o nome.</span>
@@ -205,7 +212,7 @@ export default function EditUsuarioModal({
                 ) : null}
               </div>
 
-              {role === "funcionario" || role === "promotor" ? (
+              {role !== "socio" ? (
                 <div className="field">
                   <label>CPF <span className="req">*</span></label>
                   <input
