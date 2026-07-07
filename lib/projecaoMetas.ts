@@ -7,6 +7,7 @@ import {
   lookupInsuranceShareFromPenetration,
 } from "@/lib/insuranceCalculator";
 import { loadPromoterAnalyticsBase } from "@/lib/promoterAnalytics";
+import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { fetchAllRows } from "@/lib/queryHelpers";
 
 // ============================================================
@@ -125,6 +126,11 @@ export type ProjecaoResultado = {
   };
   promotores: ProjecaoPromotor[];
   naoAtribuido: NaoAtribuido;
+  // ADITIVO (drill-down histórico) — série mensal jan/2026→corrente por promotor
+  // e por estado. Opcionais: só a visão-equipe da /projecao os popula; nenhum
+  // consumidor do mês corrente (dashboard/consolidado/grupos) depende deles.
+  perPromoterMonthly?: PromotorHistorico[];
+  perEstadoMonthly?: EstadoHistorico[];
 };
 
 export function semaforoFromPercent(percent: number | null): Semaforo {
@@ -348,6 +354,19 @@ export async function buildProjecaoMetas(
     };
   });
 
+  // ADITIVO — série histórica mensal (jan/2026→corrente) a partir do daily JÁ
+  // carregado (base.records = todos os meses). NÃO recalcula o mês corrente: só
+  // agrega ao lado. Fim da série = refDate (competência corrente), independente
+  // da competência selecionada. Master (assigned_promoter_id NULL / is_master)
+  // fica FORA — mesma regra do /equipe.
+  const { perPromoterMonthly, perEstadoMonthly } = agregarHistoricoMensal({
+    records: (base.records as HistoricoRecord[]) ?? [],
+    promoters: (base.promoters as HistoricoPromoter[]) ?? [],
+    targets: (base.targets as HistoricoTarget[]) ?? [],
+    companies: (base.companies as HistoricoCompany[]) ?? [],
+    refDate,
+  });
+
   return {
     year,
     month,
@@ -361,6 +380,8 @@ export async function buildProjecaoMetas(
     },
     promotores,
     naoAtribuido,
+    perPromoterMonthly,
+    perEstadoMonthly,
   };
 }
 
@@ -588,4 +609,259 @@ export function promotoresEmRisco(res: ProjecaoResultado): ProjecaoPromotor[] {
   return res.promotores
     .filter((p) => p.semaforo === "vermelho")
     .sort((a, b) => (a.percent_projetado ?? 0) - (b.percent_projetado ?? 0));
+}
+
+// ============================================================
+// DRILL-DOWN HISTÓRICO (ADITIVO) — série mensal jan/2026 → corrente, por PROMOTOR
+// e por ESTADO. Função PURA (sem I/O), espelhando EXATAMENTE a metodologia do
+// /equipe (lib/equipe/teamProduction.ts): elegível = PRODUCAO/PRODUCTION E
+// !SRCC; competência do registro via getProductionPeriodFromValue (movement →
+// contract → proposal); "realizado" = Σ net_value; penetração = Σ gross(c/ seg)
+// / Σ gross. Master (assigned_promoter_id NULL ou promotor is_master) FICA FORA
+// — sempre redistribuída, nunca entra no histórico. Estado = promoters.estado
+// ATUAL aplicado a toda a série (não há estado histórico por mês).
+// NÃO recalcula o mês corrente: a projeção/consolidado/grupos/semáforo ficam
+// intactos; esta série é lateral.
+// ============================================================
+
+export type HistoricoMesPromotor = {
+  year: number;
+  month: number;
+  label: string; // "jan/26"
+  producao: number; // Σ net_value elegível (assigned, não-master)
+  penetracao_seg: number | null; // fração 0-1 (null = sem base bruta no mês)
+  meta: number; // monthly_targets.meta do mês (0 = sem meta)
+  percent: number | null; // ratio producao/meta (null = sem meta)
+};
+export type PromotorHistorico = {
+  promoter_id: string;
+  promoter_name: string;
+  estado: Estado | null;
+  company_id: string;
+  company_name: string;
+  meses: HistoricoMesPromotor[];
+};
+export type HistoricoMesEstado = {
+  year: number;
+  month: number;
+  label: string;
+  producao: number;
+  penetracao_seg: number | null;
+};
+export type EstadoHistorico = {
+  estado: Estado | null;
+  estado_label: string;
+  promotor_count: number;
+  meses: HistoricoMesEstado[];
+};
+
+// Subsets mínimos (o que a agregação lê). Espelham daily_production_records /
+// promoters / monthly_targets / companies.
+type HistoricoRecord = {
+  assigned_promoter_id?: string | null;
+  status?: string | null;
+  is_srcc_restricted?: boolean | null;
+  movement_date?: string | null;
+  contract_date?: string | null;
+  proposal_date?: string | null;
+  net_value?: number | null;
+  gross_value?: number | null;
+  insurance_value?: number | null;
+  has_insurance?: boolean | null;
+};
+type HistoricoPromoter = {
+  id: string;
+  name: string;
+  company_id?: string | null;
+  estado?: unknown;
+  is_master?: boolean | null;
+};
+type HistoricoTarget = { promoter_id: string; year: number; month: number; meta?: number | null };
+type HistoricoCompany = { id: string; name?: string | null };
+
+// Acumulador por (promotor|estado, competência). Só produção/bruto/seguro-bruto.
+type AccHist = { net: number; gross: number; insuredGross: number };
+function emptyAccHist(): AccHist {
+  return { net: 0, gross: 0, insuredGross: 0 };
+}
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+const SERIES_START_HIST = { year: 2026, month: 1 };
+const MESES_ABBR = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+function ymKeyHist(year: number, month: number): string {
+  return `${year}-${pad2(month)}`;
+}
+function labelHist(year: number, month: number): string {
+  return `${MESES_ABBR[month - 1]}/${String(year).slice(-2)}`;
+}
+// Competências de (fromY,fromM) até (toY,toM) inclusive, sem buracos — igual ao
+// monthRange do teamProduction.ts.
+function monthRangeHist(fromY: number, fromM: number, toY: number, toM: number) {
+  const out: Array<{ year: number; month: number }> = [];
+  let y = fromY;
+  let m = fromM;
+  for (let guard = 0; guard < 600; guard++) {
+    if (y > toY || (y === toY && m > toM)) break;
+    out.push({ year: y, month: m });
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return out;
+}
+// Competência do registro: mesma cascata e primitiva do /equipe.
+function competenciaDoRegistro(r: HistoricoRecord): { year: number; month: number } | null {
+  return (
+    getProductionPeriodFromValue(r.movement_date) ||
+    getProductionPeriodFromValue(r.contract_date) ||
+    getProductionPeriodFromValue(r.proposal_date)
+  );
+}
+function penetracaoDe(acc: AccHist): number | null {
+  return acc.gross > 0 ? acc.insuredGross / acc.gross : null;
+}
+
+export function agregarHistoricoMensal(input: {
+  records: HistoricoRecord[];
+  promoters: HistoricoPromoter[];
+  targets: HistoricoTarget[];
+  companies: HistoricoCompany[];
+  refDate: Date;
+}): { perPromoterMonthly: PromotorHistorico[]; perEstadoMonthly: EstadoHistorico[] } {
+  const { records, promoters, targets, companies, refDate } = input;
+
+  const companyNameById = new Map(companies.map((c) => [c.id, c.name ?? "—"]));
+  const promoInfo = new Map<
+    string,
+    { name: string; estado: Estado | null; company_id: string; company_name: string; is_master: boolean }
+  >();
+  for (const pr of promoters) {
+    promoInfo.set(pr.id, {
+      name: pr.name,
+      estado: asEstado(pr.estado),
+      company_id: pr.company_id || "",
+      company_name: companyNameById.get(pr.company_id || "") || "—",
+      is_master: pr.is_master === true,
+    });
+  }
+
+  // (promoter_id) -> (ymKey) -> AccHist. Master/desconhecido FORA.
+  const byPromoterYm = new Map<string, Map<string, AccHist>>();
+  for (const r of records) {
+    const pid = r.assigned_promoter_id;
+    if (!pid) continue; // chave master (NULL) — sempre redistribuída, fora
+    const info = promoInfo.get(pid);
+    if (!info || info.is_master) continue; // promotor is_master ou desconhecido — fora
+    if (!isEligibleRecord(r)) continue;
+    const comp = competenciaDoRegistro(r);
+    if (!comp) continue;
+    const k = ymKeyHist(comp.year, comp.month);
+    let inner = byPromoterYm.get(pid);
+    if (!inner) {
+      inner = new Map<string, AccHist>();
+      byPromoterYm.set(pid, inner);
+    }
+    const acc = inner.get(k) ?? emptyAccHist();
+    const gross = toNumber(r.gross_value);
+    acc.net += toNumber(r.net_value);
+    acc.gross += gross;
+    if (toNumber(r.insurance_value) > 0 || r.has_insurance) acc.insuredGross += gross;
+    inner.set(k, acc);
+  }
+
+  const metaByPidYm = new Map<string, number>();
+  for (const t of targets) metaByPidYm.set(`${t.promoter_id}:${ymKeyHist(t.year, t.month)}`, toNumber(t.meta));
+
+  const range = monthRangeHist(
+    SERIES_START_HIST.year,
+    SERIES_START_HIST.month,
+    refDate.getUTCFullYear(),
+    refDate.getUTCMonth() + 1
+  );
+
+  // ---- série por PROMOTOR (todo promotor com produção OU meta na janela) ----
+  const pids = new Set<string>([...byPromoterYm.keys(), ...targets.map((t) => t.promoter_id)]);
+  const perPromoterMonthly: PromotorHistorico[] = Array.from(pids)
+    .filter((pid) => {
+      const info = promoInfo.get(pid);
+      return Boolean(info) && !info!.is_master;
+    })
+    .map((pid) => {
+      const info = promoInfo.get(pid)!;
+      const inner = byPromoterYm.get(pid);
+      return {
+        promoter_id: pid,
+        promoter_name: info.name,
+        estado: info.estado,
+        company_id: info.company_id,
+        company_name: info.company_name,
+        meses: range.map(({ year, month }) => {
+          const acc = inner?.get(ymKeyHist(year, month)) ?? emptyAccHist();
+          const meta = metaByPidYm.get(`${pid}:${ymKeyHist(year, month)}`) ?? 0;
+          return {
+            year,
+            month,
+            label: labelHist(year, month),
+            producao: round2(acc.net),
+            penetracao_seg: penetracaoDe(acc),
+            meta: round2(meta),
+            percent: meta > 0 ? acc.net / meta : null,
+          };
+        }),
+      };
+    })
+    .sort((a, b) => a.promoter_name.localeCompare(b.promoter_name, "pt-BR"));
+
+  // ---- série por ESTADO (soma dos promotores do estado; master já excluída) ----
+  const byEstadoYm = new Map<string, Map<string, AccHist>>();
+  const estadoPromoters = new Map<string, Set<string>>();
+  const NULO = "__NULL__";
+  for (const [pid, inner] of byPromoterYm) {
+    const info = promoInfo.get(pid);
+    if (!info || info.is_master) continue;
+    const ekey = info.estado ?? NULO;
+    if (!estadoPromoters.has(ekey)) estadoPromoters.set(ekey, new Set());
+    estadoPromoters.get(ekey)!.add(pid);
+    let eInner = byEstadoYm.get(ekey);
+    if (!eInner) {
+      eInner = new Map<string, AccHist>();
+      byEstadoYm.set(ekey, eInner);
+    }
+    for (const [k, acc] of inner) {
+      const cur = eInner.get(k) ?? emptyAccHist();
+      cur.net += acc.net;
+      cur.gross += acc.gross;
+      cur.insuredGross += acc.insuredGross;
+      eInner.set(k, cur);
+    }
+  }
+
+  const perEstadoMonthly: EstadoHistorico[] = [];
+  const pushEstado = (estado: Estado | null, ekey: string) => {
+    const eInner = byEstadoYm.get(ekey);
+    const proms = estadoPromoters.get(ekey);
+    if (!eInner || !proms || proms.size === 0) return;
+    perEstadoMonthly.push({
+      estado,
+      estado_label: estado ? ESTADO_LABEL[estado] : "Não classificado",
+      promotor_count: proms.size,
+      meses: range.map(({ year, month }) => {
+        const acc = eInner.get(ymKeyHist(year, month)) ?? emptyAccHist();
+        return {
+          year,
+          month,
+          label: labelHist(year, month),
+          producao: round2(acc.net),
+          penetracao_seg: penetracaoDe(acc),
+        };
+      }),
+    });
+  };
+  for (const e of ESTADO_ORDEM) pushEstado(e, e);
+  pushEstado(null, NULO);
+
+  return { perPromoterMonthly, perEstadoMonthly };
 }

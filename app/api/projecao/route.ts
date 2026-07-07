@@ -106,6 +106,10 @@ export async function GET(req: Request) {
       grupos: agruparPorEstado(res),
       risco: promotoresEmRisco(res),
       total_promotores: res.promotores.length,
+      // ADITIVO — séries do drill-down histórico (só socio/funcionario, escopo
+      // equipe). Guard inalterado; sem expansão de role.
+      perPromoterMonthly: res.perPromoterMonthly ?? [],
+      perEstadoMonthly: res.perEstadoMonthly ?? [],
     });
   } catch (error) {
     return apiGuardErrorResponse(error);
