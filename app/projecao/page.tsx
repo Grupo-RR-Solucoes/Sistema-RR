@@ -64,6 +64,38 @@ type Grupo = {
   nao_atribuido?: NaoAtribuido | null;
 };
 
+// ---------- drill-down histórico (jan/2026 → corrente) ----------
+type HistMesPromotor = {
+  year: number;
+  month: number;
+  label: string;
+  producao: number;
+  penetracao_seg: number | null;
+  meta: number;
+  percent: number | null;
+};
+type PromotorHist = {
+  promoter_id: string;
+  promoter_name: string;
+  estado: string | null;
+  company_id: string;
+  company_name: string;
+  meses: HistMesPromotor[];
+};
+type HistMesEstado = {
+  year: number;
+  month: number;
+  label: string;
+  producao: number;
+  penetracao_seg: number | null;
+};
+type EstadoHist = {
+  estado: string | null;
+  estado_label: string;
+  promotor_count: number;
+  meses: HistMesEstado[];
+};
+
 // ---------- ordenação (ranking de promotores) ----------
 type SortKey = "percent" | "acumulado" | "projecao" | "meta" | "seguro_pen";
 type SortDir = "asc" | "desc";
@@ -171,6 +203,203 @@ function TrendCell({ p }: { p: Promotor }) {
   if (p.tendencia === "queda") return <span className="trend down"><ArrowDown /></span>;
   if (p.tendencia === "estavel") return <span className="trend flat">→</span>;
   return <span className="trend none">—</span>;
+}
+
+// ---------- gráfico de linha SVG (espelha o LineChart do /equipe) ----------
+// `projected` (opcional) desenha um segmento PONTILHADO AMARELO do último ponto
+// real até a projeção do mês corrente + marcador vazado dourado.
+function LineChart({
+  points,
+  color = "#0F1F4A",
+  height = 128,
+  fmt,
+  projected = null,
+  projLabel = "proj",
+}: {
+  points: Array<{ label: string; value: number }>;
+  color?: string;
+  height?: number;
+  fmt: (n: number) => string;
+  projected?: number | null;
+  projLabel?: string;
+}) {
+  const W = 680;
+  const H = height;
+  const padL = 10;
+  const padR = 12;
+  const padT = 14;
+  const padB = 24;
+  const n = points.length;
+  const hasProj = projected != null && n > 0;
+  const slots = n + (hasProj ? 1 : 0);
+  const max = Math.max(1, ...points.map((p) => p.value), ...(hasProj ? [projected as number] : []));
+  const x = (i: number) => (slots <= 1 ? padL : padL + (i * (W - padL - padR)) / (slots - 1));
+  const y = (v: number) => padT + (1 - v / max) * (H - padT - padB);
+  const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
+  const area =
+    n > 0
+      ? `${line} L${x(n - 1).toFixed(1)},${(H - padB).toFixed(1)} L${x(0).toFixed(1)},${(H - padB).toFixed(1)} Z`
+      : "";
+  const projSeg = hasProj
+    ? `M${x(n - 1).toFixed(1)},${y(points[n - 1].value).toFixed(1)} L${x(n).toFixed(1)},${y(projected as number).toFixed(1)}`
+    : "";
+  const last = points[n - 1];
+  return (
+    <div className="lc">
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Série mensal" preserveAspectRatio="none">
+        <line x1={padL} y1={H - padB} x2={W - padR} y2={H - padB} stroke="#E4E7EC" strokeWidth={1} />
+        {area ? <path d={area} fill={color} opacity={0.08} /> : null}
+        {line ? <path d={line} fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" /> : null}
+        {projSeg ? <path d={projSeg} fill="none" stroke="#F2C200" strokeWidth={2.5} strokeDasharray="5 4" strokeLinecap="round" /> : null}
+        {points.map((p, i) => (
+          <circle key={i} cx={x(i)} cy={y(p.value)} r={2.6} fill={color} />
+        ))}
+        {hasProj ? <circle cx={x(n)} cy={y(projected as number)} r={3.4} fill="#fff" stroke="#D6A13F" strokeWidth={2} /> : null}
+      </svg>
+      <div className="lc-x">
+        {points.map((p, i) => (
+          <span key={i} className={!hasProj && i === n - 1 ? "on" : ""}>
+            {p.label.split("/")[0]}
+          </span>
+        ))}
+        {hasProj ? <span className="on proj">{projLabel}</span> : null}
+      </div>
+      {last ? (
+        <div className="lc-cap">
+          Último ({last.label}): <b>{fmt(last.value)}</b>
+          {hasProj ? <> · proj <b>{fmt(projected as number)}</b></> : null} · pico {fmt(max)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------- Drawer do PROMOTOR (histórico mês a mês) ----------
+function PromotorDrawer({ p, hist, onClose }: { p: Promotor; hist: PromotorHist | null; onClose: () => void }) {
+  const meses = hist?.meses ?? [];
+  const prodPts = meses.map((m) => ({ label: m.label, value: m.producao }));
+  const histRows = [...meses].reverse().filter((m) => m.producao > 0 || m.meta > 0);
+  return (
+    <div className="drawer" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="dw-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="dw-head">
+          <div>
+            <h3>{p.promoter_name}</h3>
+            <p className="dw-sub">
+              {p.company_name}
+              {hist?.estado ? ` · ${hist.estado}` : ""} · histórico de produção jan → corrente
+            </p>
+          </div>
+          <button className="dw-x" onClick={onClose} aria-label="Fechar">✕</button>
+        </div>
+        <div className="dw-body">
+          <div className="dw-kpis">
+            <div className="dwk"><span className="l">Acumulado</span><span className="v num">{brl(p.producao_acumulada)}</span></div>
+            <div className="dwk"><span className="l">Projeção</span><span className="v num">{brl(p.projecao)}</span></div>
+            <div className="dwk"><span className="l">% meta</span><span className="v num">{pctTxt(p.percent_projetado)}</span></div>
+          </div>
+          <div className="dw-block">
+            <h4>Produção líquida mês a mês</h4>
+            <LineChart points={prodPts} color="#0F1F4A" fmt={brl} projected={p.projecao} projLabel="proj" />
+          </div>
+          <div className="dw-block">
+            <h4>Meta vs realizado (histórico)</h4>
+            <Table scrollable minWidth={520}>
+              <thead>
+                <tr>
+                  <th>Mês</th>
+                  <th className="r">Produção</th>
+                  <th className="r">Meta</th>
+                  <th className="r">% meta</th>
+                  <th className="r">Penetração seg.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {histRows.length === 0 ? (
+                  <tr><td colSpan={5} className="dw-empty">Sem histórico de produção ou meta.</td></tr>
+                ) : (
+                  histRows.map((m) => (
+                    <tr key={`${m.year}-${m.month}`}>
+                      <td>{m.label}</td>
+                      <td className="r">{brl(m.producao)}</td>
+                      <td className="r">{m.meta > 0 ? brl(m.meta) : "—"}</td>
+                      <td className="r">{pctTxt(m.percent)}</td>
+                      <td className="r">{pctTxt(m.penetracao_seg)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </Table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Drawer do ESTADO (histórico + lista de promotores encadeável) ----------
+function EstadoDrawer({
+  g,
+  hist,
+  onClose,
+  onSelectPromotor,
+}: {
+  g: Grupo;
+  hist: EstadoHist | null;
+  onClose: () => void;
+  onSelectPromotor: (id: string) => void;
+}) {
+  const meses = hist?.meses ?? [];
+  const prodPts = meses.map((m) => ({ label: m.label, value: m.producao }));
+  return (
+    <div className="drawer" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="dw-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="dw-head">
+          <div>
+            <h3>{g.estado ? `${g.estado} · ${g.estado_label}` : g.estado_label}</h3>
+            <p className="dw-sub">
+              {g.promotores.length} promotor{g.promotores.length === 1 ? "" : "es"} · histórico de produção jan → corrente
+            </p>
+          </div>
+          <button className="dw-x" onClick={onClose} aria-label="Fechar">✕</button>
+        </div>
+        <div className="dw-body">
+          <div className="dw-kpis">
+            <div className="dwk"><span className="l">Acumulado</span><span className="v num">{brl(g.producao_acumulada)}</span></div>
+            <div className="dwk"><span className="l">Projeção</span><span className="v num">{brl(g.projecao)}</span></div>
+            <div className="dwk"><span className="l">% meta</span><span className="v num">{pctTxt(g.percent_projetado)}</span></div>
+          </div>
+          <div className="dw-block">
+            <h4>Produção do estado mês a mês</h4>
+            <LineChart points={prodPts} color="#0F1F4A" fmt={brl} projected={g.projecao} projLabel="proj" />
+          </div>
+          <div className="dw-block">
+            <h4>Promotores do estado <span className="dw-hint">clique para abrir</span></h4>
+            <Table scrollable minWidth={440}>
+              <thead>
+                <tr>
+                  <th>Promotor</th>
+                  <th className="r">Acumulado</th>
+                  <th className="r">Projeção</th>
+                  <th className="r">% meta</th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.promotores.map((pr) => (
+                  <tr key={pr.promoter_id} className="clickrow" onClick={() => onSelectPromotor(pr.promoter_id)}>
+                    <td className="pname">{pr.promoter_name}</td>
+                    <td className="r">{brl(pr.producao_acumulada)}</td>
+                    <td className="r">{brl(pr.projecao)}</td>
+                    <td className="r">{pctTxt(pr.percent_projetado)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function ProjecaoPage() {
@@ -345,6 +574,14 @@ function EquipeView({ data }: { data: any }) {
   // junto pelo valor real; R$ 0,00 cai no fim naturalmente).
   const [sortKey, setSortKey] = useState<SortKey>("acumulado");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  // Drill-down histórico (drawers). Séries vêm prontas da API (aditivas).
+  const perPromoter: PromotorHist[] = data.perPromoterMonthly || [];
+  const perEstado: EstadoHist[] = data.perEstadoMonthly || [];
+  const [selPromotor, setSelPromotor] = useState<string | null>(null);
+  const [selEstado, setSelEstado] = useState<string | null>(null); // "AL".."BA" | "__NULL__"
+  const estadoKey = (e: string | null | undefined) => e ?? "__NULL__";
+
   const onSort = (key: SortKey) => {
     if (key === sortKey) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -356,6 +593,13 @@ function EquipeView({ data }: { data: any }) {
   const arrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
   const ariaSort = (key: SortKey): "ascending" | "descending" | "none" =>
     sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none";
+
+  // Resolução dos drawers (promotor tem prioridade → encadeado sobre o estado).
+  const allProms: Promotor[] = grupos.flatMap((g) => g.promotores);
+  const selP = selPromotor ? allProms.find((p) => p.promoter_id === selPromotor) ?? null : null;
+  const selPHist = selPromotor ? perPromoter.find((h) => h.promoter_id === selPromotor) ?? null : null;
+  const selG = selEstado ? grupos.find((g) => estadoKey(g.estado) === selEstado) ?? null : null;
+  const selGHist = selEstado ? perEstado.find((e) => estadoKey(e.estado) === selEstado) ?? null : null;
 
   return (
     <>
@@ -444,11 +688,18 @@ function EquipeView({ data }: { data: any }) {
       {/* TABELAS POR ESTADO */}
       {grupos.map((g) => (
         <section key={g.estado ?? "nao-classificado"} className="card">
-          <div className="emp-head">
+          <div
+            className="emp-head clickhead"
+            role="button"
+            tabIndex={0}
+            aria-label={`Abrir histórico de ${g.estado_label}`}
+            onClick={() => setSelEstado(estadoKey(g.estado))}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelEstado(estadoKey(g.estado)); } }}
+          >
             <div className="left">
               <span className={`st ${CHIP[g.semaforo]}`} />
               <div>
-                <div className="nm">{g.estado_label}</div>
+                <div className="nm">{g.estado_label} <span className="drill">histórico →</span></div>
                 <div className="cnpj">{g.estado ? `Estado ${g.estado}` : "sem estado atribuído"} · {g.promotores.length} promotor{g.promotores.length === 1 ? "" : "es"}</div>
               </div>
             </div>
@@ -526,7 +777,7 @@ function EquipeView({ data }: { data: any }) {
               </thead>
               <tbody>
                 {sortPromotores(g.promotores, sortKey, sortDir).map((p) => (
-                  <tr key={p.promoter_id}>
+                  <tr key={p.promoter_id} className="clickrow" onClick={() => setSelPromotor(p.promoter_id)}>
                     <td className="rr-sticky-col pname">{p.promoter_name}</td>
                     <td className="r">{brl(p.producao_acumulada)}</td>
                     <td className="r">{brl(p.projecao)}</td>
@@ -556,6 +807,19 @@ function EquipeView({ data }: { data: any }) {
           </Table>
         </section>
       ))}
+
+      {/* Drawers do drill-down histórico. Promotor sobrepõe o estado (encadeado):
+          fechar o promotor volta ao estado se ele estiver aberto. */}
+      {selP ? (
+        <PromotorDrawer p={selP} hist={selPHist} onClose={() => setSelPromotor(null)} />
+      ) : selG ? (
+        <EstadoDrawer
+          g={selG}
+          hist={selGHist}
+          onClose={() => setSelEstado(null)}
+          onSelectPromotor={(id) => setSelPromotor(id)}
+        />
+      ) : null}
     </>
   );
 }
@@ -871,4 +1135,36 @@ const CSS = `
   .rrproj .emp-head .right{width:100%;justify-content:space-between;}
   .rrproj .compbars{gap:10px;}
 }
+
+/* ---------- drill-down histórico (aditivo): clicáveis, gráfico de linha, drawer ---------- */
+.rrproj .emp-head.clickhead{cursor:pointer;}
+.rrproj .emp-head.clickhead:hover{background:rgba(15,31,74,.02);}
+.rrproj .emp-head .drill{font-size:11px;font-weight:600;color:var(--gold-deep);opacity:0;transition:opacity .15s;margin-left:6px;}
+.rrproj .emp-head.clickhead:hover .drill{opacity:1;}
+.rrproj tr.clickrow{cursor:pointer;}
+.rrproj tr.clickrow:hover td{background:rgba(15,31,74,.035);}
+.rrproj .lc svg{width:100%;height:auto;display:block;}
+.rrproj .lc-x{display:flex;justify-content:space-between;margin-top:4px;padding:0 2px;}
+.rrproj .lc-x span{font-size:10px;color:var(--ink-3);font-variant-numeric:tabular-nums;}
+.rrproj .lc-x span.on{color:var(--navy);font-weight:700;}
+.rrproj .lc-x span.on.proj{color:var(--gold-deep);}
+.rrproj .lc-cap{font-size:11.5px;color:var(--ink-3);margin-top:8px;}
+.rrproj .lc-cap b{color:var(--ink);font-weight:600;}
+.rrproj .drawer{position:fixed;inset:0;background:rgba(15,31,74,.32);display:flex;justify-content:flex-end;z-index:60;}
+.rrproj .dw-panel{width:min(580px,94vw);height:100%;background:var(--page);box-shadow:-8px 0 30px rgba(15,31,74,.18);display:flex;flex-direction:column;animation:rrproj-slide .2s ease;}
+@keyframes rrproj-slide{from{transform:translateX(24px);opacity:.6;}to{transform:translateX(0);opacity:1;}}
+.rrproj .dw-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:20px 22px;background:var(--navy);color:#fff;}
+.rrproj .dw-head h3{margin:0;font-size:16px;font-weight:600;}
+.rrproj .dw-sub{margin:5px 0 0;font-size:11.5px;color:#B7C0D8;line-height:1.4;}
+.rrproj .dw-x{background:rgba(255,255,255,.1);border:none;color:#fff;width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:14px;}
+.rrproj .dw-x:hover{background:rgba(255,255,255,.2);}
+.rrproj .dw-body{padding:18px 20px 40px;overflow-y:auto;display:flex;flex-direction:column;gap:18px;}
+.rrproj .dw-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+.rrproj .dwk{background:#fff;border:1px solid var(--bd);border-radius:var(--r-md);padding:12px 14px;display:flex;flex-direction:column;gap:3px;}
+.rrproj .dwk .l{font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);}
+.rrproj .dwk .v{font-size:16px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;}
+.rrproj .dw-block{background:#fff;border:1px solid var(--bd);border-radius:var(--r-md);padding:16px 18px;}
+.rrproj .dw-block h4{margin:0 0 12px;font-size:12.5px;font-weight:600;color:var(--ink-2);display:flex;align-items:baseline;gap:8px;}
+.rrproj .dw-block .dw-hint{font-size:10.5px;font-weight:500;color:var(--ink-3);text-transform:none;letter-spacing:0;}
+.rrproj .dw-empty{padding:16px 4px;color:var(--ink-3);font-size:12.5px;text-align:center;}
 `;

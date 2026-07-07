@@ -720,6 +720,11 @@ export async function loadPromoterAnalyticsBase(
     promoterById,
     filteredSummaryRows,
     recordsForPeriod,
+    // ADITIVO — base crua de TODOS os meses (sem recorte por competência) para
+    // consumidores que precisam da série histórica (ex.: drill-down da /projecao).
+    // recordsForPeriod continua sendo o recorte do mês selecionado (inalterado).
+    records,
+    targets,
     recordsById,
     groupProductionValue,
     companyGrossCommission,
