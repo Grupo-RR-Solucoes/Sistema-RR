@@ -188,6 +188,14 @@ export async function importBbtsClosing(
     amostra: [],
   };
 
+  // Opção B: a competência do fechamento é a janela de apuração da Promotiva, não
+  // a data literal de venda. movement_date recebe uma data representativa do mês
+  // (dia 15 — getProductionPeriodFromValue a mapeia p/ a competência nominal; o
+  // fim do mês poderia rolar p/ a competência seguinte). A data REAL de venda vai
+  // p/ contract_date/proposal_date (preserva o histórico). extractYearMonth usa
+  // movement_date primeiro, então todas as 18 caem na competência do fechamento.
+  const compMovementDate = `${year}-${String(month).padStart(2, "0")}-15`;
+
   const records: Record<string, unknown>[] = [];
   for (const r of credito) {
     const contrato = String(r.contrato).trim();
@@ -249,9 +257,9 @@ export async function importBbtsClosing(
       // status='PRODUCAO' p/ passar em isEligibleProductionRecord (Migração/balde
       // e somas de produção só contam PRODUCAO). Cancelado fica CANCELADO (fora).
       status: cancelado ? "CANCELADO" : "PRODUCAO",
-      proposal_date: dateIso,
-      movement_date: dateIso,
-      contract_date: dateIso,
+      proposal_date: dateIso, // data real de venda
+      movement_date: compMovementDate, // competência do fechamento (Opção B)
+      contract_date: dateIso, // data real de venda (preserva histórico)
       is_srcc_restricted: isSrccRestricted,
       promoter_commission_amount: null,
       promoter_commission_percent: null,
@@ -293,7 +301,6 @@ export async function importBbtsClosing(
   //     p/ o BBTS-2c considerar o seguro. movement_date = competência (sem data
   //     própria) p/ cair no período da Migração.
   const contratosCredito = new Set(credito.map((r) => String(r.contrato).trim()));
-  const compFallback = `${year}-${String(month).padStart(2, "0")}-01`;
   const jMaster = jkByValue.get(BBTS_MASTER_KEY.toUpperCase());
   for (const s of seguroCalculo) {
     const contrato = String(s.contrato).trim();
@@ -326,9 +333,9 @@ export async function importBbtsClosing(
       term_months: null,
       installments: null,
       status: "PRODUCAO", // elegível no balde/somas (mesma regra do crédito)
-      proposal_date: compFallback,
-      movement_date: compFallback,
-      contract_date: compFallback,
+      proposal_date: compMovementDate,
+      movement_date: compMovementDate,
+      contract_date: compMovementDate,
       is_srcc_restricted: false,
       promoter_commission_amount: null,
       promoter_commission_percent: null,
