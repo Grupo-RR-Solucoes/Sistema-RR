@@ -14,7 +14,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //   herança  : contrato de chave MASTER herda o assigned_promoter_id do DIÁRIO
 //              (contract_number → daily.proposal_number, MESMA company_id,
 //              competência do mês). Chave INDIVIDUAL casa direto.
-//   seguro   : Σ(COMISSÃO SEGURO embutido no CASH) × escala de penetração.
+//   seguro   : Σ(COMISSÃO SEGURO) × escala de penetração, somando DUAS fontes com
+//              a MESMA régua — (a) o seguro EMBUTIDO nas linhas CASH e (b) a aba
+//              avulsa INSURANCE/"A Vista" (tem CHAVE J, COMISSÃO SEGURO e %
+//              PENETRAÇÃO). O avulso é atribuído por CHAVE J individual ou por
+//              herança master (contrato → diário). Linhas avulsas SEM chave J
+//              ficam de fora (logadas).
 //   exclusões: chave BBTS (JJ552710) fica FORA (frente BBTS futura); SRCC="Sim"
 //              sai do valor e volta em `restritas` para a UI.
 //
@@ -22,6 +27,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // INSURANCE/"Seguro" (~-R$901 em jun/2026, estornos/cancelamentos SEM chave J
 // nem promotor) NÃO entra nesta consolidação. Falta decisão de rateio (dedução
 // da empresa? proporcional? ignorar?). Enquanto não houver régua, fica de fora.
+// (Distinta da aba INSURANCE/"A Vista", que TEM régua e já entra — ver acima.)
 //
 // NÃO altera detectClosedMonth, NÃO toca /api/promotores, NÃO vira a tela. É
 // chamada por script/endpoint de teste manual (scripts/rodarClosingMonthly.ts).
@@ -34,6 +40,7 @@ import {
 import {
   fetchPromoterShareData,
   resolvePromoterShareSync,
+  readRawPayloadValue,
 } from "./proposalDetailing.ts";
 import {
   fetchInsuranceSlipTiers,
@@ -105,7 +112,7 @@ async function fetchAllPaged<T = any>(build: () => any): Promise<T[]> {
  */
 async function buildMasterHeirMap(
   supabase: SupabaseLike,
-  orphans: ClosingContrato[],
+  orphans: Array<{ contrato: string | null; companyId: string | null }>,
   year: number,
   month: number
 ): Promise<Map<string, string>> {
@@ -144,7 +151,8 @@ type ClosingAgg = {
   net: number; // Σ valorLiquido (produção do fechamento)
   count: number;
   avista: number; // Σ COMISSÃO PF × acordo (com Frente C)
-  seguroEmpresa: number; // Σ COMISSÃO SEGURO embutido
+  seguroEmpresa: number; // Σ COMISSÃO SEGURO EMBUTIDO no CASH (escala aplicada depois, via maxPen)
+  seguroAvulso: number; // seguro da aba INSURANCE/"A Vista", escala JÁ aplicada por linha
   maxPen: number | null; // maior % penetração do promotor no fechamento
   insuredCount: number;
   insuredNet: number;
@@ -231,6 +239,25 @@ export async function consolidateMonthlyFromClosing(
   // 5. Agrega por promotor EFETIVO. Contratos órfãos (sem promotor mesmo após
   //    herança) NÃO entram no PMR — ficam com a empresa (igual ao cms).
   const agg = new Map<string, ClosingAgg>();
+  const getAgg = (pid: string, companyId: string | null): ClosingAgg => {
+    let a = agg.get(pid);
+    if (!a) {
+      a = {
+        companyId: companyId ?? null,
+        net: 0,
+        count: 0,
+        avista: 0,
+        seguroEmpresa: 0,
+        seguroAvulso: 0,
+        maxPen: null,
+        insuredCount: 0,
+        insuredNet: 0,
+      };
+      agg.set(pid, a);
+    }
+    return a;
+  };
+
   let orfaosSemDono = 0;
   for (const c of contratos) {
     const pid = (c as any).__pid as string | null;
@@ -238,18 +265,7 @@ export async function consolidateMonthlyFromClosing(
       orfaosSemDono += 1;
       continue;
     }
-    const a =
-      agg.get(pid) ||
-      ({
-        companyId: c.companyId ?? null,
-        net: 0,
-        count: 0,
-        avista: 0,
-        seguroEmpresa: 0,
-        maxPen: null,
-        insuredCount: 0,
-        insuredNet: 0,
-      } as ClosingAgg);
+    const a = getAgg(pid, c.companyId ?? null);
     a.avista += c.comissaoEmpresaAvista * acordoDoContrato(pid, c);
     a.seguroEmpresa += c.comissaoSeguro;
     a.net += c.valorLiquido;
@@ -261,8 +277,19 @@ export async function consolidateMonthlyFromClosing(
     if (c.penetracao != null && (a.maxPen == null || c.penetracao > a.maxPen)) {
       a.maxPen = c.penetracao;
     }
-    agg.set(pid, a);
   }
+
+  // 5b. Seguro AVULSO — aba INSURANCE/"A Vista" (194 linhas em jun/2026). Mesma
+  //     escala de penetração do embutido; atribuição por CHAVE J individual ou
+  //     herança master (contrato → daily.proposal_number). Sem chave => fora.
+  //     Exclui BBTS (JJ552710). NÃO confundir com INSURANCE/"Seguro" (estornos,
+  //     sem chave J) — essa segue como pendência documentada no cabeçalho.
+  const insDiag = await addSeguroAvulso(
+    supabase,
+    { year, month, companyId },
+    tiers,
+    getAgg
+  );
 
   // 6. Metas (para target_status e colunas de meta).
   const targets = await fetchAllPaged<any>(() => {
@@ -299,7 +326,9 @@ export async function consolidateMonthlyFromClosing(
       a.maxPen ?? 0
     );
     const productionCommission = a.avista;
-    const insuranceCommission = a.seguroEmpresa * insuranceShare;
+    // seguro = embutido (Σ COMISSÃO SEGURO do CASH × escala do maxPen) + avulso
+    // (INSURANCE/"A Vista", escala já aplicada por linha em addSeguroAvulso).
+    const insuranceCommission = a.seguroEmpresa * insuranceShare + a.seguroAvulso;
     const finalCommission = productionCommission + insuranceCommission;
 
     const t = targetByPromoter.get(pid);
@@ -362,5 +391,111 @@ export async function consolidateMonthlyFromClosing(
     orfaos_sem_dono: orfaosSemDono,
     restritas, // SRCC="Sim": fora do valor, para a UI listar depois.
     bbts_excluidos: base.contratos.length - contratos.length,
+    seguro_avulso: insDiag, // { linhas, atribuidas, master_herdadas, sem_chave, bbts, total }
   };
+}
+
+// Aliases das colunas do metadata das linhas de seguro (readRawPayloadValue já
+// normaliza acento/caixa e apara espaços — cobre "COMISSÃO SEGURO", " % PENETRAÇÃO ").
+const A_CHAVE_J = ["CHAVE J", "LOGIN", "USUARIO"];
+const A_COMISSAO_SEGURO = ["COMISSAO SEGURO", "COMISSÃO SEGURO"];
+const A_PENETRACAO = ["% PENETRACAO", "% PENETRAÇÃO", "PENETRACAO", "PENETRAÇÃO"];
+const A_CONTRATO = ["CONTRATO", "NUMERO CONTRATO", "NÚMERO CONTRATO"];
+
+/**
+ * Soma ao seguro de cada promotor o AVULSO da aba INSURANCE/"A Vista", pela MESMA
+ * escala de penetração do embutido. Atribui por CHAVE J (INDIVIDUAL) ou por
+ * herança master (contrato → daily.proposal_number, mesma empresa, competência).
+ * Linhas sem chave resolvível ficam fora (contabilizadas). Exclui BBTS. Muta o
+ * agregado via getAgg (cria entrada nova se o promotor só tiver seguro avulso).
+ */
+async function addSeguroAvulso(
+  supabase: SupabaseLike,
+  params: { year: number; month: number; companyId: string | null },
+  tiers: Awaited<ReturnType<typeof fetchInsuranceSlipTiers>>,
+  getAgg: (pid: string, companyId: string | null) => ClosingAgg
+): Promise<{
+  linhas: number;
+  atribuidas: number;
+  master_herdadas: number;
+  sem_chave: number;
+  bbts: number;
+  total: number;
+}> {
+  const { year, month, companyId } = params;
+
+  // Linhas INSURANCE da aba "A Vista" (sheet_name tem espaço no fim). A aba
+  // "Seguro" (estornos) é outra sheet_name e NÃO entra aqui.
+  const rows = await fetchAllPaged<any>(() => {
+    let q = supabase
+      .from("monthly_closing_entries")
+      .select("company_id, j_key, commission_value, metadata")
+      .eq("year", year)
+      .eq("month", month)
+      .eq("entry_type", "INSURANCE")
+      .eq("sheet_name", "A Vista ");
+    if (companyId) q = q.eq("company_id", companyId);
+    return q;
+  });
+
+  // Mapa Chave J -> tipo/promotor.
+  const jkeys = await fetchAllPaged<any>(() =>
+    supabase.from("j_keys").select("j_key, promoter_id, key_type")
+  );
+  const jkeyMap = new Map<string, { promoter_id: string | null; key_type: string | null }>();
+  for (const jk of jkeys) {
+    const k = normKey(jk.j_key);
+    if (k) jkeyMap.set(k, { promoter_id: jk.promoter_id ?? null, key_type: jk.key_type ?? null });
+  }
+
+  const chaveDe = (r: any): string =>
+    normKey(readRawPayloadValue(r.metadata || {}, A_CHAVE_J) || r.j_key);
+  const contratoDe = (r: any): string =>
+    String(readRawPayloadValue(r.metadata || {}, A_CONTRATO) || "").trim();
+
+  // Herança master p/ as linhas cuja chave é MASTER.
+  const masterOrphans = rows
+    .filter((r) => {
+      const info = jkeyMap.get(chaveDe(r));
+      return info && info.key_type === "MASTER";
+    })
+    .map((r) => ({ contrato: contratoDe(r), companyId: r.company_id ?? null }));
+  const heir = await buildMasterHeirMap(supabase, masterOrphans, year, month);
+
+  let atribuidas = 0;
+  let masterHerdadas = 0;
+  let semChave = 0;
+  let bbts = 0;
+  let total = 0;
+
+  for (const r of rows) {
+    const chave = chaveDe(r);
+    if (chave === BBTS_KEY) {
+      bbts += 1;
+      continue;
+    }
+    const info = jkeyMap.get(chave);
+    let pid: string | null = null;
+    if (info && info.key_type === "INDIVIDUAL") {
+      pid = info.promoter_id;
+    } else if (info && info.key_type === "MASTER") {
+      pid = heir.get(`${r.company_id}|${contratoDe(r)}`) ?? null;
+      if (pid) masterHerdadas += 1;
+    }
+    if (!pid) {
+      semChave += 1; // sem chave individual nem herança master resolvível
+      continue;
+    }
+    const comSeg =
+      toNumber(readRawPayloadValue(r.metadata || {}, A_COMISSAO_SEGURO)) ||
+      toNumber(r.commission_value);
+    const pen = toNumber(readRawPayloadValue(r.metadata || {}, A_PENETRACAO));
+    const valor = comSeg * lookupInsuranceShareFromPenetration(tiers, pen);
+    const a = getAgg(pid, r.company_id ?? null);
+    a.seguroAvulso += valor;
+    total += valor;
+    atribuidas += 1;
+  }
+
+  return { linhas: rows.length, atribuidas, master_herdadas: masterHerdadas, sem_chave: semChave, bbts, total };
 }
