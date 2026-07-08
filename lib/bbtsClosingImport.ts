@@ -1,0 +1,323 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+// ============================================================================
+// bbtsClosingImport — CARGA do FECHAMENTO BBTS (junho/2026) em
+// daily_production_records, company ADS, chave JJ552710 -> MASTER -> balde
+// (assigned_promoter_id NULL), para a aba Migração listar e atribuir.
+//
+// FONTE: o fechamento BBTS de junho só existe em PDF (Crédito_ADS + Seguro_ADS).
+// Este módulo NÃO parseia PDF: recebe as linhas JÁ ESTRUTURADAS (o extrator
+// PDF->linhas, ancorado em rótulos, é acoplado depois — a lição do TRP-por-PDF é
+// nunca confiar em posição fixa e SEMPRE validar contra âncora antes de gravar).
+//
+// VALIDAÇÃO DE ÂNCORA (aborta sem gravar se não fechar): Σ Valor Financiado,
+// Σ pag à vista BBTS e Σ seguro têm de bater os totais do PDF. Se qualquer um
+// divergir além da tolerância, LANÇA e NÃO grava nada (nunca parcial).
+//
+// NÃO calcula comissão — só carrega a produção (crédito recalcula pela TRP e
+// seguro pela régua BBTS no consolidador BBTS-2c). READ das refs + WRITE só em
+// daily_production_records (+ daily_imports para rastreio). onConflict idempotente.
+// ============================================================================
+
+export const BBTS_COMPANY_ID = "375aea6d-3b9c-4490-87f0-e739e312c8ef"; // ADS
+export const BBTS_MASTER_KEY = "JJ552710";
+
+// Âncoras do fechamento BBTS junho/2026 (validadas contra o PDF pelo Diego).
+export const BBTS_JUNHO_ANCHORS = {
+  propostas: 18,
+  valorFinanciado: 266210.84,
+  pagAvista: 7707.03,
+  seguroTotal: 58.11,
+};
+
+// ---- entrada estruturada (o que o extrator PDF->linhas deve produzir) --------
+
+export type BbtsCreditoRow = {
+  contrato: string; // nº do contrato = proposal_number
+  valor_financiado: number; // base do crédito BBTS
+  pag_avista: number; // "pag à vista" do relatório — SÓ p/ validar âncora (não é comissão)
+  data: string; // data da proposta (junho/2026) — "08/06/2026" ou ISO
+  taxa_relatorio?: number | null; // % do relatório BBTS (ex 2,87) — IGNORADO no cálculo (junho usa TRP)
+  srcc_cd?: number | null; // 1=restrição, 2=não, 3=consulta não realizada, 4=n/a
+  chave_j?: string | null; // default JJ552710
+  produto?: string | null; // "Consignado Novo Correntista"
+  linha_credito?: string | null; // "Crédito Novo" / "Renovação"
+  segmento?: string | null; // PUBLICO / PRIVADO
+  nr_convenio?: string | number | null; // 1640 = INSS
+  categoria?: string | null; // "INSS Novo"
+  juros_mensal?: number | null; // 1,85 (taxa mensal p/ a TRP no BBTS-2c)
+  parcelas?: number | null; // 108
+  cancelamento?: boolean | null; // Cancelamento == SIM
+};
+
+export type BbtsSeguroRow = {
+  contrato: string; // casa com o crédito
+  valor_total_credito: number; // base da régua BBTS (0,10 ESTOQUE D0 / 0,35 SLIP)
+  tipo?: string | null; // "ESTOQUE D0" / "SLIP"
+  valor_seguro: number; // valor do relatório — SÓ p/ validar âncora
+};
+
+export type BbtsClosingInput = {
+  year: number;
+  month: number;
+  credito: BbtsCreditoRow[];
+  seguro?: BbtsSeguroRow[];
+};
+
+export type BbtsClosingResult = {
+  dry_run: boolean;
+  ancora_ok: boolean;
+  propostas: number;
+  soma_valor_financiado: number;
+  soma_pag_avista: number;
+  soma_seguro: number;
+  master_balde: number;
+  individual: number;
+  canceladas: number;
+  srcc_restritas: number;
+  com_seguro: number;
+  gravadas: number;
+  ancora_detalhe: Record<string, { esperado: number; obtido: number; delta: number; ok: boolean }>;
+  amostra: Array<Record<string, unknown>>;
+};
+
+// ---- helpers ----------------------------------------------------------------
+
+function round2(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+function normText(v: unknown): string {
+  return String(v ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
+}
+
+function parseDateBR(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const text = String(value).trim();
+  const br = text.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  return null;
+}
+
+class BbtsAnchorError extends Error {}
+
+// ---- carga ------------------------------------------------------------------
+
+/**
+ * Carrega o fechamento BBTS (linhas estruturadas) em daily_production_records.
+ * Valida as âncoras ANTES de qualquer escrita; se não fecharem, lança
+ * BbtsAnchorError e NÃO grava (nem em dry-run nem gravando). dryRun=true (default)
+ * só mapeia/valida. Idempotente (upsert onConflict company_id,proposal_number).
+ */
+export async function importBbtsClosing(
+  supabase: SupabaseClient,
+  input: BbtsClosingInput,
+  opts?: { dryRun?: boolean; anchors?: typeof BBTS_JUNHO_ANCHORS; tolerance?: number; fileName?: string }
+): Promise<BbtsClosingResult> {
+  const dryRun = opts?.dryRun !== false; // default: dry-run
+  const anchors = opts?.anchors ?? BBTS_JUNHO_ANCHORS;
+  const tol = opts?.tolerance ?? 0.01;
+  const { year, month, credito, seguro } = input;
+
+  // 1. Somatórios p/ âncora.
+  const somaValorFinanciado = round2(credito.reduce((a, r) => a + (Number(r.valor_financiado) || 0), 0));
+  const somaPagAvista = round2(credito.reduce((a, r) => a + (Number(r.pag_avista) || 0), 0));
+  const somaSeguro = round2((seguro ?? []).reduce((a, r) => a + (Number(r.valor_seguro) || 0), 0));
+
+  const detalhe: BbtsClosingResult["ancora_detalhe"] = {
+    propostas: { esperado: anchors.propostas, obtido: credito.length, delta: credito.length - anchors.propostas, ok: credito.length === anchors.propostas },
+    valor_financiado: { esperado: anchors.valorFinanciado, obtido: somaValorFinanciado, delta: round2(somaValorFinanciado - anchors.valorFinanciado), ok: Math.abs(somaValorFinanciado - anchors.valorFinanciado) <= tol },
+    pag_avista: { esperado: anchors.pagAvista, obtido: somaPagAvista, delta: round2(somaPagAvista - anchors.pagAvista), ok: Math.abs(somaPagAvista - anchors.pagAvista) <= tol },
+    seguro: { esperado: anchors.seguroTotal, obtido: somaSeguro, delta: round2(somaSeguro - anchors.seguroTotal), ok: Math.abs(somaSeguro - anchors.seguroTotal) <= tol },
+  };
+  const ancoraOk = Object.values(detalhe).every((d) => d.ok);
+
+  // 2. Resolve a chave (deve ser MASTER na ADS) — reusa j_keys.
+  const { data: jk, error: jkErr } = await supabase
+    .from("j_keys")
+    .select("j_key, promoter_id, key_type")
+    .eq("active", true);
+  if (jkErr) throw jkErr;
+  const jkByValue = new Map<string, { promoter_id: string | null; key_type: string | null }>();
+  for (const k of jk || []) {
+    const key = String(k.j_key || "").trim().toUpperCase();
+    if (key) jkByValue.set(key, { promoter_id: k.promoter_id ?? null, key_type: k.key_type ?? null });
+  }
+
+  const seguroByContrato = new Map<string, BbtsSeguroRow>();
+  for (const s of seguro ?? []) seguroByContrato.set(String(s.contrato).trim(), s);
+
+  // 3. Mapeia.
+  const result: BbtsClosingResult = {
+    dry_run: dryRun,
+    ancora_ok: ancoraOk,
+    propostas: credito.length,
+    soma_valor_financiado: somaValorFinanciado,
+    soma_pag_avista: somaPagAvista,
+    soma_seguro: somaSeguro,
+    master_balde: 0,
+    individual: 0,
+    canceladas: 0,
+    srcc_restritas: 0,
+    com_seguro: 0,
+    gravadas: 0,
+    ancora_detalhe: detalhe,
+    amostra: [],
+  };
+
+  const records: Record<string, unknown>[] = [];
+  for (const r of credito) {
+    const contrato = String(r.contrato).trim();
+    if (!contrato) continue;
+    const jKey = String(r.chave_j ?? BBTS_MASTER_KEY).trim();
+    const jData = jkByValue.get(jKey.toUpperCase());
+
+    let promoterId: string | null = null;
+    let source = "UNIDENTIFIED";
+    if (jData) {
+      if (jData.key_type === "INDIVIDUAL") {
+        promoterId = jData.promoter_id;
+        source = "AUTO_J_KEY";
+        result.individual += 1;
+      } else {
+        source = "MASTER_REASSIGNED"; // JJ552710 -> balde
+        result.master_balde += 1;
+      }
+    }
+
+    const cancelado = Boolean(r.cancelamento);
+    if (cancelado) result.canceladas += 1;
+    const srccCd = r.srcc_cd == null ? null : Math.trunc(Number(r.srcc_cd));
+    const isSrccRestricted = srccCd === 1;
+    if (isSrccRestricted) result.srcc_restritas += 1;
+
+    const seg = seguroByContrato.get(contrato);
+    const seguroBase = seg ? Number(seg.valor_total_credito) || 0 : 0;
+    if (seguroBase > 0) result.com_seguro += 1;
+
+    const base = Number(r.valor_financiado) || 0;
+    const dateIso = parseDateBR(r.data);
+
+    records.push({
+      company_id: BBTS_COMPANY_ID,
+      j_key: jKey,
+      promoter_id: promoterId,
+      original_promoter_id: promoterId,
+      assigned_promoter_id: promoterId,
+      promoter_source: source,
+      proposal_number: contrato,
+      contract_number: contrato,
+      product_description: r.produto ?? null,
+      convenio_code: r.nr_convenio == null ? null : String(r.nr_convenio),
+      convenio_type: r.linha_credito ?? null,
+      convenio_segment: r.segmento ?? null,
+      // Base do crédito BBTS = Valor Financiado (espelhado em gross e net).
+      gross_value: base,
+      net_value: base,
+      // Seguro: base da régua BBTS (Valor Total do Crédito) fica em insurance_value;
+      // o consolidador BBTS-2c aplica 0,10/0,35 sobre ela.
+      insurance_value: seguroBase,
+      insurance_net_value: seguroBase,
+      insurance_type: seg?.tipo ?? null,
+      has_insurance: seguroBase > 0,
+      interest_rate: r.juros_mensal ?? null,
+      term_months: r.parcelas ?? null,
+      installments: r.parcelas ?? null,
+      status: cancelado ? "CANCELADO" : null,
+      proposal_date: dateIso,
+      movement_date: dateIso,
+      contract_date: dateIso,
+      is_srcc_restricted: isSrccRestricted,
+      promoter_commission_amount: null,
+      promoter_commission_percent: null,
+      insurance_commission_amount: null,
+      insurance_commission_percent: null,
+      raw_payload: {
+        ...r,
+        __bbts_meta: {
+          fonte: "fechamento_pdf",
+          cancelado,
+          srcc_cd: srccCd,
+          pag_avista_relatorio: Number(r.pag_avista) || 0,
+          taxa_relatorio: r.taxa_relatorio ?? null,
+          categoria: r.categoria ?? null,
+          seguro_tipo: seg?.tipo ?? null,
+          seguro_base: seguroBase,
+          seguro_valor_relatorio: seg ? Number(seg.valor_seguro) || 0 : 0,
+        },
+      },
+    });
+
+    if (result.amostra.length < 3) {
+      result.amostra.push({
+        proposal_number: contrato,
+        j_key: jKey,
+        promoter_source: source,
+        base,
+        pag_avista: Number(r.pag_avista) || 0,
+        convenio_code: r.nr_convenio,
+        srcc_cd: srccCd,
+        cancelado,
+        seguro_base: seguroBase,
+      });
+    }
+  }
+
+  // 4. GATE de âncora — nunca grava se não fechar.
+  if (!ancoraOk) {
+    const falhas = Object.entries(detalhe)
+      .filter(([, d]) => !d.ok)
+      .map(([k, d]) => `${k}: esperado ${d.esperado} obtido ${d.obtido} (Δ ${d.delta})`)
+      .join(" | ");
+    throw new BbtsAnchorError(`ÂNCORA NÃO FECHOU — nada gravado. ${falhas}`);
+  }
+
+  // 5. Grava (só quando âncora OK e não dry-run). Preserva MANUAL_REASSIGNMENT.
+  if (!dryRun && records.length > 0) {
+    const { data: log, error: logErr } = await supabase
+      .from("daily_imports")
+      .insert({ file_name: opts?.fileName || "fechamento_bbts_junho.pdf", status: "PROCESSING" })
+      .select("id")
+      .single();
+    if (logErr) throw logErr;
+
+    const proposals = records.map((r) => r.proposal_number as string);
+    const existing = new Map<string, any>();
+    for (let i = 0; i < proposals.length; i += 200) {
+      const { data, error } = await supabase
+        .from("daily_production_records")
+        .select("proposal_number, assigned_promoter_id, original_promoter_id, promoter_source")
+        .eq("company_id", BBTS_COMPANY_ID)
+        .in("proposal_number", proposals.slice(i, i + 200));
+      if (error) throw error;
+      for (const e of data || []) existing.set(e.proposal_number, e);
+    }
+    const nowIso = new Date().toISOString();
+    for (const rec of records) {
+      rec.daily_import_id = log.id;
+      const ex = existing.get(rec.proposal_number as string);
+      if (ex) {
+        if (ex.original_promoter_id) rec.original_promoter_id = ex.original_promoter_id;
+        if (ex.promoter_source === "MANUAL_REASSIGNMENT") {
+          rec.assigned_promoter_id = ex.assigned_promoter_id;
+          rec.promoter_source = ex.promoter_source;
+        }
+      }
+      rec.updated_at = nowIso;
+    }
+
+    for (let i = 0; i < records.length; i += 500) {
+      const { error } = await supabase
+        .from("daily_production_records")
+        .upsert(records.slice(i, i + 500), { onConflict: "company_id,proposal_number" });
+      if (error) throw error;
+    }
+    result.gravadas = records.length;
+
+    await supabase.from("daily_imports").update({ status: "COMPLETED", rows_count: records.length }).eq("id", log.id);
+  }
+
+  return result;
+}
