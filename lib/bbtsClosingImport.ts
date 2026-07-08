@@ -11,8 +11,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // nunca confiar em posição fixa e SEMPRE validar contra âncora antes de gravar).
 //
 // VALIDAÇÃO DE ÂNCORA (aborta sem gravar se não fechar): Σ Valor Financiado,
-// Σ pag à vista BBTS e Σ seguro têm de bater os totais do PDF. Se qualquer um
-// divergir além da tolerância, LANÇA e NÃO grava nada (nunca parcial).
+// Σ pag à vista BBTS e Σ seguro 'calculo' têm de bater os totais do PDF. Se
+// qualquer um divergir além da tolerância, LANÇA e NÃO grava nada (nunca parcial).
+//
+// SEGURO por tratamento: só 'calculo' (positivos) entra como insurance_value da
+// produção (BBTS-2c calcula 0,10/0,35 sobre a base). 'debito' (estornos/cancelados)
+// NÃO entra na produção — é débito do promotor (frente promoter_monthly_debits
+// futura), devolvido em result.debitos. Seguro 'calculo' SEM crédito no mês vira
+// linha de produção só-seguro (chave JJ552710 -> balde).
 //
 // NÃO calcula comissão — só carrega a produção (crédito recalcula pela TRP e
 // seguro pela régua BBTS no consolidador BBTS-2c). READ das refs + WRITE só em
@@ -27,7 +33,9 @@ export const BBTS_JUNHO_ANCHORS = {
   propostas: 18,
   valorFinanciado: 266210.84,
   pagAvista: 7707.03,
-  seguroTotal: 58.11,
+  // Só o seguro tratamento='calculo' entra na produção comissionável (âncora).
+  // O tratamento='debito' (Σ -41,53) NÃO é produção — é débito do promotor.
+  seguroCalculo: 99.64,
 };
 
 // ---- entrada estruturada (o que o extrator PDF->linhas deve produzir) --------
@@ -55,6 +63,7 @@ export type BbtsSeguroRow = {
   valor_total_credito: number; // base da régua BBTS (0,10 ESTOQUE D0 / 0,35 SLIP)
   tipo?: string | null; // "ESTOQUE D0" / "SLIP"
   valor_seguro: number; // valor do relatório — SÓ p/ validar âncora
+  tratamento?: string | null; // "calculo" => entra na produção; "debito" => fora (débito do promotor)
 };
 
 export type BbtsClosingInput = {
@@ -70,12 +79,15 @@ export type BbtsClosingResult = {
   propostas: number;
   soma_valor_financiado: number;
   soma_pag_avista: number;
-  soma_seguro: number;
+  soma_seguro_calculo: number; // tratamento='calculo' (entra na produção)
+  soma_seguro_debito: number; // tratamento='debito' (fora da produção)
   master_balde: number;
   individual: number;
   canceladas: number;
   srcc_restritas: number;
-  com_seguro: number;
+  com_seguro: number; // linhas de produção que receberam insurance_value
+  seguro_only_lines: number; // linhas de produção criadas só p/ seguro órfão (sem crédito)
+  debitos: Array<{ contrato: string; valor_seguro: number; tipo: string | null }>; // fora da produção
   gravadas: number;
   ancora_detalhe: Record<string, { esperado: number; obtido: number; delta: number; ok: boolean }>;
   amostra: Array<Record<string, unknown>>;
@@ -121,16 +133,21 @@ export async function importBbtsClosing(
   const tol = opts?.tolerance ?? 0.01;
   const { year, month, credito, seguro } = input;
 
-  // 1. Somatórios p/ âncora.
+  // 1. Split do seguro por tratamento e somatórios p/ âncora.
+  const isCalculo = (s: BbtsSeguroRow) => normText(s.tratamento) === "CALCULO";
+  const isDebito = (s: BbtsSeguroRow) => normText(s.tratamento) === "DEBITO";
+  const seguroCalculo = (seguro ?? []).filter(isCalculo);
+  const seguroDebito = (seguro ?? []).filter(isDebito);
   const somaValorFinanciado = round2(credito.reduce((a, r) => a + (Number(r.valor_financiado) || 0), 0));
   const somaPagAvista = round2(credito.reduce((a, r) => a + (Number(r.pag_avista) || 0), 0));
-  const somaSeguro = round2((seguro ?? []).reduce((a, r) => a + (Number(r.valor_seguro) || 0), 0));
+  const somaSeguroCalculo = round2(seguroCalculo.reduce((a, r) => a + (Number(r.valor_seguro) || 0), 0));
+  const somaSeguroDebito = round2(seguroDebito.reduce((a, r) => a + (Number(r.valor_seguro) || 0), 0));
 
   const detalhe: BbtsClosingResult["ancora_detalhe"] = {
     propostas: { esperado: anchors.propostas, obtido: credito.length, delta: credito.length - anchors.propostas, ok: credito.length === anchors.propostas },
     valor_financiado: { esperado: anchors.valorFinanciado, obtido: somaValorFinanciado, delta: round2(somaValorFinanciado - anchors.valorFinanciado), ok: Math.abs(somaValorFinanciado - anchors.valorFinanciado) <= tol },
     pag_avista: { esperado: anchors.pagAvista, obtido: somaPagAvista, delta: round2(somaPagAvista - anchors.pagAvista), ok: Math.abs(somaPagAvista - anchors.pagAvista) <= tol },
-    seguro: { esperado: anchors.seguroTotal, obtido: somaSeguro, delta: round2(somaSeguro - anchors.seguroTotal), ok: Math.abs(somaSeguro - anchors.seguroTotal) <= tol },
+    seguro_calculo: { esperado: anchors.seguroCalculo, obtido: somaSeguroCalculo, delta: round2(somaSeguroCalculo - anchors.seguroCalculo), ok: Math.abs(somaSeguroCalculo - anchors.seguroCalculo) <= tol },
   };
   const ancoraOk = Object.values(detalhe).every((d) => d.ok);
 
@@ -146,8 +163,9 @@ export async function importBbtsClosing(
     if (key) jkByValue.set(key, { promoter_id: k.promoter_id ?? null, key_type: k.key_type ?? null });
   }
 
+  // Só o seguro 'calculo' anexa como insurance_value da produção.
   const seguroByContrato = new Map<string, BbtsSeguroRow>();
-  for (const s of seguro ?? []) seguroByContrato.set(String(s.contrato).trim(), s);
+  for (const s of seguroCalculo) seguroByContrato.set(String(s.contrato).trim(), s);
 
   // 3. Mapeia.
   const result: BbtsClosingResult = {
@@ -156,12 +174,15 @@ export async function importBbtsClosing(
     propostas: credito.length,
     soma_valor_financiado: somaValorFinanciado,
     soma_pag_avista: somaPagAvista,
-    soma_seguro: somaSeguro,
+    soma_seguro_calculo: somaSeguroCalculo,
+    soma_seguro_debito: somaSeguroDebito,
     master_balde: 0,
     individual: 0,
     canceladas: 0,
     srcc_restritas: 0,
     com_seguro: 0,
+    seguro_only_lines: 0,
+    debitos: seguroDebito.map((s) => ({ contrato: String(s.contrato).trim(), valor_seguro: Number(s.valor_seguro) || 0, tipo: s.tipo ?? null })),
     gravadas: 0,
     ancora_detalhe: detalhe,
     amostra: [],
@@ -225,7 +246,9 @@ export async function importBbtsClosing(
       interest_rate: r.juros_mensal ?? null,
       term_months: r.parcelas ?? null,
       installments: r.parcelas ?? null,
-      status: cancelado ? "CANCELADO" : null,
+      // status='PRODUCAO' p/ passar em isEligibleProductionRecord (Migração/balde
+      // e somas de produção só contam PRODUCAO). Cancelado fica CANCELADO (fora).
+      status: cancelado ? "CANCELADO" : "PRODUCAO",
       proposal_date: dateIso,
       movement_date: dateIso,
       contract_date: dateIso,
@@ -263,6 +286,66 @@ export async function importBbtsClosing(
         seguro_base: seguroBase,
       });
     }
+  }
+
+  // 3b. Seguro 'calculo' SEM crédito correspondente (órfão, ex. 213983877):
+  //     cria linha de produção SÓ-seguro (sem crédito), chave JJ552710 -> balde,
+  //     p/ o BBTS-2c considerar o seguro. movement_date = competência (sem data
+  //     própria) p/ cair no período da Migração.
+  const contratosCredito = new Set(credito.map((r) => String(r.contrato).trim()));
+  const compFallback = `${year}-${String(month).padStart(2, "0")}-01`;
+  const jMaster = jkByValue.get(BBTS_MASTER_KEY.toUpperCase());
+  for (const s of seguroCalculo) {
+    const contrato = String(s.contrato).trim();
+    if (!contrato || contratosCredito.has(contrato)) continue; // já anexou ao crédito
+    const seguroBase = Number(s.valor_total_credito) || 0;
+    const isMaster = !jMaster || jMaster.key_type !== "INDIVIDUAL";
+    result.seguro_only_lines += 1;
+    if (seguroBase > 0) result.com_seguro += 1;
+    result.master_balde += isMaster ? 1 : 0;
+    records.push({
+      company_id: BBTS_COMPANY_ID,
+      j_key: BBTS_MASTER_KEY,
+      promoter_id: null,
+      original_promoter_id: null,
+      assigned_promoter_id: isMaster ? null : jMaster!.promoter_id,
+      promoter_source: isMaster ? "MASTER_REASSIGNED" : "AUTO_J_KEY",
+      proposal_number: contrato,
+      contract_number: contrato,
+      product_description: "SEGURO (sem credito no mes)",
+      convenio_code: null,
+      convenio_type: null,
+      convenio_segment: null,
+      gross_value: 0,
+      net_value: 0,
+      insurance_value: seguroBase,
+      insurance_net_value: seguroBase,
+      insurance_type: s.tipo ?? null,
+      has_insurance: seguroBase > 0,
+      interest_rate: null,
+      term_months: null,
+      installments: null,
+      status: "PRODUCAO", // elegível no balde/somas (mesma regra do crédito)
+      proposal_date: compFallback,
+      movement_date: compFallback,
+      contract_date: compFallback,
+      is_srcc_restricted: false,
+      promoter_commission_amount: null,
+      promoter_commission_percent: null,
+      insurance_commission_amount: null,
+      insurance_commission_percent: null,
+      raw_payload: {
+        ...s,
+        __bbts_meta: {
+          fonte: "fechamento_pdf_seguro_only",
+          cancelado: false,
+          srcc_cd: null,
+          seguro_tipo: s.tipo ?? null,
+          seguro_base: seguroBase,
+          seguro_valor_relatorio: Number(s.valor_seguro) || 0,
+        },
+      },
+    });
   }
 
   // 4. GATE de âncora — nunca grava se não fechar.

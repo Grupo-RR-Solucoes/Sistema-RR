@@ -55,16 +55,22 @@ const brl = (n: number) => Number(n).toLocaleString("pt-BR", { minimumFractionDi
     return;
   }
 
-  const L = (k: string, v: unknown) => console.log(`  ${k.padEnd(30)} ${v}`);
+  const L = (k: string, v: unknown) => console.log(`  ${k.padEnd(32)} ${v}`);
   L("propostas parseadas", res.propostas);
   L("Σ valor financiado", brl(res.soma_valor_financiado));
   L("Σ pag à vista (âncora)", brl(res.soma_pag_avista));
-  L("Σ seguro (âncora)", brl(res.soma_seguro));
+  L("Σ seguro CÁLCULO (âncora)", brl(res.soma_seguro_calculo));
+  L("Σ seguro DÉBITO (fora produção)", brl(res.soma_seguro_debito));
   L("master balde (JJ552710)", res.master_balde);
   L("individual (AUTO_J_KEY)", res.individual);
   L("canceladas", res.canceladas);
   L("SRCC restritas (cd=1)", res.srcc_restritas);
-  L("com seguro", res.com_seguro);
+  L("com seguro (produção)", res.com_seguro);
+  L("linhas só-seguro (órfão)", res.seguro_only_lines);
+  if (res.debitos.length) {
+    console.log("\n  Débitos de seguro (FORA da produção — frente futura):");
+    for (const d of res.debitos) console.log(`    contrato ${d.contrato} | ${brl(d.valor_seguro)} | ${d.tipo ?? "-"}`);
+  }
   console.log("\n  Validação de âncora:");
   for (const [k, d] of Object.entries(res.ancora_detalhe)) {
     console.log(`    ${k.padEnd(18)} esperado=${d.esperado}  obtido=${d.obtido}  Δ=${d.delta}  ${d.ok ? "OK" : "FALHOU"}`);
