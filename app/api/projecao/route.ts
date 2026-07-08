@@ -2,6 +2,7 @@ import { apiGuardErrorResponse, withAuthenticatedAnon } from "@/lib/auth/guards"
 import { nowInFortaleza } from "@/lib/dateFortaleza";
 import {
   agruparPorEstado,
+  agruparPorSupervisor,
   buildProjecaoMetas,
   consolidarGrupoEquipe,
   promotoresEmRisco,
@@ -104,12 +105,15 @@ export async function GET(req: Request) {
       consolidado,
       seguro_comissao_grupo_empresa: seguroComissaoGrupoEmpresa,
       grupos: agruparPorEstado(res),
+      gruposSupervisor: agruparPorSupervisor(res),
+      gestores: res.gestores ?? [],
       risco: promotoresEmRisco(res),
       total_promotores: res.promotores.length,
-      // ADITIVO — séries do drill-down histórico (só socio/funcionario, escopo
-      // equipe). Guard inalterado; sem expansão de role.
+      // ADITIVO — séries do drill-down histórico HÍBRIDO (só socio/funcionario,
+      // escopo equipe). Guard inalterado; sem expansão de role.
       perPromoterMonthly: res.perPromoterMonthly ?? [],
       perEstadoMonthly: res.perEstadoMonthly ?? [],
+      perSupervisorMonthly: res.perSupervisorMonthly ?? [],
     });
   } catch (error) {
     return apiGuardErrorResponse(error);

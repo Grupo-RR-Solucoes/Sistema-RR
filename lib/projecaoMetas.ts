@@ -8,6 +8,14 @@ import {
 } from "@/lib/insuranceCalculator";
 import { loadPromoterAnalyticsBase } from "@/lib/promoterAnalytics";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
+import {
+  agregarSerieGrupo,
+  serieHibridaPorPromotor,
+  ymKey as ymKeyHist,
+  type DailyAcc,
+  type PmrPonto,
+  type SerieMesPonto,
+} from "@/lib/historicoMensal";
 import { fetchAllRows } from "@/lib/queryHelpers";
 
 // ============================================================
@@ -67,6 +75,16 @@ export type Tendencia = "crescimento" | "queda" | "estavel" | "sem_historico";
 // 20260704_000001). Fonte do agrupamento da /projecao. null = "nao classificado".
 export type Estado = "AL" | "SE" | "PE" | "BA";
 
+// Gestor (supervisor/gerente_regional/socio) — nomes + hierarquia (F2). Fonte do
+// agrupamento "por supervisor" e do nível gerente acima (app_users.manager_user_id).
+export type ProjecaoGestor = {
+  id: string;
+  full_name: string | null;
+  email: string;
+  role: string;
+  manager_user_id: string | null;
+};
+
 export type ProjecaoPromotor = {
   promoter_id: string;
   promoter_name: string;
@@ -74,6 +92,9 @@ export type ProjecaoPromotor = {
   company_name: string;
   company_cnpj: string;
   estado: Estado | null;
+  // Supervisor responsável (promoters.supervisor_user_id). null = sem supervisor.
+  // Aponta para app_users.id (role supervisor OU sócio-como-gestor).
+  supervisor_user_id: string | null;
   producao_acumulada: number;
   dias_uteis_decorridos: number;
   dias_uteis_totais: number;
@@ -126,11 +147,15 @@ export type ProjecaoResultado = {
   };
   promotores: ProjecaoPromotor[];
   naoAtribuido: NaoAtribuido;
-  // ADITIVO (drill-down histórico) — série mensal jan/2026→corrente por promotor
-  // e por estado. Opcionais: só a visão-equipe da /projecao os popula; nenhum
-  // consumidor do mês corrente (dashboard/consolidado/grupos) depende deles.
+  // Gestores (supervisor/gerente_regional/socio) — nomes + hierarquia para a aba
+  // "por supervisor". Opcional: só a visão-equipe popula.
+  gestores?: ProjecaoGestor[];
+  // ADITIVO (drill-down histórico) — série mensal HÍBRIDA jan/2026→corrente por
+  // promotor, por estado e por supervisor. Opcionais: só a visão-equipe os popula;
+  // nenhum consumidor do mês corrente (dashboard/consolidado/grupos) depende deles.
   perPromoterMonthly?: PromotorHistorico[];
   perEstadoMonthly?: EstadoHistorico[];
+  perSupervisorMonthly?: SupervisorHistorico[];
 };
 
 export function semaforoFromPercent(percent: number | null): Semaforo {
@@ -154,14 +179,21 @@ export async function buildProjecaoMetas(
     ? new Date(Date.UTC(input.referenceDate.getUTCFullYear(), input.referenceDate.getUTCMonth(), input.referenceDate.getUTCDate()))
     : todayInFortaleza();
 
-  const [base, closed, allPmr, shareTiers] = await Promise.all([
+  const [base, closed, allPmr, shareTiers, gestores] = await Promise.all([
     loadPromoterAnalyticsBase(supabase, { year, month, companyId: input.companyId }),
     detectClosedMonth(supabase, year, month).catch(() => false),
-    fetchAllRows<{ promoter_id: string; year: number; month: number; production_value: number }>(
-      () => supabase.from("promoter_monthly_results").select("promoter_id, year, month, production_value")
+    // PMR: production_value (fonte dos meses FECHADOS na série híbrida) +
+    // insurance_penetration_percent (penetração dos meses só-PMR).
+    fetchAllRows<{ promoter_id: string; year: number; month: number; production_value: number; insurance_penetration_percent?: number | null }>(
+      () => supabase.from("promoter_monthly_results").select("promoter_id, year, month, production_value, insurance_penetration_percent")
     ),
     // Scale SEGURO_SLIP_MAIO_2026 — share do promotor sobre a comissao-empresa.
     fetchInsuranceSlipTiers(supabase),
+    // Gestores (supervisor/gerente_regional/socio) — nomes + hierarquia para o
+    // agrupamento "por supervisor". Tolerante: erro → [] (aba supervisor vazia).
+    fetchAllRows<ProjecaoGestor>(
+      () => supabase.from("app_users").select("id, full_name, email, role, manager_user_id").in("role", ["supervisor", "gerente_regional", "socio"])
+    ).catch(() => [] as ProjecaoGestor[]),
   ]);
 
   const { start, end, total, holidays } = productionBusinessWindow(year, month);
@@ -274,6 +306,13 @@ export async function buildProjecaoMetas(
     porCnpj: naoAtribuidoPorCnpj,
   };
 
+  // supervisor_user_id por promotor (de base.promoters — não vem em summaryRows).
+  const supByPromoter = new Map<string, string | null>(
+    ((base.promoters as Array<{ id: string; supervisor_user_id?: string | null }>) || []).map(
+      (p) => [p.id, p.supervisor_user_id ?? null]
+    )
+  );
+
   const active = base.filteredSummaryRows.filter((row) => row.active);
   const promotores: ProjecaoPromotor[] = active.map((row) => {
     const acumulada = closed
@@ -336,6 +375,7 @@ export async function buildProjecaoMetas(
       company_name: row.company_name || "-",
       company_cnpj: row.company_cnpj || "",
       estado: asEstado(row.estado),
+      supervisor_user_id: supByPromoter.get(row.promoter_id) ?? null,
       producao_acumulada: acumulada,
       dias_uteis_decorridos: diasDecorridos,
       dias_uteis_totais: total,
@@ -354,16 +394,16 @@ export async function buildProjecaoMetas(
     };
   });
 
-  // ADITIVO — série histórica mensal (jan/2026→corrente) a partir do daily JÁ
-  // carregado (base.records = todos os meses). NÃO recalcula o mês corrente: só
-  // agrega ao lado. Fim da série = refDate (competência corrente), independente
-  // da competência selecionada. Master (assigned_promoter_id NULL / is_master)
-  // fica FORA — mesma regra do /equipe.
-  const { perPromoterMonthly, perEstadoMonthly } = agregarHistoricoMensal({
+  // ADITIVO — série histórica mensal HÍBRIDA (jan/2026→corrente): meses fechados
+  // vêm do PMR (production_value), mês corrente do daily ao vivo. NÃO recalcula o
+  // mês corrente do painel; a série é lateral. Master fica FORA.
+  const { perPromoterMonthly, perEstadoMonthly, perSupervisorMonthly } = agregarHistoricoMensal({
     records: (base.records as HistoricoRecord[]) ?? [],
     promoters: (base.promoters as HistoricoPromoter[]) ?? [],
     targets: (base.targets as HistoricoTarget[]) ?? [],
     companies: (base.companies as HistoricoCompany[]) ?? [],
+    pmr: (allPmr as HistoricoPmr[]) ?? [],
+    gestores,
     refDate,
   });
 
@@ -380,8 +420,10 @@ export async function buildProjecaoMetas(
     },
     promotores,
     naoAtribuido,
+    gestores,
     perPromoterMonthly,
     perEstadoMonthly,
+    perSupervisorMonthly,
   };
 }
 
@@ -611,6 +653,61 @@ export function promotoresEmRisco(res: ProjecaoResultado): ProjecaoPromotor[] {
     .sort((a, b) => (a.percent_projetado ?? 0) - (b.percent_projetado ?? 0));
 }
 
+// ---------- Agrupamento por SUPERVISOR (aba "Por supervisor") ----------
+// Espelha agruparPorEstado, mas particiona por promoters.supervisor_user_id.
+// TOTAL INVARIANTE: re-particiona os MESMOS promotores (soma não muda). Inclui o
+// bucket "Sem supervisor" (supervisor_user_id NULL) e resolve nome/role/gerente
+// via gestores (app_users). Sócio-como-gestor aparece como card normal (role=socio).
+export type ProjecaoGrupoSupervisor = ProjecaoGrupoTotais & {
+  supervisor_user_id: string | null; // null = "Sem supervisor"
+  supervisor_name: string;
+  supervisor_role: string | null; // supervisor | gerente_regional | socio | null
+  manager_user_id: string | null; // gerente acima (nível futuro), null se n/a
+  manager_name: string | null;
+  promotores: ProjecaoPromotor[];
+};
+
+export function agruparPorSupervisor(
+  res: ProjecaoResultado,
+  gestores: ProjecaoGestor[] = res.gestores ?? []
+): ProjecaoGrupoSupervisor[] {
+  const gestorById = new Map(gestores.map((g) => [g.id, g]));
+  const NULO = "__NULL__";
+  const bySup = new Map<string, ProjecaoPromotor[]>();
+  for (const p of res.promotores) {
+    const key = p.supervisor_user_id ?? NULO;
+    const arr = bySup.get(key) ?? [];
+    arr.push(p);
+    bySup.set(key, arr);
+  }
+  const nomeGestor = (g: ProjecaoGestor | undefined) =>
+    g ? (g.full_name && g.full_name.trim()) || g.email : null;
+
+  const grupos: ProjecaoGrupoSupervisor[] = Array.from(bySup.entries()).map(([key, promotores]) => {
+    const g = key === NULO ? undefined : gestorById.get(key);
+    const manager = g?.manager_user_id ? gestorById.get(g.manager_user_id) : undefined;
+    return {
+      supervisor_user_id: key === NULO ? null : key,
+      supervisor_name: key === NULO ? "Sem supervisor" : nomeGestor(g) ?? "Supervisor",
+      supervisor_role: g ? g.role : null,
+      manager_user_id: g?.manager_user_id ?? null,
+      manager_name: nomeGestor(manager),
+      promotores,
+      ...totaliza(promotores),
+    };
+  });
+  // pior % projetado primeiro; "Sem supervisor" sempre por último.
+  grupos.sort((a, b) => {
+    if ((a.supervisor_user_id === null) !== (b.supervisor_user_id === null)) {
+      return a.supervisor_user_id === null ? 1 : -1;
+    }
+    const pa = a.percent_projetado ?? Infinity;
+    const pb = b.percent_projetado ?? Infinity;
+    return pa - pb;
+  });
+  return grupos;
+}
+
 // ============================================================
 // DRILL-DOWN HISTÓRICO (ADITIVO) — série mensal jan/2026 → corrente, por PROMOTOR
 // e por ESTADO. Função PURA (sem I/O), espelhando EXATAMENTE a metodologia do
@@ -628,15 +725,17 @@ export type HistoricoMesPromotor = {
   year: number;
   month: number;
   label: string; // "jan/26"
-  producao: number; // Σ net_value elegível (assigned, não-master)
-  penetracao_seg: number | null; // fração 0-1 (null = sem base bruta no mês)
+  producao: number; // fechado=PMR.production_value; corrente=daily
+  penetracao_seg: number | null; // fração 0-1 (null = sem base)
   meta: number; // monthly_targets.meta do mês (0 = sem meta)
   percent: number | null; // ratio producao/meta (null = sem meta)
+  fonte: SerieMesPonto["fonte"]; // "pmr" | "daily" | "vazio"
 };
 export type PromotorHistorico = {
   promoter_id: string;
   promoter_name: string;
   estado: Estado | null;
+  supervisor_user_id: string | null;
   company_id: string;
   company_name: string;
   meses: HistoricoMesPromotor[];
@@ -654,9 +753,15 @@ export type EstadoHistorico = {
   promotor_count: number;
   meses: HistoricoMesEstado[];
 };
+export type SupervisorHistorico = {
+  supervisor_user_id: string | null; // null = "sem supervisor"
+  supervisor_name: string;
+  supervisor_role: string | null; // supervisor | gerente_regional | socio | null
+  promotor_count: number;
+  meses: HistoricoMesEstado[]; // mesma forma do estado (produção + penetração)
+};
 
-// Subsets mínimos (o que a agregação lê). Espelham daily_production_records /
-// promoters / monthly_targets / companies.
+// Subsets mínimos lidos pela agregação.
 type HistoricoRecord = {
   assigned_promoter_id?: string | null;
   status?: string | null;
@@ -675,42 +780,20 @@ type HistoricoPromoter = {
   company_id?: string | null;
   estado?: unknown;
   is_master?: boolean | null;
+  supervisor_user_id?: string | null;
 };
 type HistoricoTarget = { promoter_id: string; year: number; month: number; meta?: number | null };
 type HistoricoCompany = { id: string; name?: string | null };
+type HistoricoPmr = {
+  promoter_id: string;
+  year: number;
+  month: number;
+  production_value?: number | null;
+  insurance_penetration_percent?: number | null;
+};
 
-// Acumulador por (promotor|estado, competência). Só produção/bruto/seguro-bruto.
-type AccHist = { net: number; gross: number; insuredGross: number };
-function emptyAccHist(): AccHist {
-  return { net: 0, gross: 0, insuredGross: 0 };
-}
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
-}
-const SERIES_START_HIST = { year: 2026, month: 1 };
-const MESES_ABBR = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-function ymKeyHist(year: number, month: number): string {
-  return `${year}-${pad2(month)}`;
-}
-function labelHist(year: number, month: number): string {
-  return `${MESES_ABBR[month - 1]}/${String(year).slice(-2)}`;
-}
-// Competências de (fromY,fromM) até (toY,toM) inclusive, sem buracos — igual ao
-// monthRange do teamProduction.ts.
-function monthRangeHist(fromY: number, fromM: number, toY: number, toM: number) {
-  const out: Array<{ year: number; month: number }> = [];
-  let y = fromY;
-  let m = fromM;
-  for (let guard = 0; guard < 600; guard++) {
-    if (y > toY || (y === toY && m > toM)) break;
-    out.push({ year: y, month: m });
-    m += 1;
-    if (m > 12) {
-      m = 1;
-      y += 1;
-    }
-  }
-  return out;
 }
 // Competência do registro: mesma cascata e primitiva do /equipe.
 function competenciaDoRegistro(r: HistoricoRecord): { year: number; month: number } | null {
@@ -720,23 +803,33 @@ function competenciaDoRegistro(r: HistoricoRecord): { year: number; month: numbe
     getProductionPeriodFromValue(r.proposal_date)
   );
 }
-function penetracaoDe(acc: AccHist): number | null {
-  return acc.gross > 0 ? acc.insuredGross / acc.gross : null;
-}
 
 export function agregarHistoricoMensal(input: {
   records: HistoricoRecord[];
   promoters: HistoricoPromoter[];
   targets: HistoricoTarget[];
   companies: HistoricoCompany[];
+  pmr: HistoricoPmr[];
+  gestores: ProjecaoGestor[];
   refDate: Date;
-}): { perPromoterMonthly: PromotorHistorico[]; perEstadoMonthly: EstadoHistorico[] } {
-  const { records, promoters, targets, companies, refDate } = input;
+}): {
+  perPromoterMonthly: PromotorHistorico[];
+  perEstadoMonthly: EstadoHistorico[];
+  perSupervisorMonthly: SupervisorHistorico[];
+} {
+  const { records, promoters, targets, companies, pmr, gestores, refDate } = input;
 
   const companyNameById = new Map(companies.map((c) => [c.id, c.name ?? "—"]));
   const promoInfo = new Map<
     string,
-    { name: string; estado: Estado | null; company_id: string; company_name: string; is_master: boolean }
+    {
+      name: string;
+      estado: Estado | null;
+      company_id: string;
+      company_name: string;
+      is_master: boolean;
+      supervisor_user_id: string | null;
+    }
   >();
   for (const pr of promoters) {
     promoInfo.set(pr.id, {
@@ -745,26 +838,31 @@ export function agregarHistoricoMensal(input: {
       company_id: pr.company_id || "",
       company_name: companyNameById.get(pr.company_id || "") || "—",
       is_master: pr.is_master === true,
+      supervisor_user_id: pr.supervisor_user_id ?? null,
     });
   }
+  const ehReal = (pid: string | null | undefined): pid is string => {
+    if (!pid) return false;
+    const info = promoInfo.get(pid);
+    return Boolean(info) && !info!.is_master;
+  };
 
-  // (promoter_id) -> (ymKey) -> AccHist. Master/desconhecido FORA.
-  const byPromoterYm = new Map<string, Map<string, AccHist>>();
+  // daily por (promotor, competência) — só elegível + assigned não-master. Fonte
+  // do MÊS CORRENTE na série híbrida.
+  const dailyByPromoterYm = new Map<string, Map<string, DailyAcc>>();
   for (const r of records) {
     const pid = r.assigned_promoter_id;
-    if (!pid) continue; // chave master (NULL) — sempre redistribuída, fora
-    const info = promoInfo.get(pid);
-    if (!info || info.is_master) continue; // promotor is_master ou desconhecido — fora
+    if (!ehReal(pid)) continue;
     if (!isEligibleRecord(r)) continue;
     const comp = competenciaDoRegistro(r);
     if (!comp) continue;
     const k = ymKeyHist(comp.year, comp.month);
-    let inner = byPromoterYm.get(pid);
+    let inner = dailyByPromoterYm.get(pid);
     if (!inner) {
-      inner = new Map<string, AccHist>();
-      byPromoterYm.set(pid, inner);
+      inner = new Map<string, DailyAcc>();
+      dailyByPromoterYm.set(pid, inner);
     }
-    const acc = inner.get(k) ?? emptyAccHist();
+    const acc = inner.get(k) ?? { net: 0, gross: 0, insuredGross: 0 };
     const gross = toNumber(r.gross_value);
     acc.net += toNumber(r.net_value);
     acc.gross += gross;
@@ -772,96 +870,124 @@ export function agregarHistoricoMensal(input: {
     inner.set(k, acc);
   }
 
+  // PMR por (promotor, competência) — fonte dos MESES FECHADOS. Penetração do PMR
+  // é percentual (0-100) → fração; null quando ausente (não inventa).
+  const pmrByPromoterYm = new Map<string, Map<string, PmrPonto>>();
+  for (const p of pmr) {
+    if (!ehReal(p.promoter_id)) continue;
+    const k = ymKeyHist(p.year, p.month);
+    let inner = pmrByPromoterYm.get(p.promoter_id);
+    if (!inner) {
+      inner = new Map<string, PmrPonto>();
+      pmrByPromoterYm.set(p.promoter_id, inner);
+    }
+    inner.set(k, {
+      production: toNumber(p.production_value),
+      penetracao: p.insurance_penetration_percent == null ? null : toNumber(p.insurance_penetration_percent) / 100,
+    });
+  }
+
   const metaByPidYm = new Map<string, number>();
   for (const t of targets) metaByPidYm.set(`${t.promoter_id}:${ymKeyHist(t.year, t.month)}`, toNumber(t.meta));
 
-  const range = monthRangeHist(
-    SERIES_START_HIST.year,
-    SERIES_START_HIST.month,
-    refDate.getUTCFullYear(),
-    refDate.getUTCMonth() + 1
-  );
+  const promoterIds = new Set<string>([
+    ...dailyByPromoterYm.keys(),
+    ...pmrByPromoterYm.keys(),
+    ...targets.map((t) => t.promoter_id),
+  ]);
+  const idsReais = Array.from(promoterIds).filter(ehReal);
 
-  // ---- série por PROMOTOR (todo promotor com produção OU meta na janela) ----
-  const pids = new Set<string>([...byPromoterYm.keys(), ...targets.map((t) => t.promoter_id)]);
-  const perPromoterMonthly: PromotorHistorico[] = Array.from(pids)
-    .filter((pid) => {
-      const info = promoInfo.get(pid);
-      return Boolean(info) && !info!.is_master;
-    })
+  // Série HÍBRIDA por promotor (mês corrente=daily, fechados=PMR) — helper comum
+  // com o /equipe (lib/historicoMensal.ts).
+  const serieByPromoter = serieHibridaPorPromotor({
+    dailyByPromoterYm,
+    pmrByPromoterYm,
+    promoterIds: idsReais,
+    refDate,
+  });
+
+  // ---- série por PROMOTOR ----
+  const perPromoterMonthly: PromotorHistorico[] = idsReais
     .map((pid) => {
       const info = promoInfo.get(pid)!;
-      const inner = byPromoterYm.get(pid);
+      const serie = serieByPromoter.get(pid) ?? [];
       return {
         promoter_id: pid,
         promoter_name: info.name,
         estado: info.estado,
+        supervisor_user_id: info.supervisor_user_id,
         company_id: info.company_id,
         company_name: info.company_name,
-        meses: range.map(({ year, month }) => {
-          const acc = inner?.get(ymKeyHist(year, month)) ?? emptyAccHist();
-          const meta = metaByPidYm.get(`${pid}:${ymKeyHist(year, month)}`) ?? 0;
+        meses: serie.map((pt) => {
+          const meta = metaByPidYm.get(`${pid}:${ymKeyHist(pt.year, pt.month)}`) ?? 0;
           return {
-            year,
-            month,
-            label: labelHist(year, month),
-            producao: round2(acc.net),
-            penetracao_seg: penetracaoDe(acc),
+            year: pt.year,
+            month: pt.month,
+            label: pt.label,
+            producao: pt.producao,
+            penetracao_seg: pt.penetracao_seg,
             meta: round2(meta),
-            percent: meta > 0 ? acc.net / meta : null,
+            percent: meta > 0 ? pt.producao / meta : null,
+            fonte: pt.fonte,
           };
         }),
       };
     })
     .sort((a, b) => a.promoter_name.localeCompare(b.promoter_name, "pt-BR"));
 
-  // ---- série por ESTADO (soma dos promotores do estado; master já excluída) ----
-  const byEstadoYm = new Map<string, Map<string, AccHist>>();
-  const estadoPromoters = new Map<string, Set<string>>();
+  const seriesDe = (proms: string[]): SerieMesPonto[][] => proms.map((pid) => serieByPromoter.get(pid) ?? []);
   const NULO = "__NULL__";
-  for (const [pid, inner] of byPromoterYm) {
-    const info = promoInfo.get(pid);
-    if (!info || info.is_master) continue;
-    const ekey = info.estado ?? NULO;
-    if (!estadoPromoters.has(ekey)) estadoPromoters.set(ekey, new Set());
-    estadoPromoters.get(ekey)!.add(pid);
-    let eInner = byEstadoYm.get(ekey);
-    if (!eInner) {
-      eInner = new Map<string, AccHist>();
-      byEstadoYm.set(ekey, eInner);
-    }
-    for (const [k, acc] of inner) {
-      const cur = eInner.get(k) ?? emptyAccHist();
-      cur.net += acc.net;
-      cur.gross += acc.gross;
-      cur.insuredGross += acc.insuredGross;
-      eInner.set(k, cur);
-    }
-  }
 
+  // ---- série por ESTADO (particiona os MESMOS promotores) ----
+  const porEstado = new Map<string, string[]>();
+  for (const pid of idsReais) {
+    const ekey = promoInfo.get(pid)!.estado ?? NULO;
+    const arr = porEstado.get(ekey) ?? [];
+    arr.push(pid);
+    porEstado.set(ekey, arr);
+  }
   const perEstadoMonthly: EstadoHistorico[] = [];
   const pushEstado = (estado: Estado | null, ekey: string) => {
-    const eInner = byEstadoYm.get(ekey);
-    const proms = estadoPromoters.get(ekey);
-    if (!eInner || !proms || proms.size === 0) return;
+    const proms = porEstado.get(ekey);
+    if (!proms || proms.length === 0) return;
+    const grupo = agregarSerieGrupo(seriesDe(proms));
     perEstadoMonthly.push({
       estado,
       estado_label: estado ? ESTADO_LABEL[estado] : "Não classificado",
-      promotor_count: proms.size,
-      meses: range.map(({ year, month }) => {
-        const acc = eInner.get(ymKeyHist(year, month)) ?? emptyAccHist();
-        return {
-          year,
-          month,
-          label: labelHist(year, month),
-          producao: round2(acc.net),
-          penetracao_seg: penetracaoDe(acc),
-        };
-      }),
+      promotor_count: proms.length,
+      meses: grupo.map((g) => ({ year: g.year, month: g.month, label: g.label, producao: g.producao, penetracao_seg: g.penetracao_seg })),
     });
   };
   for (const e of ESTADO_ORDEM) pushEstado(e, e);
   pushEstado(null, NULO);
 
-  return { perPromoterMonthly, perEstadoMonthly };
+  // ---- série por SUPERVISOR (particiona os MESMOS promotores por supervisor_user_id) ----
+  const gestorById = new Map(gestores.map((g) => [g.id, g]));
+  const porSupervisor = new Map<string, string[]>();
+  for (const pid of idsReais) {
+    const skey = promoInfo.get(pid)!.supervisor_user_id ?? NULO;
+    const arr = porSupervisor.get(skey) ?? [];
+    arr.push(pid);
+    porSupervisor.set(skey, arr);
+  }
+  const perSupervisorMonthly: SupervisorHistorico[] = Array.from(porSupervisor.entries())
+    .map(([skey, proms]) => {
+      const g = skey === NULO ? null : gestorById.get(skey);
+      const grupo = agregarSerieGrupo(seriesDe(proms));
+      return {
+        supervisor_user_id: skey === NULO ? null : skey,
+        supervisor_name:
+          skey === NULO ? "Sem supervisor" : g ? (g.full_name && g.full_name.trim()) || g.email : "Supervisor",
+        supervisor_role: g ? g.role : null,
+        promotor_count: proms.length,
+        meses: grupo.map((gg) => ({ year: gg.year, month: gg.month, label: gg.label, producao: gg.producao, penetracao_seg: gg.penetracao_seg })),
+      };
+    })
+    .sort((a, b) => {
+      if (a.supervisor_user_id === null) return 1; // "sem supervisor" por último
+      if (b.supervisor_user_id === null) return -1;
+      return a.supervisor_name.localeCompare(b.supervisor_name, "pt-BR");
+    });
+
+  return { perPromoterMonthly, perEstadoMonthly, perSupervisorMonthly };
 }

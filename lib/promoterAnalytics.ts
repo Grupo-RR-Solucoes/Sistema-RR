@@ -27,6 +27,7 @@ type PromoterRow = {
   active?: boolean | null;
   is_master?: boolean | null;
   estado?: string | null;
+  supervisor_user_id?: string | null;
 };
 
 type JKeyRow = {
@@ -460,7 +461,7 @@ export async function loadPromoterAnalyticsBase(
       fetchAllRows<PromoterRow>(() => {
         let query = supabase
           .from("promoters")
-          .select("id, company_id, name, status, active, is_master, estado")
+          .select("id, company_id, name, status, active, is_master, estado, supervisor_user_id")
           .order("name", { ascending: true });
 
         if (companyId) {
