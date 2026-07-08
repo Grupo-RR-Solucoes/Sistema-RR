@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "../../lib/auth/useUser";
 import FeedbackBanner from "../../components/FeedbackBanner";
 import { UiStyles, HeaderNavy, KpiBand, Table } from "@/components/ui";
@@ -274,135 +275,226 @@ function LineChart({
   );
 }
 
-// ---------- Drawer do PROMOTOR (histórico mês a mês) ----------
-function PromotorDrawer({ p, hist, onClose }: { p: Promotor; hist: PromotorHist | null; onClose: () => void }) {
+// ---------- drill-down por TELA CHEIA (substitui os drawers do PR #76) ----------
+type SupervisorHist = {
+  supervisor_user_id: string | null;
+  supervisor_name: string;
+  supervisor_role: string | null;
+  promotor_count: number;
+  meses: HistMesEstado[];
+};
+type GrupoSupervisor = {
+  supervisor_user_id: string | null;
+  supervisor_name: string;
+  supervisor_role: string | null;
+  manager_user_id: string | null;
+  manager_name: string | null;
+  producao_acumulada: number;
+  projecao: number;
+  meta: number;
+  percent_projetado: number | null;
+  semaforo: Semaforo;
+  promotores: Promotor[];
+};
+
+type Nav = {
+  goEstado: (key: string) => void;
+  goSupervisor: (key: string) => void;
+  goPromotor: (id: string, from?: string) => void;
+  back: (from: string | null) => void;
+};
+
+const estadoKey = (e: string | null | undefined) => e ?? "__NULL__";
+const supKeyOf = (s: string | null | undefined) => s ?? "__NULL__";
+const iniciais = (nome: string) =>
+  nome.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "—";
+
+function DrillHeader({ title, subtitle, badge, onBack }: { title: string; subtitle: string; badge?: ReactNode; onBack: () => void }) {
+  return (
+    <div className="drillhead">
+      <button className="backbtn" onClick={onBack}>← Voltar</button>
+      <div className="dh-row">
+        <div className="dh-id">
+          <h2>{title}</h2>
+          <p>{subtitle}</p>
+        </div>
+        {badge ? <div className="dh-badge">{badge}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function DrillMissing({ onBack }: { onBack: () => void }) {
+  return (
+    <>
+      <DrillHeader title="Não encontrado" subtitle="Este item não existe nesta competência." onBack={onBack} />
+      <div className="card"><div className="state">Selecione outro item ou volte à lista.</div></div>
+    </>
+  );
+}
+
+function KpiCheia({ acumulada, projecao, meta, percent }: { acumulada: number; projecao: number; meta: number; percent: number | null }) {
+  return (
+    <div className="kpiwrap-navy">
+      <KpiBand
+        valueSize={24}
+        items={[
+          { label: "Produção acumulada", value: brl(acumulada) },
+          { label: "Projeção", value: brl(projecao), sub: "estimativa de fechamento", accent: true },
+          { label: "Meta", value: meta > 0 ? brl(meta) : "Sem meta" },
+          { label: "% meta", value: pctTxt(percent) },
+        ]}
+      />
+    </div>
+  );
+}
+
+// ---- TELA CHEIA: PROMOTOR ----
+function DrillPromotor({ data, id, from, nav }: { data: any; id: string; from: string | null; nav: Nav }) {
+  const allP: Promotor[] = (data.grupos || []).flatMap((g: Grupo) => g.promotores);
+  const p = allP.find((x) => x.promoter_id === id) || null;
+  const hist: PromotorHist | null = (data.perPromoterMonthly || []).find((h: PromotorHist) => h.promoter_id === id) || null;
+  const back = () => nav.back(from);
+  if (!p) return <DrillMissing onBack={back} />;
   const meses = hist?.meses ?? [];
   const prodPts = meses.map((m) => ({ label: m.label, value: m.producao }));
   const histRows = [...meses].reverse().filter((m) => m.producao > 0 || m.meta > 0);
   return (
-    <div className="drawer" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="dw-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="dw-head">
-          <div>
-            <h3>{p.promoter_name}</h3>
-            <p className="dw-sub">
-              {p.company_name}
-              {hist?.estado ? ` · ${hist.estado}` : ""} · histórico de produção jan → corrente
-            </p>
-          </div>
-          <button className="dw-x" onClick={onClose} aria-label="Fechar">✕</button>
-        </div>
-        <div className="dw-body">
-          <div className="dw-kpis">
-            <div className="dwk"><span className="l">Acumulado</span><span className="v num">{brl(p.producao_acumulada)}</span></div>
-            <div className="dwk"><span className="l">Projeção</span><span className="v num">{brl(p.projecao)}</span></div>
-            <div className="dwk"><span className="l">% meta</span><span className="v num">{pctTxt(p.percent_projetado)}</span></div>
-          </div>
-          <div className="dw-block">
-            <h4>Produção líquida mês a mês</h4>
-            <LineChart points={prodPts} color="#0F1F4A" fmt={brl} projected={p.projecao} projLabel="proj" />
-          </div>
-          <div className="dw-block">
-            <h4>Meta vs realizado (histórico)</h4>
-            <Table scrollable minWidth={520}>
-              <thead>
-                <tr>
-                  <th>Mês</th>
-                  <th className="r">Produção</th>
-                  <th className="r">Meta</th>
-                  <th className="r">% meta</th>
-                  <th className="r">Penetração seg.</th>
+    <>
+      <DrillHeader
+        title={p.promoter_name}
+        subtitle={`${p.company_name}${hist?.estado ? ` · ${hist.estado}` : ""} · histórico jan → corrente`}
+        badge={<Chip s={p.semaforo} onNavy />}
+        onBack={back}
+      />
+      <KpiCheia acumulada={p.producao_acumulada} projecao={p.projecao} meta={p.meta} percent={p.percent_projetado} />
+      <section className="card"><div className="card-pad">
+        <h3 className="drill-h">Produção líquida mês a mês</h3>
+        <LineChart points={prodPts} color="#0F1F4A" fmt={brl} projected={p.projecao} projLabel="proj" />
+      </div></section>
+      <section className="card"><div className="card-pad">
+        <h3 className="drill-h">Meta vs realizado (histórico)</h3>
+        <Table scrollable minWidth={560}>
+          <thead><tr><th>Mês</th><th className="r">Produção</th><th className="r">Meta</th><th className="r">% meta</th><th className="r">Penetração seg.</th></tr></thead>
+          <tbody>
+            {histRows.length === 0 ? (
+              <tr><td colSpan={5} className="drill-empty">Sem histórico de produção ou meta.</td></tr>
+            ) : (
+              histRows.map((m) => (
+                <tr key={`${m.year}-${m.month}`}>
+                  <td>{m.label}</td>
+                  <td className="r">{brl(m.producao)}</td>
+                  <td className="r">{m.meta > 0 ? brl(m.meta) : "—"}</td>
+                  <td className="r">{pctTxt(m.percent)}</td>
+                  <td className="r">{pctTxt(m.penetracao_seg)}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {histRows.length === 0 ? (
-                  <tr><td colSpan={5} className="dw-empty">Sem histórico de produção ou meta.</td></tr>
-                ) : (
-                  histRows.map((m) => (
-                    <tr key={`${m.year}-${m.month}`}>
-                      <td>{m.label}</td>
-                      <td className="r">{brl(m.producao)}</td>
-                      <td className="r">{m.meta > 0 ? brl(m.meta) : "—"}</td>
-                      <td className="r">{pctTxt(m.percent)}</td>
-                      <td className="r">{pctTxt(m.penetracao_seg)}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </Table>
-          </div>
-        </div>
-      </div>
-    </div>
+              ))
+            )}
+          </tbody>
+        </Table>
+      </div></section>
+    </>
   );
 }
 
-// ---------- Drawer do ESTADO (histórico + lista de promotores encadeável) ----------
-function EstadoDrawer({
-  g,
-  hist,
-  onClose,
-  onSelectPromotor,
-}: {
-  g: Grupo;
-  hist: EstadoHist | null;
-  onClose: () => void;
-  onSelectPromotor: (id: string) => void;
-}) {
-  const meses = hist?.meses ?? [];
-  const prodPts = meses.map((m) => ({ label: m.label, value: m.producao }));
+// ---- TELA CHEIA: ESTADO ----
+function DrillEstado({ data, id, nav }: { data: any; id: string; nav: Nav }) {
+  const g: Grupo | null = (data.grupos || []).find((x: Grupo) => estadoKey(x.estado) === id) || null;
+  const hist: EstadoHist | null = (data.perEstadoMonthly || []).find((e: EstadoHist) => estadoKey(e.estado) === id) || null;
+  const back = () => nav.back(null);
+  if (!g) return <DrillMissing onBack={back} />;
+  const prodPts = (hist?.meses ?? []).map((m) => ({ label: m.label, value: m.producao }));
   return (
-    <div className="drawer" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="dw-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="dw-head">
-          <div>
-            <h3>{g.estado ? `${g.estado} · ${g.estado_label}` : g.estado_label}</h3>
-            <p className="dw-sub">
-              {g.promotores.length} promotor{g.promotores.length === 1 ? "" : "es"} · histórico de produção jan → corrente
-            </p>
-          </div>
-          <button className="dw-x" onClick={onClose} aria-label="Fechar">✕</button>
-        </div>
-        <div className="dw-body">
-          <div className="dw-kpis">
-            <div className="dwk"><span className="l">Acumulado</span><span className="v num">{brl(g.producao_acumulada)}</span></div>
-            <div className="dwk"><span className="l">Projeção</span><span className="v num">{brl(g.projecao)}</span></div>
-            <div className="dwk"><span className="l">% meta</span><span className="v num">{pctTxt(g.percent_projetado)}</span></div>
-          </div>
-          <div className="dw-block">
-            <h4>Produção do estado mês a mês</h4>
-            <LineChart points={prodPts} color="#0F1F4A" fmt={brl} projected={g.projecao} projLabel="proj" />
-          </div>
-          <div className="dw-block">
-            <h4>Promotores do estado <span className="dw-hint">clique para abrir</span></h4>
-            <Table scrollable minWidth={440}>
-              <thead>
-                <tr>
-                  <th>Promotor</th>
-                  <th className="r">Acumulado</th>
-                  <th className="r">Projeção</th>
-                  <th className="r">% meta</th>
-                </tr>
-              </thead>
-              <tbody>
-                {g.promotores.map((pr) => (
-                  <tr key={pr.promoter_id} className="clickrow" onClick={() => onSelectPromotor(pr.promoter_id)}>
-                    <td className="pname">{pr.promoter_name}</td>
-                    <td className="r">{brl(pr.producao_acumulada)}</td>
-                    <td className="r">{brl(pr.projecao)}</td>
-                    <td className="r">{pctTxt(pr.percent_projetado)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
-          </div>
-        </div>
-      </div>
-    </div>
+    <>
+      <DrillHeader
+        title={g.estado ? `${g.estado} · ${g.estado_label}` : g.estado_label}
+        subtitle={`${g.estado ? `Estado ${g.estado}` : "Sem estado atribuído"} · ${g.promotores.length} promotor${g.promotores.length === 1 ? "" : "es"} · histórico jan → corrente`}
+        badge={<Chip s={g.semaforo} onNavy />}
+        onBack={back}
+      />
+      <KpiCheia acumulada={g.producao_acumulada} projecao={g.projecao} meta={g.meta} percent={g.percent_projetado} />
+      <section className="card"><div className="card-pad">
+        <h3 className="drill-h">Produção do estado mês a mês</h3>
+        <LineChart points={prodPts} color="#0F1F4A" fmt={brl} projected={g.projecao} projLabel="proj" />
+      </div></section>
+      <section className="card"><div className="card-pad">
+        <h3 className="drill-h">Promotores do estado <span className="drill-hint">clique para abrir</span></h3>
+        <Table scrollable minWidth={480}>
+          <thead><tr><th>Promotor</th><th className="r">Acumulado</th><th className="r">Projeção</th><th className="r">% meta</th></tr></thead>
+          <tbody>
+            {g.promotores.map((pr) => (
+              <tr key={pr.promoter_id} className="clickrow" onClick={() => nav.goPromotor(pr.promoter_id, `estado:${id}`)}>
+                <td className="pname">{pr.promoter_name}</td>
+                <td className="r">{brl(pr.producao_acumulada)}</td>
+                <td className="r">{brl(pr.projecao)}</td>
+                <td className="r">{pctTxt(pr.percent_projetado)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </div></section>
+    </>
   );
+}
+
+// ---- TELA CHEIA: SUPERVISOR ----
+function DrillSupervisor({ data, id, nav }: { data: any; id: string; nav: Nav }) {
+  const g: GrupoSupervisor | null = (data.gruposSupervisor || []).find((x: GrupoSupervisor) => supKeyOf(x.supervisor_user_id) === id) || null;
+  const hist: SupervisorHist | null = (data.perSupervisorMonthly || []).find((s: SupervisorHist) => supKeyOf(s.supervisor_user_id) === id) || null;
+  const back = () => nav.back(null);
+  if (!g) return <DrillMissing onBack={back} />;
+  const prodPts = (hist?.meses ?? []).map((m) => ({ label: m.label, value: m.producao }));
+  const roleLabel = g.supervisor_role === "gerente_regional" ? "Gerente regional" : g.supervisor_role === "socio" ? "Gestora (sócio)" : g.supervisor_user_id === null ? "Sem supervisor" : "Supervisor";
+  return (
+    <>
+      <DrillHeader
+        title={g.supervisor_name}
+        subtitle={`${roleLabel}${g.manager_name ? ` · gerente ${g.manager_name}` : ""} · ${g.promotores.length} promotor${g.promotores.length === 1 ? "" : "es"} · histórico jan → corrente`}
+        badge={<Chip s={g.semaforo} onNavy />}
+        onBack={back}
+      />
+      <KpiCheia acumulada={g.producao_acumulada} projecao={g.projecao} meta={g.meta} percent={g.percent_projetado} />
+      <section className="card"><div className="card-pad">
+        <h3 className="drill-h">Produção da equipe mês a mês</h3>
+        <LineChart points={prodPts} color="#0F1F4A" fmt={brl} projected={g.projecao} projLabel="proj" />
+      </div></section>
+      <section className="card"><div className="card-pad">
+        <h3 className="drill-h">Promotores da equipe <span className="drill-hint">clique para abrir</span></h3>
+        <Table scrollable minWidth={480}>
+          <thead><tr><th>Promotor</th><th className="r">Acumulado</th><th className="r">Projeção</th><th className="r">% meta</th></tr></thead>
+          <tbody>
+            {g.promotores.map((pr) => (
+              <tr key={pr.promoter_id} className="clickrow" onClick={() => nav.goPromotor(pr.promoter_id, `supervisor:${id}`)}>
+                <td className="pname">{pr.promoter_name}</td>
+                <td className="r">{brl(pr.producao_acumulada)}</td>
+                <td className="r">{brl(pr.projecao)}</td>
+                <td className="r">{pctTxt(pr.percent_projetado)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </div></section>
+    </>
+  );
+}
+
+function DrillScreen({ data, view, id, from, nav }: { data: any; view: string; id: string; from: string | null; nav: Nav }) {
+  if (view === "promotor") return <DrillPromotor data={data} id={id} from={from} nav={nav} />;
+  if (view === "estado") return <DrillEstado data={data} id={id} nav={nav} />;
+  if (view === "supervisor") return <DrillSupervisor data={data} id={id} nav={nav} />;
+  return null;
 }
 
 export default function ProjecaoPage() {
+  // useSearchParams exige boundary de Suspense no app router (build estático).
+  return (
+    <Suspense fallback={<div className="rrproj"><div className="wrap" style={{ padding: 34 }}>Carregando…</div></div>}>
+      <ProjecaoContent />
+    </Suspense>
+  );
+}
+
+function ProjecaoContent() {
   const { user, loading: userLoading } = useUser();
   const now = new Date();
   const [year, setYear] = useState(now.getUTCFullYear());
@@ -458,6 +550,28 @@ export default function ProjecaoPage() {
   // dados do promotor (p/ header badge)
   const prom: Promotor | null = isPromotor ? data?.promotor ?? null : null;
 
+  // ---- drill por query param (?view=&id=&from=) — sobrevive a refresh + back ----
+  const router = useRouter();
+  const sp = useSearchParams();
+  const view = sp.get("view") || "";
+  const drillId = sp.get("id") || "";
+  const drillFrom = sp.get("from");
+  const isDrill = !isPromotor && (view === "estado" || view === "supervisor" || view === "promotor") && Boolean(drillId);
+  const nav: Nav = useMemo(
+    () => ({
+      goEstado: (key) => router.push(`/projecao?view=estado&id=${encodeURIComponent(key)}`),
+      goSupervisor: (key) => router.push(`/projecao?view=supervisor&id=${encodeURIComponent(key)}`),
+      goPromotor: (id, fromKey) =>
+        router.push(`/projecao?view=promotor&id=${encodeURIComponent(id)}${fromKey ? `&from=${encodeURIComponent(fromKey)}` : ""}`),
+      back: (fromKey) => {
+        if (fromKey && fromKey.startsWith("estado:")) router.push(`/projecao?view=estado&id=${encodeURIComponent(fromKey.slice(7))}`);
+        else if (fromKey && fromKey.startsWith("supervisor:")) router.push(`/projecao?view=supervisor&id=${encodeURIComponent(fromKey.slice(11))}`);
+        else router.push("/projecao");
+      },
+    }),
+    [router]
+  );
+
   return (
     <div className="rrproj">
       <UiStyles />
@@ -468,9 +582,20 @@ export default function ProjecaoPage() {
           <span className="sep">/</span>
           <span>Comercial</span>
           <span className="sep">/</span>
-          <span>Projeção</span>
+          {isDrill ? <Link href="/projecao">Projeção</Link> : <span>Projeção</span>}
+          {isDrill ? (<><span className="sep">/</span><span>Detalhe</span></>) : null}
         </nav>
 
+        {isDrill ? (
+          loading || !data ? (
+            <div className="card" style={{ padding: "26px 28px" }}>
+              <div className="loading-row"><span className="spinner" />Carregando…</div>
+            </div>
+          ) : (
+            <DrillScreen data={data} view={view} id={drillId} from={drillFrom} nav={nav} />
+          )
+        ) : (
+        <>
         {/* HEADER navy (kit) — badge semáforo no slot badge, pills no slot actions */}
         <HeaderNavy
           brand="GRUPO RR CRED"
@@ -552,7 +677,9 @@ export default function ProjecaoPage() {
         ) : isPromotor ? (
           <PromotorView data={data} />
         ) : (
-          <EquipeView data={data} />
+          <EquipeView data={data} nav={nav} />
+        )}
+        </>
         )}
       </main>
     </div>
@@ -562,25 +689,23 @@ export default function ProjecaoPage() {
 // ============================================================
 // VISÃO EQUIPE (socio / funcionario)
 // ============================================================
-function EquipeView({ data }: { data: any }) {
+function EquipeView({ data, nav }: { data: any; nav: Nav }) {
   if (!data || data.scope !== "equipe") return null;
   const cons = data.consolidado;
   const grupos: Grupo[] = data.grupos || [];
+  const gruposSupervisor: GrupoSupervisor[] = data.gruposSupervisor || [];
   const risco: Promotor[] = data.risco || [];
   const jan = data.janela;
+
+  // Segmented control: agrupa por ESTADO (atual) ou por SUPERVISOR (novo). Drill
+  // (estado/supervisor/promotor) abre TELA CHEIA via nav (query param).
+  const [tab, setTab] = useState<"estado" | "supervisor">("estado");
 
   // Ordenação GLOBAL (mesmo critério para todos os CNPJs). Default: ranking por
   // produção acumulada, maior primeiro (sem-meta não vão pro fim aqui — entram
   // junto pelo valor real; R$ 0,00 cai no fim naturalmente).
   const [sortKey, setSortKey] = useState<SortKey>("acumulado");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-
-  // Drill-down histórico (drawers). Séries vêm prontas da API (aditivas).
-  const perPromoter: PromotorHist[] = data.perPromoterMonthly || [];
-  const perEstado: EstadoHist[] = data.perEstadoMonthly || [];
-  const [selPromotor, setSelPromotor] = useState<string | null>(null);
-  const [selEstado, setSelEstado] = useState<string | null>(null); // "AL".."BA" | "__NULL__"
-  const estadoKey = (e: string | null | undefined) => e ?? "__NULL__";
 
   const onSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -593,13 +718,6 @@ function EquipeView({ data }: { data: any }) {
   const arrow = (key: SortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
   const ariaSort = (key: SortKey): "ascending" | "descending" | "none" =>
     sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none";
-
-  // Resolução dos drawers (promotor tem prioridade → encadeado sobre o estado).
-  const allProms: Promotor[] = grupos.flatMap((g) => g.promotores);
-  const selP = selPromotor ? allProms.find((p) => p.promoter_id === selPromotor) ?? null : null;
-  const selPHist = selPromotor ? perPromoter.find((h) => h.promoter_id === selPromotor) ?? null : null;
-  const selG = selEstado ? grupos.find((g) => estadoKey(g.estado) === selEstado) ?? null : null;
-  const selGHist = selEstado ? perEstado.find((e) => estadoKey(e.estado) === selEstado) ?? null : null;
 
   return (
     <>
@@ -685,16 +803,22 @@ function EquipeView({ data }: { data: any }) {
         )}
       </section>
 
+      {/* SEGMENTED CONTROL — por estado (atual) | por supervisor (novo) */}
+      <div className="seg2" role="tablist" aria-label="Agrupar por">
+        <button role="tab" aria-selected={tab === "estado"} className={tab === "estado" ? "on" : ""} onClick={() => setTab("estado")}>Por estado</button>
+        <button role="tab" aria-selected={tab === "supervisor"} className={tab === "supervisor" ? "on" : ""} onClick={() => setTab("supervisor")}>Por supervisor</button>
+      </div>
+
       {/* TABELAS POR ESTADO */}
-      {grupos.map((g) => (
+      {tab === "estado" && grupos.map((g) => (
         <section key={g.estado ?? "nao-classificado"} className="card">
           <div
             className="emp-head clickhead"
             role="button"
             tabIndex={0}
             aria-label={`Abrir histórico de ${g.estado_label}`}
-            onClick={() => setSelEstado(estadoKey(g.estado))}
-            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelEstado(estadoKey(g.estado)); } }}
+            onClick={() => nav.goEstado(estadoKey(g.estado))}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); nav.goEstado(estadoKey(g.estado)); } }}
           >
             <div className="left">
               <span className={`st ${CHIP[g.semaforo]}`} />
@@ -777,7 +901,7 @@ function EquipeView({ data }: { data: any }) {
               </thead>
               <tbody>
                 {sortPromotores(g.promotores, sortKey, sortDir).map((p) => (
-                  <tr key={p.promoter_id} className="clickrow" onClick={() => setSelPromotor(p.promoter_id)}>
+                  <tr key={p.promoter_id} className="clickrow" onClick={() => nav.goPromotor(p.promoter_id, `estado:${estadoKey(g.estado)}`)}>
                     <td className="rr-sticky-col pname">{p.promoter_name}</td>
                     <td className="r">{brl(p.producao_acumulada)}</td>
                     <td className="r">{brl(p.projecao)}</td>
@@ -808,17 +932,47 @@ function EquipeView({ data }: { data: any }) {
         </section>
       ))}
 
-      {/* Drawers do drill-down histórico. Promotor sobrepõe o estado (encadeado):
-          fechar o promotor volta ao estado se ele estiver aberto. */}
-      {selP ? (
-        <PromotorDrawer p={selP} hist={selPHist} onClose={() => setSelPromotor(null)} />
-      ) : selG ? (
-        <EstadoDrawer
-          g={selG}
-          hist={selGHist}
-          onClose={() => setSelEstado(null)}
-          onSelectPromotor={(id) => setSelPromotor(id)}
-        />
+      {/* CARDS POR SUPERVISOR */}
+      {tab === "supervisor" ? (
+        <div className="supgrid">
+          {gruposSupervisor.map((g) => {
+            const semSup = g.supervisor_user_id === null;
+            const roleTag = g.supervisor_role === "gerente_regional" ? "Gerente" : g.supervisor_role === "socio" ? "Gestora" : semSup ? "" : "Supervisor";
+            if (semSup) {
+              return (
+                <div key="__sem__" className="supcard dashed">
+                  <div className="sc-top">
+                    <span className="sc-av none">—</span>
+                    <div className="sc-id"><div className="sc-nm">Sem supervisor</div><div className="sc-sub">{g.promotores.length} promotor{g.promotores.length === 1 ? "" : "es"} · aguardando vínculo</div></div>
+                  </div>
+                  <div className="sc-mid"><div className="sc-fig"><span className="l">Projeção</span><span className="v num">{brl(g.projecao)}</span></div><div className="sc-fig"><span className="l">% meta</span><span className="v num">{pctTxt(g.percent_projetado)}</span></div></div>
+                  <Link className="sc-assign" href="/admin/equipes">Atribuir supervisor →</Link>
+                </div>
+              );
+            }
+            return (
+              <button key={g.supervisor_user_id ?? "__x__"} className="supcard" onClick={() => nav.goSupervisor(supKeyOf(g.supervisor_user_id))}>
+                <div className="sc-top">
+                  <span className="sc-av">{iniciais(g.supervisor_name)}</span>
+                  <div className="sc-id">
+                    <div className="sc-nm">{g.supervisor_name}{roleTag ? <span className="sc-role">{roleTag}</span> : null}</div>
+                    <div className="sc-sub">{g.promotores.length} promotor{g.promotores.length === 1 ? "" : "es"}{g.manager_name ? ` · ${g.manager_name}` : ""}</div>
+                  </div>
+                  <Chip s={g.semaforo} />
+                </div>
+                <div className="sc-mid">
+                  <div className="sc-fig"><span className="l">Projeção</span><span className="v num">{brl(g.projecao)}</span></div>
+                  <div className="sc-fig"><span className="l">Meta</span><span className="v num">{g.meta > 0 ? brl(g.meta) : "—"}</span></div>
+                  <div className="sc-fig"><span className="l">% meta</span><span className="v num">{pctTxt(g.percent_projetado)}</span></div>
+                </div>
+                <span className="sc-go">Ver equipe →</span>
+              </button>
+            );
+          })}
+          {gruposSupervisor.length === 0 ? (
+            <div className="card"><div className="state">Nenhum supervisor com promotores nesta competência. Atribua em <Link href="/admin/equipes" className="ilink">Equipes</Link>.</div></div>
+          ) : null}
+        </div>
       ) : null}
     </>
   );
@@ -1167,4 +1321,43 @@ const CSS = `
 .rrproj .dw-block h4{margin:0 0 12px;font-size:12.5px;font-weight:600;color:var(--ink-2);display:flex;align-items:baseline;gap:8px;}
 .rrproj .dw-block .dw-hint{font-size:10.5px;font-weight:500;color:var(--ink-3);text-transform:none;letter-spacing:0;}
 .rrproj .dw-empty{padding:16px 4px;color:var(--ink-3);font-size:12.5px;text-align:center;}
+
+/* ---------- segmented control (por estado | por supervisor) ---------- */
+.rrproj .seg2{display:inline-flex;gap:4px;background:#E7EAF0;border:1px solid var(--bd);border-radius:999px;padding:4px;width:fit-content;margin:-4px 2px 0;}
+.rrproj .seg2 button{appearance:none;border:none;background:transparent;color:var(--ink-2);font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 18px;border-radius:999px;cursor:pointer;transition:.15s;white-space:nowrap;}
+.rrproj .seg2 button:hover{color:var(--navy);}
+.rrproj .seg2 button.on{background:var(--navy);color:var(--yellow);}
+
+/* ---------- cards por supervisor ---------- */
+.rrproj .supgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;}
+.rrproj .supcard{text-align:left;background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:18px 20px;display:flex;flex-direction:column;gap:14px;cursor:pointer;font-family:inherit;transition:box-shadow .15s,transform .05s;}
+.rrproj .supcard:hover{box-shadow:0 2px 4px rgba(15,31,74,.06),0 12px 30px rgba(15,31,74,.09);}
+.rrproj .supcard:active{transform:translateY(1px);}
+.rrproj .supcard.dashed{border-style:dashed;background:#FBFAF7;cursor:default;}
+.rrproj .supcard.dashed:hover{box-shadow:var(--shadow);}
+.rrproj .supcard .sc-top{display:flex;align-items:center;gap:12px;}
+.rrproj .supcard .sc-av{flex:none;width:42px;height:42px;border-radius:12px;background:var(--navy);color:#fff;display:grid;place-items:center;font-size:14px;font-weight:700;letter-spacing:.02em;}
+.rrproj .supcard .sc-av.none{background:#EEF0F4;color:var(--ink-3);}
+.rrproj .supcard .sc-id{flex:1;min-width:0;}
+.rrproj .supcard .sc-nm{font-size:14.5px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.rrproj .supcard .sc-role{font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--gold-deep);background:rgba(214,161,63,.14);border:1px solid rgba(214,161,63,.32);padding:1px 7px;border-radius:999px;}
+.rrproj .supcard .sc-sub{font-size:12px;color:var(--ink-3);margin-top:2px;}
+.rrproj .supcard .sc-mid{display:flex;gap:18px;padding-top:12px;border-top:1px solid var(--bd-soft);}
+.rrproj .supcard .sc-fig{display:flex;flex-direction:column;gap:2px;}
+.rrproj .supcard .sc-fig .l{font-size:10.5px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);}
+.rrproj .supcard .sc-fig .v{font-size:15px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;}
+.rrproj .supcard .sc-go{font-size:12px;font-weight:600;color:var(--navy);}
+.rrproj .supcard .sc-assign{font-size:12.5px;font-weight:600;color:var(--gold-deep);text-decoration:none;border-bottom:1px dashed rgba(185,132,42,.5);width:fit-content;padding-bottom:1px;}
+.rrproj .supcard .sc-assign:hover{color:var(--navy);}
+
+/* ---------- tela cheia (drill) ---------- */
+.rrproj .drillhead{display:flex;flex-direction:column;gap:14px;background:var(--navy);border-radius:var(--r-lg);padding:20px 24px 22px;color:#fff;}
+.rrproj .backbtn{appearance:none;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.07);color:#E4E9F4;font-family:inherit;font-size:12.5px;font-weight:600;padding:7px 14px;border-radius:999px;cursor:pointer;width:fit-content;}
+.rrproj .backbtn:hover{background:rgba(255,255,255,.14);}
+.rrproj .drillhead .dh-row{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+.rrproj .drillhead .dh-id h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.01em;color:#fff;}
+.rrproj .drillhead .dh-id p{margin:5px 0 0;font-size:12.5px;color:#B7C0D8;}
+.rrproj .drill-h{font-size:14.5px;font-weight:600;margin:0 0 14px;color:var(--ink);display:flex;align-items:baseline;gap:8px;}
+.rrproj .drill-hint{font-size:11px;font-weight:500;color:var(--ink-3);}
+.rrproj .drill-empty{padding:16px 4px;color:var(--ink-3);font-size:12.5px;text-align:center;}
 `;

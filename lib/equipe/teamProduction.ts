@@ -11,6 +11,15 @@ import {
   productionBusinessWindow,
   ymd,
 } from "@/lib/trp/vigencia";
+// Série mensal HÍBRIDA (mês corrente=daily, fechados=PMR) — helper comum com a
+// /projecao. Corrige os buracos jan/fev/mar/mai (daily só tem abr+/2026).
+import {
+  agregarSerieGrupo,
+  serieHibridaPorPromotor,
+  ymKey as ymKeyHelper,
+  type DailyAcc,
+  type PmrPonto,
+} from "@/lib/historicoMensal";
 
 /**
  * F4 — Visão do gestor. Monta a produção/desempenho do TIME do gestor logado,
@@ -231,26 +240,9 @@ function penetration(acc: Acc): number {
   return acc.gross > 0 ? (acc.insuredGross / acc.gross) * 100 : 0;
 }
 
-/** Início da série mensal do painel (competência mais antiga exibida). */
-const SERIES_START = { year: 2026, month: 1 };
-
-/** Lista de competências de (fromY,fromM) até (toY,toM) inclusive, sem buracos. */
-function monthRange(fromY: number, fromM: number, toY: number, toM: number) {
-  const out: Array<{ year: number; month: number }> = [];
-  let y = fromY;
-  let m = fromM;
-  // trava defensiva (nunca deve estourar; ~ dezenas de meses)
-  for (let guard = 0; guard < 600; guard++) {
-    if (y > toY || (y === toY && m > toM)) break;
-    out.push({ year: y, month: m });
-    m += 1;
-    if (m > 12) {
-      m = 1;
-      y += 1;
-    }
-  }
-  return out;
-}
+// A janela da série (jan/2026 → corrente) e a lista de competências agora vêm do
+// helper comum lib/historicoMensal.ts (SERIE_INICIO/rangeMeses), via
+// serieHibridaPorPromotor. Removidos SERIES_START/monthRange locais.
 
 /**
  * Montagem PURA do payload (sem I/O) — testável isoladamente.
@@ -265,6 +257,9 @@ export function assembleTeamProduction(
   opts: { year?: number; month?: number },
   refDate: Date,
   gestorOverrides: Array<{ year: number; month: number; meta: number }> = [],
+  // Fonte dos meses FECHADOS da série (PMR). Vazio => série cai no daily (mesmo
+  // comportamento anterior). Injetado por buildTeamProduction via service_role.
+  pmrByPromoterYm: Map<string, Map<string, PmrPonto>> = new Map(),
 ): TeamProductionPayload {
   // ---- competências disponíveis (dos registros + das metas) ----
   const periodsMap = new Map<string, TeamPeriod>();
@@ -375,62 +370,70 @@ export function assembleTeamProduction(
   }
   for (const t of targetByPid.values()) tMeta += toNumber(t.meta);
 
-  // ---- série mensal do TIME (jan/2026 → corrente) ----
-  // Mesmo critério do total do período (elegível + atribuído) → o ponto do mês
-  // corrente da série BATE com totals.production_value (não-regressão).
-  const teamByYm = new Map<string, Acc>();
-  const promoByYm = new Map<string, Map<string, Acc>>();
+  // ---- série mensal HÍBRIDA (jan/2026 → corrente) ----
+  // Mês CORRENTE = daily (bate com totals.production_value — não-regressão);
+  // meses FECHADOS = PMR (corrige os buracos jan/fev/mar/mai que o daily não tem).
+  // daily por (promotor, competência) — só elegível + atribuído.
+  const dailyByPromoterYm = new Map<string, Map<string, DailyAcc>>();
   for (const r of rows) {
     if (!r.assigned_promoter_id) continue;
     if (!isEligible(r)) continue;
     const p = extractYearMonth(r);
     if (!p) continue;
-    const k = periodKey(p.year, p.month);
-    const team = teamByYm.get(k) ?? emptyAcc();
-    addRow(team, r);
-    teamByYm.set(k, team);
-
-    let inner = promoByYm.get(r.assigned_promoter_id);
+    const k = ymKeyHelper(p.year, p.month);
+    let inner = dailyByPromoterYm.get(r.assigned_promoter_id);
     if (!inner) {
-      inner = new Map<string, Acc>();
-      promoByYm.set(r.assigned_promoter_id, inner);
+      inner = new Map<string, DailyAcc>();
+      dailyByPromoterYm.set(r.assigned_promoter_id, inner);
     }
-    const pa = inner.get(k) ?? emptyAcc();
-    addRow(pa, r);
-    inner.set(k, pa);
+    const acc = inner.get(k) ?? { net: 0, gross: 0, insuredGross: 0 };
+    const gross = toNumber(r.gross_value);
+    acc.net += toNumber(r.net_value);
+    acc.gross += gross;
+    if (toNumber(r.insurance_value) > 0 || r.has_insurance) acc.insuredGross += gross;
+    inner.set(k, acc);
   }
 
-  const range = monthRange(SERIES_START.year, SERIES_START.month, nowYear, nowMonth);
-  const monthlySeries: MonthPoint[] = range.map(({ year, month }) => {
-    const acc = teamByYm.get(periodKey(year, month)) ?? emptyAcc();
-    return {
-      year,
-      month,
-      label: periodLabel(year, month),
-      production_value: acc.net,
-      insurance_penetration_percent: penetration(acc),
-    };
+  const promoterIdsSerie = new Set<string>([
+    ...dailyByPromoterYm.keys(),
+    ...pmrByPromoterYm.keys(),
+    ...targets.map((t) => t.promoter_id),
+  ]);
+  const serieByPromoter = serieHibridaPorPromotor({
+    dailyByPromoterYm,
+    pmrByPromoterYm,
+    promoterIds: promoterIdsSerie,
+    refDate,
   });
+
+  // penetração aqui é PERCENTUAL (0-100), convenção do /equipe; o helper devolve
+  // fração 0-1 → ×100.
+  const grupoTeam = agregarSerieGrupo(Array.from(serieByPromoter.values()));
+  const monthlySeries: MonthPoint[] = grupoTeam.map((g) => ({
+    year: g.year,
+    month: g.month,
+    label: g.label,
+    production_value: g.producao,
+    insurance_penetration_percent: g.penetracao_seg == null ? 0 : g.penetracao_seg * 100,
+  }));
 
   // ---- série mensal POR PROMOTOR ----
   const targetByPidYm = new Map<string, TargetRow>();
-  for (const t of targets) targetByPidYm.set(`${t.promoter_id}:${periodKey(t.year, t.month)}`, t);
+  for (const t of targets) targetByPidYm.set(`${t.promoter_id}:${ymKeyHelper(t.year, t.month)}`, t);
 
-  const allPromoterIds = new Set<string>([...promoByYm.keys(), ...targets.map((t) => t.promoter_id)]);
-  const perPromoterMonthly: PromoterMonthly[] = Array.from(allPromoterIds).map((pid) => ({
+  const perPromoterMonthly: PromoterMonthly[] = Array.from(promoterIdsSerie).map((pid) => ({
     promoter_id: pid,
-    months: range.map(({ year, month }) => {
-      const acc = promoByYm.get(pid)?.get(periodKey(year, month)) ?? emptyAcc();
-      const t = targetByPidYm.get(`${pid}:${periodKey(year, month)}`);
+    months: (serieByPromoter.get(pid) ?? []).map((pt) => {
+      const t = targetByPidYm.get(`${pid}:${ymKeyHelper(pt.year, pt.month)}`);
       const meta = toNumber(t?.meta);
       return {
-        year,
-        month,
-        label: periodLabel(year, month),
-        production_value: acc.net,
-        insurance_penetration_percent: penetration(acc),
+        year: pt.year,
+        month: pt.month,
+        label: pt.label,
+        production_value: pt.producao,
+        insurance_penetration_percent: pt.penetracao_seg == null ? 0 : pt.penetracao_seg * 100,
         meta,
-        attainment_percent: meta > 0 ? (acc.net / meta) * 100 : null,
+        attainment_percent: meta > 0 ? (pt.producao / meta) * 100 : null,
       };
     }),
   }));
@@ -526,6 +529,37 @@ export async function buildTeamProduction(
     }
   }
 
+  // PMR (production_value + penetração) dos MESES FECHADOS, só dos ids já
+  // autorizados (mesmo escopo dos nomes). Via service_role: selecionamos APENAS
+  // produção/penetração — nada de comissão. Tolerante: erro → série cai no daily.
+  const pmrByPromoterYm = new Map<string, Map<string, PmrPonto>>();
+  if (allIds.size > 0) {
+    const { data: pmrData, error: pmrErr } = await admin
+      .from("promoter_monthly_results")
+      .select("promoter_id, year, month, production_value, insurance_penetration_percent")
+      .in("promoter_id", Array.from(allIds));
+    if (!pmrErr) {
+      for (const p of (pmrData ?? []) as Array<{
+        promoter_id: string;
+        year: number;
+        month: number;
+        production_value: number | null;
+        insurance_penetration_percent: number | null;
+      }>) {
+        const k = ymKeyHelper(p.year, p.month);
+        let inner = pmrByPromoterYm.get(p.promoter_id);
+        if (!inner) {
+          inner = new Map<string, PmrPonto>();
+          pmrByPromoterYm.set(p.promoter_id, inner);
+        }
+        inner.set(k, {
+          production: Number(p.production_value ?? 0) || 0,
+          penetracao: p.insurance_penetration_percent == null ? null : (Number(p.insurance_penetration_percent) || 0) / 100,
+        });
+      }
+    }
+  }
+
   const refDate = todayInFortaleza();
-  return assembleTeamProduction(rows, targets, nameById, supById, opts, refDate, gestorOverrides);
+  return assembleTeamProduction(rows, targets, nameById, supById, opts, refDate, gestorOverrides, pmrByPromoterYm);
 }
