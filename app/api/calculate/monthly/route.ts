@@ -1349,7 +1349,7 @@ export async function POST(req: Request) {
       const { error } = await supabase
         .from("promoter_monthly_results")
         .upsert(promoterUpserts, {
-          onConflict: "promoter_id,year,month",
+          onConflict: "promoter_id,year,month,company_id",
         });
 
       if (error) throw error;

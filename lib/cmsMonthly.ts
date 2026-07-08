@@ -226,7 +226,7 @@ export async function consolidateMonthlyFromCms(
   if (upserts.length > 0) {
     const { error } = await supabase
       .from("promoter_monthly_results")
-      .upsert(upserts, { onConflict: "promoter_id,year,month" });
+      .upsert(upserts, { onConflict: "promoter_id,year,month,company_id" });
     if (error) throw error;
   }
 

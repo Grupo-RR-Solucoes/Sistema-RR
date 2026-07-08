@@ -4,8 +4,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // closingMonthly — consolidação do PMR a partir do FECHAMENTO (monthly_closing_
 // entries, aba "A Vista"). Função IRMÃ de consolidateMonthlyFromCms (cmsMonthly.ts):
 // mesma tabela (promoter_monthly_results), mesmo upsert onConflict
-// (promoter_id,year,month), mesma forma de retorno. A diferença é a FONTE e a
-// RÉGUA — aqui o valor nasce do fechamento, não do cms.
+// (promoter_id,year,month,company_id — constraint por empresa, p/ RR e BBTS
+// coexistirem no mesmo promotor/competência), mesma forma de retorno. A diferença
+// é a FONTE e a RÉGUA — aqui o valor nasce do fechamento, não do cms.
 //
 // RÉGUA (validada contra o gabarito RR puro — sem chave BBTS — jun/2026: gap 0,3%):
 //   à vista  : Σ(COMISSÃO PF do contrato) × acordo, onde acordo = resolve-
@@ -374,7 +375,7 @@ export async function consolidateMonthlyFromClosing(
   if (upserts.length > 0) {
     const { error } = await supabase
       .from("promoter_monthly_results")
-      .upsert(upserts, { onConflict: "promoter_id,year,month" });
+      .upsert(upserts, { onConflict: "promoter_id,year,month,company_id" });
     if (error) throw error;
   }
 
