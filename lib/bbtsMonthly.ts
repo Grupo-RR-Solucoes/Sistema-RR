@@ -24,7 +24,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //   carga BBTS-2b).
 // COMISSÃO DO PROMOTOR = comissão-empresa × acordo (resolvePromoterShareSync).
 //   NÃO decide meta nem faixa de penetração aqui — o orquestrador BBTS-2d injeta
-//   via statusMetaByPromoter / faixaSeguroByPromoter. Ausentes => comportamento
+//   via statusMetaByPromoter / seguroShareByPromoter. Ausentes => comportamento
 //   provisório RR-only (acordo base/profile + escala de penetração da ADS), com
 //   AVISO no retorno.
 //
@@ -96,8 +96,11 @@ export async function consolidateMonthlyFromBbts(
     year: number;
     month: number;
     dryRun?: boolean;
-    statusMetaByPromoter?: Map<string, string>; // BBTS-2d injeta; senão default
-    faixaSeguroByPromoter?: Map<string, number>; // BBTS-2d injeta share seguro; senão penetração
+    // ===== INJEÇÕES DO ORQUESTRADOR (BBTS-2d) — produção CONSOLIDADA RR+ADS =====
+    statusMetaByPromoter?: Map<string, string>; // meta conjunta -> target_status
+    seguroShareByPromoter?: Map<string, number>; // penetração consolidada -> share seguro
+    // volume consolidado p/ a escala ENTRANTE (sem ele, volume ADS-isolado dá 0%).
+    volumeConsolidadoByPromoter?: Map<string, number>;
   }
 ) {
   const { year, month } = params;
@@ -201,7 +204,7 @@ export async function consolidateMonthlyFromBbts(
     propostas.push({ contrato: String(r.proposal_number), vfin: gross, juros: toNumber(r.interest_rate), parc: toNumber(r.term_months), conv: String(r.convenio_code ?? ""), trp: creditPercent, avista: comEmpAvista, diferido, comEmpresa: comEmpAvista, promoter_id: pid });
   }
 
-  if (params.statusMetaByPromoter === undefined && params.faixaSeguroByPromoter === undefined) {
+  if (params.statusMetaByPromoter === undefined && params.seguroShareByPromoter === undefined) {
     avisos.push("PROVISÓRIO: meta e faixa de seguro NÃO injetadas (BBTS-2d). acordo = base/profile; seguro promotor = escala de penetração da ADS. Rode via BBTS-2d p/ a meta conjunta RR+ADS.");
   }
   avisos.push("LIMITAÇÃO (a): sem 'Tipo de Liberação' no fechamento PDF — TODAS as linhas de seguro contam na penetração.");
@@ -219,13 +222,16 @@ export async function consolidateMonthlyFromBbts(
   }
 
   function acordoDe(pid: string): number {
-    // frenteC não injetado aqui (BBTS crédito INSS fica < 5,80%, fora da faixa da
-    // escala; a meta conjunta é do BBTS-2d). Cascata base/profile.
+    // ENTRANTE usa o VOLUME: consolidado (RR+ADS) quando o orquestrador injeta;
+    // senão o ADS-isolado (que dá 0% p/ quem tem volume baixo — provisório).
+    // frenteC null (BBTS crédito INSS < 5,80%, fora da escala de meta).
+    const volume =
+      params.volumeConsolidadoByPromoter?.get(pid) ?? share.monthlyVolumesMap.get(pid) ?? 0;
     const res = resolvePromoterShareSync({
       record: { assigned_promoter_id: pid, share_percent_override: null },
       profilesMap: share.profilesMap,
       scalesMap: share.scalesMap,
-      monthlyVolumesMap: share.monthlyVolumesMap,
+      monthlyVolumesMap: new Map([[pid, volume]]),
       frenteC: null,
     });
     return Math.min(Math.max(Number(res.sharePercent) || 0, 0), 1);
@@ -242,7 +248,7 @@ export async function consolidateMonthlyFromBbts(
     // CONSOLIDADA RR+ADS); ausente => individual da própria ADS.
     const penetracao = individualPenetration(a.insuredProd, a.prod);
     const seguroShare =
-      params.faixaSeguroByPromoter?.get(pid) ?? insuranceShareForPenetration(penetracao);
+      params.seguroShareByPromoter?.get(pid) ?? insuranceShareForPenetration(penetracao);
 
     const comPromotorCredito = a.comEmpAvista * acordo;
     const comPromotorSeguro = a.comEmpSeguro * seguroShare;

@@ -176,9 +176,17 @@ export async function consolidateMonthlyFromClosing(
     companyId?: string | null;
     promoterId?: string | null;
     dryRun?: boolean;
-    // BBTS-2d injeta o share de seguro (penetração CONSOLIDADA RR+ADS por promotor).
-    // Ausente => usa a penetração INDIVIDUAL da própria RR (cortes oficiais).
+    // ===== INJEÇÕES DO ORQUESTRADOR (BBTS-2d) — produção CONSOLIDADA RR+ADS =====
+    // Ausentes => comportamento RR-puro (cada uma cai no cálculo local).
+    // (1) share de seguro pela penetração CONSOLIDADA RR+ADS.
     seguroShareByPromoter?: Map<string, number>;
+    // (2) target_status pela meta CONSOLIDADA RR+ADS (coluna do PMR).
+    statusMetaByPromoter?: Map<string, string>;
+    // (3) volume CONSOLIDADO (RR+ADS) da escala ENTRANTE (monthlyVolumesMap).
+    volumeConsolidadoByPromoter?: Map<string, number>;
+    // (3b) produção VÁLIDA CONSOLIDADA (RR+ADS) da Frente C (frenteCProductionMap).
+    //      Separada do volume: ENTRANTE usa TODOS os records; Frente C só válidos.
+    prodConsolidadoByPromoter?: Map<string, number>;
   }
 ) {
   const { year, month } = params;
@@ -229,6 +237,13 @@ export async function consolidateMonthlyFromClosing(
     for (const p of proms) nameById.set(p.id, p.name);
   }
 
+  // Volume/produção efetivos p/ a escala: CONSOLIDADO (RR+ADS) quando injetado
+  // pelo orquestrador; senão RR-puro (monthlyVolumesMap / frenteCProductionMap).
+  const volConsol = params.volumeConsolidadoByPromoter;
+  const prodConsol = params.prodConsolidadoByPromoter;
+  const volumeDe = (pid: string) => volConsol?.get(pid) ?? share.monthlyVolumesMap.get(pid) ?? 0;
+  const producaoDe = (pid: string) => prodConsol?.get(pid) ?? share.frenteCProductionMap.get(pid) ?? 0;
+
   // acordo POR CONTRATO — Frente C aplica na faixa 5,80% (escala de repasse) e o
   // acordo base (profile/default) fora dela. isAldaleneInss usa nome + produto.
   function acordoDoContrato(pid: string, c: ClosingContrato): number {
@@ -237,10 +252,10 @@ export async function consolidateMonthlyFromClosing(
       record: { assigned_promoter_id: pid, share_percent_override: null },
       profilesMap: share.profilesMap,
       scalesMap: share.scalesMap,
-      monthlyVolumesMap: share.monthlyVolumesMap,
+      monthlyVolumesMap: new Map([[pid, volumeDe(pid)]]), // ENTRANTE: volume consolidado
       frenteC: {
         goalRepasse: share.goalRepasseMap.get(pid) ?? null,
-        productionValue: share.frenteCProductionMap.get(pid) ?? 0,
+        productionValue: producaoDe(pid), // Frente C: produção consolidada
         target1Value: tgt?.meta1 ?? 0,
         target2Value: tgt?.meta2 ?? 0,
         isAldaleneInss:
@@ -371,7 +386,10 @@ export async function consolidateMonthlyFromClosing(
       agreement_adjustment_value: 0,
       discount_value: 0,
       final_commission_value: finalCommission,
-      target_status: resolveTargetStatus(a.net, targetValue, target1Value, target2Value),
+      // Meta CONSOLIDADA (RR+ADS) injetada pelo orquestrador; senão RR-pura.
+      target_status:
+        params.statusMetaByPromoter?.get(pid) ??
+        resolveTargetStatus(a.net, targetValue, target1Value, target2Value),
       source: "fechamento",
       calculated_at: nowIso,
     });
