@@ -213,6 +213,45 @@ export async function consolidateMonthlyFromClosing(
   for (const c of contratos) (c as any).__pid = efetivoPid(c);
   for (const c of restritas) (c as any).__pid = efetivoPid(c);
 
+  // 3b. Empresa "DONA" DETERMINÍSTICA por promotor. Sem isto, getAgg fixava o
+  //     company_id da linha do PMR pelo PRIMEIRO contrato processado — arbitrário
+  //     e dependente da ordem de fetch. Quando a ordem mudava (ex.: re-importação),
+  //     um promotor com produção em 2+ empresas RR (parte na chave própria, parte
+  //     por herança master) migrava de empresa e o upsert onConflict
+  //     (promoter_id,year,month,company_id) criava linha NOVA em vez de atualizar
+  //     -> DUPLICATA (caso Mayanne jun/2026: AL2 direto + AL3 herança).
+  //     CRITÉRIO (aprovado): empresa onde o Σ net da chave INDIVIDUAL (própria,
+  //     não-herdada) é maior; fallback = maior Σ net geral; desempate por
+  //     company_id (asc). Data-driven e ESTÁVEL entre re-importações. Não muda
+  //     valor nenhum — só o rótulo company_id da linha (a régua RR segue
+  //     consolidada por promotor). Não altera a separação RR × ADS.
+  const donaCompany = new Map<string, string | null>();
+  {
+    const perPid = new Map<string, Map<string, { indiv: number; total: number }>>();
+    for (const c of contratos) {
+      const pid = (c as any).__pid as string | null;
+      if (!pid || !c.companyId) continue;
+      let byCo = perPid.get(pid);
+      if (!byCo) {
+        byCo = new Map();
+        perPid.set(pid, byCo);
+      }
+      const e = byCo.get(c.companyId) || { indiv: 0, total: 0 };
+      e.total += c.valorLiquido;
+      if (c.promoterId === pid) e.indiv += c.valorLiquido; // chave PRÓPRIA (não herança)
+      byCo.set(c.companyId, e);
+    }
+    for (const [pid, byCo] of perPid) {
+      const ranked = [...byCo.entries()].sort(
+        (a, b) =>
+          b[1].indiv - a[1].indiv || // 1º: maior net da chave individual
+          b[1].total - a[1].total || // 2º: maior net total
+          (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0) // 3º: company_id asc (determinístico)
+      );
+      donaCompany.set(pid, ranked[0][0]);
+    }
+  }
+
   // 4. Dados de cascata/Frente C (profiles, escalas, metas, goal_repasse,
   //    produção válida) para os promotores EFETIVOS.
   const efetivos = [
@@ -274,7 +313,9 @@ export async function consolidateMonthlyFromClosing(
     let a = agg.get(pid);
     if (!a) {
       a = {
-        companyId: companyId ?? null,
+        // Empresa DONA (determinística) para quem tem contrato CASH; fallback ao
+        // company_id passado (ex.: promotor só com seguro avulso, fora do map).
+        companyId: donaCompany.get(pid) ?? companyId ?? null,
         net: 0,
         liquidoSegurado: 0,
         count: 0,

@@ -699,8 +699,19 @@ function buildBaseEntry(
   );
 
   const primaryValue = options.commissionValue;
+  const contractNumber =
+    String(
+      pickField(row, ["Contrato", "Numero Contrato", "Numero Seguro"]) || ""
+    ).trim() || null;
 
-  if (!primaryValue) {
+  // CASH (aba "A Vista"): preserva a PROPOSTA REAL (tem contrato + VALOR LÍQUIDO
+  // > 0) mesmo com COMISSÃO PF = 0. Toda proposta SRCC="Sim" tem PF=0 (não pagou,
+  // "FATURAR") — descartá-las escondia as restritas do banco e da tela. O metadata
+  // completo (incl. RESTRIÇÃO SRCC) é preservado. Demais abas (PRT/INSURANCE/
+  // CREDIT/DEBIT) seguem descartando comissão-zero.
+  const isRealCashProposal =
+    options.entryType === "CASH" && netValue > 0 && !!contractNumber;
+  if (!primaryValue && !isRealCashProposal) {
     return null;
   }
 
@@ -722,10 +733,7 @@ function buildBaseEntry(
           "NRO OPERACAO",
         ]) || ""
       ).trim() || null,
-    contractNumber:
-      String(
-        pickField(row, ["Contrato", "Numero Contrato", "Numero Seguro"]) || ""
-      ).trim() || null,
+    contractNumber,
     jKey:
       String(
         pickField(row, ["Chave J", "Login", "Usuario", "Promotor", "Login do Agente de Credito"]) ||
@@ -1195,8 +1203,14 @@ async function runImportPipeline(ctx: ImportContext) {
   };
 
   const rowsToInsert = entries.map((entry) => {
+    // CASH: amount = COMISSÃO PF (pode ser 0 na restrita/FATURAR). NÃO cai para
+    // netValue — senão a linha SRCC/FATURAR gravaria commission_value=netValue e
+    // (a) inflaria valor_avista, (b) o closingMonthly leria comissaoEmpresaAvista
+    // = netValue e comissionaria a proposta não-paga. Demais abas: fallback antigo.
     const amount =
-      entry.commissionValue || entry.netValue || entry.insuranceValue || entry.grossValue;
+      entry.entryType === "CASH"
+        ? entry.commissionValue
+        : entry.commissionValue || entry.netValue || entry.insuranceValue || entry.grossValue;
     const adjustment = isAdjustmentRow(entry.entryType, entry.metadata);
 
     if (entry.entryType === "CASH") {
