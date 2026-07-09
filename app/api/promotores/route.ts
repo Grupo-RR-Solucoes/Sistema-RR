@@ -17,6 +17,13 @@ import { buildCmsProposalRows } from "@/lib/promoterReportData";
 // VIRADA DE TELA — proposalRows do mês FECHADO por fechamento (jun+): fonte
 // monthly_closing_entries + linhas ADS, com o campo SRCC p/ a UI colorir.
 import { buildClosingProposalRows } from "@/lib/closingProposalRows";
+// FRENTE DÉBITOS — leitura (detalhe + fila) e ações (cadastro manual, atribuição).
+import {
+  fetchPromoterDebits,
+  fetchDebitQueue,
+  createManualDebit,
+  assignQueuedDebit,
+} from "@/lib/debitsData";
 
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
@@ -153,6 +160,21 @@ export async function GET(req: Request) {
       allUnassigned: searchParams.get("unassigned") === "1",
     });
 
+    // FRENTE DÉBITOS — no mês fechado: detalhe dos débitos do promotor + fila de
+    // atribuição (estornos MASTER/ADS sem dono). Só leitura; erro não quebra a tela.
+    let debitRows: Awaited<ReturnType<typeof fetchPromoterDebits>> = [];
+    let debitQueue: Awaited<ReturnType<typeof fetchDebitQueue>> = [];
+    if (closed && yearN && monthN) {
+      try {
+        if (effectivePromoterId) {
+          debitRows = await fetchPromoterDebits(supabase, { year: yearN, month: monthN, promoterId: effectivePromoterId });
+        }
+        debitQueue = await fetchDebitQueue(supabase, { year: yearN, month: monthN });
+      } catch {
+        // débitos são aditivos — falha aqui não derruba a tela.
+      }
+    }
+
     // Mês FECHADO: o detalhe (proposalRows) vem da fonte fechada, não do diário.
     //   'cms' (jan-mai)        -> cms_promoter_entries (ground truth do seed).
     //   'fechamento' (jun+)    -> monthly_closing_entries + linhas ADS, com SRCC.
@@ -166,7 +188,7 @@ export async function GET(req: Request) {
           yearN,
           monthN
         );
-        return NextResponse.json({ ...payload, proposalRows: cmsRows, proposalSource });
+        return NextResponse.json({ ...payload, proposalRows: cmsRows, proposalSource, debitRows, debitQueue });
       }
       // regime === 'fechamento'
       proposalSource = "fechamento";
@@ -176,10 +198,10 @@ export async function GET(req: Request) {
         yearN,
         monthN
       );
-      return NextResponse.json({ ...payload, proposalRows: closingRows, proposalSource });
+      return NextResponse.json({ ...payload, proposalRows: closingRows, proposalSource, debitRows, debitQueue });
     }
 
-    return NextResponse.json({ ...payload, proposalSource });
+    return NextResponse.json({ ...payload, proposalSource, debitRows, debitQueue });
   } catch (error) {
     return apiGuardErrorResponse(error);
   }
@@ -585,6 +607,61 @@ export async function POST(req: Request) {
         mantidas,
         total_origem: rows.length,
       });
+    }
+
+    // FRENTE DÉBITOS — cadastro MANUAL (gera o plano + N parcelas).
+    if (action === "debit_upsert") {
+      const promoterId = String(body.promoterId || "");
+      const debitType = String(body.debitType || "").trim();
+      const totalAmount = toNumber(body.totalAmount);
+      const installmentsTotal = Math.max(1, toNumber(body.installmentsTotal) || 1);
+      const startYear = Number(body.startYear);
+      const startMonth = Number(body.startMonth);
+      const companyId = body.companyId ? String(body.companyId) : null;
+      if (!promoterId || !debitType || totalAmount <= 0 || !startYear || !startMonth) {
+        return NextResponse.json(
+          { error: "Informe promotor, tipo, valor total e competencia inicial." },
+          { status: 400 }
+        );
+      }
+      const res = await createManualDebit(supabase, {
+        promoterId,
+        companyId,
+        debitType,
+        totalAmount,
+        installmentsTotal,
+        startYear,
+        startMonth,
+        notes: body.notes ? String(body.notes) : null,
+        createdBy: auditActor,
+      });
+      clearPromoterReadCaches();
+      await writeAudit(
+        "Cadastro de debito manual do promotor",
+        { promoter_id: promoterId, debit_type: debitType, total: totalAmount, parcelas: installmentsTotal },
+        auditActor
+      );
+      return NextResponse.json({ success: true, ...res });
+    }
+
+    // FRENTE DÉBITOS — atribui um estorno da FILA (MASTER/ADS) ao promotor.
+    if (action === "debit_assign") {
+      const assignmentId = String(body.assignmentId || "");
+      const promoterId = String(body.promoterId || "");
+      if (!assignmentId || !promoterId) {
+        return NextResponse.json(
+          { error: "Informe o item da fila e o promotor de destino." },
+          { status: 400 }
+        );
+      }
+      const res = await assignQueuedDebit(supabase, { assignmentId, promoterId, createdBy: auditActor });
+      clearPromoterReadCaches();
+      await writeAudit(
+        "Atribuicao de debito da fila",
+        { assignment_id: assignmentId, promoter_id: promoterId },
+        auditActor
+      );
+      return NextResponse.json({ success: true, ...res });
     }
 
     return NextResponse.json({ error: "Acao invalida." }, { status: 400 });

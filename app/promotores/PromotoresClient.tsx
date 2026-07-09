@@ -125,6 +125,32 @@ type PromoterPayload = {
   promoterOptions: PromoterOption[];
   promoterLookup: PromoterOption[];
   companies: CompanyOption[];
+  debitRows?: DebitRow[];
+  debitQueue?: DebitQueueRow[];
+};
+
+// FRENTE DÉBITOS — detalhe dos débitos do promotor + fila de atribuição.
+type DebitRow = {
+  id: string;
+  kind: string;
+  debit_type: string;
+  total_amount: number;
+  installments_total: number;
+  status: string;
+  parcela_mes: number;
+  installment_number: number | null;
+  parcela_status: string | null;
+  desceu: number;
+  falta: number;
+  sources: Array<{ operation: string | null; estorno_amount: number; resolved_via: string | null }>;
+};
+type DebitQueueRow = {
+  id: string;
+  operation: string;
+  source_kind: string;
+  estorno_amount: number;
+  chave_j: string | null;
+  debit_type: string;
 };
 
 const emptyPayload: PromoterPayload = {
@@ -155,6 +181,8 @@ const emptyPayload: PromoterPayload = {
   promoterOptions: [],
   promoterLookup: [],
   companies: [],
+  debitRows: [],
+  debitQueue: [],
 };
 
 export default function PromotoresPage() {
@@ -206,6 +234,15 @@ function PromotoresFullPage() {
   const [savingAgreement, setSavingAgreement] = useState(false);
   const [savingDiscount, setSavingDiscount] = useState(false);
   const [deletingDiscountId, setDeletingDiscountId] = useState("");
+  // FRENTE DÉBITOS — cadastro manual + atribuição da fila.
+  const [debitForm, setDebitForm] = useState({
+    debitType: "ADIANTAMENTO",
+    totalAmount: "",
+    installmentsTotal: "1",
+    notes: "",
+  });
+  const [savingDebit, setSavingDebit] = useState(false);
+  const [assignTargets, setAssignTargets] = useState<Record<string, string>>({});
   const [proposalTargets, setProposalTargets] = useState<Record<string, string>>({});
   const [proposalReasons, setProposalReasons] = useState<Record<string, string>>({});
   const [movingProposalId, setMovingProposalId] = useState("");
@@ -564,6 +601,66 @@ function PromotoresFullPage() {
       setError(err.message || "Erro ao salvar desconto.");
     } finally {
       setSavingDiscount(false);
+    }
+  }
+
+  // FRENTE DÉBITOS — cadastro manual (gera N parcelas).
+  async function handleDebitSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      setSavingDebit(true);
+      setError("");
+      setNotice("");
+      const [year, month] = (selectedKey || data.selectedPeriod.key || "").split("-");
+      const selectedSummary = data.summaryRows.find((row) => row.promoter_id === promoterId);
+      const response = await fetch("/api/promotores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "debit_upsert",
+          promoterId,
+          companyId: selectedSummary?.company_id || null,
+          debitType: debitForm.debitType,
+          totalAmount: parseBrazilianNumber(debitForm.totalAmount),
+          installmentsTotal: parseBrazilianNumber(debitForm.installmentsTotal) || 1,
+          startYear: Number(year),
+          startMonth: Number(month),
+          notes: debitForm.notes || null,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Erro ao cadastrar débito.");
+      setDebitForm({ debitType: "ADIANTAMENTO", totalAmount: "", installmentsTotal: "1", notes: "" });
+      setReloadKey((value) => value + 1);
+      setNotice(`Débito cadastrado (${payload.parcelas} parcela(s)).`);
+    } catch (err: any) {
+      setError(err.message || "Erro ao cadastrar débito.");
+    } finally {
+      setSavingDebit(false);
+    }
+  }
+
+  // FRENTE DÉBITOS — atribui um item da fila ao promotor escolhido.
+  async function handleDebitAssign(assignmentId: string) {
+    const toPromoterId = assignTargets[assignmentId] || "";
+    if (!toPromoterId) {
+      setError("Escolha o promotor para atribuir o estorno.");
+      return;
+    }
+    try {
+      setError("");
+      setNotice("");
+      const response = await fetch("/api/promotores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "debit_assign", assignmentId, promoterId: toPromoterId }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Erro ao atribuir estorno.");
+      setReloadKey((value) => value + 1);
+      setNotice("Estorno atribuído e débito criado.");
+    } catch (err: any) {
+      setError(err.message || "Erro ao atribuir estorno.");
     }
   }
 
@@ -1608,6 +1705,155 @@ function PromotoresFullPage() {
                 </div>
               </div>
             </div>
+
+            {/* FRENTE DÉBITOS — débitos do mês (bruto − débitos = líquido) + cadastro manual */}
+            {promoterId ? (
+              <div className="card">
+                <div className="card-head">
+                  <div>
+                    <h2>Débitos do mês</h2>
+                    <p className="csub">
+                      Bruto − débitos = líquido. Automáticos (cancelamento de seguro) trazem a origem
+                      (operações); manuais são parcelados com saldo.
+                    </p>
+                  </div>
+                  <span className="chip soft">{(data.debitRows ?? []).length} débito(s)</span>
+                </div>
+                <div className="dk">
+                  <div className="dkc">
+                    <p className="k">Bruto</p>
+                    <div className="v num">{formatCurrency(selectedPromoterSummary?.final_commission_value)}</div>
+                  </div>
+                  <div className="dkc">
+                    <p className="k">Débitos (mês)</p>
+                    <div className="v num neg">
+                      −{formatCurrency((data.debitRows ?? []).reduce((a, d) => a + d.parcela_mes, 0))}
+                    </div>
+                  </div>
+                  <div className="dkc hl">
+                    <p className="k">Líquido</p>
+                    <div className="v num">{formatCurrency(selectedPromoterSummary?.payable_commission_value)}</div>
+                  </div>
+                </div>
+                {(data.debitRows ?? []).length > 0 ? (
+                  <div className="scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th className="l">Tipo</th>
+                          <th className="l">Origem / obs</th>
+                          <th>Parcela</th>
+                          <th>Valor no mês</th>
+                          <th>Saldo (falta)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(data.debitRows ?? []).map((d) => (
+                          <tr key={d.id}>
+                            <td className="l">
+                              {d.debit_type} <small>{d.kind === "AUTO" ? "auto" : "manual"}</small>
+                            </td>
+                            <td className="l">
+                              {d.sources.length
+                                ? d.sources.map((sc) => sc.operation).filter(Boolean).join(" + ")
+                                : "—"}
+                            </td>
+                            <td className="num">
+                              {d.installment_number ?? 1}/{d.installments_total}
+                            </td>
+                            <td className="num neg">−{formatCurrency(d.parcela_mes)}</td>
+                            <td className="num">{formatCurrency(d.falta)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="state">Nenhum débito neste mês.</div>
+                )}
+                <form onSubmit={handleDebitSubmit} style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end", marginTop: 12 }}>
+                  <div className="field">
+                    <label>Tipo</label>
+                    <select value={debitForm.debitType} onChange={(e) => setDebitForm((c) => ({ ...c, debitType: e.target.value }))}>
+                      <option value="ADIANTAMENTO">Adiantamento</option>
+                      <option value="PASSAGEM">Passagem</option>
+                      <option value="LIQUIDACAO_ANTECIPADA">Liquidação antecipada</option>
+                      <option value="CERTIFICACAO">Certificação</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Valor total (R$)</label>
+                    <input value={debitForm.totalAmount} onChange={(e) => setDebitForm((c) => ({ ...c, totalAmount: e.target.value }))} placeholder="0,00" />
+                  </div>
+                  <div className="field">
+                    <label>Nº parcelas</label>
+                    <input value={debitForm.installmentsTotal} onChange={(e) => setDebitForm((c) => ({ ...c, installmentsTotal: e.target.value }))} />
+                  </div>
+                  <div className="field">
+                    <label>Obs</label>
+                    <input value={debitForm.notes} onChange={(e) => setDebitForm((c) => ({ ...c, notes: e.target.value }))} placeholder="opcional" />
+                  </div>
+                  <button className="tinybtn" type="submit" disabled={savingDebit}>
+                    {savingDebit ? "Salvando…" : "Cadastrar débito"}
+                  </button>
+                </form>
+              </div>
+            ) : null}
+
+            {/* FRENTE DÉBITOS — FILA de atribuição (estornos MASTER/ADS sem dono) */}
+            {(data.debitQueue ?? []).length > 0 ? (
+              <div className="card">
+                <div className="card-head">
+                  <div>
+                    <h2>Fila de atribuição de estornos</h2>
+                    <p className="csub">
+                      Cancelamentos sem dono (chave master ou ADS). Atribua ao promotor para gerar o débito.
+                    </p>
+                  </div>
+                  <span className="chip soft">{(data.debitQueue ?? []).length} pendente(s)</span>
+                </div>
+                <div className="scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th className="l">Operação</th>
+                        <th className="l">Origem</th>
+                        <th className="l">Chave J</th>
+                        <th>Estorno</th>
+                        <th className="l">Atribuir a</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(data.debitQueue ?? []).map((q) => (
+                        <tr key={q.id}>
+                          <td className="l">{q.operation}</td>
+                          <td className="l">{q.source_kind === "DAILY_CANCEL" ? "ADS" : "Fechamento"}</td>
+                          <td className="l">{q.chave_j || "—"}</td>
+                          <td className="num neg">−{formatCurrency(q.estorno_amount)}</td>
+                          <td className="l">
+                            <select
+                              value={assignTargets[q.id] || ""}
+                              onChange={(e) => setAssignTargets((c) => ({ ...c, [q.id]: e.target.value }))}
+                            >
+                              <option value="">Selecione…</option>
+                              {data.promoterLookup.map((p) => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>
+                            <button className="tinybtn" type="button" onClick={() => handleDebitAssign(q.id)} disabled={!assignTargets[q.id]}>
+                              Atribuir
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
 
             <div className="card">
               <div className="card-head">
