@@ -590,7 +590,14 @@ export async function fetchPromoterShareData(
   supabase: any,
   promoterIds: string[],
   year: number,
-  month: number
+  month: number,
+  // ESCOPO DE EMPRESA — company_ids que entram na produção/volume que alimenta
+  // monthlyVolumesMap e frenteCProductionMap (escala ENTRANTE + Frente C). O
+  // consolidador RR passa os company_ids do Grupo RR; o de ADS passa a ADS. Sem
+  // escopo => soma TODAS as empresas (comportamento antigo) + AVISO — evita que
+  // produção de outra empresa (ex: ADS) vaze na escala do promotor. A meta
+  // CONSOLIDADA RR+ADS é aplicada explicitamente pelo orquestrador (BBTS-2d).
+  scopeCompanyIds?: string[]
 ): Promise<{
   profilesMap: Map<string, SharePromoterProfile>;
   scalesMap: Map<string, ShareScaleWithTiers>;
@@ -685,12 +692,22 @@ export async function fetchPromoterShareData(
       ? `${year + 1}-01-01`
       : `${year}-${String(month + 1).padStart(2, "0")}-01`;
 
-  const { data: volumeRows } = await supabase
+  let volumeQuery = supabase
     .from("daily_production_records")
     .select("assigned_promoter_id, net_value, status, cancellation_date, is_srcc_restricted")
     .in("assigned_promoter_id", promoterIds)
     .gte("movement_date", startDate)
     .lt("movement_date", endDate);
+  // ESCOPO: só as empresas do consolidador chamador — impede que produção de
+  // outra empresa (ex: ADS) infle o volume/produção da escala do promotor.
+  if (scopeCompanyIds && scopeCompanyIds.length > 0) {
+    volumeQuery = volumeQuery.in("company_id", scopeCompanyIds);
+  } else {
+    console.warn(
+      "[fetchPromoterShareData] SEM escopo de empresa — monthlyVolumesMap/frenteCProductionMap somam TODAS as empresas (RR+ADS podem se misturar). Passe scopeCompanyIds."
+    );
+  }
+  const { data: volumeRows } = await volumeQuery;
 
   for (const row of volumeRows ?? []) {
     const r = row as {

@@ -210,7 +210,15 @@ export async function consolidateMonthlyFromClosing(
   const efetivos = [
     ...new Set(contratos.map((c) => (c as any).__pid).filter(Boolean)),
   ] as string[];
-  const share = await fetchPromoterShareData(supabase, efetivos, year, month);
+  // ESCOPO DE EMPRESA: a produção/volume que decide a escala do promotor
+  // (monthlyVolumesMap/frenteCProductionMap) deve considerar SÓ o Grupo RR — sem
+  // isso, a produção ADS atribuída no diário vazava na escala (bug Maria Letícia).
+  // A meta CONSOLIDADA RR+ADS é aplicada explicitamente pelo BBTS-2d.
+  const rrCompanies = await fetchAllPaged<any>(() =>
+    supabase.from("companies").select("id").eq("group_name", "Grupo RR")
+  );
+  const rrCompanyIds = rrCompanies.map((c) => c.id as string);
+  const share = await fetchPromoterShareData(supabase, efetivos, year, month, rrCompanyIds);
 
   // Nomes p/ carve-out Aldalene INSS.
   const nameById = new Map<string, string>();
