@@ -4,8 +4,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // closingMonthly — consolidação do PMR a partir do FECHAMENTO (monthly_closing_
 // entries, aba "A Vista"). Função IRMÃ de consolidateMonthlyFromCms (cmsMonthly.ts):
 // mesma tabela (promoter_monthly_results), mesmo upsert onConflict
-// (promoter_id,year,month), mesma forma de retorno. A diferença é a FONTE e a
-// RÉGUA — aqui o valor nasce do fechamento, não do cms.
+// (promoter_id,year,month,company_id — constraint por empresa, p/ RR e BBTS
+// coexistirem no mesmo promotor/competência), mesma forma de retorno. A diferença
+// é a FONTE e a RÉGUA — aqui o valor nasce do fechamento, não do cms.
 //
 // RÉGUA (validada contra o gabarito RR puro — sem chave BBTS — jun/2026: gap 0,3%):
 //   à vista  : Σ(COMISSÃO PF do contrato) × acordo, onde acordo = resolve-
@@ -14,12 +15,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //   herança  : contrato de chave MASTER herda o assigned_promoter_id do DIÁRIO
 //              (contract_number → daily.proposal_number, MESMA company_id,
 //              competência do mês). Chave INDIVIDUAL casa direto.
-//   seguro   : Σ(COMISSÃO SEGURO) × escala de penetração, somando DUAS fontes com
-//              a MESMA régua — (a) o seguro EMBUTIDO nas linhas CASH e (b) a aba
-//              avulsa INSURANCE/"A Vista" (tem CHAVE J, COMISSÃO SEGURO e %
-//              PENETRAÇÃO). O avulso é atribuído por CHAVE J individual ou por
-//              herança master (contrato → diário). Linhas avulsas SEM chave J
-//              ficam de fora (logadas).
+//   seguro   : Σ(COMISSÃO SEGURO empresa) × share do repasse. O share vem da
+//              PENETRAÇÃO INDIVIDUAL do promotor (líquido_segurado/líquido_total,
+//              "segurado" pelo FLAG PROD.SEGURADA), cortes oficiais 0,11/0,21/0,30
+//              (lib/insurancePenetration). NÃO usa a penetração do GRUPO (era bug).
+//              Soma duas fontes de comissão-empresa — (a) embutido nas linhas CASH
+//              e (b) aba avulsa INSURANCE/"A Vista" (chave individual ou herança
+//              master; sem chave => fora) — e aplica o share UMA vez. O BBTS-2d
+//              pode INJETAR o share (penetração consolidada RR+ADS).
 //   exclusões: chave BBTS (JJ552710) fica FORA (frente BBTS futura); SRCC="Sim"
 //              sai do valor e volta em `restritas` para a UI.
 //
@@ -43,9 +46,9 @@ import {
   readRawPayloadValue,
 } from "./proposalDetailing.ts";
 import {
-  fetchInsuranceSlipTiers,
-  lookupInsuranceShareFromPenetration,
-} from "./insuranceCalculator.ts";
+  individualPenetration,
+  insuranceShareForPenetration,
+} from "./insurancePenetration.ts";
 
 // Chave master BBTS/ADS — excluída desta consolidação (frente futura).
 const BBTS_KEY = "JJ552710";
@@ -148,14 +151,15 @@ type SupabaseLike = SupabaseClient;
 
 type ClosingAgg = {
   companyId: string | null;
-  net: number; // Σ valorLiquido (produção do fechamento)
+  net: number; // Σ valorLiquido (produção do fechamento) = denominador da penetração
+  liquidoSegurado: number; // Σ valorLiquido de contratos com PROD.SEGURADA="Sim" = numerador
   count: number;
   avista: number; // Σ COMISSÃO PF × acordo (com Frente C)
-  seguroEmpresa: number; // Σ COMISSÃO SEGURO EMBUTIDO no CASH (escala aplicada depois, via maxPen)
-  seguroAvulso: number; // seguro da aba INSURANCE/"A Vista", escala JÁ aplicada por linha
-  maxPen: number | null; // maior % penetração do promotor no fechamento
+  // Comissão-EMPRESA de seguro (COMISSÃO SEGURO), BRUTA — o share (individual) é
+  // aplicado UMA vez no final sobre (embutido + avulso).
+  seguroEmpresaEmbutido: number; // Σ COMISSÃO SEGURO do CASH
+  seguroEmpresaAvulso: number; // Σ COMISSÃO SEGURO da aba INSURANCE/"A Vista"
   insuredCount: number;
-  insuredNet: number;
 };
 
 /**
@@ -171,11 +175,24 @@ export async function consolidateMonthlyFromClosing(
     month: number;
     companyId?: string | null;
     promoterId?: string | null;
+    dryRun?: boolean;
+    // ===== INJEÇÕES DO ORQUESTRADOR (BBTS-2d) — produção CONSOLIDADA RR+ADS =====
+    // Ausentes => comportamento RR-puro (cada uma cai no cálculo local).
+    // (1) share de seguro pela penetração CONSOLIDADA RR+ADS.
+    seguroShareByPromoter?: Map<string, number>;
+    // (2) target_status pela meta CONSOLIDADA RR+ADS (coluna do PMR).
+    statusMetaByPromoter?: Map<string, string>;
+    // (3) volume CONSOLIDADO (RR+ADS) da escala ENTRANTE (monthlyVolumesMap).
+    volumeConsolidadoByPromoter?: Map<string, number>;
+    // (3b) produção VÁLIDA CONSOLIDADA (RR+ADS) da Frente C (frenteCProductionMap).
+    //      Separada do volume: ENTRANTE usa TODOS os records; Frente C só válidos.
+    prodConsolidadoByPromoter?: Map<string, number>;
   }
 ) {
   const { year, month } = params;
   const companyId = params.companyId ?? null;
   const promoterId = params.promoterId ?? null;
+  const dryRun = params.dryRun === true;
 
   // 1. Base do fechamento (à vista + seguro embutido; SRCC="Sim" em restritas).
   const base = await loadClosingPromoterBase(supabase, { year, month, companyId });
@@ -201,8 +218,15 @@ export async function consolidateMonthlyFromClosing(
   const efetivos = [
     ...new Set(contratos.map((c) => (c as any).__pid).filter(Boolean)),
   ] as string[];
-  const share = await fetchPromoterShareData(supabase, efetivos, year, month);
-  const tiers = await fetchInsuranceSlipTiers(supabase as any);
+  // ESCOPO DE EMPRESA: a produção/volume que decide a escala do promotor
+  // (monthlyVolumesMap/frenteCProductionMap) deve considerar SÓ o Grupo RR — sem
+  // isso, a produção ADS atribuída no diário vazava na escala (bug Maria Letícia).
+  // A meta CONSOLIDADA RR+ADS é aplicada explicitamente pelo BBTS-2d.
+  const rrCompanies = await fetchAllPaged<any>(() =>
+    supabase.from("companies").select("id").eq("group_name", "Grupo RR")
+  );
+  const rrCompanyIds = rrCompanies.map((c) => c.id as string);
+  const share = await fetchPromoterShareData(supabase, efetivos, year, month, rrCompanyIds);
 
   // Nomes p/ carve-out Aldalene INSS.
   const nameById = new Map<string, string>();
@@ -213,6 +237,13 @@ export async function consolidateMonthlyFromClosing(
     for (const p of proms) nameById.set(p.id, p.name);
   }
 
+  // Volume/produção efetivos p/ a escala: CONSOLIDADO (RR+ADS) quando injetado
+  // pelo orquestrador; senão RR-puro (monthlyVolumesMap / frenteCProductionMap).
+  const volConsol = params.volumeConsolidadoByPromoter;
+  const prodConsol = params.prodConsolidadoByPromoter;
+  const volumeDe = (pid: string) => volConsol?.get(pid) ?? share.monthlyVolumesMap.get(pid) ?? 0;
+  const producaoDe = (pid: string) => prodConsol?.get(pid) ?? share.frenteCProductionMap.get(pid) ?? 0;
+
   // acordo POR CONTRATO — Frente C aplica na faixa 5,80% (escala de repasse) e o
   // acordo base (profile/default) fora dela. isAldaleneInss usa nome + produto.
   function acordoDoContrato(pid: string, c: ClosingContrato): number {
@@ -221,10 +252,10 @@ export async function consolidateMonthlyFromClosing(
       record: { assigned_promoter_id: pid, share_percent_override: null },
       profilesMap: share.profilesMap,
       scalesMap: share.scalesMap,
-      monthlyVolumesMap: share.monthlyVolumesMap,
+      monthlyVolumesMap: new Map([[pid, volumeDe(pid)]]), // ENTRANTE: volume consolidado
       frenteC: {
         goalRepasse: share.goalRepasseMap.get(pid) ?? null,
-        productionValue: share.frenteCProductionMap.get(pid) ?? 0,
+        productionValue: producaoDe(pid), // Frente C: produção consolidada
         target1Value: tgt?.meta1 ?? 0,
         target2Value: tgt?.meta2 ?? 0,
         isAldaleneInss:
@@ -245,13 +276,12 @@ export async function consolidateMonthlyFromClosing(
       a = {
         companyId: companyId ?? null,
         net: 0,
+        liquidoSegurado: 0,
         count: 0,
         avista: 0,
-        seguroEmpresa: 0,
-        seguroAvulso: 0,
-        maxPen: null,
+        seguroEmpresaEmbutido: 0,
+        seguroEmpresaAvulso: 0,
         insuredCount: 0,
-        insuredNet: 0,
       };
       agg.set(pid, a);
     }
@@ -267,27 +297,23 @@ export async function consolidateMonthlyFromClosing(
     }
     const a = getAgg(pid, c.companyId ?? null);
     a.avista += c.comissaoEmpresaAvista * acordoDoContrato(pid, c);
-    a.seguroEmpresa += c.comissaoSeguro;
-    a.net += c.valorLiquido;
+    a.seguroEmpresaEmbutido += c.comissaoSeguro;
+    a.net += c.valorLiquido; // denominador da penetração (SRCC já fora — restritas separadas)
     a.count += 1;
-    if (c.comissaoSeguro > 0 || c.valorSeguro > 0) {
+    // "Segurado" pelo FLAG oficial PROD.SEGURADA (não insurance_value>0).
+    if (c.prodSegurada) {
       a.insuredCount += 1;
-      a.insuredNet += c.valorLiquido;
-    }
-    if (c.penetracao != null && (a.maxPen == null || c.penetracao > a.maxPen)) {
-      a.maxPen = c.penetracao;
+      a.liquidoSegurado += c.valorLiquido; // numerador da penetração
     }
   }
 
-  // 5b. Seguro AVULSO — aba INSURANCE/"A Vista" (194 linhas em jun/2026). Mesma
-  //     escala de penetração do embutido; atribuição por CHAVE J individual ou
-  //     herança master (contrato → daily.proposal_number). Sem chave => fora.
-  //     Exclui BBTS (JJ552710). NÃO confundir com INSURANCE/"Seguro" (estornos,
-  //     sem chave J) — essa segue como pendência documentada no cabeçalho.
+  // 5b. Seguro AVULSO — aba INSURANCE/"A Vista". Acumula a COMISSÃO SEGURO BRUTA
+  //     (o share individual é aplicado no final, junto com o embutido). Atribui
+  //     por CHAVE J individual ou herança master; exclui BBTS. A aba
+  //     INSURANCE/"Seguro" (estornos, sem chave) segue como pendência.
   const insDiag = await addSeguroAvulso(
     supabase,
     { year, month, companyId },
-    tiers,
     getAgg
   );
 
@@ -311,6 +337,10 @@ export async function consolidateMonthlyFromClosing(
   const table: Array<{
     promoter_id: string;
     promoter_name: string;
+    // Diagnóstico de seguro para o dry-run/conferência.
+    penetracao_individual: number; // decimal 0..1
+    seguro_share: number; // 0..1 aplicado
+    seguro_empresa: number; // comissão-empresa (embutido + avulso), BRUTA
     production_commission_value: number;
     insurance_commission_value: number;
     final_commission_value: number;
@@ -321,21 +351,21 @@ export async function consolidateMonthlyFromClosing(
   for (const [pid, a] of agg) {
     if (promoterId && pid !== promoterId) continue;
 
-    const insuranceShare = lookupInsuranceShareFromPenetration(
-      tiers,
-      a.maxPen ?? 0
-    );
+    // PENETRAÇÃO INDIVIDUAL (líquido segurado / líquido total) + cortes oficiais.
+    // O share pode ser INJETADO pelo BBTS-2d (penetração consolidada RR+ADS).
+    const penetracao = individualPenetration(a.liquidoSegurado, a.net);
+    const seguroShare =
+      params.seguroShareByPromoter?.get(pid) ?? insuranceShareForPenetration(penetracao);
+    const seguroEmpresa = a.seguroEmpresaEmbutido + a.seguroEmpresaAvulso;
+
     const productionCommission = a.avista;
-    // seguro = embutido (Σ COMISSÃO SEGURO do CASH × escala do maxPen) + avulso
-    // (INSURANCE/"A Vista", escala já aplicada por linha em addSeguroAvulso).
-    const insuranceCommission = a.seguroEmpresa * insuranceShare + a.seguroAvulso;
+    const insuranceCommission = seguroEmpresa * seguroShare;
     const finalCommission = productionCommission + insuranceCommission;
 
     const t = targetByPromoter.get(pid);
     const targetValue = t ? toNumber(t.meta) : 0;
     const target1Value = t ? toNumber(t.meta_1) : 0;
     const target2Value = t ? toNumber(t.meta_2) : 0;
-    const penetrationPct = a.maxPen != null ? a.maxPen * 100 : 0;
 
     upserts.push({
       promoter_id: pid,
@@ -345,8 +375,8 @@ export async function consolidateMonthlyFromClosing(
       production_value: a.net,
       proposal_count: a.count,
       insured_proposal_count: a.insuredCount,
-      insured_production_value: a.insuredNet,
-      insurance_penetration_percent: penetrationPct,
+      insured_production_value: a.liquidoSegurado,
+      insurance_penetration_percent: penetracao * 100, // INDIVIDUAL, não a do grupo
       target_value: targetValue,
       target_1_value: target1Value,
       target_2_value: target2Value,
@@ -356,7 +386,10 @@ export async function consolidateMonthlyFromClosing(
       agreement_adjustment_value: 0,
       discount_value: 0,
       final_commission_value: finalCommission,
-      target_status: resolveTargetStatus(a.net, targetValue, target1Value, target2Value),
+      // Meta CONSOLIDADA (RR+ADS) injetada pelo orquestrador; senão RR-pura.
+      target_status:
+        params.statusMetaByPromoter?.get(pid) ??
+        resolveTargetStatus(a.net, targetValue, target1Value, target2Value),
       source: "fechamento",
       calculated_at: nowIso,
     });
@@ -364,6 +397,9 @@ export async function consolidateMonthlyFromClosing(
     table.push({
       promoter_id: pid,
       promoter_name: nameById.get(pid) ?? "(promotor desconhecido)",
+      penetracao_individual: penetracao,
+      seguro_share: seguroShare,
+      seguro_empresa: seguroEmpresa,
       production_commission_value: productionCommission,
       insurance_commission_value: insuranceCommission,
       final_commission_value: finalCommission,
@@ -371,10 +407,11 @@ export async function consolidateMonthlyFromClosing(
     });
   }
 
-  if (upserts.length > 0) {
+  // dryRun: NÃO grava (só calcula e devolve p/ conferência).
+  if (!dryRun && upserts.length > 0) {
     const { error } = await supabase
       .from("promoter_monthly_results")
-      .upsert(upserts, { onConflict: "promoter_id,year,month" });
+      .upsert(upserts, { onConflict: "promoter_id,year,month,company_id" });
     if (error) throw error;
   }
 
@@ -383,7 +420,9 @@ export async function consolidateMonthlyFromClosing(
   );
 
   return {
+    dry_run: dryRun,
     promoters_calculated: upserts.length,
+    gravadas: dryRun ? 0 : upserts.length,
     table,
     // Diagnóstico / UI futura.
     contratos_processados: contratos.length,
@@ -391,7 +430,7 @@ export async function consolidateMonthlyFromClosing(
     orfaos_sem_dono: orfaosSemDono,
     restritas, // SRCC="Sim": fora do valor, para a UI listar depois.
     bbts_excluidos: base.contratos.length - contratos.length,
-    seguro_avulso: insDiag, // { linhas, atribuidas, master_herdadas, sem_chave, bbts, total }
+    seguro_avulso: insDiag,
   };
 }
 
@@ -399,20 +438,19 @@ export async function consolidateMonthlyFromClosing(
 // normaliza acento/caixa e apara espaços — cobre "COMISSÃO SEGURO", " % PENETRAÇÃO ").
 const A_CHAVE_J = ["CHAVE J", "LOGIN", "USUARIO"];
 const A_COMISSAO_SEGURO = ["COMISSAO SEGURO", "COMISSÃO SEGURO"];
-const A_PENETRACAO = ["% PENETRACAO", "% PENETRAÇÃO", "PENETRACAO", "PENETRAÇÃO"];
 const A_CONTRATO = ["CONTRATO", "NUMERO CONTRATO", "NÚMERO CONTRATO"];
 
 /**
- * Soma ao seguro de cada promotor o AVULSO da aba INSURANCE/"A Vista", pela MESMA
- * escala de penetração do embutido. Atribui por CHAVE J (INDIVIDUAL) ou por
- * herança master (contrato → daily.proposal_number, mesma empresa, competência).
- * Linhas sem chave resolvível ficam fora (contabilizadas). Exclui BBTS. Muta o
- * agregado via getAgg (cria entrada nova se o promotor só tiver seguro avulso).
+ * Acumula em cada promotor a COMISSÃO SEGURO BRUTA da aba INSURANCE/"A Vista"
+ * (em seguroEmpresaAvulso). O share (penetração individual) é aplicado UMA vez no
+ * final, junto com o embutido — por isso NÃO multiplica por share aqui. Atribui
+ * por CHAVE J (INDIVIDUAL) ou herança master (contrato → daily.proposal_number).
+ * Sem chave resolvível => fora. Exclui BBTS. Muta o agregado via getAgg (cria
+ * entrada nova se o promotor só tiver seguro avulso).
  */
 async function addSeguroAvulso(
   supabase: SupabaseLike,
   params: { year: number; month: number; companyId: string | null },
-  tiers: Awaited<ReturnType<typeof fetchInsuranceSlipTiers>>,
   getAgg: (pid: string, companyId: string | null) => ClosingAgg
 ): Promise<{
   linhas: number;
@@ -420,7 +458,7 @@ async function addSeguroAvulso(
   master_herdadas: number;
   sem_chave: number;
   bbts: number;
-  total: number;
+  total: number; // Σ COMISSÃO SEGURO BRUTA atribuída (antes do share)
 }> {
   const { year, month, companyId } = params;
 
@@ -489,11 +527,9 @@ async function addSeguroAvulso(
     const comSeg =
       toNumber(readRawPayloadValue(r.metadata || {}, A_COMISSAO_SEGURO)) ||
       toNumber(r.commission_value);
-    const pen = toNumber(readRawPayloadValue(r.metadata || {}, A_PENETRACAO));
-    const valor = comSeg * lookupInsuranceShareFromPenetration(tiers, pen);
     const a = getAgg(pid, r.company_id ?? null);
-    a.seguroAvulso += valor;
-    total += valor;
+    a.seguroEmpresaAvulso += comSeg; // BRUTO — share individual aplicado no final
+    total += comSeg;
     atribuidas += 1;
   }
 

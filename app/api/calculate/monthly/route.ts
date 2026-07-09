@@ -14,6 +14,7 @@ import {
   type InsuranceShareTier,
   type InsuranceSlipRule,
 } from "@/lib/insuranceCalculator";
+import { insuranceShareForPenetration } from "@/lib/insurancePenetration";
 import { getPrazoTrp } from "@/lib/prazoTrp";
 import { getProductionWindow } from "@/lib/productionPeriod";
 import {
@@ -952,16 +953,21 @@ export async function POST(req: Request) {
       const penetrationRecords = validRecords.filter(
         isEligibleForInsurancePenetration
       );
+      // FIX penetração: base LÍQUIDO (net_value), não BRUTO (gross_value). O
+      // oficial Promotiva calcula sobre a produção líquida (excl SRCC, já em
+      // validRecords). BRUTO empurrava a penetração p/ a faixa de baixo.
       const penetrationDenominator = penetrationRecords.reduce(
-        (sum: number, record: any) => sum + toNumber(record.gross_value),
+        (sum: number, record: any) => sum + toNumber(record.net_value),
         0
       );
+      // TODO: "segurado" oficial é o FLAG PROD.SEGURADA; enquanto o campo
+      // equivalente na diária não é confirmado, mantém insurance_value>0.
       const penetrationNumerator = penetrationRecords
         .filter(
           (record: any) => toNumber(record.insurance_value) > 0 || record.has_insurance
         )
         .reduce(
-          (sum: number, record: any) => sum + toNumber(record.gross_value),
+          (sum: number, record: any) => sum + toNumber(record.net_value),
           0
         );
 
@@ -1293,8 +1299,9 @@ export async function POST(req: Request) {
       // mas grava o valor atual (Promotiva total) — preservacao explicita
       // ate Etapa D rodar o recalculo retroativo.
       const insurancePenetrationDecimal = insurancePenetrationPercent / 100;
-      const insuranceShareApplied = lookupInsuranceShareFromPenetration(
-        insuranceShareTiers,
+      // Cortes oficiais 0,11/0,21/0,30 via lib única (share_scale_tier do banco
+      // ainda tem 0,10/0,20/0,30 — migration pendente; a lib não lê o banco).
+      const insuranceShareApplied = insuranceShareForPenetration(
         insurancePenetrationDecimal
       );
       const insuranceCommissionValuePromotorProjected =
@@ -1349,7 +1356,7 @@ export async function POST(req: Request) {
       const { error } = await supabase
         .from("promoter_monthly_results")
         .upsert(promoterUpserts, {
-          onConflict: "promoter_id,year,month",
+          onConflict: "promoter_id,year,month,company_id",
         });
 
       if (error) throw error;

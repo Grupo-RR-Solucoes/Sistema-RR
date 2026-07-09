@@ -89,7 +89,7 @@ function padL(s: string | number, n: number): string {
       padL(brl(tI), W.val) +
       padL(brl(tF), W.val)
   );
-  console.log(`\nGRAVADO em promoter_monthly_results (source='fechamento', onConflict promoter_id,year,month).`);
+  console.log(`\nGRAVADO em promoter_monthly_results (source='fechamento', onConflict promoter_id,year,month,company_id).`);
 })().catch((e) => {
   console.error("ERRO:", e && e.message ? e.message : e);
   process.exit(1);
