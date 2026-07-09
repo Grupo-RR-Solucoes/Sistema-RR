@@ -43,14 +43,21 @@ async function fetchAllPaged<T = any>(baseQueryBuilder: () => any): Promise<T[]>
   return all;
 }
 
-// MES FECHADO = existe cms_imports COMPLETED para TODAS as empresas ativas na
-// competencia. Pre-migration (tabela ausente) ou erro => trata como ABERTO,
-// preservando o caminho diario.
-export async function detectClosedMonth(
+// REGIME da competencia — decide a FONTE de leitura da tela, com PRECEDENCIA:
+//   'cms'        (jan-mai): cms_imports COMPLETED cobrindo TODAS as empresas ativas.
+//   'fechamento' (jun+)   : monthly_closing_imports COMPLETED cobrindo as ativas.
+//   'open'                : nenhum dos dois => le o daily ao vivo.
+// A ORDEM importa: jan-mai tem cms E fechamento; a precedencia cms > fechamento
+// garante que aqueles meses continuem lendo o SEED do cms (nao recalculam pelo
+// fechamento). ADS e active=false => NAO entra no gatilho (as 4 RR bastam).
+// Pre-migration (tabela ausente) / erro => degrada para 'open' (caminho diario).
+export type MonthRegime = "cms" | "fechamento" | "open";
+
+export async function detectMonthRegime(
   supabase: SupabaseClient,
   year: number,
   month: number
-): Promise<boolean> {
+): Promise<MonthRegime> {
   const { data: active, error: companiesError } = await supabase
     .from("companies")
     .select("id")
@@ -58,19 +65,44 @@ export async function detectClosedMonth(
   if (companiesError) throw companiesError;
 
   const totalActive = (active || []).length;
-  if (totalActive === 0) return false;
+  if (totalActive === 0) return "open";
 
-  const { data: imports, error } = await supabase
+  // 1o) cms (jan-mai) — precedencia sobre o fechamento.
+  const { data: cmsImports, error: cmsError } = await supabase
     .from("cms_imports")
     .select("company_id")
     .eq("prod_year", year)
     .eq("prod_month", month)
     .eq("status", "COMPLETED");
+  if (!cmsError) {
+    const covered = new Set((cmsImports || []).map((row: any) => row.company_id));
+    if (covered.size >= totalActive) return "cms";
+  }
 
-  if (error) return false; // tabela ausente / erro => mes aberto (defensivo)
+  // 2o) fechamento (jun+) — monthly_closing_imports COMPLETED.
+  const { data: closingImports, error: closingError } = await supabase
+    .from("monthly_closing_imports")
+    .select("company_id")
+    .eq("year", year)
+    .eq("month", month)
+    .eq("status", "COMPLETED");
+  if (!closingError) {
+    const covered = new Set((closingImports || []).map((row: any) => row.company_id));
+    if (covered.size >= totalActive) return "fechamento";
+  }
 
-  const covered = new Set((imports || []).map((row: any) => row.company_id));
-  return covered.size >= totalActive;
+  return "open";
+}
+
+// MES FECHADO = regime != 'open' (cms OU fechamento cobrem as ativas). Assinatura
+// preservada para os chamadores existentes (route /promotores usa detectMonthRegime
+// diretamente para escolher a fonte; dre/projecao seguem so com o boolean).
+export async function detectClosedMonth(
+  supabase: SupabaseClient,
+  year: number,
+  month: number
+): Promise<boolean> {
+  return (await detectMonthRegime(supabase, year, month)) !== "open";
 }
 
 // Consolida o PMR do mes fechado REPRODUZINDO o cms:

@@ -17,7 +17,30 @@ type CompanyRow = {
   id: string;
   name: string;
   cnpj: string;
+  group_name?: string | null;
 };
+
+// VIRADA DE TELA — sentinelas de GRUPO no seletor de Empresa (mes fechado).
+// Individuais continuam sendo o UUID da company; "" = todas (consolidado).
+export const COMPANY_SCOPE_GROUP_RR = "grupo:rr";
+export const COMPANY_SCOPE_GROUP_ADS = "grupo:ads";
+
+// Resolve o parametro companyId em um conjunto de company_ids do escopo.
+// null => sem restricao (consolidado). Grupos via group_name (RR = 'Grupo RR',
+// ADS = 'BBTS'); individual = [uuid].
+function resolveCompanyScope(
+  companyIdParam: string,
+  companies: CompanyRow[]
+): { companyIds: string[] | null } {
+  if (!companyIdParam) return { companyIds: null };
+  if (companyIdParam === COMPANY_SCOPE_GROUP_RR) {
+    return { companyIds: companies.filter((c) => c.group_name === "Grupo RR").map((c) => c.id) };
+  }
+  if (companyIdParam === COMPANY_SCOPE_GROUP_ADS) {
+    return { companyIds: companies.filter((c) => c.group_name === "BBTS").map((c) => c.id) };
+  }
+  return { companyIds: [companyIdParam] };
+}
 
 type PromoterRow = {
   id: string;
@@ -61,6 +84,7 @@ type MonthlyResultRow = {
   final_commission_value?: number | null;
   discount_value?: number | null;
   target_status?: string | null;
+  source?: string | null;
 };
 
 type DiscountRow = {
@@ -444,32 +468,38 @@ export async function loadPromoterAnalyticsBase(
     // ao vivo). Quem decide é o CHAMADOR (via detectClosedMonth). Default sem
     // closed = comportamento anterior (CALCULATED) — preserva dre/projecao.
     closed?: boolean;
+    // VIRADA DE TELA — fonte do mês FECHADO: 'cms' (jan-mai, seed) ou 'fechamento'
+    // (jun+). PRESENTE => caminho CONSOLIDADO: soma as linhas do PMR por promotor no
+    // escopo (sem filtro = fechamento+bbts; grupo/empresa = só as do escopo), em vez
+    // do .find() de UMA linha. AUSENTE => comportamento anterior (dre/projecao intactos).
+    closedSource?: "cms" | "fechamento";
   }
 ) {
   const yearParam = filters?.year;
   const monthParam = filters?.month;
   const companyId = filters?.companyId || "";
+  const closedSource = filters?.closedSource;
 
-  const [companies, promoters, jKeys, targets, monthlyResults, discounts, agreements, records, insuranceSlipRules] =
+  // companies PRIMEIRO — necessário para resolver o escopo de grupo (Grupo RR / ADS)
+  // antes de escopar o daily. Os promotores são buscados SEM filtro de empresa: no
+  // fechado a linha vem do PMR (um promotor ADS pode ter home RR), e o recorte por
+  // escopo acontece em filteredSummaryRows / na agregação do PMR.
+  const companies = await fetchAllRows<CompanyRow>(() =>
+    supabase
+      .from("companies")
+      .select("id, name, cnpj, group_name")
+      .order("name", { ascending: true })
+  );
+  const scope = resolveCompanyScope(companyId, companies);
+
+  const [promoters, jKeys, targets, monthlyResults, discounts, agreements, records, insuranceSlipRules] =
     await Promise.all([
-      fetchAllRows<CompanyRow>(() =>
+      fetchAllRows<PromoterRow>(() =>
         supabase
-          .from("companies")
-          .select("id, name, cnpj")
-          .order("name", { ascending: true })
-      ),
-      fetchAllRows<PromoterRow>(() => {
-        let query = supabase
           .from("promoters")
           .select("id, company_id, name, status, active, is_master, estado, supervisor_user_id")
-          .order("name", { ascending: true });
-
-        if (companyId) {
-          query = query.eq("company_id", companyId);
-        }
-
-        return query;
-      }),
+          .order("name", { ascending: true })
+      ),
       fetchAllRows<JKeyRow>(() => supabase.from("j_keys").select("id, promoter_id")),
       fetchAllRows<TargetRow>(() =>
         supabase
@@ -480,7 +510,7 @@ export async function loadPromoterAnalyticsBase(
         supabase
           .from("promoter_monthly_results")
           .select(
-            "promoter_id, company_id, year, month, production_value, proposal_count, insured_proposal_count, insured_production_value, insurance_penetration_percent, production_commission_value, insurance_commission_value, agreement_adjustment_value, final_commission_value, discount_value, target_status"
+            "promoter_id, company_id, year, month, production_value, proposal_count, insured_proposal_count, insured_production_value, insurance_penetration_percent, production_commission_value, insurance_commission_value, agreement_adjustment_value, final_commission_value, discount_value, target_status, source"
           )
       ),
       fetchAllRows<DiscountRow>(() =>
@@ -505,8 +535,8 @@ export async function loadPromoterAnalyticsBase(
           )
           .order("movement_date", { ascending: false });
 
-        if (companyId) {
-          query = query.eq("company_id", companyId);
+        if (scope.companyIds) {
+          query = query.in("company_id", scope.companyIds);
         }
 
         return query;
@@ -598,17 +628,22 @@ export async function loadPromoterAnalyticsBase(
   // Dashboard (registros PRODUCAO válidos do período, assigned_promoter_id null).
   // Entra só no consolidado do grupo; nenhum promotor individual a recebe.
   let unassignedProduction = 0;
-  for (const record of recordsForPeriod) {
-    if (companyId && record.company_id !== companyId) continue;
-    if (!isEligibleProductionRecord(record)) continue;
-    const commission =
-      toNumber(record.net_value) *
-      getPromoterViewCompanyRate(record, groupProductionValue);
-    companyGrossCommission += commission;
-    if (!record.assigned_promoter_id) {
-      unassignedCompanyGrossCommission += commission;
-      unassignedProduction += toNumber(record.net_value);
-      unassignedCount += 1;
+  // Mês FECHADO consolidado (closedSource): esses agregados vêm do PMR, não do
+  // daily. Zera aqui — senão a produção master do daily (inclui a SRCC não flagada)
+  // vazaria no productionTotal e infla. No fechamento não há órfão (herança resolve).
+  if (!closedSource) {
+    for (const record of recordsForPeriod) {
+      if (scope.companyIds && !scope.companyIds.includes(record.company_id || "")) continue;
+      if (!isEligibleProductionRecord(record)) continue;
+      const commission =
+        toNumber(record.net_value) *
+        getPromoterViewCompanyRate(record, groupProductionValue);
+      companyGrossCommission += commission;
+      if (!record.assigned_promoter_id) {
+        unassignedCompanyGrossCommission += commission;
+        unassignedProduction += toNumber(record.net_value);
+        unassignedCount += 1;
+      }
     }
   }
 
@@ -706,9 +741,122 @@ export async function loadPromoterAnalyticsBase(
     };
   });
 
-  const filteredSummaryRows = summaryRows
-    .filter((row) => (companyId ? row.company_id === companyId : true))
-    .sort((a, b) => b.payable_commission_value - a.payable_commission_value);
+  // VIRADA — mês FECHADO consolidado: SOMA as linhas do PMR por promotor no escopo,
+  // em vez do .find() de UMA linha (que mostrava metade de quem tem RR + ADS).
+  // regime 'cms' => só source='cms' (jan-mai); 'fechamento' => source IN
+  // ('fechamento','bbts') (jun+). O escopo (grupo/empresa) filtra pelo company_id da
+  // PRÓPRIA linha do PMR (não pelo home do promotor) — assim a ADS aparece mesmo p/
+  // promotor de home RR (ex.: Kétley). As linhas source='daily' (valor 0) ficam fora.
+  const consolidatedSummaryRows = !closedSource
+    ? null
+    : (() => {
+        const regimeSources = closedSource === "cms" ? ["cms"] : ["fechamento", "bbts"];
+        type Agg = {
+          production_value: number;
+          insured_production_value: number;
+          proposal_count: number;
+          production_commission_value: number;
+          insurance_commission_value: number;
+          agreement_adjustment_value: number;
+          final_commission_value: number;
+          discount_value: number;
+          target_status: string | null;
+          company_id: string | null;
+          best_production: number; // p/ escolher company_id/status da linha dominante
+        };
+        const agg = new Map<string, Agg>();
+        for (const row of monthlyResults) {
+          if (row.year !== latestPeriod.year || row.month !== latestPeriod.month) continue;
+          if (!regimeSources.includes(String(row.source || ""))) continue;
+          if (scope.companyIds && !scope.companyIds.includes(row.company_id || "")) continue;
+          let a = agg.get(row.promoter_id);
+          if (!a) {
+            a = {
+              production_value: 0,
+              insured_production_value: 0,
+              proposal_count: 0,
+              production_commission_value: 0,
+              insurance_commission_value: 0,
+              agreement_adjustment_value: 0,
+              final_commission_value: 0,
+              discount_value: 0,
+              target_status: null,
+              company_id: null,
+              best_production: -1,
+            };
+            agg.set(row.promoter_id, a);
+          }
+          const prod = toNumber(row.production_value);
+          a.production_value += prod;
+          a.insured_production_value += toNumber(row.insured_production_value);
+          a.proposal_count += toNumber(row.proposal_count);
+          a.production_commission_value += toNumber(row.production_commission_value);
+          a.insurance_commission_value += toNumber(row.insurance_commission_value);
+          a.agreement_adjustment_value += toNumber(row.agreement_adjustment_value);
+          a.final_commission_value += toNumber(row.final_commission_value);
+          a.discount_value += toNumber(row.discount_value);
+          // company_id/status representativos = os da linha de MAIOR produção
+          // (a RR/fechamento domina; a linha ADS não rouba o rótulo).
+          if (prod > a.best_production) {
+            a.best_production = prod;
+            a.company_id = row.company_id ?? null;
+            a.target_status = row.target_status ?? a.target_status;
+          }
+        }
+        return [...agg.entries()].map(([pid, a]) => {
+          const promoter = promoterById.get(pid);
+          const target = targets.find(
+            (t) => t.promoter_id === pid && t.year === latestPeriod.year && t.month === latestPeriod.month
+          );
+          const manualDiscount = discounts
+            .filter(
+              (d) =>
+                d.promoter_id === pid &&
+                d.year === latestPeriod.year &&
+                d.month === latestPeriod.month &&
+                d.apply_to_company !== true
+            )
+            .reduce((sum, d) => sum + toNumber(d.amount), 0);
+          const discountValue = manualDiscount || a.discount_value;
+          const targetValue = toNumber(target?.meta);
+          const target1Value = toNumber(target?.meta_1);
+          const target2Value = toNumber(target?.meta_2);
+          return {
+            promoter_id: pid,
+            promoter_name: promoter?.name ?? "(promotor desconhecido)",
+            company_id: a.company_id,
+            company_name: companyById.get(a.company_id || "")?.name || "-",
+            company_cnpj: companyById.get(a.company_id || "")?.cnpj || "",
+            estado: promoter?.estado ?? null,
+            active: promoter?.active !== false,
+            status: promoter?.status || (promoter?.active === false ? "DISMISSED" : "ACTIVE"),
+            j_keys_count: jKeys.filter((jKey) => jKey.promoter_id === pid).length,
+            production_value: a.production_value,
+            proposal_count: a.proposal_count,
+            insurance_penetration_percent:
+              a.production_value > 0 ? (a.insured_production_value / a.production_value) * 100 : 0,
+            target_value: targetValue,
+            target_1_value: target1Value,
+            target_2_value: target2Value,
+            target_status:
+              a.target_status || resolveTargetStatus(a.production_value, targetValue, target1Value, target2Value),
+            production_commission_value: a.production_commission_value,
+            insurance_commission_value: a.insurance_commission_value,
+            agreement_adjustment_value: a.agreement_adjustment_value,
+            discount_value: discountValue,
+            final_commission_value: a.final_commission_value,
+            payable_commission_value: a.final_commission_value - discountValue,
+            result_source: "CALCULATED",
+          };
+        });
+      })();
+
+  const filteredSummaryRows = (
+    consolidatedSummaryRows ??
+    summaryRows.filter((row) =>
+      scope.companyIds ? scope.companyIds.includes(row.company_id || "") : true
+    )
+  ).sort((a, b) => b.payable_commission_value - a.payable_commission_value);
 
   const recordsById = new Map(recordsForPeriod.map((record) => [record.id, record]));
 
@@ -981,6 +1129,8 @@ export async function buildPromoterAnalytics(
     companyId?: string;
     promoterId?: string;
     closed?: boolean; // ver loadPromoterAnalyticsBase: aberto(false)=LIVE_BASE, fechado/indef=CALCULATED
+    // VIRADA — fonte do mês fechado (consolida PMR por promotor). Ver loadPromoterAnalyticsBase.
+    closedSource?: "cms" | "fechamento";
     // Aba Migração: quando o selecionado é is_master, proposalRows lista o balde
     // não atribuído (assigned_promoter_id NULL) p/ redistribuir. Default off =>
     // todos os demais chamadores ficam idênticos (match exato por promoter_id).

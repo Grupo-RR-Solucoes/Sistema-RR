@@ -10,10 +10,13 @@ import {
 import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { detectClosedMonth } from "@/lib/cmsMonthly";
+import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 // FRENTE 2 / ETAPA 7 — buildCmsProposalRows agora vive em lib compartilhada
 // (mesma fonte usada pelo export de relatorio, sem divergencia).
 import { buildCmsProposalRows } from "@/lib/promoterReportData";
+// VIRADA DE TELA — proposalRows do mês FECHADO por fechamento (jun+): fonte
+// monthly_closing_entries + linhas ADS, com o campo SRCC p/ a UI colorir.
+import { buildClosingProposalRows } from "@/lib/closingProposalRows";
 
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
@@ -119,17 +122,20 @@ export async function GET(req: Request) {
     const yearN = Number(searchParams.get("year") || 0) || undefined;
     const monthN = Number(searchParams.get("month") || 0) || undefined;
 
-    // Regime do mês ANTES do analytics: aberto(false)=LIVE_BASE (daily ao vivo),
-    // fechado(true)=CALCULATED (PMR/cms). Sem year/month explícitos => undefined
-    // (mantém CALCULATED, comportamento anterior). Reusado no swap cms abaixo.
-    let closed: boolean | undefined = undefined;
+    // Regime do mês ANTES do analytics (VIRADA): 'open' => LIVE_BASE (daily ao vivo);
+    // 'cms' (jan-mai, seed) / 'fechamento' (jun+) => CONSOLIDADO do PMR. A precedência
+    // cms > fechamento vive em detectMonthRegime. Sem year/month => 'open' aqui, mas
+    // closedSource fica undefined e o analytics mantém o CALCULATED (.find) legado.
+    let regime: MonthRegime = "open";
     if (yearN && monthN) {
       try {
-        closed = await detectClosedMonth(supabase, yearN, monthN);
+        regime = await detectMonthRegime(supabase, yearN, monthN);
       } catch {
-        closed = false; // tabela ausente / erro -> trata como aberto
+        regime = "open"; // tabela ausente / erro -> trata como aberto
       }
     }
+    const closed = regime !== "open";
+    const closedSource = regime === "open" ? undefined : regime; // 'cms' | 'fechamento'
 
     const payload = await buildPromoterAnalytics(supabase, {
       year: yearN,
@@ -137,6 +143,7 @@ export async function GET(req: Request) {
       companyId: searchParams.get("companyId") || undefined,
       promoterId: effectivePromoterId,
       closed,
+      closedSource,
       // Master é balde temporário: ao selecioná-la na aba Migração, listar o que
       // ainda está sem promotor (assigned_promoter_id NULL) p/ redistribuir.
       // Só atua no mês ABERTO — no fechado a rota retorna cmsRows antes (abaixo).
@@ -146,10 +153,12 @@ export async function GET(req: Request) {
       allUnassigned: searchParams.get("unassigned") === "1",
     });
 
-    // FRENTE 2 — mes FECHADO: detalhe vem do cms (ground truth), nao do diario.
-    let proposalSource: "daily" | "cms" = "daily";
-    if (yearN && monthN && effectivePromoterId) {
-      if (closed) {
+    // Mês FECHADO: o detalhe (proposalRows) vem da fonte fechada, não do diário.
+    //   'cms' (jan-mai)        -> cms_promoter_entries (ground truth do seed).
+    //   'fechamento' (jun+)    -> monthly_closing_entries + linhas ADS, com SRCC.
+    let proposalSource: "daily" | "cms" | "fechamento" = "daily";
+    if (yearN && monthN && effectivePromoterId && closed) {
+      if (regime === "cms") {
         proposalSource = "cms";
         const cmsRows = await buildCmsProposalRows(
           supabase,
@@ -159,6 +168,15 @@ export async function GET(req: Request) {
         );
         return NextResponse.json({ ...payload, proposalRows: cmsRows, proposalSource });
       }
+      // regime === 'fechamento'
+      proposalSource = "fechamento";
+      const closingRows = await buildClosingProposalRows(
+        supabase,
+        effectivePromoterId,
+        yearN,
+        monthN
+      );
+      return NextResponse.json({ ...payload, proposalRows: closingRows, proposalSource });
     }
 
     return NextResponse.json({ ...payload, proposalSource });
