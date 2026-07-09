@@ -181,6 +181,10 @@ export async function consolidateMonthlyFromCms(
       };
 
     const productionCommission = a.credit;
+    // cms é ground-truth: promoter_insurance já vem calculado pela fonte — NÃO
+    // aplica share por penetração aqui, então o bug de cortes (share_scale_tier)
+    // NÃO afeta a comissão do cms. A penetração abaixo é só MÉTRICA (base net,
+    // "segurado" = insurance_premium>0, critério do próprio cms).
     const insuranceCommission = a.insurance;
     const finalCommission = productionCommission + insuranceCommission;
 

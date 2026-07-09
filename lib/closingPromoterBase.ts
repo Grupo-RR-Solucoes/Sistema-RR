@@ -71,6 +71,8 @@ const A_VALOR_SEGURO = ["VALOR SEGURO", "VALOR LIQUIDO SEGURO", "VALOR LÍQUIDO 
 const A_COMISSAO_SEGURO = ["COMISSAO SEGURO", "COMISSÃO SEGURO"];
 const A_PENETRACAO = ["% PENETRACAO", "% PENETRAÇÃO", "PENETRACAO", "PENETRAÇÃO"];
 const A_CONTRATO = ["CONTRATO", "NUMERO CONTRATO", "NÚMERO CONTRATO"];
+// Flag oficial de "proposta segurada" (base da penetração INDIVIDUAL, não insurance_value>0).
+const A_PROD_SEGURADA = ["PROD. SEGURADA", "PROD SEGURADA", "PROD.SEGURADA", "PRODUTO SEGURADO", "PRODUCAO SEGURADA"];
 
 // ---- tipos -----------------------------------------------------------------
 
@@ -89,7 +91,8 @@ export type ClosingContrato = {
   srccRaw: string; // "RESTRIÇÃO SRCC" cru (p/ pintar de vermelho)
   comissaoSeguro: number; // "COMISSÃO SEGURO" (empresa)
   valorSeguro: number; // " VALOR SEGURO "
-  penetracao: number | null; // "% PENETRAÇÃO" (decimal 0..1)
+  penetracao: number | null; // "% PENETRAÇÃO" (decimal 0..1) — penetração do GRUPO (informativo)
+  prodSegurada: boolean; // flag "PROD. SEGURADA"="Sim" — base da penetração INDIVIDUAL
 };
 
 export type ClosingPromoterBase = {
@@ -205,6 +208,7 @@ export async function loadClosingPromoterBase(
         const v = readRawPayloadValue(md, A_PENETRACAO);
         return v === null || v === undefined || v === "" ? null : toNumber(v);
       })(),
+      prodSegurada: normalizeSrcc(readRawPayloadValue(md, A_PROD_SEGURADA)) === "SIM",
     };
 
     if (isSrccRestrito(srccRaw)) restritas.push(contrato);
