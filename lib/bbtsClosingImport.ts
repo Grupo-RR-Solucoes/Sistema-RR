@@ -426,5 +426,23 @@ export async function importBbtsClosing(
     await supabase.from("daily_imports").update({ status: "COMPLETED", rows_count: records.length }).eq("id", log.id);
   }
 
+  // VIRADA DÉBITOS — persiste os cancelamentos ADS (tratamento='debito') que antes
+  // só iam pro console.log e se perdiam. Resolve o promotor via daily da ADS; sem
+  // dono vai pra fila. NÃO falha o import: erro aqui vira só um aviso no retorno.
+  if (!dryRun && result.debitos.length > 0) {
+    try {
+      const { resolveAdsCancelDebits } = await import("./debitInsuranceResolver.ts");
+      const plan = await resolveAdsCancelDebits(supabase, {
+        year: input.year,
+        month: input.month,
+        debitos: result.debitos,
+        dryRun: false,
+      });
+      (result as any).debitos_persistidos = { criados: plan.debits.length, fila: plan.fila.length };
+    } catch (e: any) {
+      (result as any).debitos_aviso = `Falha ao persistir débitos ADS: ${e?.message || e}`;
+    }
+  }
+
   return result;
 }

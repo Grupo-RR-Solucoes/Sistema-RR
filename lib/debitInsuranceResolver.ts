@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { BBTS_COMPANY_ID } from "./bbtsMonthly.ts";
 
 // ============================================================================
 // debitInsuranceResolver — DÉBITO AUTOMÁTICO de cancelamento de seguro.
@@ -269,7 +270,8 @@ export async function resolveInsuranceDebits(
     .eq("kind", "AUTO")
     .eq("debit_type", CANCELAMENTO_SEGURO)
     .eq("start_year", year)
-    .eq("start_month", month);
+    .eq("start_month", month)
+    .neq("company_id", BBTS_COMPANY_ID); // não apaga os débitos ADS (frente DAILY_CANCEL)
   const oldIds = (oldDebits || []).map((d: any) => d.id);
   if (oldIds.length) {
     // parcelas e sources caem por ON DELETE CASCADE ao apagar o débito.
@@ -351,5 +353,162 @@ export async function resolveInsuranceDebits(
     if (error) throw error;
   }
 
+  return plan;
+}
+
+// ============================================================================
+// resolveAdsCancelDebits — débito de cancelamento de seguro da ADS (source
+// DAILY_CANCEL). A fonte é o BBTS (result.debitos do bbtsClosingImport), que hoje
+// NÃO persistia (só console.log). Resolve o promotor via daily da ADS
+// (proposal_number → assigned_promoter_id); sem dono → fila. Mesma regra
+// versionada e mesmo destino (promoter_debits/discounts/assignments). estorno =
+// |valor_seguro| do débito. Idempotente escopado à empresa ADS (não colide com
+// o RR CLOSING_INSURANCE).
+// ============================================================================
+export async function resolveAdsCancelDebits(
+  supabase: SupabaseLike,
+  params: {
+    year: number;
+    month: number;
+    debitos: Array<{ contrato: string; valor_seguro: number; tipo?: string | null }>;
+    dryRun?: boolean;
+    createdBy?: string | null;
+  }
+): Promise<InsuranceDebitPlan> {
+  const { year, month } = params;
+  const dryRun = params.dryRun !== false;
+  const competencia = `${year}-${String(month).padStart(2, "0")}`;
+  const avisos: string[] = [];
+  const debitosRaw = params.debitos || [];
+
+  const ops = debitosRaw.map((d) => String(d.contrato).trim());
+  const daily = ops.length
+    ? await pagedOrdered<any>(() =>
+        supabase.from("daily_production_records").select("id, proposal_number, assigned_promoter_id").eq("company_id", BBTS_COMPANY_ID).in("proposal_number", ops)
+      )
+    : [];
+  const dailyByOp = new Map<string, any>();
+  for (const e of daily) if (!dailyByOp.has(String(e.proposal_number))) dailyByOp.set(String(e.proposal_number), e);
+  const { data: proms } = await supabase.from("promoters").select("id, name");
+  const nameById = new Map((proms || []).map((p: any) => [p.id, p.name]));
+  const { data: assigns } = await supabase.from("promoter_debit_assignments").select("operation, promoter_id, status").eq("year", year).eq("month", month);
+  const assignByOp = new Map((assigns || []).map((a: any) => [String(a.operation), a]));
+
+  const { data: rules } = await supabase
+    .from("debit_rule_versions")
+    .select("id, rule, vigencia_inicio")
+    .eq("debit_type", CANCELAMENTO_SEGURO)
+    .lte("vigencia_inicio", `${competencia}-01`)
+    .order("vigencia_inicio", { ascending: false })
+    .limit(1);
+  const ruleRow = (rules || [])[0] || null;
+  const rule = ruleRow?.rule ?? null;
+  const ruleVersionId = ruleRow?.id ?? null;
+
+  const resolved: ResolvedOperation[] = [];
+  const fila: ResolvedOperation[] = [];
+  for (const d of debitosRaw) {
+    const op = String(d.contrato).trim();
+    const estorno = Math.abs(toNumber(d.valor_seguro));
+    let promoterId: string | null = null;
+    let resolvedVia = "";
+    const manual = assignByOp.get(op);
+    if (manual && manual.status === "ASSIGNED" && manual.promoter_id) { promoterId = manual.promoter_id; resolvedVia = "fila-atribuida"; }
+    else if (dailyByOp.get(op)?.assigned_promoter_id) { promoterId = dailyByOp.get(op).assigned_promoter_id; resolvedVia = "daily"; }
+    const rec: ResolvedOperation = {
+      operation: op,
+      estorno,
+      chaveJ: null,
+      keyType: null,
+      promoterId,
+      promoterName: promoterId ? nameById.get(promoterId) ?? null : null,
+      companyId: BBTS_COMPANY_ID,
+      closingEntryId: "", // ADS não tem monthly_closing_entries; origem é o BBTS/JSON
+      resolvedVia,
+      debitAmount: debitAmountFor(estorno, rule),
+    };
+    if (promoterId) resolved.push(rec);
+    else fila.push(rec);
+  }
+
+  const mode = rule?.mode ?? "SUM_100";
+  const debits: InsuranceDebitPlan["debits"] = [];
+  if (mode === "SUM_100") {
+    const byProm = new Map<string, InsuranceDebitPlan["debits"][number]>();
+    for (const r of resolved) {
+      let a = byProm.get(r.promoterId!);
+      if (!a) { a = { promoterId: r.promoterId!, promoterName: r.promoterName || "?", companyId: BBTS_COMPANY_ID, total: 0, sources: [] }; byProm.set(r.promoterId!, a); }
+      a.total += r.debitAmount;
+      a.sources.push(r);
+    }
+    debits.push(...byProm.values());
+  } else {
+    for (const r of resolved) debits.push({ promoterId: r.promoterId!, promoterName: r.promoterName || "?", companyId: BBTS_COMPANY_ID, total: r.debitAmount, sources: [r] });
+  }
+
+  const plan: InsuranceDebitPlan = {
+    competencia,
+    dryRun,
+    rule,
+    ruleVersionId,
+    debits,
+    fila,
+    totals: {
+      individuais: resolved.length,
+      somaIndividuais: Number(resolved.reduce((a, r) => a + r.estorno, 0).toFixed(2)),
+      fila: fila.length,
+      somaFila: Number(fila.reduce((a, r) => a + r.estorno, 0).toFixed(2)),
+    },
+    avisos,
+  };
+  if (fila.length) avisos.push(`${fila.length} cancelamento(s) ADS aguardando atribuição.`);
+  if (dryRun) return plan;
+
+  // GRAVAÇÃO idempotente escopada à ADS (source DAILY_CANCEL / company ADS).
+  const { data: oldDebits } = await supabase
+    .from("promoter_debits")
+    .select("id")
+    .eq("kind", "AUTO")
+    .eq("debit_type", CANCELAMENTO_SEGURO)
+    .eq("start_year", year)
+    .eq("start_month", month)
+    .eq("company_id", BBTS_COMPANY_ID);
+  const oldIds = (oldDebits || []).map((d: any) => d.id);
+  if (oldIds.length) {
+    const { error } = await supabase.from("promoter_debits").delete().in("id", oldIds);
+    if (error) throw error;
+  }
+  for (const d of debits) {
+    const { data: ins, error: e1 } = await supabase
+      .from("promoter_debits")
+      .insert({
+        promoter_id: d.promoterId, company_id: BBTS_COMPANY_ID, kind: "AUTO", debit_type: CANCELAMENTO_SEGURO,
+        total_amount: Number(d.total.toFixed(2)), installments_total: 1, start_year: year, start_month: month,
+        rule_version_id: ruleVersionId, status: "ACTIVE", notes: `ADS: ${d.sources.length} cancelamento(s).`, created_by: params.createdBy ?? "resolver-ads",
+      })
+      .select("id")
+      .single();
+    if (e1) throw e1;
+    const debitId = ins.id;
+    const { error: e2 } = await supabase.from("promoter_discounts").insert({
+      promoter_id: d.promoterId, company_id: BBTS_COMPANY_ID, year, month, discount_type: CANCELAMENTO_SEGURO,
+      amount: Number(d.total.toFixed(2)), installments: 1, installment_number: 1, apply_to_company: false,
+      debit_id: debitId, status: "PENDING", notes: "Débito automático — cancelamento de seguro (ADS).",
+    });
+    if (e2) throw e2;
+    const { error: e3 } = await supabase.from("promoter_debit_sources").insert(
+      d.sources.map((sc) => ({ debit_id: debitId, source_kind: "DAILY_CANCEL", operation: sc.operation, estorno_amount: Number(sc.estorno.toFixed(2)), resolved_via: sc.resolvedVia }))
+    );
+    if (e3) throw e3;
+  }
+  for (const r of fila) {
+    const existing = assignByOp.get(r.operation);
+    if (existing && existing.status !== "PENDING") continue;
+    const { error } = await supabase.from("promoter_debit_assignments").upsert(
+      { year, month, source_kind: "DAILY_CANCEL", operation: r.operation, estorno_amount: Number(r.estorno.toFixed(2)), debit_type: CANCELAMENTO_SEGURO, status: "PENDING" },
+      { onConflict: "year,month,operation" }
+    );
+    if (error) throw error;
+  }
   return plan;
 }
