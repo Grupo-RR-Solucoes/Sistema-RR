@@ -71,6 +71,14 @@ export type BbtsClosingInput = {
   month: number;
   credito: BbtsCreditoRow[];
   seguro?: BbtsSeguroRow[];
+  // Âncoras declaradas pela própria extração (self-describing). Se presente,
+  // sobrepõe o const hardcoded — o arquivo v3 traz 19 propostas / 271.210,84.
+  _ancoras?: {
+    credito_propostas?: number;
+    credito_valor_financiado?: number;
+    credito_pag_avista?: number;
+    seguro_calculo?: number;
+  };
 };
 
 export type BbtsClosingResult = {
@@ -129,7 +137,16 @@ export async function importBbtsClosing(
   opts?: { dryRun?: boolean; anchors?: typeof BBTS_JUNHO_ANCHORS; tolerance?: number; fileName?: string }
 ): Promise<BbtsClosingResult> {
   const dryRun = opts?.dryRun !== false; // default: dry-run
-  const anchors = opts?.anchors ?? BBTS_JUNHO_ANCHORS;
+  // Precedência: opts.anchors > _ancoras do arquivo > const hardcoded.
+  const fileAnchors = input._ancoras
+    ? {
+        propostas: input._ancoras.credito_propostas ?? BBTS_JUNHO_ANCHORS.propostas,
+        valorFinanciado: input._ancoras.credito_valor_financiado ?? BBTS_JUNHO_ANCHORS.valorFinanciado,
+        pagAvista: input._ancoras.credito_pag_avista ?? BBTS_JUNHO_ANCHORS.pagAvista,
+        seguroCalculo: input._ancoras.seguro_calculo ?? BBTS_JUNHO_ANCHORS.seguroCalculo,
+      }
+    : null;
+  const anchors = opts?.anchors ?? fileAnchors ?? BBTS_JUNHO_ANCHORS;
   const tol = opts?.tolerance ?? 0.01;
   const { year, month, credito, seguro } = input;
 
