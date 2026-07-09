@@ -674,6 +674,9 @@ function PromotoresFullPage() {
     () =>
       data.proposalRows.reduce(
         (acc, row) => {
+          // SRCC="Sim": produzida, não paga -> FORA dos totais (produção e comissão).
+          // A linha continua na lista com o valor visível (vermelha), só não soma.
+          if (isSrccRedLabel(row.srcc_restriction)) return acc;
           acc.net += row.net_value;
           acc.companyCommission += row.company_commission_amount;
           acc.companyInsurance += row.company_insurance_commission_amount;
@@ -965,11 +968,17 @@ function PromotoresFullPage() {
               }}
             >
               <option value="">Empresa: todas</option>
-              {data.companies.map((company) => (
-                <option key={company.id} value={company.id}>
-                  {company.name}
-                </option>
-              ))}
+              <optgroup label="Grupos">
+                <option value="grupo:rr">Grupo RR</option>
+                <option value="grupo:ads">ADS</option>
+              </optgroup>
+              <optgroup label="Empresas">
+                {data.companies.map((company) => (
+                  <option key={company.id} value={company.id}>
+                    {company.name}
+                  </option>
+                ))}
+              </optgroup>
             </select>
             <span className="chev">▾</span>
           </div>
@@ -1651,8 +1660,18 @@ function PromotoresFullPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.proposalRows.map((row) => (
-                        <tr key={row.id}>
+                      {data.proposalRows.map((row) => {
+                        const srccRed = isSrccRedLabel(row.srcc_restriction);
+                        return (
+                        <tr
+                          key={row.id}
+                          className={srccRed ? "srcc-red" : undefined}
+                          title={
+                            srccRed
+                              ? "produzida, não paga (restrição SRCC)"
+                              : undefined
+                          }
+                        >
                           <td className="l sticky ctr" data-l="Contrato">
                             {row.contract_number}
                           </td>
@@ -1690,7 +1709,11 @@ function PromotoresFullPage() {
                             {formatCurrency(row.company_commission_amount)}
                           </td>
                           <td className="l" data-l="Restrição SRCC">
-                            {row.srcc_restriction}
+                            {srccRed ? (
+                              <span className="srcc-tag">{row.srcc_restriction}</span>
+                            ) : (
+                              row.srcc_restriction
+                            )}
                           </td>
                           <td className="num" data-l="Valor seguro">
                             {formatCurrency(row.insurance_value)}
@@ -1711,7 +1734,8 @@ function PromotoresFullPage() {
                             {formatCurrency(row.insurance_commission_amount)}
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                     <tfoot>
                       <tr className="total">
@@ -1861,6 +1885,17 @@ function formatCurrency(value?: number) {
     style: "currency",
     currency: "BRL",
   }).format(Number(value || 0));
+}
+
+// VIRADA — proposta com RESTRIÇÃO SRCC = "Sim": produzida, mas NÃO paga. Fica
+// VERMELHA na lista, com o valor visível, e FORA dos totais (produção/comissão).
+function isSrccRedLabel(value: unknown): boolean {
+  const s = String(value ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toUpperCase();
+  return s === "SIM" || s === "RESTRITO" || s === "COM RESTRICAO";
 }
 
 function formatPercent(value?: number, digits = 1) {
@@ -2028,6 +2063,11 @@ const CSS = `
 .rrprom .badge2.low{color:var(--amber);background:var(--amber-bg);border:1px solid var(--amber-bd);}
 .rrprom .badge2 .d{width:6px;height:6px;border-radius:50%;background:currentColor;}
 .rrprom .pay{font-weight:600;color:var(--ink);}
+/* VIRADA — proposta SRCC="Sim": produzida, não paga. Linha vermelha, valor visível. */
+.rrprom tbody tr.srcc-red td{background:#FEF2F2;color:#B91C1C;}
+.rrprom tbody tr.srcc-red td.sticky{background:#FEF2F2;}
+.rrprom tbody tr.srcc-red .pay{color:#B91C1C;}
+.rrprom .srcc-tag{display:inline-flex;align-items:center;font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:999px;color:#B91C1C;background:#FEE2E2;border:1px solid #FECACA;}
 .rrprom .neg{color:var(--red);}
 .rrprom .muted{color:var(--ink-2);}
 .rrprom .mtin{width:96px;border:1px solid var(--bd);border-radius:8px;padding:7px 9px;font-family:inherit;font-size:13px;color:var(--ink);text-align:right;background:#fff;}
