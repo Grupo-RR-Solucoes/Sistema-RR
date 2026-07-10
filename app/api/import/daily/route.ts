@@ -6,6 +6,9 @@ import { apiGuardErrorResponse, withSocioOrFuncionarioAdmin } from "@/lib/auth/g
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { deriveDailySegmentRows } from "@/lib/convenioSegmento";
 import { mergeDailyProductionRecords } from "@/lib/dailyRecordMerge";
+import { detectDailySource, type DailySource } from "@/lib/dailySourceDetect";
+import { importBbtsDaily } from "@/lib/bbtsDailyImport";
+import { importAdsSeguroDaily } from "@/lib/adsSeguroDailyImport";
 import {
   getProductionPeriodFromValue,
   getProductionPeriodKey,
@@ -262,12 +265,79 @@ export async function POST(req: Request) {
     // + invalidacao de monthly_expected_closings + promoter_monthly_results.
     const { supabase } = await withSocioOrFuncionarioAdmin();
 
-    const { file, fileName } = await req.json();
+    const { file, fileName, source: bodySource } = await req.json();
 
     if (!file) {
       return NextResponse.json({ error: "Arquivo nao enviado" }, { status: 400 });
     }
 
+    const workbook = XLSX.read(Buffer.from(file, "base64"), { type: "buffer" });
+
+    // ORIGEM: confia no `source` explícito da tela (dropdown de override protege
+    // contra cabeçalho novo); senão auto-detecta pela assinatura de colunas/abas.
+    const headerRow = (XLSX.utils.sheet_to_json<any[]>(workbook.Sheets[workbook.SheetNames[0]], {
+      header: 1,
+      blankrows: false,
+    })[0] || []) as Array<string | number>;
+    const source: DailySource =
+      (bodySource as DailySource) ||
+      detectDailySource({ sheetNames: workbook.SheetNames, headers: headerRow }) ||
+      "promotiva";
+
+    // ---- ADS: parsers próprios (dono de coluna) — não passam pelo fluxo RR. ----
+    if (source === "ads-credito" || source === "ads-seguro") {
+      const pickSheet = (name: string) =>
+        workbook.SheetNames.includes(name) ? name : workbook.SheetNames[0];
+      if (source === "ads-credito") {
+        const abaName = pickSheet("Total");
+        const adsRows = XLSX.utils.sheet_to_json<Record<string, any>>(workbook.Sheets[abaName]);
+        const res = await importBbtsDaily(supabase, {
+          rows: adsRows,
+          fileName: fileName || "credito_ads.xlsx",
+          aba: abaName,
+          dryRun: false,
+        });
+        clearMemoryCache("closing:");
+        clearMemoryCache("promoters:");
+        clearMemoryCache("dashboard:");
+        return NextResponse.json({
+          success: true,
+          source,
+          processed: res.processadas,
+          inserted: res.inseridas,
+          updated: res.atualizadas,
+          duplicates_in_file: res.duplicadas_no_arquivo,
+          errors_count: res.empresa_nao_identificada,
+          // ADS consolida via BBTS-2 (não recalcula por competência aqui).
+          affected_periods: [],
+        });
+      }
+      const abaName = pickSheet("Prestamista");
+      const adsRows = XLSX.utils.sheet_to_json<Record<string, any>>(workbook.Sheets[abaName]);
+      const res = await importAdsSeguroDaily(supabase, {
+        rows: adsRows,
+        fileName: fileName || "prestamista_ads.xlsx",
+        dryRun: false,
+      });
+      clearMemoryCache("closing:");
+      clearMemoryCache("promoters:");
+      clearMemoryCache("dashboard:");
+      return NextResponse.json({
+        success: true,
+        source,
+        processed: res.processadas,
+        inserted: res.inseridas,
+        updated: res.atualizadas,
+        duplicates_in_file: res.duplicadas_no_arquivo,
+        errors_count: res.empresa_nao_identificada,
+        affected_periods: [],
+        seguradas: res.seguradas,
+        nao_seguradas: res.nao_seguradas,
+        vfin_divergente: res.vfin_divergente,
+      });
+    }
+
+    // ---- Promotiva (RR): fluxo inline existente. ----
     const { data: importLog, error: importLogError } = await supabase
       .from("daily_imports")
       .insert({
@@ -281,7 +351,6 @@ export async function POST(req: Request) {
       throw importLogError;
     }
 
-    const workbook = XLSX.read(Buffer.from(file, "base64"), { type: "buffer" });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet);
 
@@ -557,6 +626,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
+      source: "promotiva",
       processed,
       inserted,
       updated,

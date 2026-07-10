@@ -2,6 +2,8 @@
 
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useState } from "react";
+import * as XLSX from "xlsx";
+import { detectDailySource, DAILY_SOURCE_LABEL, type DailySource } from "@/lib/dailySourceDetect";
 import { useUser } from "../../lib/auth/useUser";
 import EmptyStatePanel from "../../components/EmptyStatePanel";
 import FeedbackBanner from "../../components/FeedbackBanner";
@@ -115,6 +117,9 @@ export default function ImportacoesPage() {
   const [dailyError, setDailyError] = useState("");
   const [dailyPhase, setDailyPhase] = useState<"" | "importing" | "recalculating">("");
   const [dailyRecalcLabel, setDailyRecalcLabel] = useState("");
+  // ORIGEM da diária: auto-detect pela assinatura de colunas/abas + override manual.
+  const [detectedSource, setDetectedSource] = useState<DailySource | null>(null);
+  const [sourceOverride, setSourceOverride] = useState<DailySource | "">("");
   const [form, setForm] = useState({
     year: String(new Date().getFullYear()),
     month: String(new Date().getMonth() + 1),
@@ -245,10 +250,31 @@ export default function ImportacoesPage() {
     }
   }
 
+  // Lê abas + cabeçalho da 1ª linha e detecta a origem, SEM enviar nada (só p/
+  // mostrar o formato antes do upload; o servidor re-detecta/valida no envio).
+  async function detectSourceFromFile(selectedFile: File) {
+    try {
+      const buf = await selectedFile.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const header = (XLSX.utils.sheet_to_json<any[]>(wb.Sheets[wb.SheetNames[0]], {
+        header: 1,
+        blankrows: false,
+      })[0] || []) as Array<string | number>;
+      setDetectedSource(detectDailySource({ sheetNames: wb.SheetNames, headers: header }));
+    } catch {
+      setDetectedSource(null);
+    }
+  }
+
   async function handleDailySubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!dailyFile) {
       setDailyError("Selecione uma planilha de produção antes de enviar.");
+      return;
+    }
+    const source: DailySource | undefined = sourceOverride || detectedSource || undefined;
+    if (!source) {
+      setDailyError("Não foi possível identificar o formato da planilha. Escolha a origem no seletor antes de enviar.");
       return;
     }
     try {
@@ -265,7 +291,7 @@ export default function ImportacoesPage() {
       const response = await fetch("/api/import/daily", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file: base64, fileName: dailyFile.name }),
+        body: JSON.stringify({ file: base64, fileName: dailyFile.name, source }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "Erro ao importar a planilha.");
@@ -567,10 +593,44 @@ export default function ImportacoesPage() {
                   <Dropzone
                     accept=".xlsx,.xls"
                     file={dailyFile}
-                    onFile={(f) => { setDailyFile(f); setDailyError(""); }}
+                    onFile={(f) => {
+                      setDailyFile(f);
+                      setDailyError("");
+                      setSourceOverride("");
+                      setDetectedSource(null);
+                      if (f) detectSourceFromFile(f);
+                    }}
                     title="selecione a planilha de produção"
                     sub="Formato .xlsx ou .xls · uma planilha pode conter vários dias"
                   />
+
+                  {/* ORIGEM detectada + override (protege contra cabeçalho novo) */}
+                  {dailyFile ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between", margin: "12px 0", padding: "10px 12px", border: "1px solid var(--rrimp-line, #e3e8ef)", borderRadius: 10, background: "var(--rrimp-soft, #f7f9fc)" }}>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        <span className="ic" aria-hidden><IcoSearch /></span>
+                        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.25 }}>
+                          <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, opacity: 0.6 }}>Formato detectado</span>
+                          <strong style={{ fontSize: 14, color: detectedSource ? "inherit" : "#b45309" }}>
+                            {detectedSource ? DAILY_SOURCE_LABEL[detectedSource] : "Não identificado — escolha a origem"}
+                          </strong>
+                        </div>
+                      </div>
+                      <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+                        <span style={{ opacity: 0.7 }}>Origem</span>
+                        <select
+                          value={sourceOverride}
+                          onChange={(e) => setSourceOverride(e.target.value as DailySource | "")}
+                          style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid var(--rrimp-line, #e3e8ef)" }}
+                        >
+                          <option value="">{detectedSource ? `Auto (${DAILY_SOURCE_LABEL[detectedSource]})` : "Auto (não identificado)"}</option>
+                          <option value="promotiva">{DAILY_SOURCE_LABEL["promotiva"]}</option>
+                          <option value="ads-credito">{DAILY_SOURCE_LABEL["ads-credito"]}</option>
+                          <option value="ads-seguro">{DAILY_SOURCE_LABEL["ads-seguro"]}</option>
+                        </select>
+                      </label>
+                    </div>
+                  ) : null}
 
                   <div className="rules-wrap">
                     <div className="rules-lab">Como cada linha entra</div>
