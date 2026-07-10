@@ -94,6 +94,9 @@ function competenceLabel(month: number, year: number) {
   return `${abbr}/${year}`;
 }
 
+// Empresa ADS (BBTS): o fechamento dela vem em 2 PDFs (crédito + seguro), não xlsx.
+const ADS_COMPANY_ID = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
+
 export default function ImportacoesPage() {
   const { user } = useUser();
   const isFuncionario = user?.role === "funcionario";
@@ -105,6 +108,10 @@ export default function ImportacoesPage() {
   const [notice, setNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  // Fechamento ADS (2 PDFs): crédito + seguro.
+  const [adsCreditoFile, setAdsCreditoFile] = useState<File | null>(null);
+  const [adsSeguroFile, setAdsSeguroFile] = useState<File | null>(null);
+  const [adsSubmitting, setAdsSubmitting] = useState(false);
   const [promoterRemunerationFile, setPromoterRemunerationFile] = useState<File | null>(null);
   const [promoterRemunerationSubmitting, setPromoterRemunerationSubmitting] = useState(false);
   const [cancellingImportId, setCancellingImportId] = useState<string | null>(null);
@@ -211,6 +218,38 @@ export default function ImportacoesPage() {
       setError(err.message || "Erro ao importar fechamento mensal.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleAdsClosingSubmit() {
+    if (!adsCreditoFile) {
+      setError("Envie ao menos o PDF de crédito da ADS.");
+      return;
+    }
+    try {
+      setAdsSubmitting(true);
+      setError("");
+      setNotice("");
+      const creditoFile = await fileToBase64(adsCreditoFile);
+      const seguroFile = adsSeguroFile ? await fileToBase64(adsSeguroFile) : null;
+      const response = await fetch("/api/import/closing/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ creditoFile, seguroFile, fileName: adsCreditoFile.name }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Erro ao importar o fechamento ADS.");
+      setNotice(
+        `Fechamento ADS importado (${competenceLabel(payload.month, payload.year)}): ${payload.gravadas} linha(s), ` +
+          `${payload.com_seguro} com seguro. Âncoras ${payload.ancora_ok ? "conferidas ✔" : "NÃO fecharam ✖"}.`
+      );
+      setAdsCreditoFile(null);
+      setAdsSeguroFile(null);
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || "Erro ao importar o fechamento ADS.");
+    } finally {
+      setAdsSubmitting(false);
     }
   }
 
@@ -833,15 +872,41 @@ export default function ImportacoesPage() {
                       </select>
                     </Field>
                   </div>
-                  <Dropzone disabled={isFuncionario} accept=".xlsx,.xls"
-                    file={file} onFile={setFile}
-                    title="selecione a planilha" sub="Fechamento da competência · até 25 MB" />
-                  <div className="uact">
-                    <span className="uhint"><IcoInfo />Disponível na auditoria após importar.</span>
-                    <button type="submit" className={`btn-primary${isFuncionario ? " dis" : ""}`} disabled={isFuncionario || submitting}>
-                      {submitting ? <><span className="spinner" />Importando…</> : <><span className="ck"><IcoUp /></span>Importar fechamento</>}
-                    </button>
-                  </div>
+                  {form.companyId === ADS_COMPANY_ID ? (
+                    <>
+                      {/* ADS: fechamento vem em 2 PDFs (crédito + seguro). */}
+                      <div className="autobar" style={{ marginBottom: 10 }}>
+                        <span className="ic"><IcoInfo /></span>
+                        <div className="t"><b>ADS — fechamento por PDF.</b> Envie o PDF de crédito (obrigatório) e o de seguro. A competência é lida do próprio arquivo; as âncoras do PDF são conferidas antes de gravar.</div>
+                      </div>
+                      <div className="two-up">
+                        <Dropzone disabled={isFuncionario} accept=".pdf"
+                          file={adsCreditoFile} onFile={setAdsCreditoFile}
+                          title="PDF de crédito (Crédito ADS-BBTS)" sub="obrigatório · .pdf" />
+                        <Dropzone disabled={isFuncionario} accept=".pdf"
+                          file={adsSeguroFile} onFile={setAdsSeguroFile}
+                          title="PDF de seguro (Seguro ADS-BBTS)" sub="opcional · .pdf" />
+                      </div>
+                      <div className="uact">
+                        <span className="uhint"><IcoInfo />Grava na produção ADS; âncora do PDF valida antes.</span>
+                        <button type="button" onClick={handleAdsClosingSubmit} className={`btn-primary${isFuncionario ? " dis" : ""}`} disabled={isFuncionario || adsSubmitting || !adsCreditoFile}>
+                          {adsSubmitting ? <><span className="spinner" />Importando…</> : <><span className="ck"><IcoUp /></span>Importar fechamento ADS</>}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <Dropzone disabled={isFuncionario} accept=".xlsx,.xls"
+                        file={file} onFile={setFile}
+                        title="selecione a planilha" sub="Fechamento da competência · até 25 MB" />
+                      <div className="uact">
+                        <span className="uhint"><IcoInfo />Disponível na auditoria após importar.</span>
+                        <button type="submit" className={`btn-primary${isFuncionario ? " dis" : ""}`} disabled={isFuncionario || submitting}>
+                          {submitting ? <><span className="spinner" />Importando…</> : <><span className="ck"><IcoUp /></span>Importar fechamento</>}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </form>
               </section>
 
