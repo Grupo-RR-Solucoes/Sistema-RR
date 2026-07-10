@@ -5,13 +5,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { apiGuardErrorResponse, withSocioOrFuncionarioAdmin } from "@/lib/auth/guards";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { deriveDailySegmentRows } from "@/lib/convenioSegmento";
+import { mergeDailyProductionRecords } from "@/lib/dailyRecordMerge";
 import {
   getProductionPeriodFromValue,
   getProductionPeriodKey,
 } from "@/lib/productionPeriod";
 
-const EXISTING_LOOKUP_CHUNK_SIZE = 200;
-const UPSERT_CHUNK_SIZE = 500;
 
 /**
  * BEST-EFFORT / ISOLADO — auto-crescimento da tabela de referência
@@ -226,34 +225,6 @@ function groupAffectedPeriods(records: any[]): AffectedPeriod[] {
     month: item.month,
     companyIds: Array.from(item.companyIds),
   }));
-}
-
-async function fetchExistingRecords(
-  supabase: SupabaseClient,
-  companyIds: string[],
-  proposalNumbers: string[]
-) {
-  const existingByKey = new Map<string, any>();
-
-  if (companyIds.length === 0 || proposalNumbers.length === 0) {
-    return existingByKey;
-  }
-
-  for (const proposalChunk of chunkArray(proposalNumbers, EXISTING_LOOKUP_CHUNK_SIZE)) {
-    const { data, error } = await supabase
-      .from("daily_production_records")
-      .select("id, company_id, proposal_number, assigned_promoter_id, original_promoter_id, promoter_source")
-      .in("company_id", companyIds)
-      .in("proposal_number", proposalChunk);
-
-    if (error) throw error;
-
-    for (const record of data || []) {
-      existingByKey.set(makeRecordKey(record.company_id, record.proposal_number), record);
-    }
-  }
-
-  return existingByKey;
 }
 
 async function invalidateMonthlySnapshots(
@@ -548,44 +519,17 @@ export async function POST(req: Request) {
 
     const recordsToSave = Array.from(recordsByKey.values());
     const affectedPeriods = groupAffectedPeriods(recordsToSave);
-    const companyIds = Array.from(new Set(recordsToSave.map((record) => record.company_id)));
-    const proposalNumbers = Array.from(
-      new Set(recordsToSave.map((record) => record.proposal_number))
-    );
-    const existingByKey = await fetchExistingRecords(supabase, companyIds, proposalNumbers);
-    const now = new Date().toISOString();
 
-    for (const payload of recordsToSave) {
-      const key = makeRecordKey(payload.company_id, payload.proposal_number);
-      const existing = existingByKey.get(key);
-
-      if (existing) {
-        updated += 1;
-
-        if (existing.original_promoter_id) {
-          payload.original_promoter_id = existing.original_promoter_id;
-        }
-
-        if (existing.promoter_source === "MANUAL_REASSIGNMENT") {
-          payload.assigned_promoter_id = existing.assigned_promoter_id;
-          payload.promoter_source = existing.promoter_source;
-        }
-      } else {
-        inserted += 1;
-      }
-
-      payload.updated_at = now;
-    }
-
-    for (const chunk of chunkArray(recordsToSave, UPSERT_CHUNK_SIZE)) {
-      const { error: upsertError } = await supabase
-        .from("daily_production_records")
-        .upsert(chunk, {
-          onConflict: "company_id,proposal_number",
-        });
-
-      if (upsertError) throw upsertError;
-    }
+    // MERGE por dono de coluna (owner='FULL' — a Promotiva traz crédito+seguro
+    // juntos numa linha só; comportamento idêntico ao upsert antigo). O helper
+    // preserva MANUAL_REASSIGNMENT (read-before-write) internamente.
+    const merged = await mergeDailyProductionRecords(supabase, {
+      records: recordsToSave as any,
+      owner: "FULL",
+      daily_import_id: importLog.id,
+    });
+    inserted = merged.inserted;
+    updated = merged.updated;
 
     await invalidateMonthlySnapshots(supabase, affectedPeriods);
 
