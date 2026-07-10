@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { resolveDonaCompanyForPromoter } from "./closingMonthly.ts";
 
 // ============================================================================
 // debitsData — leitura e AÇÕES dos débitos do promotor (itens 3/4/5).
@@ -207,7 +208,12 @@ export async function assignQueuedDebit(
   const estorno = Number(a.estorno_amount);
   const amount = round2(ruleAmount(estorno, ruleRow?.rule));
   const isAds = a.source_kind === "DAILY_CANCEL";
-  const companyId = isAds ? "375aea6d-3b9c-4490-87f0-e739e312c8ef" : null;
+  // ADS mantém a company ADS. MASTER (fechamento) resolve a empresa DONA
+  // determinística pela MESMA régua do fechamento (computeDonaCompanyMap) — antes
+  // gravava null e o débito sumia ao filtrar por empresa.
+  const companyId = isAds
+    ? "375aea6d-3b9c-4490-87f0-e739e312c8ef"
+    : await resolveDonaCompanyForPromoter(supabase, { year: a.year, month: a.month, promoterId: params.promoterId });
 
   const { data: ins, error: e1 } = await supabase
     .from("promoter_debits")

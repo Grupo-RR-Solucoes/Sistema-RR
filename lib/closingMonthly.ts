@@ -163,6 +163,68 @@ type ClosingAgg = {
 };
 
 /**
+ * Empresa "DONA" DETERMINÍSTICA por promotor (régua do bloco 3b, extraída p/ REUSO
+ * — a fila de débitos master usa a MESMA lógica, sem duplicar). `contratos` já devem
+ * ter `__pid` (promotor efetivo, pós-herança master). CRITÉRIO: 1º maior Σ net da
+ * chave INDIVIDUAL (própria, não-herdada); 2º maior Σ net total; 3º company_id asc
+ * (determinístico). Não altera valor — só o rótulo company_id da linha.
+ */
+export function computeDonaCompanyMap(
+  contratos: Array<ClosingContrato & { __pid?: string | null }>
+): Map<string, string | null> {
+  const donaCompany = new Map<string, string | null>();
+  const perPid = new Map<string, Map<string, { indiv: number; total: number }>>();
+  for (const c of contratos) {
+    const pid = (c as any).__pid as string | null;
+    if (!pid || !c.companyId) continue;
+    let byCo = perPid.get(pid);
+    if (!byCo) {
+      byCo = new Map();
+      perPid.set(pid, byCo);
+    }
+    const e = byCo.get(c.companyId) || { indiv: 0, total: 0 };
+    e.total += c.valorLiquido;
+    if (c.promoterId === pid) e.indiv += c.valorLiquido; // chave PRÓPRIA (não herança)
+    byCo.set(c.companyId, e);
+  }
+  for (const [pid, byCo] of perPid) {
+    const ranked = [...byCo.entries()].sort(
+      (a, b) =>
+        b[1].indiv - a[1].indiv || // 1º: maior net da chave individual
+        b[1].total - a[1].total || // 2º: maior net total
+        (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0) // 3º: company_id asc (determinístico)
+    );
+    donaCompany.set(pid, ranked[0][0]);
+  }
+  return donaCompany;
+}
+
+/**
+ * Resolve a empresa DONA determinística de UM promotor no mês, pela MESMA régua do
+ * fechamento (computeDonaCompanyMap): carrega a base do fechamento (todas as empresas),
+ * aplica exclusão BBTS + herança master p/ obter o pid efetivo, e retorna a company da
+ * chave individual dominante. Usada pela FILA de débitos (estorno master) p/ NÃO gravar
+ * company_id nulo — que faria o débito sumir ao filtrar por empresa. Retorna null só se
+ * o promotor não aparece no fechamento do mês.
+ */
+export async function resolveDonaCompanyForPromoter(
+  supabase: SupabaseLike,
+  params: { year: number; month: number; promoterId: string }
+): Promise<string | null> {
+  const { year, month, promoterId } = params;
+  const base = await loadClosingPromoterBase(supabase, { year, month, companyId: null });
+  const isBbts = (c: ClosingContrato) => normKey(c.chaveJ) === BBTS_KEY;
+  const contratos = base.contratos.filter((c) => !isBbts(c));
+  const orphans = contratos.filter((c) => !c.promoterId && (c.contrato || "").trim());
+  const heir = await buildMasterHeirMap(supabase, orphans, year, month);
+  for (const c of contratos) {
+    (c as any).__pid =
+      c.promoterId ?? heir.get(`${c.companyId}|${(c.contrato || "").trim()}`) ?? null;
+  }
+  return computeDonaCompanyMap(contratos).get(promoterId) ?? null;
+}
+
+/**
  * Consolida o PMR do mês a partir do FECHAMENTO. Grava em
  * promoter_monthly_results com source='fechamento', agregado por promotor.
  * READ das fontes + WRITE apenas em promoter_monthly_results (upsert onConflict).
@@ -225,32 +287,8 @@ export async function consolidateMonthlyFromClosing(
   //     company_id (asc). Data-driven e ESTÁVEL entre re-importações. Não muda
   //     valor nenhum — só o rótulo company_id da linha (a régua RR segue
   //     consolidada por promotor). Não altera a separação RR × ADS.
-  const donaCompany = new Map<string, string | null>();
-  {
-    const perPid = new Map<string, Map<string, { indiv: number; total: number }>>();
-    for (const c of contratos) {
-      const pid = (c as any).__pid as string | null;
-      if (!pid || !c.companyId) continue;
-      let byCo = perPid.get(pid);
-      if (!byCo) {
-        byCo = new Map();
-        perPid.set(pid, byCo);
-      }
-      const e = byCo.get(c.companyId) || { indiv: 0, total: 0 };
-      e.total += c.valorLiquido;
-      if (c.promoterId === pid) e.indiv += c.valorLiquido; // chave PRÓPRIA (não herança)
-      byCo.set(c.companyId, e);
-    }
-    for (const [pid, byCo] of perPid) {
-      const ranked = [...byCo.entries()].sort(
-        (a, b) =>
-          b[1].indiv - a[1].indiv || // 1º: maior net da chave individual
-          b[1].total - a[1].total || // 2º: maior net total
-          (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0) // 3º: company_id asc (determinístico)
-      );
-      donaCompany.set(pid, ranked[0][0]);
-    }
-  }
+  //     (Régua extraída em computeDonaCompanyMap — reusada pela fila de débitos.)
+  const donaCompany = computeDonaCompanyMap(contratos);
 
   // 4. Dados de cascata/Frente C (profiles, escalas, metas, goal_repasse,
   //    produção válida) para os promotores EFETIVOS.
