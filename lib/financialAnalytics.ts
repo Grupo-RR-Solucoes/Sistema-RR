@@ -242,6 +242,34 @@ function prevCompetencia(year: number, month: number) {
   return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
 }
 
+// LIQUIDO por competencia = Σ final_commission_value (PMR) − Σ debitos
+// (promoter_discounts, apply_to_company !== true). MESMA formula do promoterAnalytics
+// (so a parte do debito). NAO filtra ativos/source — preserva o CONJUNTO de linhas do
+// PMR que a Caixa ja soma. Debitos (adiantamento/cancelamento seguro) sao parcelas em
+// promoter_discounts (com debit_id). Helper LEVE: opera sobre os dados JA carregados
+// (pmrRows) + a query de promoter_discounts, sem chamar loadPromoterAnalyticsBase.
+function payableByCompetencia(
+  pmrRows: Array<{ year: number; month: number; final_commission_value: number | null }>,
+  discountRows: Array<{ year: number; month: number; amount: number | null; apply_to_company: boolean | null }>
+): { payableByPeriod: Map<string, number>; finalByPeriod: Map<string, number>; discountByPeriod: Map<string, number> } {
+  const finalByPeriod = new Map<string, number>();
+  for (const r of pmrRows) {
+    const k = getPeriodKey(r.year, r.month);
+    finalByPeriod.set(k, toNumber(finalByPeriod.get(k)) + toNumber(r.final_commission_value));
+  }
+  const discountByPeriod = new Map<string, number>();
+  for (const d of discountRows) {
+    if (d.apply_to_company === true) continue; // debito da EMPRESA nao abate o repasse
+    const k = getPeriodKey(d.year, d.month);
+    discountByPeriod.set(k, toNumber(discountByPeriod.get(k)) + toNumber(d.amount));
+  }
+  const payableByPeriod = new Map<string, number>();
+  for (const k of new Set<string>([...finalByPeriod.keys(), ...discountByPeriod.keys()])) {
+    payableByPeriod.set(k, toNumber(finalByPeriod.get(k)) - toNumber(discountByPeriod.get(k)));
+  }
+  return { payableByPeriod, finalByPeriod, discountByPeriod };
+}
+
 // Σ liquido do fechamento (com o mesmo fallback ja usado: valor_liquido OU
 // avista+diferido+seguro-estorno-renovacao). valor_liquido JA e liquido de
 // estorno — o estorno acompanha o mesmo deslocamento, nada separado.
@@ -352,7 +380,7 @@ export async function buildFinancialAnalytics(
     month?: number;
   }
 ): Promise<FinancialAnalyticsPayload> {
-  const [companies, categories, closings, expenses, openingBalances, deferredRows, pmrRows, manualRevenues] =
+  const [companies, categories, closings, expenses, openingBalances, deferredRows, pmrRows, manualRevenues, discountRows] =
     await Promise.all([
       fetchAllRows<CompanyRow>(() =>
         supabase
@@ -423,21 +451,30 @@ export async function buildFinancialAnalytics(
           .from("receita_lancamento_manual")
           .select("ano, mes, valor, data_credito")
       ),
+      // DEBITOS do repasse (adiantamento/cancelamento seguro/etc.) — parcelas em
+      // promoter_discounts. Abatidos do LIQUIDO por competencia (correcao B do caixa:
+      // comissoes pagas do mes M = liquido da competencia M-1). apply_to_company !== true.
+      fetchAllRows<{ year: number; month: number; amount: number | null; apply_to_company: boolean | null }>(() =>
+        supabase
+          .from("promoter_discounts")
+          .select("year, month, amount, apply_to_company")
+      ),
     ]);
 
   const companyById = new Map(companies.map((company) => [company.id, company]));
   const companyByCnpj = new Map(companies.map((company) => [company.cnpj, company]));
   const categoryById = new Map(categories.map((category) => [category.id, category]));
 
-  // Comissão paga (saída de caixa) por competência — Σ payable_commission_value.
-  const comissaoByPeriod = new Map<string, number>();
-  // INFORMATIVO: parcela de seguro do repasse (JA dentro de comissaoByPeriod,
-  // pois final = producao + seguro). Mesmas linhas/competencia do payable.
+  // COMISSAO PAGA (saida de caixa) = LIQUIDO por competencia = Σ final_commission_value
+  // − Σ debitos (promoter_discounts). O caixa do mes M usa o LIQUIDO da competencia
+  // M-1 (mesma do "Recebido"); o deslocamento M-1 acontece no consumo (:comissoesPagas
+  // e no cashTrend), aqui so montamos o mapa por competencia.
+  const { payableByPeriod } = payableByCompetencia(pmrRows, discountRows);
+  // INFORMATIVO: parcela de seguro do repasse por competencia (subcomponente do
+  // liquido, "do qual seguro"). Consumido tambem em M-1 (mesma competencia do liquido).
   const comissaoSeguroByPeriod = new Map<string, number>();
   for (const row of pmrRows) {
     const k = getPeriodKey(row.year, row.month);
-    const payable = toNumber(row.final_commission_value) - toNumber(row.discount_value);
-    comissaoByPeriod.set(k, toNumber(comissaoByPeriod.get(k)) + payable);
     comissaoSeguroByPeriod.set(
       k,
       toNumber(comissaoSeguroByPeriod.get(k)) + toNumber(row.insurance_commission_value)
@@ -559,10 +596,15 @@ export async function buildFinancialAnalytics(
     }, 0)
   );
 
-  const comissoesPagas = roundMoney(comissaoByPeriod.get(selectedPeriod.key) ?? 0);
-  // INFORMATIVO: "do qual seguro" do repasse — competencia M (selectedPeriod),
-  // mesmo conjunto de comissoesPagas. NAO confundir com receivedInsurance (M-1).
-  const paidInsuranceShare = roundMoney(comissaoSeguroByPeriod.get(selectedPeriod.key) ?? 0);
+  // CORRECAO B: comissoes pagas do caixa M = LIQUIDO (final − debitos) da competencia
+  // M-1 — MESMA prevCompetencia do "Recebido" (cashReceivedFor), inclusive jan -> dez
+  // ano-1. Antes lia selectedPeriod (M) e o valor era bruto (discount_value=0).
+  const prevSel = prevCompetencia(selectedPeriod.year, selectedPeriod.month);
+  const prevSelKey = getPeriodKey(prevSel.year, prevSel.month);
+  const comissoesPagas = roundMoney(payableByPeriod.get(prevSelKey) ?? 0);
+  // INFORMATIVO: "do qual seguro" do repasse — subcomponente do comissoesPagas, MESMA
+  // competencia M-1 (antes lia M, ficaria descasado do liquido agora deslocado).
+  const paidInsuranceShare = roundMoney(comissaoSeguroByPeriod.get(prevSelKey) ?? 0);
 
   const summary: FinanceSummary = {
     periodLabel: selectedPeriod.label,
@@ -773,7 +815,10 @@ export async function buildFinancialAnalytics(
       const openingBalance = roundMoney(
         periodOpenings.reduce((sum, row) => sum + toNumber(row.opening_balance), 0)
       );
-      const comissoesPagas = roundMoney(comissaoByPeriod.get(period.key) ?? 0);
+      // cada ponto usa o LIQUIDO do mes ANTERIOR (M-1 do proprio ponto) — mesmo regime
+      // de caixa do Recebido (cashReceivedFor acima), pra o grafico bater com o card.
+      const prevP = prevCompetencia(period.year, period.month);
+      const comissoesPagas = roundMoney(payableByPeriod.get(getPeriodKey(prevP.year, prevP.month)) ?? 0);
 
       return {
         key: period.key,
