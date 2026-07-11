@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
 import { clearMemoryCache } from "@/lib/memoryCache";
+import { resolveCompanyScope } from "@/lib/companyScope";
 import { consolidateMonthlyFromCms, detectClosedMonth } from "@/lib/cmsMonthly";
 import { findImportedProductionRule } from "@/lib/promoterRemuneration";
 import { calcularOperacao, getProductionBandByValue } from "@/lib/motor";
@@ -609,13 +610,22 @@ export async function POST(req: Request) {
 
     const { start, end } = getMonthRange(year, month);
 
+    // ESCOPO — traduz "grupo:rr"/"grupo:ads" no conjunto de company_ids ANTES dos
+    // filtros (sem isto, companyId cru caía num .eq(uuid) -> 22P02 "Erro interno").
+    // null => sem restrição; grupo => [ids]; individual => [uuid].
+    const allCompaniesForScope = await fetchAllPaged<any>(() =>
+      supabase.from("companies").select("id, group_name")
+    );
+    const scope = resolveCompanyScope(companyId || "", allCompaniesForScope);
+    const scopeIds = scope.companyIds;
+
     const companies = await fetchAllPaged<any>(() => {
       let query = supabase
         .from("companies")
         .select("id, name, cnpj")
         .eq("active", true);
 
-      if (companyId) query = query.eq("id", companyId);
+      if (scopeIds) query = query.in("id", scopeIds);
       return query;
     });
 
@@ -682,7 +692,7 @@ export async function POST(req: Request) {
         .gte("movement_date", start)
         .lt("movement_date", end);
 
-      if (companyId) query = query.eq("company_id", companyId);
+      if (scopeIds) query = query.in("company_id", scopeIds);
       if (promoterId) query = query.eq("assigned_promoter_id", promoterId);
       return query;
     });
@@ -693,7 +703,7 @@ export async function POST(req: Request) {
         .select("id, company_id, name, active")
         .eq("active", true);
 
-      if (companyId) query = query.eq("company_id", companyId);
+      if (scopeIds) query = query.in("company_id", scopeIds);
       if (promoterId) query = query.eq("id", promoterId);
       return query;
     });
@@ -705,7 +715,7 @@ export async function POST(req: Request) {
         .eq("year", year)
         .eq("month", month);
 
-      if (companyId) query = query.eq("company_id", companyId);
+      if (scopeIds) query = query.in("company_id", scopeIds);
       if (promoterId) query = query.eq("promoter_id", promoterId);
       return query;
     });
@@ -718,7 +728,7 @@ export async function POST(req: Request) {
         .eq("month", month)
         .eq("active", true);
 
-      if (companyId) query = query.eq("company_id", companyId);
+      if (scopeIds) query = query.in("company_id", scopeIds);
       if (promoterId) query = query.eq("promoter_id", promoterId);
       return query;
     });
@@ -731,7 +741,7 @@ export async function POST(req: Request) {
         .eq("month", month)
         .eq("active", true);
 
-      if (companyId) query = query.eq("company_id", companyId);
+      if (scopeIds) query = query.in("company_id", scopeIds);
       return query;
     });
 
@@ -755,7 +765,7 @@ export async function POST(req: Request) {
         .eq("month", month)
         .eq("active", true);
 
-      if (companyId) query = query.eq("company_id", companyId);
+      if (scopeIds) query = query.in("company_id", scopeIds);
       if (promoterId) query = query.eq("promoter_id", promoterId);
       return query;
     });

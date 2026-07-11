@@ -12,6 +12,16 @@ import {
   getSrccRestrictionLabel as getSrccRestrictionLabelShared,
 } from "@/lib/proposalDetailing";
 import { fetchAllRows } from "@/lib/queryHelpers";
+// Resolução de escopo (individual/grupo) extraída p/ módulo compartilhado — o
+// recálculo (/api/calculate/monthly) reusa o MESMO resolvedor. Re-exporta os
+// sentinelas p/ não quebrar quem importa daqui.
+import {
+  resolveCompanyScope,
+  COMPANY_SCOPE_GROUP_RR,
+  COMPANY_SCOPE_GROUP_ADS,
+} from "@/lib/companyScope";
+
+export { COMPANY_SCOPE_GROUP_RR, COMPANY_SCOPE_GROUP_ADS };
 
 type CompanyRow = {
   id: string;
@@ -19,28 +29,6 @@ type CompanyRow = {
   cnpj: string;
   group_name?: string | null;
 };
-
-// VIRADA DE TELA — sentinelas de GRUPO no seletor de Empresa (mes fechado).
-// Individuais continuam sendo o UUID da company; "" = todas (consolidado).
-export const COMPANY_SCOPE_GROUP_RR = "grupo:rr";
-export const COMPANY_SCOPE_GROUP_ADS = "grupo:ads";
-
-// Resolve o parametro companyId em um conjunto de company_ids do escopo.
-// null => sem restricao (consolidado). Grupos via group_name (RR = 'Grupo RR',
-// ADS = 'BBTS'); individual = [uuid].
-function resolveCompanyScope(
-  companyIdParam: string,
-  companies: CompanyRow[]
-): { companyIds: string[] | null } {
-  if (!companyIdParam) return { companyIds: null };
-  if (companyIdParam === COMPANY_SCOPE_GROUP_RR) {
-    return { companyIds: companies.filter((c) => c.group_name === "Grupo RR").map((c) => c.id) };
-  }
-  if (companyIdParam === COMPANY_SCOPE_GROUP_ADS) {
-    return { companyIds: companies.filter((c) => c.group_name === "BBTS").map((c) => c.id) };
-  }
-  return { companyIds: [companyIdParam] };
-}
 
 type PromoterRow = {
   id: string;
