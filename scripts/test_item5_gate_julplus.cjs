@@ -24,7 +24,13 @@ const { consolidateMonthlyFromBbts } = require("../lib/bbtsMonthly.ts");
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 const ADS = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
-const MOV = "2026-07-15";
+// Competência LIMPA (nov/2026, sem dados reais de ADS) p/ isolar o teste do estado
+// de prod. jul+ = qualquer mês NÃO-congelado (mesmo caminho do creditoDriver); usar
+// 2026-07 passou a colidir com linhas reais atribuídas sem taxa_relatorio (ex.
+// 213983877), que disparam o gate REAL — o que é o comportamento correto, mas
+// polui o teste unitário do gate.
+const MOV = "2026-11-15";
+const GY = 2026, GM = 11;
 
 let pass = 0, fail = 0;
 const ok = (n, c, x) => { c ? (pass++, console.log(`  ✅ ${n}`)) : (fail++, console.log(`  ❌ ${n} ${x ? "— " + x : ""}`)); };
@@ -50,7 +56,7 @@ async function cleanup() {
 }
 
 async function main() {
-  console.log("\n=== ITEM 5 — GATE jul+ (2026-07) ===\n");
+  console.log("\n=== ITEM 5 — GATE jul+ (competência limpa 2026-11) ===\n");
   await cleanup();
   const { data: prom } = await sb.from("promoters").select("id, name").limit(1).single();
   const PID = prom.id;
@@ -66,7 +72,7 @@ async function main() {
   console.log("RUN 1 — a(taxa 2,87) + c(taxa 0) + d(gross 0): espera SUCESSO");
   await insert([A, C, D]);
   let res1 = null, err1 = null;
-  try { res1 = await consolidateMonthlyFromBbts(sb, { year: 2026, month: 7, dryRun: true }); }
+  try { res1 = await consolidateMonthlyFromBbts(sb, { year: GY, month: GM, dryRun: true }); }
   catch (e) { err1 = e; }
   ok("(a/c/d) NÃO aborta", !err1, err1 && err1.message);
   if (res1) {
@@ -82,7 +88,7 @@ async function main() {
   console.log("\nRUN 2 — adiciona b(gross 5000 SEM taxa): espera ABORT nomeando ZZGATE-B");
   await insert([B]);
   let res2 = null, err2 = null;
-  try { res2 = await consolidateMonthlyFromBbts(sb, { year: 2026, month: 7, dryRun: true }); }
+  try { res2 = await consolidateMonthlyFromBbts(sb, { year: GY, month: GM, dryRun: true }); }
   catch (e) { err2 = e; }
   ok("(b) ABORTA (lança erro, não grava)", Boolean(err2) && !res2, err2 ? "" : "não lançou");
   ok("(b) o erro NOMEIA o contrato ZZGATE-B", err2 && /ZZGATE-B/.test(err2.message || ""), err2 && (err2.message || "").slice(0, 160));

@@ -143,7 +143,7 @@ export type BbtsImportResult = {
   amostra: Array<Record<string, unknown>>; // primeiras linhas mapeadas (diagnóstico)
   // Projeção das linhas que SERÃO gravadas (proposta + data de efetivação) — usada
   // p/ conferência de competência sem gravar (dry-run) e p/ a tela.
-  preview: Array<{ proposal_number: string; movement_date: string | null }>;
+  preview: Array<{ proposal_number: string; movement_date: string | null; status: string | null }>;
 };
 
 // ---- import -----------------------------------------------------------------
@@ -310,7 +310,12 @@ export async function importBbtsDaily(
       interest_rate: parseRateBR(getField(lookup, ["vl_tx_mensal_juros", "taxa"])),
       term_months: parseIntBR(getField(lookup, ["qt_parcelas", "parcelas"])),
       installments: parseIntBR(getField(lookup, ["qt_parcelas", "parcelas"])),
-      status: situacao,
+      // PRODUÇÃO: só "Contratação CDC" chega aqui (gate acima). O campo status
+      // guarda o status de PRODUÇÃO ("Producao", como o RR grava "Produção" e o
+      // bbtsClosingImport grava "PRODUCAO" — todos normalizam p/ PRODUCAO em
+      // isProductionStatus). O ds_situacao_documento cru ("LIQUIDADO") NÃO é status
+      // de produção — fica só em raw_payload.__bbts_meta.situacao p/ rastreio.
+      status: "Producao",
       proposal_date: proposalDate,
       movement_date: movementDate,
       contract_date: contractDate,
@@ -350,7 +355,8 @@ export async function importBbtsDaily(
         convenio_code: payload.convenio_code,
         cancelado,
         srcc_cd: srccCd,
-        status: situacao,
+        status: "Producao",
+        situacao_documento: situacao ?? null,
       });
     }
   }
@@ -359,6 +365,7 @@ export async function importBbtsDaily(
   result.preview = records.map((r) => ({
     proposal_number: String(r.proposal_number),
     movement_date: (r.movement_date as string | null) ?? null,
+    status: (r.status as string | null) ?? null,
   }));
 
   // 4. MERGE por dono de coluna (owner='CREDIT'): preserva MANUAL_REASSIGNMENT e
