@@ -14,10 +14,11 @@ type Period = { key: string; label: string; year: number; month: number };
 
 type FinSummary = {
   receivedNet: number;
-  receivedInsurance: number; // informativo: "do qual seguro" do Recebido (M-1)
+  receivedInsurance: number; // "do qual seguro" das Comissoes recebidas pela empresa (M-1)
+  receivedEmpresa: number; // avista + seguro do fechamento M-1 (o que gera repasse)
   totalExpenses: number;
   comissoesPagas: number;
-  paidInsuranceShare: number; // informativo: "do qual seguro" do repasse (M)
+  paidInsuranceShare: number; // "do qual seguro" do repasse (M-1)
   operatingResult: number;
   actualPrt: number;
   openingBalance: number;
@@ -254,10 +255,13 @@ export default function FinanceiroPage() {
           </div>
           {tab === "caixa" && fin ? (
             <KpiBand
-              valueSize={26}
+              valueSize={22}
               items={[
                 { label: "Recebido", value: brl(fin.summary.receivedNet), sub: "crédito recebido (bruto)" },
-                { label: "Comissões pagas", value: brl(fin.summary.comissoesPagas), sub: "repasse aos promotores", subTone: "gold" },
+                { label: "Comissões recebidas pela empresa", value: brl(fin.summary.receivedEmpresa), sub: "à vista + seguro do fechamento M-1 (o que gera repasse) — base de comparação com as comissões pagas" },
+                { label: "Comissões pagas", value: brl(fin.summary.comissoesPagas), sub: "repasse aos promotores (M-1)", subTone: "gold" },
+                { label: "Seguro recebido", value: brl(fin.summary.receivedInsurance), sub: "do qual das 'recebidas pela empresa' — ref. mês anterior" },
+                { label: "Seguro repassado", value: brl(fin.summary.paidInsuranceShare), sub: "do qual das 'comissões pagas' (M-1)" },
                 { label: "Despesas", value: brl(fin.summary.totalExpenses), sub: "operacionais" },
                 { label: "Saldo do mês", value: brl(fin.summary.operatingResult), sub: "recebido − comissões − despesas", subTone: "ok", accent: true },
               ]}
@@ -270,42 +274,11 @@ export default function FinanceiroPage() {
 
         {!loading && tab === "caixa" && fin ? (
           <div className="panes">
-            {/* os 4 KPIs migraram pro <KpiBand> dentro do <HeaderNavy> (aba Caixa) */}
-            <p className="note"><span className="dot" />Saldo de <b>caixa</b> = recebido − comissões pagas − despesas. Difere do resultado da DRE pela receita complementar (competência, não caixa).</p>
-
-            {/* Subtotal INFORMATIVO de seguro RECEBIDO: "do qual" do Recebido —
-                JA dentro de receivedNet (nao soma). Regime de caixa: o seguro vem
-                dos fechamentos de M-1 (mes anterior), mesmo conjunto do Recebido. */}
-            <section className="card" style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)", textTransform: "uppercase", letterSpacing: ".04em" }}>
-                  Comissão de seguro recebida <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "var(--ink-3)" }}>(do qual)</span>
-                </div>
-                <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginTop: 5 }}>
-                  parte do “Recebido” acima — regime de caixa (ref. mês anterior), não é parcela adicional
-                </div>
-              </div>
-              <div className="num" style={{ fontSize: 26, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono',ui-monospace,monospace", fontVariantNumeric: "tabular-nums" }}>
-                {brl2(fin.summary.receivedInsurance)}
-              </div>
-            </section>
-
-            {/* Subtotal INFORMATIVO de seguro REPASSADO: "do qual" das Comissoes
-                pagas — JA dentro de comissoesPagas (final = producao + seguro), nao
-                soma. Competencia M (mes), distinta do seguro recebido (M-1). */}
-            <section className="card" style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)", textTransform: "uppercase", letterSpacing: ".04em" }}>
-                  Comissão de seguro repassada <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "var(--ink-3)" }}>(do qual)</span>
-                </div>
-                <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginTop: 5 }}>
-                  parte das “Comissões pagas” acima (repasse aos promotores) — competência do mês, não é parcela adicional
-                </div>
-              </div>
-              <div className="num" style={{ fontSize: 26, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono',ui-monospace,monospace", fontVariantNumeric: "tabular-nums" }}>
-                {brl2(fin.summary.paidInsuranceShare)}
-              </div>
-            </section>
+            {/* Os KPIs (incl. os 2 de seguro, agora promovidos) vivem no <KpiBand>
+                dentro do <HeaderNavy>. "Seguro recebido" e um "do qual" das Comissoes
+                recebidas pela empresa; "Seguro repassado" e um "do qual" das Comissoes
+                pagas — nenhum e entrada/saida adicional (nao somam). */}
+            <p className="note"><span className="dot" />Saldo de <b>caixa</b> = recebido − comissões pagas − despesas. <b>Comissões recebidas pela empresa</b> (à vista + seguro do fechamento M-1) é a base de comparação com as <b>Comissões pagas</b> (entrada × saída, mesma competência M-1). Difere do resultado da DRE pela receita complementar (competência, não caixa).</p>
 
             <section className="card">
               <div className="card-head">
