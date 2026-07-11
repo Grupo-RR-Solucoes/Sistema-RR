@@ -19,8 +19,16 @@ import { mergeDailyProductionRecords } from "./dailyRecordMerge.ts";
 // invalida snapshots (monthly_expected_closings / promoter_monthly_results) — o
 // PMR é somado pelo consolidador BBTS-2, não recalculado por empresa aqui.
 //
+// PRODUÇÃO (regra Promotiva, "só Produção entra"): o discriminador é ds_transacao,
+// NÃO a situação (todas vêm ds_situacao_documento=LIQUIDADO). SÓ grava
+// "Contratação CDC"; "Proposta CDC" (transitório) e "Cancelamento ..." NÃO gravam —
+// a linha nem chega em daily_production_records. Reconcilia por nu_proposta quando
+// a proposta liberar (o relatório seguinte traz "Contratação CDC").
+//
+// COMPETÊNCIA = EFETIVAÇÃO: movement_date sai de ts_movimento/dt_transacao (não de
+// dt_arquivo/digitação); a janela é a do productionPeriod, igual à Promotiva.
+//
 // Marcações que o consolidador BBTS-2 lê depois (via raw_payload.__bbts_meta):
-//   - cancelado: ds_transacao contém "Cancelamento" => NÃO comissiona.
 //   - srcc_cd  : Cd. Restrição SRCC (1=tem restrição => is_srcc_restricted).
 // A base do crédito é vl_solicitado (Valor Financiado); vl_liquido vem 0 e NÃO
 // é usado como base.
@@ -126,12 +134,16 @@ export type BbtsImportResult = {
   individual_auto: number; // casaram chave INDIVIDUAL -> promotor
   master_balde: number; // MASTER (JJ552710) -> assigned NULL
   nao_identificadas: number; // chave fora de j_keys
-  canceladas: number;
+  canceladas: number; // ds_transacao "Cancelamento ..." -> NÃO grava
+  transitorias: number; // ds_transacao "Proposta CDC" (aguardando liberação) -> NÃO grava
   srcc_restritas: number;
   empresa_nao_identificada: number; // MCI sem company_identifiers
   duplicadas_no_arquivo: number;
   por_empresa: Record<string, number>;
   amostra: Array<Record<string, unknown>>; // primeiras linhas mapeadas (diagnóstico)
+  // Projeção das linhas que SERÃO gravadas (proposta + data de efetivação) — usada
+  // p/ conferência de competência sem gravar (dry-run) e p/ a tela.
+  preview: Array<{ proposal_number: string; movement_date: string | null }>;
 };
 
 // ---- import -----------------------------------------------------------------
@@ -183,11 +195,13 @@ export async function importBbtsDaily(
     master_balde: 0,
     nao_identificadas: 0,
     canceladas: 0,
+    transitorias: 0,
     srcc_restritas: 0,
     empresa_nao_identificada: 0,
     duplicadas_no_arquivo: 0,
     por_empresa: {},
     amostra: [],
+    preview: [],
   };
 
   // 2. Registro de import (rastreabilidade) — só quando grava.
@@ -217,6 +231,17 @@ export async function importBbtsDaily(
       continue;
     }
 
+    // Regra Promotiva: SÓ PRODUÇÃO entra. O discriminador é ds_transacao — NÃO a
+    // situação (TODAS as linhas vêm ds_situacao_documento=LIQUIDADO, inclusive
+    // Proposta CDC e Cancelamento). "Contratação CDC" = produção; "Proposta CDC"
+    // (transitório, aguarda liberação) e "Cancelamento ..." NÃO gravam — a linha
+    // nem chega em daily_production_records. Quando a proposta liberar, o próximo
+    // relatório traz "Contratação CDC" e reconcilia por nu_proposta (merge b17a961).
+    const transacao = String(getField(lookup, ["ds_transacao"]) || "");
+    const transacaoNorm = normalizeText(transacao);
+    if (transacaoNorm.includes("CANCELAMENTO")) { result.canceladas += 1; continue; }
+    if (!transacaoNorm.startsWith("CONTRATACAO")) { result.transitorias += 1; continue; }
+
     const jKey = String(getField(lookup, ["cd_chave_j_operador", "chave_j", "chavej"]) || "").trim();
     const jData = jKeyByValue.get(jKey.toUpperCase());
     let promoterId: string | null = null;
@@ -237,9 +262,8 @@ export async function importBbtsDaily(
     // Base do crédito = vl_solicitado (Valor Financiado). vl_liquido NÃO é base.
     const vlSolicitado = parseMoneyBR(getField(lookup, ["vl_solicitado"]));
 
-    const transacao = String(getField(lookup, ["ds_transacao"]) || "");
-    const cancelado = normalizeText(transacao).includes("CANCELAMENTO");
-    if (cancelado) result.canceladas += 1;
+    // Cancelado já foi filtrado acima (só "Contratação CDC" chega aqui).
+    const cancelado = false;
 
     // Cd. Restrição SRCC: 1=tem restrição, 2=não, 3=consulta não realizada,
     // 4=não se aplica. Procura por nome exato e, se não achar, por "RESTRIC".
@@ -251,8 +275,13 @@ export async function importBbtsDaily(
     if (isSrccRestricted) result.srcc_restritas += 1;
 
     const situacao = getField(lookup, ["ds_situacao_documento", "situacao"]);
+    // COMPETÊNCIA por EFETIVAÇÃO: ts_movimento / dt_transacao (data de efetivação/
+    // liquidação) têm PRIORIDADE — a competência sai daí, pela janela do
+    // productionPeriod (último dia útil -> último dia útil do mês seguinte), igual
+    // à Promotiva. NUNCA de dt_arquivo (digitação). Os aliases antigos ficam de
+    // fallback. Sem isto, proposta jul-efetivada (digitada em jun) caía em junho.
     const movementDate =
-      parseDateBR(getField(lookup, ["dt_movimentacao", "dt_movimento", "data_movimento", "dt_operacao"]));
+      parseDateBR(getField(lookup, ["ts_movimento", "dt_transacao", "dt_movimentacao", "dt_movimento", "data_movimento", "dt_operacao"]));
     const contractDate =
       parseDateBR(getField(lookup, ["dt_contratacao", "dt_contrato", "data_contratacao"]));
     const proposalDate = parseDateBR(getField(lookup, ["dt_proposta", "data_proposta"]));
@@ -327,6 +356,10 @@ export async function importBbtsDaily(
   }
 
   const records = Array.from(recordsByKey.values());
+  result.preview = records.map((r) => ({
+    proposal_number: String(r.proposal_number),
+    movement_date: (r.movement_date as string | null) ?? null,
+  }));
 
   // 4. MERGE por dono de coluna (owner='CREDIT'): preserva MANUAL_REASSIGNMENT e
   //    NÃO toca em insurance_* (o seguro ADS é dono das colunas de seguro).
