@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { mergeDailyProductionRecords } from "./dailyRecordMerge.ts";
 
 // ============================================================================
 // bbtsClosingImport — CARGA do FECHAMENTO BBTS (junho/2026) em
@@ -381,7 +382,9 @@ export async function importBbtsClosing(
     throw new BbtsAnchorError(`ÂNCORA NÃO FECHOU — nada gravado. ${falhas}`);
   }
 
-  // 5. Grava (só quando âncora OK e não dry-run). Preserva MANUAL_REASSIGNMENT.
+  // 5. Grava (só quando âncora OK e não dry-run). MERGE por dono de coluna
+  //    (owner='FULL' — o fechamento traz crédito+seguro juntos numa linha só, é a
+  //    verdade de fim de mês). Preserva MANUAL_REASSIGNMENT dentro do helper.
   if (!dryRun && records.length > 0) {
     const { data: log, error: logErr } = await supabase
       .from("daily_imports")
@@ -390,38 +393,12 @@ export async function importBbtsClosing(
       .single();
     if (logErr) throw logErr;
 
-    const proposals = records.map((r) => r.proposal_number as string);
-    const existing = new Map<string, any>();
-    for (let i = 0; i < proposals.length; i += 200) {
-      const { data, error } = await supabase
-        .from("daily_production_records")
-        .select("proposal_number, assigned_promoter_id, original_promoter_id, promoter_source")
-        .eq("company_id", BBTS_COMPANY_ID)
-        .in("proposal_number", proposals.slice(i, i + 200));
-      if (error) throw error;
-      for (const e of data || []) existing.set(e.proposal_number, e);
-    }
-    const nowIso = new Date().toISOString();
-    for (const rec of records) {
-      rec.daily_import_id = log.id;
-      const ex = existing.get(rec.proposal_number as string);
-      if (ex) {
-        if (ex.original_promoter_id) rec.original_promoter_id = ex.original_promoter_id;
-        if (ex.promoter_source === "MANUAL_REASSIGNMENT") {
-          rec.assigned_promoter_id = ex.assigned_promoter_id;
-          rec.promoter_source = ex.promoter_source;
-        }
-      }
-      rec.updated_at = nowIso;
-    }
-
-    for (let i = 0; i < records.length; i += 500) {
-      const { error } = await supabase
-        .from("daily_production_records")
-        .upsert(records.slice(i, i + 500), { onConflict: "company_id,proposal_number" });
-      if (error) throw error;
-    }
-    result.gravadas = records.length;
+    const merged = await mergeDailyProductionRecords(supabase, {
+      records: records as any,
+      owner: "FULL",
+      daily_import_id: log.id,
+    });
+    result.gravadas = merged.inserted + merged.updated;
 
     await supabase.from("daily_imports").update({ status: "COMPLETED", rows_count: records.length }).eq("id", log.id);
   }

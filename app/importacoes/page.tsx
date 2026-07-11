@@ -2,6 +2,8 @@
 
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useState } from "react";
+import * as XLSX from "xlsx";
+import { detectDailySource, DAILY_SOURCE_LABEL, type DailySource } from "@/lib/dailySourceDetect";
 import { useUser } from "../../lib/auth/useUser";
 import EmptyStatePanel from "../../components/EmptyStatePanel";
 import FeedbackBanner from "../../components/FeedbackBanner";
@@ -92,6 +94,9 @@ function competenceLabel(month: number, year: number) {
   return `${abbr}/${year}`;
 }
 
+// Empresa ADS (BBTS): o fechamento dela vem em 2 PDFs (crédito + seguro), não xlsx.
+const ADS_COMPANY_ID = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
+
 export default function ImportacoesPage() {
   const { user } = useUser();
   const isFuncionario = user?.role === "funcionario";
@@ -103,6 +108,10 @@ export default function ImportacoesPage() {
   const [notice, setNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  // Fechamento ADS (2 PDFs): crédito + seguro.
+  const [adsCreditoFile, setAdsCreditoFile] = useState<File | null>(null);
+  const [adsSeguroFile, setAdsSeguroFile] = useState<File | null>(null);
+  const [adsSubmitting, setAdsSubmitting] = useState(false);
   const [promoterRemunerationFile, setPromoterRemunerationFile] = useState<File | null>(null);
   const [promoterRemunerationSubmitting, setPromoterRemunerationSubmitting] = useState(false);
   const [cancellingImportId, setCancellingImportId] = useState<string | null>(null);
@@ -115,6 +124,9 @@ export default function ImportacoesPage() {
   const [dailyError, setDailyError] = useState("");
   const [dailyPhase, setDailyPhase] = useState<"" | "importing" | "recalculating">("");
   const [dailyRecalcLabel, setDailyRecalcLabel] = useState("");
+  // ORIGEM da diária: auto-detect pela assinatura de colunas/abas + override manual.
+  const [detectedSource, setDetectedSource] = useState<DailySource | null>(null);
+  const [sourceOverride, setSourceOverride] = useState<DailySource | "">("");
   const [form, setForm] = useState({
     year: String(new Date().getFullYear()),
     month: String(new Date().getMonth() + 1),
@@ -209,6 +221,38 @@ export default function ImportacoesPage() {
     }
   }
 
+  async function handleAdsClosingSubmit() {
+    if (!adsCreditoFile) {
+      setError("Envie ao menos o PDF de crédito da ADS.");
+      return;
+    }
+    try {
+      setAdsSubmitting(true);
+      setError("");
+      setNotice("");
+      const creditoFile = await fileToBase64(adsCreditoFile);
+      const seguroFile = adsSeguroFile ? await fileToBase64(adsSeguroFile) : null;
+      const response = await fetch("/api/import/closing/ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ creditoFile, seguroFile, fileName: adsCreditoFile.name }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Erro ao importar o fechamento ADS.");
+      setNotice(
+        `Fechamento ADS importado (${competenceLabel(payload.month, payload.year)}): ${payload.gravadas} linha(s), ` +
+          `${payload.com_seguro} com seguro. Âncoras ${payload.ancora_ok ? "conferidas ✔" : "NÃO fecharam ✖"}.`
+      );
+      setAdsCreditoFile(null);
+      setAdsSeguroFile(null);
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || "Erro ao importar o fechamento ADS.");
+    } finally {
+      setAdsSubmitting(false);
+    }
+  }
+
   async function handlePromoterRemunerationSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!promoterRemunerationFile) {
@@ -245,10 +289,31 @@ export default function ImportacoesPage() {
     }
   }
 
+  // Lê abas + cabeçalho da 1ª linha e detecta a origem, SEM enviar nada (só p/
+  // mostrar o formato antes do upload; o servidor re-detecta/valida no envio).
+  async function detectSourceFromFile(selectedFile: File) {
+    try {
+      const buf = await selectedFile.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const header = (XLSX.utils.sheet_to_json<any[]>(wb.Sheets[wb.SheetNames[0]], {
+        header: 1,
+        blankrows: false,
+      })[0] || []) as Array<string | number>;
+      setDetectedSource(detectDailySource({ sheetNames: wb.SheetNames, headers: header }));
+    } catch {
+      setDetectedSource(null);
+    }
+  }
+
   async function handleDailySubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!dailyFile) {
       setDailyError("Selecione uma planilha de produção antes de enviar.");
+      return;
+    }
+    const source: DailySource | undefined = sourceOverride || detectedSource || undefined;
+    if (!source) {
+      setDailyError("Não foi possível identificar o formato da planilha. Escolha a origem no seletor antes de enviar.");
       return;
     }
     try {
@@ -265,7 +330,7 @@ export default function ImportacoesPage() {
       const response = await fetch("/api/import/daily", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file: base64, fileName: dailyFile.name }),
+        body: JSON.stringify({ file: base64, fileName: dailyFile.name, source }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data?.error || "Erro ao importar a planilha.");
@@ -567,10 +632,44 @@ export default function ImportacoesPage() {
                   <Dropzone
                     accept=".xlsx,.xls"
                     file={dailyFile}
-                    onFile={(f) => { setDailyFile(f); setDailyError(""); }}
+                    onFile={(f) => {
+                      setDailyFile(f);
+                      setDailyError("");
+                      setSourceOverride("");
+                      setDetectedSource(null);
+                      if (f) detectSourceFromFile(f);
+                    }}
                     title="selecione a planilha de produção"
                     sub="Formato .xlsx ou .xls · uma planilha pode conter vários dias"
                   />
+
+                  {/* ORIGEM detectada + override (protege contra cabeçalho novo) */}
+                  {dailyFile ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between", margin: "12px 0", padding: "10px 12px", border: "1px solid var(--rrimp-line, #e3e8ef)", borderRadius: 10, background: "var(--rrimp-soft, #f7f9fc)" }}>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        <span className="ic" aria-hidden><IcoSearch /></span>
+                        <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.25 }}>
+                          <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4, opacity: 0.6 }}>Formato detectado</span>
+                          <strong style={{ fontSize: 14, color: detectedSource ? "inherit" : "#b45309" }}>
+                            {detectedSource ? DAILY_SOURCE_LABEL[detectedSource] : "Não identificado — escolha a origem"}
+                          </strong>
+                        </div>
+                      </div>
+                      <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+                        <span style={{ opacity: 0.7 }}>Origem</span>
+                        <select
+                          value={sourceOverride}
+                          onChange={(e) => setSourceOverride(e.target.value as DailySource | "")}
+                          style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid var(--rrimp-line, #e3e8ef)" }}
+                        >
+                          <option value="">{detectedSource ? `Auto (${DAILY_SOURCE_LABEL[detectedSource]})` : "Auto (não identificado)"}</option>
+                          <option value="promotiva">{DAILY_SOURCE_LABEL["promotiva"]}</option>
+                          <option value="ads-credito">{DAILY_SOURCE_LABEL["ads-credito"]}</option>
+                          <option value="ads-seguro">{DAILY_SOURCE_LABEL["ads-seguro"]}</option>
+                        </select>
+                      </label>
+                    </div>
+                  ) : null}
 
                   <div className="rules-wrap">
                     <div className="rules-lab">Como cada linha entra</div>
@@ -773,15 +872,41 @@ export default function ImportacoesPage() {
                       </select>
                     </Field>
                   </div>
-                  <Dropzone disabled={isFuncionario} accept=".xlsx,.xls"
-                    file={file} onFile={setFile}
-                    title="selecione a planilha" sub="Fechamento da competência · até 25 MB" />
-                  <div className="uact">
-                    <span className="uhint"><IcoInfo />Disponível na auditoria após importar.</span>
-                    <button type="submit" className={`btn-primary${isFuncionario ? " dis" : ""}`} disabled={isFuncionario || submitting}>
-                      {submitting ? <><span className="spinner" />Importando…</> : <><span className="ck"><IcoUp /></span>Importar fechamento</>}
-                    </button>
-                  </div>
+                  {form.companyId === ADS_COMPANY_ID ? (
+                    <>
+                      {/* ADS: fechamento vem em 2 PDFs (crédito + seguro). */}
+                      <div className="autobar" style={{ marginBottom: 10 }}>
+                        <span className="ic"><IcoInfo /></span>
+                        <div className="t"><b>ADS — fechamento por PDF.</b> Envie o PDF de crédito (obrigatório) e o de seguro. A competência é lida do próprio arquivo; as âncoras do PDF são conferidas antes de gravar.</div>
+                      </div>
+                      <div className="two-up">
+                        <Dropzone disabled={isFuncionario} accept=".pdf"
+                          file={adsCreditoFile} onFile={setAdsCreditoFile}
+                          title="PDF de crédito (Crédito ADS-BBTS)" sub="obrigatório · .pdf" />
+                        <Dropzone disabled={isFuncionario} accept=".pdf"
+                          file={adsSeguroFile} onFile={setAdsSeguroFile}
+                          title="PDF de seguro (Seguro ADS-BBTS)" sub="opcional · .pdf" />
+                      </div>
+                      <div className="uact">
+                        <span className="uhint"><IcoInfo />Grava na produção ADS; âncora do PDF valida antes.</span>
+                        <button type="button" onClick={handleAdsClosingSubmit} className={`btn-primary${isFuncionario ? " dis" : ""}`} disabled={isFuncionario || adsSubmitting || !adsCreditoFile}>
+                          {adsSubmitting ? <><span className="spinner" />Importando…</> : <><span className="ck"><IcoUp /></span>Importar fechamento ADS</>}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <Dropzone disabled={isFuncionario} accept=".xlsx,.xls"
+                        file={file} onFile={setFile}
+                        title="selecione a planilha" sub="Fechamento da competência · até 25 MB" />
+                      <div className="uact">
+                        <span className="uhint"><IcoInfo />Disponível na auditoria após importar.</span>
+                        <button type="submit" className={`btn-primary${isFuncionario ? " dis" : ""}`} disabled={isFuncionario || submitting}>
+                          {submitting ? <><span className="spinner" />Importando…</> : <><span className="ck"><IcoUp /></span>Importar fechamento</>}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </form>
               </section>
 

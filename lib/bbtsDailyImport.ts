@@ -1,9 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { mergeDailyProductionRecords } from "./dailyRecordMerge.ts";
 
 // ============================================================================
-// bbtsDailyImport — PARSER + IMPORT da diária BBTS (formato próprio, aba "Total")
-// para daily_production_records, reusando a MESMA infra de atribuição master do
-// RR (j_keys INDIVIDUAL casa direto; MASTER = balde da aba Migração).
+// bbtsDailyImport — PARSER + IMPORT da diária BBTS de CRÉDITO (formato próprio,
+// aba "Total") para daily_production_records, reusando a MESMA infra de atribuição
+// master do RR (j_keys INDIVIDUAL casa direto; MASTER = balde da aba Migração).
+//
+// DONO DE COLUNA = CRÉDITO (mergeDailyProductionRecords owner='CREDIT'): escreve só
+// as colunas de crédito e NÃO toca em insurance_* — o seguro ADS vem em arquivo
+// separado (adsSeguroDailyImport) e é dono das colunas de seguro. Idempotente nos
+// dois sentidos: re-subir o crédito não zera o seguro já aplicado.
 //
 // BBTS-1: SÓ importa/mapeia — NÃO calcula comissão (isso é o consolidador BBTS-2).
 // A empresa ADS (group_name='BBTS', active=false) é identificada por MCI via
@@ -230,9 +236,6 @@ export async function importBbtsDaily(
 
     // Base do crédito = vl_solicitado (Valor Financiado). vl_liquido NÃO é base.
     const vlSolicitado = parseMoneyBR(getField(lookup, ["vl_solicitado"]));
-    const insuranceValue =
-      parseMoneyBR(getField(lookup, ["vl_seguro_credito"])) ||
-      parseMoneyBR(getField(lookup, ["vl_total_seguro"]));
 
     const transacao = String(getField(lookup, ["ds_transacao"]) || "");
     const cancelado = normalizeText(transacao).includes("CANCELAMENTO");
@@ -274,10 +277,7 @@ export async function importBbtsDaily(
       // é a base única do crédito BBTS (vl_liquido vem 0 e não é usado).
       gross_value: vlSolicitado,
       net_value: vlSolicitado,
-      insurance_value: insuranceValue,
-      insurance_net_value: insuranceValue,
-      insurance_type: getField(lookup, ["ds_tipo_seguro", "tipo_seguro"]),
-      has_insurance: insuranceValue > 0,
+      // DONO=CRÉDITO: NÃO escreve insurance_* (o seguro ADS vem em arquivo próprio).
       interest_rate: parseRateBR(getField(lookup, ["vl_tx_mensal_juros", "taxa"])),
       term_months: parseIntBR(getField(lookup, ["qt_parcelas", "parcelas"])),
       installments: parseIntBR(getField(lookup, ["qt_parcelas", "parcelas"])),
@@ -328,46 +328,17 @@ export async function importBbtsDaily(
 
   const records = Array.from(recordsByKey.values());
 
-  // 4. Preserva atribuição MANUAL em reimport (igual ao RR) + upsert.
+  // 4. MERGE por dono de coluna (owner='CREDIT'): preserva MANUAL_REASSIGNMENT e
+  //    NÃO toca em insurance_* (o seguro ADS é dono das colunas de seguro).
   if (!dryRun && records.length > 0) {
-    const companyIds = [...new Set(records.map((r) => r.company_id as string))];
-    const proposals = [...new Set(records.map((r) => r.proposal_number as string))];
-    const existingByKey = new Map<string, any>();
-    for (let i = 0; i < proposals.length; i += 200) {
-      const chunk = proposals.slice(i, i + 200);
-      const { data, error } = await supabase
-        .from("daily_production_records")
-        .select("company_id, proposal_number, assigned_promoter_id, original_promoter_id, promoter_source")
-        .in("company_id", companyIds)
-        .in("proposal_number", chunk);
-      if (error) throw error;
-      for (const e of data || []) existingByKey.set(`${e.company_id}::${e.proposal_number}`, e);
-    }
-
-    const nowIso = new Date().toISOString();
-    for (const rec of records) {
-      const ex = existingByKey.get(`${rec.company_id}::${rec.proposal_number}`);
-      if (ex) {
-        result.atualizadas += 1;
-        if (ex.original_promoter_id) rec.original_promoter_id = ex.original_promoter_id;
-        if (ex.promoter_source === "MANUAL_REASSIGNMENT") {
-          rec.assigned_promoter_id = ex.assigned_promoter_id;
-          rec.promoter_source = ex.promoter_source;
-        }
-      } else {
-        result.inseridas += 1;
-      }
-      rec.updated_at = nowIso;
-    }
-
-    for (let i = 0; i < records.length; i += 500) {
-      const chunk = records.slice(i, i + 500);
-      const { error } = await supabase
-        .from("daily_production_records")
-        .upsert(chunk, { onConflict: "company_id,proposal_number" });
-      if (error) throw error;
-    }
-    result.gravadas = records.length;
+    const merged = await mergeDailyProductionRecords(supabase, {
+      records: records as any,
+      owner: "CREDIT",
+      daily_import_id: importId,
+    });
+    result.inseridas = merged.inserted;
+    result.atualizadas = merged.updated;
+    result.gravadas = merged.inserted + merged.updated;
 
     await supabase
       .from("daily_imports")
