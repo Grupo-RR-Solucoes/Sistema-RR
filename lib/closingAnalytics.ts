@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { calcularOperacao } from "@/lib/motor";
+import type { TrpRegraProvider } from "@/lib/motor";
+import { buildTrpCreditProvider } from "@/lib/trp/creditTrpProvider";
 import { getCompanyDisplayIdentity } from "@/lib/knownCompanies";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { fetchAllRows } from "@/lib/queryHelpers";
@@ -931,7 +933,11 @@ function buildStopPeriodByOperation(params: {
   return stopMap;
 }
 
-function estimateRow(row: ProductionRow, productionValue: number) {
+function estimateRow(
+  row: ProductionRow,
+  productionValue: number,
+  trpProvider?: TrpRegraProvider,
+) {
   const netValue = toNumber(row.net_value);
   const grossValue = Math.max(toNumber(row.gross_value), netValue);
   const insuranceValue = toNumber(row.insurance_value);
@@ -965,7 +971,7 @@ function estimateRow(row: ProductionRow, productionValue: number) {
       movement_date: row.movement_date,
       contract_date: row.contract_date,
       proposal_date: row.proposal_date,
-    });
+    }, { trpProvider });
 
     expectedCash = toNumber(result.credito.avista_empresa);
     expectedPrt = toNumber(result.credito.diferido);
@@ -1345,6 +1351,14 @@ export async function buildClosingAnalytics(
         productionValueByCompanyPeriod,
       });
 
+  // TRP self-service: fonte da regra de crédito atrás da flag TRP_SOURCE. O
+  // preload async das competências (derivadas do contract_date, a MESMA chave que
+  // o motor consulta) roda 1x aqui; o cálculo por linha em estimateRow continua
+  // síncrono. Sem db-source, provider=undefined -> motor lê o JSON (no-op).
+  const trpProvider = await buildTrpCreditProvider(
+    productionRows.map((row) => row.contract_date)
+  );
+
   for (const row of productionRows) {
     if (!row.company_id || !isEligibleProductionRow(row)) {
       continue;
@@ -1390,7 +1404,8 @@ export async function buildClosingAnalytics(
     // pelo somatorio do grupo empresarial.
     const estimation = estimateRow(
       row,
-      groupProductionByPeriod.get(periodKey) || 0
+      groupProductionByPeriod.get(periodKey) || 0,
+      trpProvider
     );
     const term = getOperationTerm(row);
 

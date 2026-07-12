@@ -7,6 +7,8 @@ import { resolveCompanyScope } from "@/lib/companyScope";
 import { consolidateMonthlyFromCms, detectClosedMonth } from "@/lib/cmsMonthly";
 import { findImportedProductionRule } from "@/lib/promoterRemuneration";
 import { calcularOperacao, getProductionBandByValue } from "@/lib/motor";
+import type { TrpRegraProvider } from "@/lib/motor";
+import { buildTrpCreditProvider } from "@/lib/trp/creditTrpProvider";
 import {
   calculateInsuranceCommissionFromRules,
   fetchInsuranceSlipRules,
@@ -124,7 +126,11 @@ function getPersistedCompanyReceivedPercent(record: any, fallbackImportedRule: a
   return 0;
 }
 
-function deriveCompanyReceivedPercentFromMotor(record: any, companyProductionValue: number) {
+function deriveCompanyReceivedPercentFromMotor(
+  record: any,
+  companyProductionValue: number,
+  trpProvider?: TrpRegraProvider,
+) {
   const netValue = toNumber(record.net_value);
   if (netValue <= 0) return 0;
 
@@ -187,7 +193,7 @@ function deriveCompanyReceivedPercentFromMotor(record: any, companyProductionVal
     movement_date: record.movement_date,
     contract_date: record.contract_date,
     proposal_date: record.proposal_date,
-  });
+  }, { trpProvider });
 
   const avistaEmpresa = toNumber(operation?.credito?.avista_empresa);
   if (avistaEmpresa <= 0) return 0;
@@ -446,7 +452,7 @@ async function fetchAllPaged<T = any>(baseQueryBuilder: () => any): Promise<T[]>
   return all;
 }
 
-function calculateCompanyExpectedValues(records: any[]) {
+function calculateCompanyExpectedValues(records: any[], trpProvider?: TrpRegraProvider) {
   let grossProduction = 0;
   let netValidProduction = 0;
   let cancelledValue = 0;
@@ -510,7 +516,7 @@ function calculateCompanyExpectedValues(records: any[]) {
       movement_date: record.movement_date,
       contract_date: record.contract_date,
       proposal_date: record.proposal_date,
-    });
+    }, { trpProvider });
 
     expectedCashCommission += toNumber(result.credito.avista_empresa);
     expectedPrtCommission += toNumber(result.credito.diferido);
@@ -868,9 +874,17 @@ export async function POST(req: Request) {
     const expectedClosingsUpserts: any[] = [];
     const companyExpectedMap = new Map<string, any>();
 
+    // TRP self-service: fonte da regra de crédito atrás da flag TRP_SOURCE. Preload
+    // async 1x das competências dos registros (derivadas do contract_date, a MESMA
+    // chave do motor); o cálculo por linha continua síncrono. Sem db-source,
+    // provider=undefined -> motor lê o JSON (no-op).
+    const trpProvider = await buildTrpCreditProvider(
+      dailyRecords.map((record: any) => record.contract_date)
+    );
+
     for (const company of companies) {
       const records = companyGroups.get(company.id) || [];
-      const expected = calculateCompanyExpectedValues(records);
+      const expected = calculateCompanyExpectedValues(records, trpProvider);
       companyExpectedMap.set(company.id, expected);
 
       expectedClosingsUpserts.push({
@@ -1085,7 +1099,8 @@ export async function POST(req: Request) {
           ) ||
           deriveCompanyReceivedPercentFromMotor(
             record,
-            toNumber(companyExpected?.netValidProduction)
+            toNumber(companyExpected?.netValidProduction),
+            trpProvider
           );
 
         const effectiveCompanyReceivedPercent = persistedCompanyReceivedPercent;

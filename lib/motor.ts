@@ -1,4 +1,5 @@
 import { resolvePromotivaCashPolicy } from "./promotivaCashPolicy.ts";
+import type { RegraMes } from "./regrasData.ts";
 import { getRegime, getRegra, lookupPctInRegra } from "./regrasLoader.ts";
 import {
   getProductionPeriodFromValue,
@@ -24,6 +25,23 @@ type Operation = {
   movement_date?: string | null;
   contract_date?: string | null;
   proposal_date?: string | null;
+};
+
+/**
+ * Provider SINCRONO da RegraMes por competencia (YYYY-MM). Injetado pelo chamador
+ * que ja fez o preload async 1x (createTrpRegraDbPreloader.getRegraSync). Retorna
+ * null quando a competencia nao tem versao no DB (ex.: pre-abril/2026) -> o motor
+ * cai no JSON embutido (getRegra). Espelha o padrao da a-vista F4 (avistaProducao):
+ * pre-carga async fora do motor, lookup sincrono aqui dentro.
+ */
+export type TrpRegraProvider = (competencia: string) => RegraMes | null;
+
+/**
+ * Opcoes opcionais de calcularOperacao. Sem opts (ou sem trpProvider) o
+ * comportamento e IDENTICO ao historico — le so o JSON embutido. 100% retrocompativel.
+ */
+export type CalcularOperacaoOpts = {
+  trpProvider?: TrpRegraProvider;
 };
 
 type BandKey =
@@ -435,11 +453,20 @@ const CATEGORIAS_PCT_GERAL = new Set(["PORTAB_PUBLICO", "PORTAB_PRIVADO", "FGTS"
 /** Mesma tolerância de range do regrasLoader (EPS), p/ o gate B. */
 const LOOKUP_EPS = 1e-7;
 
-/** Competência (YYYY-MM) do contrato por VIGÊNCIA (holiday-aware), reusando a
- *  função canônica de lib/productionPeriod.ts — NÃO reimplementada aqui. */
-function competenciaDoContrato(op: Operation): string | null {
-  const periodo = getProductionPeriodFromValue(op.contract_date);
+/** Competência (YYYY-MM) de uma data de contrato por VIGÊNCIA (holiday-aware),
+ *  reusando a função canônica de lib/productionPeriod.ts — NÃO reimplementada aqui.
+ *  Exportada para o chamador PRE-CARREGAR exatamente as competências que o motor
+ *  vai consultar no provider (mesma chave do lookup -> sem miss no getRegraSync). */
+export function competenciaDaDataContrato(
+  contractDate: string | null | undefined,
+): string | null {
+  const periodo = getProductionPeriodFromValue(contractDate ?? null);
   return periodo ? getProductionPeriodKey(periodo.year, periodo.month) : null;
+}
+
+/** Competência (YYYY-MM) do contrato por VIGÊNCIA (holiday-aware). */
+function competenciaDoContrato(op: Operation): string | null {
+  return competenciaDaDataContrato(op.contract_date);
 }
 
 /** Lookup do pct CRU na TRP da competência (caminho VOLUME_5). Replica EXATAMENTE
@@ -450,7 +477,8 @@ function lookupCreditPercentTrp(
   mes: string,
   tableKey: string,
   rate: number,
-  term: number
+  term: number,
+  trpProvider?: TrpRegraProvider
 ): { percent: number | null; motivo?: string } {
   const categoria = MAP_TABLEKEY_TO_CATEGORIA[tableKey] || tableKey;
   const tabLabel = CATEGORIAS_PCT_GERAL.has(categoria)
@@ -458,7 +486,13 @@ function lookupCreditPercentTrp(
     : `Faixa ${BAND_INDEX[band] + 1}`;
   const taxaDec = rate > 1 ? rate / 100 : rate;
 
-  const r = getRegra(mes);
+  // FONTE da RegraMes: DB (trp_rule_versions) quando o chamador injeta o provider
+  // E a competencia tem versao (2026-04+); senao JSON embutido (getRegra), que
+  // cobre o historico pre-abril. Sem provider -> so JSON (100% retrocompativel).
+  const fromDb = trpProvider ? trpProvider(mes) : null;
+  const r = fromDb
+    ? { regra: fromDb, jsonRegra: "db:trp_rule_versions", regraInferida: false }
+    : getRegra(mes);
   if (!r) return { percent: null, motivo: `getRegra(${mes})=null` };
 
   // GATE B — ADIANTAMENTO_13: o motor exige tx_juros_min (via minRate); o loader
@@ -479,7 +513,7 @@ function lookupCreditPercentTrp(
   return { percent: out.pct, motivo: out.celula ?? undefined };
 }
 
-function getCreditPercent(op: Operation, band: BandKey) {
+function getCreditPercent(op: Operation, band: BandKey, trpProvider?: TrpRegraProvider) {
   const tableKey = inferCreditTable(op);
   const ticket = toNumber(op.valor_liquido);
   const rate = toNumber(op.taxa_juros);
@@ -499,7 +533,7 @@ function getCreditPercent(op: Operation, band: BandKey) {
   let entrouTrp = false;
   if (mes && getRegime(mes) === "VOLUME_5_FAIXAS") {
     entrouTrp = true;
-    const trp = lookupCreditPercentTrp(band, mes, tableKey, rate, term);
+    const trp = lookupCreditPercentTrp(band, mes, tableKey, rate, term, trpProvider);
     if (trp.percent !== null) {
       return { tableKey, percent: trp.percent };
     }
@@ -533,9 +567,9 @@ function getCreditPercent(op: Operation, band: BandKey) {
   };
 }
 
-export function calcularOperacao(op: Operation) {
+export function calcularOperacao(op: Operation, opts?: CalcularOperacaoOpts) {
   const productionBand = getProductionBandByValue(op.production_value || 0);
-  const creditPercentInfo = getCreditPercent(op, productionBand);
+  const creditPercentInfo = getCreditPercent(op, productionBand, opts?.trpProvider);
   const totalCreditPercent = creditPercentInfo.percent;
   const cashPolicy = resolvePromotivaCashPolicy({
     companyCashPercent: op.company_cash_percent,

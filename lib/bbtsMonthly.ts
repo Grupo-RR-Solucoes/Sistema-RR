@@ -36,6 +36,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getProductionPeriodFromValue, getProductionPeriodKey } from "./productionPeriod.ts";
 import { calcularOperacao } from "./motor.ts";
+import { buildTrpCreditProvider } from "./trp/creditTrpProvider.ts";
 import { fetchPromoterShareData, resolvePromoterShareSync } from "./proposalDetailing.ts";
 import { individualPenetration, insuranceShareForPenetration } from "./insurancePenetration.ts";
 
@@ -139,6 +140,10 @@ export async function consolidateMonthlyFromBbts(
   };
   const agg = new Map<string, Agg>();
   const compDate = `${year}-${String(month).padStart(2, "0")}-15`; // competência p/ vigência TRP
+  // TRP self-service: fonte da regra de crédito atrás da flag TRP_SOURCE. compDate
+  // é único (a competência consolidada), então o preload é 1 competência. Sem
+  // db-source, provider=undefined -> motor lê o JSON (comportamento histórico).
+  const trpProvider = await buildTrpCreditProvider([compDate]);
   let ignoradasBalde = 0, ignoradasCancel = 0, ignoradasSrcc = 0;
   // Detalhe por proposta (conferência).
   const propostas: Array<{ contrato: string; vfin: number; juros: number; parc: number; conv: string; trp: number; avista: number; diferido: number; comEmpresa: number; promoter_id: string }> = [];
@@ -176,7 +181,7 @@ export async function consolidateMonthlyFromBbts(
         valor_seguro: 0,
         company_cash_percent: null,
       };
-      creditPercent = toNumber(calcularOperacao(op as any).credito.percentual);
+      creditPercent = toNumber(calcularOperacao(op as any, { trpProvider }).credito.percentual);
     }
 
     // TETO 5,80% à vista; excedente = diferido (100% empresa). Comissão-empresa

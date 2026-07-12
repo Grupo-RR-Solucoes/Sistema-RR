@@ -5,6 +5,8 @@ import {
   fetchInsuranceSlipRules,
 } from "@/lib/insuranceCalculator";
 import { calcularOperacao } from "@/lib/motor";
+import type { TrpRegraProvider } from "@/lib/motor";
+import { buildTrpCreditProvider } from "@/lib/trp/creditTrpProvider";
 import { getPrazoTrp } from "@/lib/prazoTrp";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import {
@@ -280,7 +282,11 @@ function readRawPayloadValue(
   return null;
 }
 
-function deriveCompanyReceivedRate(record: ProductionRow, companyProductionValue: number) {
+function deriveCompanyReceivedRate(
+  record: ProductionRow,
+  companyProductionValue: number,
+  trpProvider?: TrpRegraProvider,
+) {
   const netValue = toNumber(record.net_value);
   if (netValue <= 0) return 0;
 
@@ -333,7 +339,7 @@ function deriveCompanyReceivedRate(record: ProductionRow, companyProductionValue
     movement_date: record.movement_date,
     contract_date: record.contract_date,
     proposal_date: record.proposal_date,
-  });
+  }, { trpProvider });
 
   const avistaEmpresa = toNumber(operation?.credito?.avista_empresa);
   if (avistaEmpresa <= 0) return 0;
@@ -341,7 +347,11 @@ function deriveCompanyReceivedRate(record: ProductionRow, companyProductionValue
   return avistaEmpresa / netValue;
 }
 
-function getCompanyReceivedRate(record: ProductionRow, companyProductionValue: number) {
+function getCompanyReceivedRate(
+  record: ProductionRow,
+  companyProductionValue: number,
+  trpProvider?: TrpRegraProvider,
+) {
   const rawRate = toPercentRate(
     readRawPayloadValue(record.raw_payload, [
       "% A VISTA",
@@ -361,12 +371,16 @@ function getCompanyReceivedRate(record: ProductionRow, companyProductionValue: n
     return storedRate;
   }
 
-  return deriveCompanyReceivedRate(record, companyProductionValue);
+  return deriveCompanyReceivedRate(record, companyProductionValue, trpProvider);
 }
 
-function getPromoterViewCompanyRate(record: ProductionRow, companyProductionValue: number) {
+function getPromoterViewCompanyRate(
+  record: ProductionRow,
+  companyProductionValue: number,
+  trpProvider?: TrpRegraProvider,
+) {
   return capPromoterViewRate(
-    getCompanyReceivedRate(record, companyProductionValue)
+    getCompanyReceivedRate(record, companyProductionValue, trpProvider)
   );
 }
 
@@ -585,6 +599,14 @@ export async function loadPromoterAnalyticsBase(
     return period && period.year === latestPeriod.year && period.month === latestPeriod.month;
   });
 
+  // TRP self-service: fonte da regra de crédito atrás da flag TRP_SOURCE. Preload
+  // async 1x das competências do período (derivadas do contract_date, a MESMA chave
+  // do motor); as taxas por registro (getPromoterViewCompanyRate) seguem síncronas.
+  // Sem db-source, provider=undefined -> motor lê o JSON (no-op).
+  const trpProvider = await buildTrpCreditProvider(
+    recordsForPeriod.map((record) => record.contract_date)
+  );
+
   const companyProductionMap = new Map<string, number>();
   // CORREÇÃO A — Produção CONSOLIDADA do grupo no periodo selecionado.
   // O enquadramento Promotiva é por grupo empresarial, nao por CNPJ.
@@ -625,7 +647,7 @@ export async function loadPromoterAnalyticsBase(
       if (!isEligibleProductionRecord(record)) continue;
       const commission =
         toNumber(record.net_value) *
-        getPromoterViewCompanyRate(record, groupProductionValue);
+        getPromoterViewCompanyRate(record, groupProductionValue, trpProvider);
       companyGrossCommission += commission;
       if (!record.assigned_promoter_id) {
         unassignedCompanyGrossCommission += commission;
@@ -864,6 +886,10 @@ export async function loadPromoterAnalyticsBase(
     targets,
     recordsById,
     groupProductionValue,
+    // TRP self-service: provider (db) pre-carregado 1x; repassado a selectPromoterView
+    // para as proposalRows usarem a MESMA fonte de crédito (síncrono). undefined em
+    // modo json (motor lê o JSON).
+    trpProvider,
     companyGrossCommission,
     unassignedCompanyGrossCommission,
     unassignedProduction,
@@ -893,6 +919,7 @@ export function selectPromoterView(
     recordsForPeriod,
     recordsById,
     groupProductionValue,
+    trpProvider,
     companyGrossCommission,
     unassignedCompanyGrossCommission,
     unassignedProduction,
@@ -991,7 +1018,8 @@ export function selectPromoterView(
           // CORREÇÃO A — usar produção CONSOLIDADA do grupo, nao por CNPJ.
           const promoterViewCompanyRate = getPromoterViewCompanyRate(
             record,
-            groupProductionValue
+            groupProductionValue,
+            trpProvider
           );
 
           return {
