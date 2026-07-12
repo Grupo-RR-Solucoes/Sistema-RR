@@ -183,6 +183,11 @@ export async function createManualDebit(
  *   - o nº de parcelas tem que caber as já aplicadas;
  *   - as novas parcelas começam no mês seguinte à última aplicada (ou no mês inicial
  *     do plano, se nada foi aplicado ainda).
+ *
+ * CORREÇÃO DE DONO COM PARCELA JÁ PAGA (ver estornarParcelasPagas): se o débito foi
+ * descontado do promotor ERRADO e é movido para o CERTO, o que desceu do errado é
+ * ESTORNADO (crédito no mês corrente) e o certo assume o débito INTEIRO. O mês fechado
+ * continua intocado — o estorno é lançamento novo, não reescrita.
  */
 export async function updateDebit(
   supabase: SupabaseLike,
@@ -192,6 +197,10 @@ export async function updateDebit(
     totalAmount?: number | null;
     installmentsTotal?: number | null;
     updatedBy?: string | null;
+    // Competência CORRENTE (mês aberto) onde entram o estorno e as parcelas do novo
+    // dono. Injetável para teste; default = mês de hoje.
+    currentYear?: number;
+    currentMonth?: number;
   }
 ): Promise<{
   debitId: string;
@@ -201,6 +210,14 @@ export async function updateDebit(
   restante: number;
   parcelasReescritas: number;
   parcelasPreservadas: number;
+  estorno?: {
+    promoterId: string;
+    valor: number;
+    year: number;
+    month: number;
+    debitId: string;
+    parcelasOrigem: number;
+  };
 }> {
   const { data: debit, error: eD } = await supabase
     .from("promoter_debits")
@@ -211,14 +228,38 @@ export async function updateDebit(
 
   const { data: parcelas, error: eP } = await supabase
     .from("promoter_discounts")
-    .select("id, year, month, amount, status, installment_number")
+    .select("id, promoter_id, year, month, amount, status, installment_number")
     .eq("debit_id", params.debitId)
     .order("year", { ascending: true })
     .order("month", { ascending: true });
   if (eP) throw eP;
 
-  const aplicadas = (parcelas || []).filter((p: any) => p.status === "APPLIED");
+  // APLICADAS DO DONO ATUAL. Filtrar por promoter_id importa: depois de uma correção de
+  // dono, a parcela paga continua registrada no débito mas pertence ao promotor ANTIGO —
+  // ela não pode contar como "já descontado" do dono novo numa edição seguinte.
+  const aplicadas = (parcelas || []).filter(
+    (p: any) => p.status === "APPLIED" && p.promoter_id === debit.promoter_id
+  );
   const desceu = round2(aplicadas.reduce((s: number, p: any) => s + Number(p.amount), 0));
+
+  const promoterIdNovo = params.promoterId || debit.promoter_id;
+  const trocouPromotor = promoterIdNovo !== debit.promoter_id;
+
+  // CORREÇÃO DE DONO com parcela já paga pelo promotor ERRADO -> caminho do estorno.
+  if (trocouPromotor && desceu > 0.005) {
+    return estornarParcelasPagas(supabase, {
+      debit,
+      parcelas: parcelas || [],
+      aplicadas,
+      desceu,
+      promoterIdNovo,
+      totalAmount: params.totalAmount,
+      installmentsTotal: params.installmentsTotal,
+      currentYear: params.currentYear,
+      currentMonth: params.currentMonth,
+      updatedBy: params.updatedBy ?? null,
+    });
+  }
 
   const novoTotal = round2(
     params.totalAmount === null || params.totalAmount === undefined
@@ -248,10 +289,10 @@ export async function updateDebit(
     );
   }
 
-  const promoterId = params.promoterId || debit.promoter_id;
-  const trocouPromotor = promoterId !== debit.promoter_id;
-  // Promotor novo => empresa DONA determinística do promotor na competência (mesma
-  // régua do fechamento). Sem troca, mantém a empresa que já estava no débito.
+  // Aqui só se chega SEM parcela paga do dono atual (o caminho com estorno já retornou
+  // acima). Promotor novo => empresa DONA determinística do promotor na competência
+  // (mesma régua do fechamento). Sem troca, mantém a empresa que já estava no débito.
+  const promoterId = promoterIdNovo;
   const companyId = trocouPromotor
     ? await resolveDonaCompanyForPromoter(supabase, {
         year: debit.start_year,
@@ -329,6 +370,194 @@ export async function updateDebit(
     restante,
     parcelasReescritas: rows.length,
     parcelasPreservadas: aplicadas.length,
+  };
+}
+
+/** Tipo do lançamento de crédito gerado pela correção de dono. */
+export const ESTORNO_CORRECAO = "ESTORNO_CORRECAO";
+
+/**
+ * CORREÇÃO DE DONO quando o débito JÁ FOI DESCONTADO do promotor ERRADO.
+ *
+ * Regra: estorna o que desceu do errado e cobra o valor INTEIRO do certo.
+ *
+ * MÊS FECHADO NUNCA É REESCRITO. A parcela APPLIED do promotor errado FICA como está
+ * (é histórico: aquele dinheiro desceu mesmo, naquele mês). O acerto é um LANÇAMENTO
+ * NOVO na competência CORRENTE (mês aberto):
+ *
+ *   promoter_discounts.amount NEGATIVO = CRÉDITO. O payable é
+ *   `final_commission_value - Σ(amount)` (promoterAnalytics), então um amount de −100
+ *   AUMENTA em 100 o líquido do promotor errado no mês corrente. É o mecanismo nativo
+ *   da tabela — `amount` é numeric(18,2) sem CHECK de sinal, não precisa coluna nova.
+ *
+ * O promotor CERTO assume o débito INTEIRO (não o saldo): as parcelas PENDENTES são
+ * recriadas cobrindo o total, a partir da competência corrente.
+ *
+ * Rastreabilidade: o estorno é um promoter_debits próprio (debit_type ESTORNO_CORRECAO,
+ * total negativo) + promoter_debit_sources apontando para o débito de ORIGEM e quantas
+ * parcelas pagas o geraram. Quem→quem vai para audit_logs na rota.
+ */
+async function estornarParcelasPagas(
+  supabase: SupabaseLike,
+  args: {
+    debit: any;
+    parcelas: any[];
+    aplicadas: any[];
+    desceu: number;
+    promoterIdNovo: string;
+    totalAmount?: number | null;
+    installmentsTotal?: number | null;
+    currentYear?: number;
+    currentMonth?: number;
+    updatedBy: string | null;
+  }
+) {
+  const { debit, parcelas, aplicadas, desceu, promoterIdNovo } = args;
+  const promoterIdErrado = debit.promoter_id;
+
+  const agora = new Date();
+  const cy = args.currentYear ?? agora.getUTCFullYear();
+  const cm = args.currentMonth ?? agora.getUTCMonth() + 1;
+
+  const novoTotal = round2(
+    args.totalAmount === null || args.totalAmount === undefined
+      ? Number(debit.total_amount)
+      : args.totalAmount
+  );
+  const n = Math.max(
+    1,
+    Math.floor(
+      args.installmentsTotal === null || args.installmentsTotal === undefined
+        ? Number(debit.installments_total) || 1
+        : args.installmentsTotal
+    )
+  );
+
+  // 1) ESTORNO — crédito para o promotor ERRADO, na competência CORRENTE (mês aberto).
+  //    Débito próprio, com total NEGATIVO: é um crédito, não um débito.
+  const { data: estornoDebit, error: eE } = await supabase
+    .from("promoter_debits")
+    .insert({
+      promoter_id: promoterIdErrado,
+      company_id: debit.company_id,
+      kind: "AUTO",
+      debit_type: ESTORNO_CORRECAO,
+      total_amount: round2(-desceu),
+      installments_total: 1,
+      start_year: cy,
+      start_month: cm,
+      status: "ACTIVE",
+      notes:
+        `Estorno da correcao de dono do debito ${debit.id} (${debit.debit_type}): ` +
+        `${aplicadas.length} parcela(s) ja paga(s) pelo promotor errado, total ${desceu.toFixed(2)}. ` +
+        `Mes fechado preservado; credito lancado na competencia corrente.`,
+      created_by: args.updatedBy,
+    })
+    .select("id")
+    .single();
+  if (eE) throw eE;
+
+  const { error: eEP } = await supabase.from("promoter_discounts").insert({
+    promoter_id: promoterIdErrado,
+    company_id: debit.company_id,
+    year: cy,
+    month: cm,
+    discount_type: ESTORNO_CORRECAO,
+    amount: round2(-desceu), // NEGATIVO = crédito (aumenta o payable)
+    installments: 1,
+    installment_number: 1,
+    apply_to_company: false,
+    debit_id: estornoDebit.id,
+    status: "PENDING",
+    notes: `Estorno: debito ${debit.id} era de outro promotor.`,
+  });
+  if (eEP) throw eEP;
+
+  const { error: eES } = await supabase.from("promoter_debit_sources").insert({
+    debit_id: estornoDebit.id,
+    source_kind: "DEBIT_CORRECTION",
+    operation: String(debit.id), // débito de ORIGEM (rastreabilidade)
+    estorno_amount: round2(desceu),
+    resolved_via: "correcao-dono",
+  });
+  if (eES) throw eES;
+
+  // 2) O promotor CERTO assume o débito INTEIRO. Apaga as PENDENTES antigas e recria
+  //    cobrindo o TOTAL (não o saldo), a partir da competência corrente.
+  const idsPendentes = parcelas.filter((p: any) => p.status !== "APPLIED").map((p: any) => p.id);
+  if (idsPendentes.length) {
+    const { error } = await supabase.from("promoter_discounts").delete().in("id", idsPendentes);
+    if (error) throw error;
+  }
+
+  const companyIdNovo = await resolveDonaCompanyForPromoter(supabase, {
+    year: cy,
+    month: cm,
+    promoterId: promoterIdNovo,
+  });
+
+  const base = round2(novoTotal / n);
+  const rows: any[] = [];
+  let acc = 0;
+  let y = cy;
+  let m = cm;
+  for (let i = 0; i < n; i++) {
+    const amount = i === n - 1 ? round2(novoTotal - acc) : base;
+    acc = round2(acc + base);
+    rows.push({
+      promoter_id: promoterIdNovo,
+      company_id: companyIdNovo,
+      year: y,
+      month: m,
+      discount_type: debit.debit_type,
+      amount,
+      installments: n,
+      installment_number: i + 1,
+      apply_to_company: false,
+      debit_id: debit.id,
+      status: "PENDING",
+      notes: `Debito movido de promotor; valor integral cobrado do dono correto.`,
+    });
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  const { error: eI } = await supabase.from("promoter_discounts").insert(rows);
+  if (eI) throw eI;
+
+  const { error: eU } = await supabase
+    .from("promoter_debits")
+    .update({
+      promoter_id: promoterIdNovo,
+      company_id: companyIdNovo,
+      total_amount: novoTotal,
+      installments_total: n,
+      status: "ACTIVE",
+      notes:
+        `${debit.notes ? `${debit.notes} | ` : ""}Dono corrigido: o que desceu do promotor anterior ` +
+        `(${desceu.toFixed(2)}) foi estornado em ${cy}-${String(cm).padStart(2, "0")}; valor integral cobrado do dono correto.`,
+    })
+    .eq("id", debit.id);
+  if (eU) throw eU;
+
+  return {
+    debitId: debit.id,
+    totalAmount: novoTotal,
+    installmentsTotal: n,
+    desceu,
+    restante: novoTotal, // o dono novo assume o total INTEIRO, não o saldo
+    parcelasReescritas: rows.length,
+    parcelasPreservadas: aplicadas.length, // ficam com o promotor antigo (histórico)
+    estorno: {
+      promoterId: promoterIdErrado,
+      valor: round2(desceu),
+      year: cy,
+      month: cm,
+      debitId: estornoDebit.id,
+      parcelasOrigem: aplicadas.length,
+    },
   };
 }
 

@@ -688,8 +688,12 @@ function PromotoresFullPage() {
       setEditDebitId("");
       setReloadKey((value) => value + 1);
       setNotice(
-        `Débito atualizado: ${payload.installmentsTotal} parcela(s), ${payload.parcelasReescritas} reescrita(s), ` +
-          `${payload.parcelasPreservadas} já aplicada(s) preservada(s).`
+        payload.estorno
+          ? `Dono corrigido. O promotor anterior recebeu crédito de ${formatCurrency(payload.estorno.valor)} ` +
+              `em ${payload.estorno.month}/${payload.estorno.year} (estorno de ${payload.estorno.parcelasOrigem} parcela(s) já paga(s)); ` +
+              `o dono correto assumiu o débito integral de ${formatCurrency(payload.totalAmount)} em ${payload.installmentsTotal} parcela(s).`
+          : `Débito atualizado: ${payload.installmentsTotal} parcela(s), ${payload.parcelasReescritas} reescrita(s), ` +
+              `${payload.parcelasPreservadas} já aplicada(s) preservada(s).`
       );
     } catch (err: any) {
       setError(err.message || "Erro ao editar débito.");
@@ -1821,7 +1825,13 @@ function PromotoresFullPage() {
                               <td className="num">
                                 {d.installment_number ?? 1}/{d.installments_total}
                               </td>
-                              <td className="num neg">−{formatCurrency(d.parcela_mes)}</td>
+                              {/* Estorno da correção de dono entra como parcela NEGATIVA
+                                  (crédito): soma no líquido em vez de descontar. */}
+                              {d.parcela_mes < 0 ? (
+                                <td className="num">+{formatCurrency(Math.abs(d.parcela_mes))}</td>
+                              ) : (
+                                <td className="num neg">−{formatCurrency(d.parcela_mes)}</td>
+                              )}
                               <td className="num">{formatCurrency(d.falta)}</td>
                               <td className="num">
                                 <button

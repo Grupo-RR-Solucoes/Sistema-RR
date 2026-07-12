@@ -680,22 +680,38 @@ export async function POST(req: Request) {
         );
       }
       try {
+        // Competência CORRENTE (mês aberto) — é onde entra o estorno da correção de dono
+        // e onde recomeçam as parcelas do dono correto. O mês fechado não é reescrito.
+        const hoje = new Date();
         const res = await updateDebit(supabase, {
           debitId,
           promoterId: novoPromotor,
           totalAmount: temTotal ? toNumber(body.totalAmount) : null,
           installmentsTotal: temParcelas ? Math.max(1, toNumber(body.installmentsTotal) || 1) : null,
           updatedBy: auditActor,
+          currentYear: hoje.getUTCFullYear(),
+          currentMonth: hoje.getUTCMonth() + 1,
         });
         clearPromoterReadCaches();
         await writeAudit(
-          "Edicao de debito do promotor",
+          res.estorno ? "Correcao de dono de debito com estorno" : "Edicao de debito do promotor",
           {
             debit_id: debitId,
             promoter_id: novoPromotor,
             total: res.totalAmount,
             parcelas: res.installmentsTotal,
             parcelas_preservadas: res.parcelasPreservadas,
+            // Correção de dono: quem -> quem, e o crédito devolvido ao promotor errado.
+            estorno: res.estorno
+              ? {
+                  de_promotor: res.estorno.promoterId,
+                  para_promotor: novoPromotor,
+                  valor_creditado: res.estorno.valor,
+                  competencia: `${res.estorno.year}-${String(res.estorno.month).padStart(2, "0")}`,
+                  debito_estorno_id: res.estorno.debitId,
+                  parcelas_pagas_origem: res.estorno.parcelasOrigem,
+                }
+              : null,
           },
           auditActor
         );
