@@ -30,6 +30,13 @@ type AgMes = {
   recebidoAvista: number | null;
   gapAvistaInformativo: number | null;
   previstoDiferido: number | null;
+  // CONFRONTO CONGELADO — o que se previu ENTÃO (snapshot de um fechamento anterior),
+  // não o previsto re-derivado com o que sabemos hoje. É o que mede o erro da previsão.
+  // Só existe em mês FECHADO que tenha um snapshot com lead (ver agregador).
+  previstoPrtCongelado: number | null;
+  gapPrtCongelado: number | null;
+  previstoAvistaCongelado: number | null;
+  snapshotCongeladoUsado: string | null;
   avistaFallback: { competenciaFornecedora: string; contratos: number } | null;
   cobertura: Cobertura;
 };
@@ -244,7 +251,10 @@ export default function RecebiveisPage() {
               <div className="card-head">
                 <div>
                   <h2>Quadro mês a mês</h2>
-                  <p className="csub">Recebido por produto · previsto · gap PRT (acionável)</p>
+                  <p className="csub">
+                    Recebido · previsto ENTÃO (congelado no fechamento) vs previsto AGORA
+                    (re-derivado) · erro da previsão
+                  </p>
                 </div>
               </div>
               <Table className="fc-tbl">
@@ -252,9 +262,14 @@ export default function RecebiveisPage() {
                   <tr>
                     <th>Competência</th>
                     <th className="r">Recebido</th>
-                    <th className="r">Prev. PRT</th>
+                    {/* PREVIU ENTÃO: o snapshot congelado no fechamento anterior — é contra
+                        ele que se mede o erro da previsão. Só existe em mês fechado com
+                        snapshot de lead. PREV. AGORA: o re-derivado com o que se sabe hoje. */}
+                    <th className="r">Previu então (PRT)</th>
+                    <th className="r">Prev. agora (PRT)</th>
                     <th className="r">Prev. à vista</th>
                     <th className="r">Prev. diferido</th>
+                    <th className="r">Erro da previsão</th>
                     <th className="r">Gap PRT</th>
                     <th>Cobertura</th>
                   </tr>
@@ -263,6 +278,13 @@ export default function RecebiveisPage() {
                   {ag.meses.map((m) => {
                     const recebido = m.fechado ? (m.recebidoPrt ?? 0) + (m.recebidoAvista ?? 0) : null;
                     const gapTone = m.gapPrt == null ? "" : m.gapPrt < -0.005 ? "neg" : "pos";
+                    // Erro da previsão = recebido − previsto ENTÃO. É o número que dá sentido
+                    // ao Forecast: quanto a previsão congelada errou contra o que entrou.
+                    const erroTone =
+                      m.gapPrtCongelado == null ? "" : m.gapPrtCongelado < -0.005 ? "neg" : "pos";
+                    const congeladoTitle = m.snapshotCongeladoUsado
+                      ? `Previsto no fechamento de ${fmtComp(m.snapshotCongeladoUsado)}`
+                      : "Sem snapshot anterior a esta competencia";
                     return (
                       <tr key={m.competencia}>
                         <td>
@@ -270,9 +292,15 @@ export default function RecebiveisPage() {
                           <Chip variant={m.fechado ? "ok" : "neutral"}>{m.fechado ? "fechado" : "futuro"}</Chip>
                         </td>
                         <Num>{brl(recebido)}</Num>
+                        <Num title={congeladoTitle}>
+                          {m.previstoPrtCongelado == null ? "—" : brl(m.previstoPrtCongelado)}
+                        </Num>
                         <Num>{brl(m.previstoPrt)}</Num>
                         <Num>{brl(m.previstoAvista)}</Num>
                         <Num>{brl(m.previstoDiferido)}</Num>
+                        <Num className={`gap ${erroTone}`} title={congeladoTitle}>
+                          {m.gapPrtCongelado == null ? "—" : brl2(m.gapPrtCongelado)}
+                        </Num>
                         <Num className={`gap ${gapTone}`}>{m.gapPrt == null ? "—" : brl2(m.gapPrt)}</Num>
                         <td className="cob" title={m.cobertura.nota}>
                           {m.cobertura.incluido.length > 0 ? m.cobertura.incluido.map((x) => x.split(" (")[0]).join(" + ") : "—"}
