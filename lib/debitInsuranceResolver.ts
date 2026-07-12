@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { BBTS_COMPANY_ID } from "./bbtsMonthly.ts";
+// RÉGUA ÚNICA do valor do débito (lib/debitRules). NÃO reimplementar aqui.
+import { debitAmountFor, fetchDebitRule } from "./debitRules.ts";
 
 // ============================================================================
 // debitInsuranceResolver — DÉBITO AUTOMÁTICO de cancelamento de seguro.
@@ -90,18 +92,6 @@ export type InsuranceDebitPlan = {
   avisos: string[];
 };
 
-// Valor do débito de UMA operação segundo a regra.
-function debitAmountFor(estorno: number, rule: any): number {
-  if (!rule || rule.mode === "SUM_100") return estorno; // 100% (agregação por promotor fora)
-  if (rule.mode === "PER_OPERATION") {
-    const threshold = Number(rule.threshold ?? 100);
-    const above = Number(rule.above_pct ?? 0.8);
-    const below = Number(rule.below_pct ?? 1.0);
-    return estorno * (estorno > threshold ? above : below);
-  }
-  return estorno;
-}
-
 /**
  * Resolve e (se !dryRun) grava os débitos automáticos de cancelamento de seguro
  * da competência a partir do fechamento. READ das fontes + WRITE em
@@ -165,15 +155,8 @@ export async function resolveInsuranceDebits(
     .eq("month", month);
   const assignByOp = new Map((assigns || []).map((a: any) => [String(a.operation), a]));
 
-  // 3. Regra vigente da competência (maior vigencia_inicio ≤ competência).
-  const { data: rules } = await supabase
-    .from("debit_rule_versions")
-    .select("id, rule, vigencia_inicio")
-    .eq("debit_type", CANCELAMENTO_SEGURO)
-    .lte("vigencia_inicio", `${competencia}-01`)
-    .order("vigencia_inicio", { ascending: false })
-    .limit(1);
-  const ruleRow = (rules || [])[0] || null;
+  // 3. Regra vigente da competência (régua única — lib/debitRules).
+  const ruleRow = await fetchDebitRule(supabase, CANCELAMENTO_SEGURO, year, month);
   const rule = ruleRow?.rule ?? null;
   const ruleVersionId = ruleRow?.id ?? null;
   if (!rule) avisos.push(`SEM REGRA vigente para ${CANCELAMENTO_SEGURO} em ${competencia} — usando 100% (fallback).`);
@@ -394,14 +377,8 @@ export async function resolveAdsCancelDebits(
   const { data: assigns } = await supabase.from("promoter_debit_assignments").select("operation, promoter_id, status").eq("year", year).eq("month", month);
   const assignByOp = new Map((assigns || []).map((a: any) => [String(a.operation), a]));
 
-  const { data: rules } = await supabase
-    .from("debit_rule_versions")
-    .select("id, rule, vigencia_inicio")
-    .eq("debit_type", CANCELAMENTO_SEGURO)
-    .lte("vigencia_inicio", `${competencia}-01`)
-    .order("vigencia_inicio", { ascending: false })
-    .limit(1);
-  const ruleRow = (rules || [])[0] || null;
+  // Regra vigente da competência (régua única — lib/debitRules). MESMA regra do RR.
+  const ruleRow = await fetchDebitRule(supabase, CANCELAMENTO_SEGURO, year, month);
   const rule = ruleRow?.rule ?? null;
   const ruleVersionId = ruleRow?.id ?? null;
 

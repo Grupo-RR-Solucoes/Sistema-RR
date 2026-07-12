@@ -1616,7 +1616,7 @@ function PromotoresFullPage() {
                     onChange={(event) =>
                       setDiscountForm((current) => ({ ...current, companyAmount: event.target.value }))
                     }
-                    placeholder="Base p/ 70%"
+                    placeholder="Base do estorno"
                   />
                 </div>
                 <div className="field">
@@ -1626,7 +1626,7 @@ function PromotoresFullPage() {
                     onChange={(event) =>
                       setDiscountForm((current) => ({ ...current, amount: event.target.value }))
                     }
-                    placeholder="Se vazio, calcula 70%"
+                    placeholder="Se vazio, aplica a regra da competencia"
                   />
                 </div>
                 <div className="field">

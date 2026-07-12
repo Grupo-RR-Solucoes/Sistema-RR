@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveDonaCompanyForPromoter } from "./closingMonthly.ts";
+// RÉGUA ÚNICA do valor do débito (lib/debitRules). NÃO reimplementar aqui.
+import { debitAmountFor, fetchDebitRule, round2 } from "./debitRules.ts";
 
 // ============================================================================
 // debitsData — leitura e AÇÕES dos débitos do promotor (itens 3/4/5).
@@ -12,28 +14,6 @@ import { resolveDonaCompanyForPromoter } from "./closingMonthly.ts";
 
 type SupabaseLike = SupabaseClient;
 
-function round2(n: number): number {
-  return Math.round((Number(n) || 0) * 100) / 100;
-}
-function ruleAmount(estorno: number, rule: any): number {
-  if (!rule || rule.mode === "SUM_100") return estorno;
-  if (rule.mode === "PER_OPERATION") {
-    const threshold = Number(rule.threshold ?? 100);
-    return estorno * (estorno > threshold ? Number(rule.above_pct ?? 0.8) : Number(rule.below_pct ?? 1.0));
-  }
-  return estorno;
-}
-async function fetchRule(supabase: SupabaseLike, debitType: string, year: number, month: number) {
-  const comp = `${year}-${String(month).padStart(2, "0")}-01`;
-  const { data } = await supabase
-    .from("debit_rule_versions")
-    .select("id, rule")
-    .eq("debit_type", debitType)
-    .lte("vigencia_inicio", comp)
-    .order("vigencia_inicio", { ascending: false })
-    .limit(1);
-  return (data || [])[0] || null;
-}
 
 export type PromoterDebitRow = {
   id: string;
@@ -204,9 +184,9 @@ export async function assignQueuedDebit(
   if (eA) throw eA;
   if (a.status === "RESOLVED") throw new Error("Item da fila já resolvido.");
 
-  const ruleRow = await fetchRule(supabase, a.debit_type, a.year, a.month);
+  const ruleRow = await fetchDebitRule(supabase, a.debit_type, a.year, a.month);
   const estorno = Number(a.estorno_amount);
-  const amount = round2(ruleAmount(estorno, ruleRow?.rule));
+  const amount = round2(debitAmountFor(estorno, ruleRow?.rule));
   const isAds = a.source_kind === "DAILY_CANCEL";
   // ADS mantém a company ADS. MASTER (fechamento) resolve a empresa DONA
   // determinística pela MESMA régua do fechamento (computeDonaCompanyMap) — antes

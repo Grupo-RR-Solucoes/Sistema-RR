@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   ApiGuardError,
@@ -24,6 +25,8 @@ import {
   createManualDebit,
   assignQueuedDebit,
 } from "@/lib/debitsData";
+// RÉGUA ÚNICA do valor do débito automático (mata o 0.7 legado desta rota).
+import { debitAmountFor, fetchDebitRule, isAutoDebitType, round2 } from "@/lib/debitRules";
 
 function toNumber(value: unknown) {
   const parsed = Number(value ?? 0);
@@ -38,30 +41,45 @@ function normalizeText(value: unknown) {
     .toUpperCase();
 }
 
-function resolveDiscountAmount(
+/**
+ * Valor que desce do promotor no desconto manual.
+ *
+ * O percentual dos tipos AUTOMÁTICOS vem SEMPRE da regra versionada da competência
+ * (debit_rule_versions, via lib/debitRules) — nunca de hardcode. Até 12/07/2026 esta
+ * função aplicava `companyAmount * 0.7` fixo, uma SEGUNDA régua rodando à margem do
+ * debit_rule_versions e divergindo do resolvedor automático. Foi removida.
+ *
+ * Sem regra versionada para (tipo, competência) e sem valor explícito, NÃO inventamos
+ * percentual: devolve null e a rota responde 400 pedindo o valor. Ou se versiona a
+ * regra, ou se informa o valor — nunca um chute.
+ */
+async function resolveDiscountAmount(
+  supabase: SupabaseClient,
   discountType: string,
   amountInput: unknown,
-  companyAmountInput: unknown
-) {
+  companyAmountInput: unknown,
+  year: number,
+  month: number
+): Promise<{ amount: number } | { error: string }> {
   const explicitAmount = toNumber(amountInput);
-  if (explicitAmount > 0) return explicitAmount;
+  if (explicitAmount > 0) return { amount: round2(explicitAmount) };
 
   const companyAmount = toNumber(companyAmountInput);
-  if (companyAmount <= 0) return 0;
+  if (companyAmount <= 0) return { amount: 0 };
 
-  const autoTypes = new Set([
-    "LIQUIDACAO_ANTECIPADA",
-    "CANCELAMENTO_SEGURO",
-    "CANCELAMENTO_CREDITO",
-    "ESTORNO_CREDITO",
-    "RENOVACAO_ANTECIPADA",
-  ]);
+  // Tipo não-automático: desce o valor cheio (comportamento histórico preservado).
+  if (!isAutoDebitType(discountType)) return { amount: round2(companyAmount) };
 
-  if (autoTypes.has(discountType)) {
-    return Number((companyAmount * 0.7).toFixed(2));
+  const ruleRow = await fetchDebitRule(supabase, discountType, year, month);
+  if (!ruleRow) {
+    return {
+      error:
+        `Nao ha regra versionada de ${discountType} para ${year}-${String(month).padStart(2, "0")} ` +
+        `(debit_rule_versions). Informe o valor do desconto ou versione a regra da competencia.`,
+    };
   }
 
-  return companyAmount;
+  return { amount: round2(debitAmountFor(companyAmount, ruleRow.rule)) };
 }
 
 // audit_logs RLS bloqueia INSERT via PostgREST para todos os roles
@@ -417,11 +435,25 @@ export async function POST(req: Request) {
       const month = Number(body.month);
       const discountType = normalizeText(body.discountType || "OUTROS");
       const companyAmount = toNumber(body.companyAmount);
-      const amount = resolveDiscountAmount(
+      if (!promoterId || !year || !month) {
+        return NextResponse.json(
+          { error: "Informe promotor e competencia do desconto." },
+          { status: 400 }
+        );
+      }
+      // Valor pela régua VERSIONADA da competência (nunca hardcode).
+      const resolvedAmount = await resolveDiscountAmount(
+        supabase as unknown as SupabaseClient,
         discountType,
         body.amount,
-        body.companyAmount
+        body.companyAmount,
+        year,
+        month
       );
+      if ("error" in resolvedAmount) {
+        return NextResponse.json({ error: resolvedAmount.error }, { status: 400 });
+      }
+      const amount = resolvedAmount.amount;
       const installments = Math.max(1, toNumber(body.installments) || 1);
       const installmentNumber = Math.max(
         1,
@@ -436,13 +468,6 @@ export async function POST(req: Request) {
 
       if (body.notes) {
         notesParts.push(String(body.notes).trim());
-      }
-
-      if (!promoterId || !year || !month) {
-        return NextResponse.json(
-          { error: "Informe promotor e competencia do desconto." },
-          { status: 400 }
-        );
       }
 
       if (amount <= 0) {
