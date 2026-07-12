@@ -11,10 +11,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // CRÉDITO: crédito total = gross_value (Valor Financiado) × %TRP(FAIXA 3). Teto
 //   5,80% à vista: comissão-empresa que remunera o promotor = à-vista PÓS-teto;
 //   o excedente vira DIFERIDO (100% empresa, promotor não recebe).
-//   - EXCEÇÃO junho/2026 (isolada num único if): o %TRP vem da Promotiva via
-//     calcularOperacao (o relatório BBTS veio com % menor por erro; junho congela
-//     na TRP). Jul+ usaria o % próprio do relatório (r.taxa_relatorio) — caminho
-//     preparado abaixo, ainda NÃO ligado.
+//   - REGRA DEFINITIVA: o %TRP vem SEMPRE da Promotiva via calcularOperacao (a MESMA
+//     matriz/TRP do RR), para QUALQUER competência, sem exceção. O taxa_relatorio
+//     (% do relatório/fechamento BBTS) NÃO entra na comissão — serve só p/ a SOBRA
+//     DE CAIXA (diferença entre o que a BBTS pagou e a TRP). Ausência dele NÃO
+//     bloqueia o cálculo (a TRP está na matriz, independe do PDF).
 //   - FAIXA 3 herdada do GRUPO (aba Validador). Sem exceção por proposta: o motor
 //     zera sozinho quem não remunera por prazo (ex: 36 parcelas -> %TRP 0).
 //   - Exclui cancelamento (raw_payload.__bbts_meta.cancelado / status CANCELADO)
@@ -39,9 +40,6 @@ import { fetchPromoterShareData, resolvePromoterShareSync } from "./proposalDeta
 import { individualPenetration, insuranceShareForPenetration } from "./insurancePenetration.ts";
 
 export const BBTS_COMPANY_ID = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
-// Competências com o crédito CONGELADO na TRP (exceção datada, ver comentário no
-// consolidador). Jul+ NÃO está aqui → usa o % do relatório BBTS (taxa_relatorio).
-const TRP_CREDITO_CONGELADO = new Set<string>(["2026-06"]);
 const SEGURO_RATE = { ESTOQUE: 0.001, SLIP: 0.0035 }; // 0,10% ESTOQUE D0 / 0,35% SLIP
 const TETO_AVISTA = 0.058; // teto 5,80% à vista; excedente vira diferido (100% empresa)
 // FAIXA 3 herdada do GRUPO (dado oficial da aba Validador da Promotiva, jun/2026).
@@ -109,11 +107,6 @@ export async function consolidateMonthlyFromBbts(
   const { year, month } = params;
   const dryRun = params.dryRun !== false; // default dry-run
   const compKey = getProductionPeriodKey(year, month);
-  // VIGÊNCIA (não trava eterna): competências com o crédito CONGELADO na TRP — uma
-  // EXCEÇÃO datada, não um "junho para sempre". Junho/2026 congelou porque o
-  // relatório BBTS veio com % menor por erro. Jul+ usa o % do próprio relatório
-  // (raw_payload.taxa_relatorio). Novas exceções entram em TRP_CREDITO_CONGELADO.
-  const usaTrpCongelada = TRP_CREDITO_CONGELADO.has(compKey);
   const avisos: string[] = [];
 
   // 1. Linhas ADS da competência, com promotor atribuído.
@@ -147,7 +140,6 @@ export async function consolidateMonthlyFromBbts(
   const agg = new Map<string, Agg>();
   const compDate = `${year}-${String(month).padStart(2, "0")}-15`; // competência p/ vigência TRP
   let ignoradasBalde = 0, ignoradasCancel = 0, ignoradasSrcc = 0;
-  let creditoDrift = 0;
   // Detalhe por proposta (conferência).
   const propostas: Array<{ contrato: string; vfin: number; juros: number; parc: number; conv: string; trp: number; avista: number; diferido: number; comEmpresa: number; promoter_id: string }> = [];
 
@@ -160,45 +152,31 @@ export async function consolidateMonthlyFromBbts(
 
     const gross = toNumber(r.gross_value);
 
-    // CRÉDITO — % por competência. Só há crédito quando gross > 0 (linha só-seguro
-    // tem gross=0 e não entra no gate jul+). FAIXA 3 (grupo); o motor zera sozinho
-    // quem não remunera por prazo (ex: 36 parcelas -> 0%).
+    // CRÉDITO — SEMPRE a TRP Promotiva (a MESMA matriz do RR), para QUALQUER
+    // competência, sem exceção. O taxa_relatorio (% do relatório/fechamento BBTS)
+    // NÃO entra na comissão — serve só p/ a SOBRA DE CAIXA (fica em raw_payload/
+    // __bbts_meta p/ um cálculo futuro), e a ausência dele NÃO bloqueia o cálculo.
+    // FAIXA 3 (grupo); o motor zera sozinho quem não remunera por prazo (ex: 36
+    // parcelas -> 0%). Só há crédito quando gross > 0 (linha só-seguro tem gross=0).
     let creditPercent = 0;
     if (gross > 0) {
-      if (usaTrpCongelada) {
-        const op = {
-          product_description: r.product_description ?? null,
-          product_code: r.product_code ?? null,
-          convenio_code: r.convenio_code ?? null,
-          valor_liquido: gross,
-          valor_bruto: gross,
-          taxa_juros: toNumber(r.interest_rate),
-          prazo: toNumber(r.term_months),
-          contract_date: compDate, // competência do fechamento decide a TRP (junho)
-          movement_date: compDate,
-          proposal_date: compDate,
-          production_value: FAIXA3_PRODUCTION, // FAIXA 3 do grupo (Validador oficial)
-          tem_seguro: false,
-          valor_seguro: 0,
-          company_cash_percent: null,
-        };
-        creditPercent = toNumber(calcularOperacao(op as any).credito.percentual);
-      } else {
-        // Jul+: usa o % do PRÓPRIO relatório BBTS (ex 2,87 -> 0,0287). GATE REAL:
-        // sem taxa_relatorio NÃO calcula crédito 0 silenciosamente — ABORTA (o
-        // extrator de PDF é quem popula o %; ausência = fechamento incompleto).
-        // Distingue "0 legítimo" (paga 0% à vista) de "ausente" (null/undefined).
-        const taxaRel =
-          r.raw_payload?.taxa_relatorio ?? r.raw_payload?.__bbts_meta?.taxa_relatorio ?? null;
-        if (taxaRel === null || taxaRel === undefined || taxaRel === "") {
-          throw new Error(
-            `BBTS ${compKey}: contrato ${r.proposal_number} (gross ${gross}) sem taxa_relatorio no fechamento — ` +
-              `o crédito jul+ não pode virar 0 silencioso. Reimporte o fechamento ADS (o extrator de PDF popula o %).`
-          );
-        }
-        creditPercent = toNumber(taxaRel) / 100;
-        creditoDrift += 1;
-      }
+      const op = {
+        product_description: r.product_description ?? null,
+        product_code: r.product_code ?? null,
+        convenio_code: r.convenio_code ?? null,
+        valor_liquido: gross,
+        valor_bruto: gross,
+        taxa_juros: toNumber(r.interest_rate),
+        prazo: toNumber(r.term_months),
+        contract_date: compDate, // competência decide a vigência da TRP
+        movement_date: compDate,
+        proposal_date: compDate,
+        production_value: FAIXA3_PRODUCTION, // FAIXA 3 do grupo (Validador oficial)
+        tem_seguro: false,
+        valor_seguro: 0,
+        company_cash_percent: null,
+      };
+      creditPercent = toNumber(calcularOperacao(op as any).credito.percentual);
     }
 
     // TETO 5,80% à vista; excedente = diferido (100% empresa). Comissão-empresa
@@ -229,7 +207,7 @@ export async function consolidateMonthlyFromBbts(
     avisos.push("PROVISÓRIO: meta e faixa de seguro NÃO injetadas (BBTS-2d). acordo = base/profile; seguro promotor = escala de penetração da ADS. Rode via BBTS-2d p/ a meta conjunta RR+ADS.");
   }
   avisos.push("LIMITAÇÃO (a): sem 'Tipo de Liberação' no fechamento PDF — TODAS as linhas de seguro contam na penetração.");
-  if (!usaTrpCongelada) avisos.push(`Competência ${compKey}: crédito pelo % do relatório BBTS (taxa_relatorio). Gate ativo: aborta se faltar o % em contrato com produção.`);
+  avisos.push(`Competência ${compKey}: crédito pela TRP Promotiva (matriz por competência), teto 5,80% x acordo. taxa_relatorio NÃO entra na comissão (só sobra de caixa).`);
 
   // 3. Acordo (cascata) + escala de seguro. ESCOPO = só a ADS (a produção/volume
   //    da escala do promotor não pode misturar RR — o BBTS-2d é quem injeta a
@@ -330,7 +308,6 @@ export async function consolidateMonthlyFromBbts(
     linhas_competencia: emCompetencia.length,
     promotores: table.length,
     ignoradas: { balde: ignoradasBalde, cancelada: ignoradasCancel, srcc: ignoradasSrcc },
-    credito_drift_jul: creditoDrift,
     gravadas: dryRun ? 0 : upserts.length,
     avisos,
     propostas, // detalhe por proposta (conferência)
