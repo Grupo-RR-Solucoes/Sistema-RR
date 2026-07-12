@@ -24,6 +24,7 @@ import {
   fetchDebitQueue,
   createManualDebit,
   assignQueuedDebit,
+  updateDebit,
 } from "@/lib/debitsData";
 // RÉGUA ÚNICA do valor do débito automático (mata o 0.7 legado desta rota).
 import { debitAmountFor, fetchDebitRule, isAutoDebitType, round2 } from "@/lib/debitRules";
@@ -42,16 +43,17 @@ function normalizeText(value: unknown) {
 }
 
 /**
- * Valor que desce do promotor no desconto manual.
+ * Valor INICIAL que desce do promotor. É um ponto de partida, não uma trava:
+ * todo débito é editável depois (valor, parcelas, promotor).
  *
- * O percentual dos tipos AUTOMÁTICOS vem SEMPRE da regra versionada da competência
- * (debit_rule_versions, via lib/debitRules) — nunca de hardcode. Até 12/07/2026 esta
- * função aplicava `companyAmount * 0.7` fixo, uma SEGUNDA régua rodando à margem do
+ * O percentual vem SEMPRE da regra versionada da competência (debit_rule_versions,
+ * via lib/debitRules) — nunca de hardcode. Até 12/07/2026 esta função aplicava
+ * `companyAmount * 0.7` fixo, uma SEGUNDA régua rodando à margem do
  * debit_rule_versions e divergindo do resolvedor automático. Foi removida.
  *
- * Sem regra versionada para (tipo, competência) e sem valor explícito, NÃO inventamos
- * percentual: devolve null e a rota responde 400 pedindo o valor. Ou se versiona a
- * regra, ou se informa o valor — nunca um chute.
+ * SEM regra versionada para (tipo, competência): NÃO bloqueia e NÃO chuta percentual
+ * — lança o valor CHEIO do estorno como inicial, e o sócio/auxiliar ajusta na tela.
+ * O automático faz o trabalho inicial; ele nunca impede o lançamento.
  */
 async function resolveDiscountAmount(
   supabase: SupabaseClient,
@@ -60,26 +62,19 @@ async function resolveDiscountAmount(
   companyAmountInput: unknown,
   year: number,
   month: number
-): Promise<{ amount: number } | { error: string }> {
+): Promise<number> {
   const explicitAmount = toNumber(amountInput);
-  if (explicitAmount > 0) return { amount: round2(explicitAmount) };
+  if (explicitAmount > 0) return round2(explicitAmount);
 
   const companyAmount = toNumber(companyAmountInput);
-  if (companyAmount <= 0) return { amount: 0 };
+  if (companyAmount <= 0) return 0;
 
-  // Tipo não-automático: desce o valor cheio (comportamento histórico preservado).
-  if (!isAutoDebitType(discountType)) return { amount: round2(companyAmount) };
+  // Tipo não-automático: desce o valor cheio.
+  if (!isAutoDebitType(discountType)) return round2(companyAmount);
 
+  // Tipo automático: regra da competência quando existe; senão, valor cheio (editável).
   const ruleRow = await fetchDebitRule(supabase, discountType, year, month);
-  if (!ruleRow) {
-    return {
-      error:
-        `Nao ha regra versionada de ${discountType} para ${year}-${String(month).padStart(2, "0")} ` +
-        `(debit_rule_versions). Informe o valor do desconto ou versione a regra da competencia.`,
-    };
-  }
-
-  return { amount: round2(debitAmountFor(companyAmount, ruleRow.rule)) };
+  return round2(debitAmountFor(companyAmount, ruleRow?.rule ?? null));
 }
 
 // audit_logs RLS bloqueia INSERT via PostgREST para todos os roles
@@ -441,8 +436,9 @@ export async function POST(req: Request) {
           { status: 400 }
         );
       }
-      // Valor pela régua VERSIONADA da competência (nunca hardcode).
-      const resolvedAmount = await resolveDiscountAmount(
+      // Valor INICIAL pela régua VERSIONADA da competência (nunca hardcode). Sem regra
+      // para o tipo, cai no valor cheio — nunca bloqueia. Editável depois.
+      const amount = await resolveDiscountAmount(
         supabase as unknown as SupabaseClient,
         discountType,
         body.amount,
@@ -450,10 +446,6 @@ export async function POST(req: Request) {
         year,
         month
       );
-      if ("error" in resolvedAmount) {
-        return NextResponse.json({ error: resolvedAmount.error }, { status: 400 });
-      }
-      const amount = resolvedAmount.amount;
       const installments = Math.max(1, toNumber(body.installments) || 1);
       const installmentNumber = Math.max(
         1,
@@ -667,6 +659,52 @@ export async function POST(req: Request) {
         auditActor
       );
       return NextResponse.json({ success: true, ...res });
+    }
+
+    // FRENTE DÉBITOS — EDIÇÃO transversal (vale p/ AUTO e MANUAL igualmente):
+    // valor total, nº de parcelas (parcelar um débito automático) e promotor.
+    // Parcelas já APLICADAS não são tocadas — só as PENDENTES são reescritas.
+    if (action === "debit_update") {
+      const debitId = String(body.debitId || "");
+      if (!debitId) {
+        return NextResponse.json({ error: "Informe o debito a editar." }, { status: 400 });
+      }
+      const temTotal = body.totalAmount !== undefined && body.totalAmount !== null && body.totalAmount !== "";
+      const temParcelas =
+        body.installmentsTotal !== undefined && body.installmentsTotal !== null && body.installmentsTotal !== "";
+      const novoPromotor = body.promoterId ? String(body.promoterId) : null;
+      if (!temTotal && !temParcelas && !novoPromotor) {
+        return NextResponse.json(
+          { error: "Informe ao menos um campo: valor total, parcelas ou promotor." },
+          { status: 400 }
+        );
+      }
+      try {
+        const res = await updateDebit(supabase, {
+          debitId,
+          promoterId: novoPromotor,
+          totalAmount: temTotal ? toNumber(body.totalAmount) : null,
+          installmentsTotal: temParcelas ? Math.max(1, toNumber(body.installmentsTotal) || 1) : null,
+          updatedBy: auditActor,
+        });
+        clearPromoterReadCaches();
+        await writeAudit(
+          "Edicao de debito do promotor",
+          {
+            debit_id: debitId,
+            promoter_id: novoPromotor,
+            total: res.totalAmount,
+            parcelas: res.installmentsTotal,
+            parcelas_preservadas: res.parcelasPreservadas,
+          },
+          auditActor
+        );
+        return NextResponse.json({ success: true, ...res });
+      } catch (e: any) {
+        // Regras de negócio da edição (total menor que o já pago, parcelas insuficientes)
+        // voltam como 400 com a mensagem — não como 500.
+        return NextResponse.json({ error: e?.message || "Falha ao editar o debito." }, { status: 400 });
+      }
     }
 
     // FRENTE DÉBITOS — atribui um estorno da FILA (MASTER/ADS) ao promotor.
