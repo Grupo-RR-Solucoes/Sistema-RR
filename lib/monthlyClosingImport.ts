@@ -1386,6 +1386,18 @@ async function runImportPipeline(ctx: ImportContext) {
     increment,
   });
 
+  // FRENTE DÉBITOS (tipo A) — o fechamento acabou de gravar as entries, entre elas a
+  // aba Seguro. Agora o resolvedor lê os estornos CANCELADOS, resolve OPERAÇÃO → PRT
+  // → chave J → promotor, aplica a regra VERSIONADA da competência e grava as parcelas;
+  // os MASTER não resolvidos vão pra fila. Espelha o que o ADS já faz no
+  // bbtsClosingImport. NÃO derruba o import: falha aqui vira aviso no retorno.
+  const debitosAuto = await persistAutoInsuranceDebits({
+    supabaseAdmin,
+    year: targetYear,
+    month: targetMonth,
+    createdBy: input.createdBy ?? null,
+  });
+
   await markImportCompleted(supabaseAdmin, importId);
 
   return {
@@ -1405,5 +1417,78 @@ async function runImportPipeline(ctx: ImportContext) {
     },
     productIncrement: increment,
     warning: resomaWarning,
+    debitosAuto,
   };
+}
+
+/**
+ * Primeira competência em que o débito automático de seguro roda pelo IMPORT do
+ * fechamento RR. Competências anteriores ficam CONGELADAS: jun/2026 foi lançado à
+ * mão sob a regra SUM_100 (15 débitos AUTO, 27 estornos, 3 na fila) e não se
+ * recalcula — reimportar o fechamento de junho não pode mexer neles.
+ */
+const DEBITO_AUTO_PRIMEIRA_COMPETENCIA = "2026-07";
+
+/**
+ * Gera/atualiza os débitos automáticos de cancelamento de seguro da competência a
+ * partir do fechamento recém-importado.
+ *
+ * IDEMPOTÊNCIA: resolveInsuranceDebits faz delete-and-replace dos débitos AUTO/
+ * CANCELAMENTO_SEGURO da competência (parcelas e sources caem por CASCADE) antes de
+ * regravar, e a fila é upsert por (year, month, operation). Reimportar o mesmo
+ * fechamento — ou importar as empresas uma a uma — converge no mesmo estado, sem
+ * duplicar. Atribuições que o Diego já fez (status ASSIGNED) são respeitadas.
+ *
+ * DUAS TRAVAS, porque o delete-and-replace é destrutivo:
+ *   1. competência < DEBITO_AUTO_PRIMEIRA_COMPETENCIA → não roda (junho congelado).
+ *   2. competência com parcela já APLICADA (paga) → não roda. Sem isso, reimportar um
+ *      fechamento de um mês já pago apagaria a parcela APPLIED e a recriaria PENDING,
+ *      ressuscitando um débito já quitado.
+ * Em ambos os casos devolve o motivo — o import segue normal.
+ */
+async function persistAutoInsuranceDebits(params: {
+  supabaseAdmin: ReturnType<typeof getSupabaseAdmin>;
+  year: number;
+  month: number;
+  createdBy: string | null;
+}): Promise<{ executado: boolean; motivo?: string; criados?: number; fila?: number; aviso?: string }> {
+  const { supabaseAdmin, year, month, createdBy } = params;
+  const competencia = `${year}-${String(month).padStart(2, "0")}`;
+
+  if (competencia < DEBITO_AUTO_PRIMEIRA_COMPETENCIA) {
+    return {
+      executado: false,
+      motivo: `competencia ${competencia} congelada (anterior a ${DEBITO_AUTO_PRIMEIRA_COMPETENCIA}); debitos automaticos preservados`,
+    };
+  }
+
+  try {
+    const { data: pagas, error: pagasError } = await supabaseAdmin
+      .from("promoter_discounts")
+      .select("id")
+      .eq("year", year)
+      .eq("month", month)
+      .eq("discount_type", "CANCELAMENTO_SEGURO")
+      .eq("status", "APPLIED")
+      .limit(1);
+    if (pagasError) throw pagasError;
+
+    if ((pagas || []).length > 0) {
+      return {
+        executado: false,
+        motivo: `competencia ${competencia} ja tem parcela de cancelamento APLICADA; debitos automaticos nao reprocessados`,
+      };
+    }
+
+    const { resolveInsuranceDebits } = await import("./debitInsuranceResolver.ts");
+    const plan = await resolveInsuranceDebits(supabaseAdmin as any, {
+      year,
+      month,
+      dryRun: false,
+      createdBy: createdBy ?? "import-fechamento",
+    });
+    return { executado: true, criados: plan.debits.length, fila: plan.fila.length };
+  } catch (e: any) {
+    return { executado: false, aviso: `Falha ao persistir debitos automaticos: ${e?.message || e}` };
+  }
 }
