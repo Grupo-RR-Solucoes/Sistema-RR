@@ -110,6 +110,11 @@ export type FinanceSummary = {
   // fechamentos M-1 que compoem receivedLiquido. JA dentro de receivedNet —
   // NAO somar. Difere de actualInsurance (que e competencia M, descasada).
   receivedInsurance: number;
+  // COMISSOES RECEBIDAS PELA EMPRESA (M-1) = Σ (valor_avista + valor_seguro) do
+  // fechamento M-1. So o que gera repasse (PRT/valor_diferido fora). SUBCONJUNTO do
+  // Recebido. Base de comparacao com comissoesPagas (entrada x saida). receivedInsurance
+  // e um "do qual" DESTE card.
+  receivedEmpresa: number;
   actualCash: number;
   actualPrt: number;
   actualInsurance: number;
@@ -336,6 +341,14 @@ function cashReceivedFor(
   const receivedProdutos = roundMoney(sumClosingProdutos(closingRows));
   // INFORMATIVO: parcela de seguro JA dentro de receivedLiquido (mesmas M-1 rows).
   const receivedInsurance = roundMoney(sumClosingInsurance(closingRows));
+  // COMISSOES RECEBIDAS PELA EMPRESA (M-1) — so o que gera repasse ao promotor:
+  // valor_avista + valor_seguro. PRT (valor_diferido) FICA DE FORA (e da empresa,
+  // nao entra na comparacao com as comissoes pagas). E um SUBCONJUNTO do Recebido.
+  // TODO (decisao Diego): abater valor_estorno? O Recebido usa valor_liquido (ja
+  // liquido de estorno/renovacao); por ora receivedEmpresa e avista+seguro PURO.
+  const receivedEmpresa = roundMoney(
+    closingRows.reduce((sum, r) => sum + toNumber(r.valor_avista) + toNumber(r.valor_seguro), 0)
+  );
   const receivedClosing = roundMoney(receivedLiquido + receivedProdutos);
   const receivedManual = roundMoney(
     manualRows.reduce((sum, row) => {
@@ -347,6 +360,7 @@ function cashReceivedFor(
     receivedLiquido,
     receivedProdutos,
     receivedInsurance,
+    receivedEmpresa,
     receivedClosing,
     receivedManual,
     receivedNet: roundMoney(receivedClosing + receivedManual),
@@ -617,6 +631,7 @@ export async function buildFinancialAnalytics(
     receivedProdutos: received.receivedProdutos,
     receivedManual: received.receivedManual,
     receivedInsurance: received.receivedInsurance,
+    receivedEmpresa: received.receivedEmpresa,
     actualCash: roundMoney(receivedSummary.actualCash),
     actualPrt: roundMoney(receivedSummary.actualPrt),
     actualInsurance: roundMoney(receivedSummary.actualInsurance),

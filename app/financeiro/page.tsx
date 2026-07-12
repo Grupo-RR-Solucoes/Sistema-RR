@@ -14,10 +14,11 @@ type Period = { key: string; label: string; year: number; month: number };
 
 type FinSummary = {
   receivedNet: number;
-  receivedInsurance: number; // informativo: "do qual seguro" do Recebido (M-1)
+  receivedInsurance: number; // "do qual seguro" das Comissoes recebidas pela empresa (M-1)
+  receivedEmpresa: number; // avista + seguro do fechamento M-1 (o que gera repasse)
   totalExpenses: number;
   comissoesPagas: number;
-  paidInsuranceShare: number; // informativo: "do qual seguro" do repasse (M)
+  paidInsuranceShare: number; // "do qual seguro" do repasse (M-1)
   operatingResult: number;
   actualPrt: number;
   openingBalance: number;
@@ -55,6 +56,19 @@ const brl = (v: number | null | undefined) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(Number(v ?? 0));
 const brl2 = (v: number | null | undefined) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 }).format(Number(v ?? 0));
+
+// Valor do KPI colorido por NATUREZA (entrada azul / saida vermelho / saldo verde+
+// ou vermelho-). REGRA ZERO: valor == 0 fica NEUTRO (branco padrao sobre o navy) p/
+// nao dar alarme falso (ex.: Despesas R$ 0). So pinta o numero, nao o card.
+function kpiVal(amount: number, nature: "in" | "out" | "saldo") {
+  const txt = brl(amount);
+  if (!amount) return txt; // 0/NaN -> neutro (branco)
+  const color =
+    nature === "in" ? "var(--kpi-in)" :
+    nature === "out" ? "var(--kpi-out)" :
+    amount > 0 ? "var(--kpi-pos)" : "var(--kpi-neg)";
+  return <span style={{ color }}>{txt}</span>;
+}
 
 const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 function cashLabel(year: number, month: number) {
@@ -253,15 +267,29 @@ export default function FinanceiroPage() {
             </button>
           </div>
           {tab === "caixa" && fin ? (
-            <KpiBand
-              valueSize={26}
-              items={[
-                { label: "Recebido", value: brl(fin.summary.receivedNet), sub: "crédito recebido (bruto)" },
-                { label: "Comissões pagas", value: brl(fin.summary.comissoesPagas), sub: "repasse aos promotores", subTone: "gold" },
-                { label: "Despesas", value: brl(fin.summary.totalExpenses), sub: "operacionais" },
-                { label: "Saldo do mês", value: brl(fin.summary.operatingResult), sub: "recebido − comissões − despesas", subTone: "ok", accent: true },
-              ]}
-            />
+            <>
+              {/* Linha 1 — fluxo de comissoes/despesas (M-1). Cor por natureza:
+                  entrada azul, saida vermelho, saldo verde/vermelho, zero neutro. */}
+              <KpiBand
+                valueSize={24}
+                items={[
+                  { label: "Recebido", value: kpiVal(fin.summary.receivedNet, "in"), sub: "crédito recebido (bruto)" },
+                  { label: "Comissões recebidas", value: kpiVal(fin.summary.receivedEmpresa, "in"), sub: "à vista + seguro do fechamento M-1 (o que gera repasse)" },
+                  { label: "Comissões pagas", value: kpiVal(fin.summary.comissoesPagas, "out"), sub: "repasse aos promotores (M-1)" },
+                  { label: "Saldo de comissões à vista", value: kpiVal(fin.summary.receivedEmpresa - fin.summary.comissoesPagas, "saldo"), sub: "recebidas − pagas (M-1)" },
+                  { label: "Despesas", value: kpiVal(fin.summary.totalExpenses, "out"), sub: "operacionais" },
+                ]}
+              />
+              {/* Linha 2 — detalhe de seguro (do qual, M-1) + saldo do caixa. */}
+              <KpiBand
+                valueSize={24}
+                items={[
+                  { label: "Seguro recebido", value: kpiVal(fin.summary.receivedInsurance, "in"), sub: "do qual das 'comissões recebidas' — mês anterior" },
+                  { label: "Seguro repassado", value: kpiVal(fin.summary.paidInsuranceShare, "out"), sub: "do qual das 'comissões pagas' (M-1)" },
+                  { label: "Saldo", value: kpiVal(fin.summary.operatingResult, "saldo"), sub: "recebido − comissões − despesas", accent: true },
+                ]}
+              />
+            </>
           ) : null}
         </HeaderNavy>
 
@@ -270,42 +298,11 @@ export default function FinanceiroPage() {
 
         {!loading && tab === "caixa" && fin ? (
           <div className="panes">
-            {/* os 4 KPIs migraram pro <KpiBand> dentro do <HeaderNavy> (aba Caixa) */}
-            <p className="note"><span className="dot" />Saldo de <b>caixa</b> = recebido − comissões pagas − despesas. Difere do resultado da DRE pela receita complementar (competência, não caixa).</p>
-
-            {/* Subtotal INFORMATIVO de seguro RECEBIDO: "do qual" do Recebido —
-                JA dentro de receivedNet (nao soma). Regime de caixa: o seguro vem
-                dos fechamentos de M-1 (mes anterior), mesmo conjunto do Recebido. */}
-            <section className="card" style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)", textTransform: "uppercase", letterSpacing: ".04em" }}>
-                  Comissão de seguro recebida <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "var(--ink-3)" }}>(do qual)</span>
-                </div>
-                <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginTop: 5 }}>
-                  parte do “Recebido” acima — regime de caixa (ref. mês anterior), não é parcela adicional
-                </div>
-              </div>
-              <div className="num" style={{ fontSize: 26, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono',ui-monospace,monospace", fontVariantNumeric: "tabular-nums" }}>
-                {brl2(fin.summary.receivedInsurance)}
-              </div>
-            </section>
-
-            {/* Subtotal INFORMATIVO de seguro REPASSADO: "do qual" das Comissoes
-                pagas — JA dentro de comissoesPagas (final = producao + seguro), nao
-                soma. Competencia M (mes), distinta do seguro recebido (M-1). */}
-            <section className="card" style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-2)", textTransform: "uppercase", letterSpacing: ".04em" }}>
-                  Comissão de seguro repassada <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "var(--ink-3)" }}>(do qual)</span>
-                </div>
-                <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginTop: 5 }}>
-                  parte das “Comissões pagas” acima (repasse aos promotores) — competência do mês, não é parcela adicional
-                </div>
-              </div>
-              <div className="num" style={{ fontSize: 26, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono',ui-monospace,monospace", fontVariantNumeric: "tabular-nums" }}>
-                {brl2(fin.summary.paidInsuranceShare)}
-              </div>
-            </section>
+            {/* Os KPIs (incl. os 2 de seguro, agora promovidos) vivem no <KpiBand>
+                dentro do <HeaderNavy>. "Seguro recebido" e um "do qual" das Comissoes
+                recebidas pela empresa; "Seguro repassado" e um "do qual" das Comissoes
+                pagas — nenhum e entrada/saida adicional (nao somam). */}
+            <p className="note"><span className="dot" />Saldo de <b>caixa</b> = recebido − comissões pagas − despesas. <b>Comissões recebidas</b> (à vista + seguro do fechamento M-1) × <b>Comissões pagas</b> = <b>Saldo de comissões à vista</b> (mesma competência M-1). Difere do resultado da DRE pela receita complementar (competência, não caixa).</p>
 
             <section className="card">
               <div className="card-head">
@@ -489,6 +486,9 @@ const CSS = `
 .rrfin{
   --navy:#0F1F4A; --navy-bar:#1E3066; --yellow:#FFF000; --gold:#D6A13F; --gold-deep:#B9842A; --gold-soft:#E7BE6A;
   --green:#3C9D6B; --green-soft:#5FB98A; --red:#C0443C; --red-bg:#FBECEB;
+  /* Cores por natureza do KPI, legiveis sobre o navy (valor branco por padrao).
+     ENTRADA=azul claro, SAIDA=vermelho claro, SALDO +=verde / -=vermelho. */
+  --kpi-in:#7FB0FF; --kpi-out:#E88A82; --kpi-pos:#5FB98A; --kpi-neg:#E88A82;
   --page:#EDEFF3; --card:#FFFFFF; --bd:#E4E7EC; --bd-soft:#EEF0F4;
   --ink:#16203A; --ink-2:#4B5468; --ink-3:#838B9C; --r-lg:20px; --r-md:16px;
   --shadow:0 1px 2px rgba(15,31,74,.04), 0 8px 24px rgba(15,31,74,.05);
