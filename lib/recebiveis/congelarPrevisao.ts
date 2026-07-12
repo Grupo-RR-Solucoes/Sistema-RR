@@ -28,17 +28,48 @@ export interface CongelarPrevisaoResult {
   linhasGravadas: number;
   /** Linhas da curva forward (inseridas OU já existentes). */
   linhasProjetadas: number;
+  /** true se o vintage JÁ existia — nada foi gravado (write-once). */
+  vintageJaExistia: boolean;
+  /** Linhas recalculadas que NÃO foram gravadas por já existir o vintage. */
+  linhasDescartadas: number;
+  /**
+   * true quando o vintage gravado tem campo NULL que o cálculo de AGORA preencheria.
+   * É o sintoma do vintage congelado cedo demais (ex.: jun/2026 congelado antes de
+   * carteira_contrato existir → previsto_diferido NULL para sempre).
+   */
+  vintageIncompleto: boolean;
+  /** Avisos legíveis (também vão para console.warn). */
+  avisos: string[];
+  /** true quando rodou em dry-run (nada gravado). */
+  dryRun: boolean;
+  /** As linhas que seriam/foram gravadas — para conferência no dry-run. */
+  linhas: PrevisaoSnapshotRow[];
 }
+
+export interface PrevisaoSnapshotRow {
+  competencia_snapshot: string;
+  competencia_alvo: string;
+  previsto_prt: number | null;
+  previsto_avista: number | null;
+  previsto_diferido: number | null;
+  base_snapshot_prt: string;
+  contratos_avista_fallback: number | null;
+}
+
+/** Campos do snapshot que podem ficar NULL por congelamento prematuro. */
+const CAMPOS_PREVISAO = ["previsto_prt", "previsto_avista", "previsto_diferido"] as const;
 
 /**
  * Congela a projeção de recebíveis vigente em `previsao_snapshot`.
  * `horizonteMeses` = quantos meses à frente congelar (default 12).
+ * `dryRun` = calcula e confere, mas NÃO grava.
  */
 export async function congelarPrevisao(
   supabase: SupabaseClient,
-  options: { horizonteMeses?: number } = {},
+  options: { horizonteMeses?: number; dryRun?: boolean } = {},
 ): Promise<CongelarPrevisaoResult> {
   const horizonteMeses = options.horizonteMeses ?? 12;
+  const dryRun = options.dryRun === true;
 
   const [agenda, avista] = await Promise.all([
     buildPrtAgenda(supabase, { horizonteMeses }),
@@ -75,6 +106,78 @@ export async function congelarPrevisao(
     };
   });
 
+  // AVISO ANTI-SILÊNCIO. O write-once (ON CONFLICT DO NOTHING) é CORRETO — a previsão
+  // autêntica não pode ser sobrescrita por um re-import. Mas ele era SILENCIOSO: o
+  // congelamento retornava sucesso com 0 linhas e ninguém via que o resultado tinha
+  // sido descartado. Foi exatamente assim que jun/2026 ficou errado para sempre: o
+  // seed manual congelou em 04/07 (antes de carteira_contrato existir) com
+  // previsto_diferido NULL; o hook rodou no fechamento de 09/07 já com a carteira
+  // certa, recalculou tudo — e o DO NOTHING jogou fora, em silêncio.
+  //
+  // A semântica NÃO muda (segue write-once, sem sobrescrever). O que muda é que agora
+  // isso é VISÍVEL: dizemos que o vintage já existia, quantas linhas foram descartadas
+  // e — o que importa de verdade — se o que está gravado está INCOMPLETO em relação ao
+  // que o cálculo de hoje produziria. Consertar exige ação explícita (apagar o vintage
+  // e recongelar), que é como tem que ser: dado congelado não se reescreve sozinho.
+  const { data: existentes, error: erroExistentes } = await supabase
+    .from("previsao_snapshot")
+    .select("competencia_alvo, previsto_prt, previsto_avista, previsto_diferido")
+    .eq("competencia_snapshot", competenciaSnapshot);
+  if (erroExistentes) throw new Error(erroExistentes.message);
+
+  const avisos: string[] = [];
+  const vintageJaExistia = (existentes ?? []).length > 0;
+  let vintageIncompleto = false;
+
+  if (vintageJaExistia) {
+    const existentePorAlvo = new Map(
+      (existentes ?? []).map((e: any) => [String(e.competencia_alvo), e]),
+    );
+    // Campo NULL no gravado que o cálculo de AGORA preencheria => vintage incompleto.
+    const lacunas: string[] = [];
+    for (const nova of rows) {
+      const velha = existentePorAlvo.get(nova.competencia_alvo);
+      if (!velha) {
+        lacunas.push(`${nova.competencia_alvo} (alvo ausente no vintage gravado)`);
+        continue;
+      }
+      for (const campo of CAMPOS_PREVISAO) {
+        if (velha[campo] === null && (nova as any)[campo] !== null) {
+          lacunas.push(`${nova.competencia_alvo}.${campo}`);
+        }
+      }
+    }
+    if (lacunas.length > 0) {
+      vintageIncompleto = true;
+      avisos.push(
+        `Vintage ${competenciaSnapshot} INCOMPLETO: ${lacunas.length} campo(s) estao NULL no ` +
+          `snapshot gravado mas o calculo de agora os preencheria (${lacunas.slice(0, 6).join(", ")}` +
+          `${lacunas.length > 6 ? ", ..." : ""}). Foi congelado cedo demais. Para corrigir: apague as ` +
+          `linhas de competencia_snapshot='${competenciaSnapshot}' e recongele.`,
+      );
+    }
+    avisos.push(
+      `Vintage ${competenciaSnapshot} JA EXISTIA: ${rows.length} linha(s) recalculadas NAO foram ` +
+        `gravadas (write-once — a previsao autentica nao e sobrescrita).`,
+    );
+  }
+
+  for (const aviso of avisos) console.warn(`[congelarPrevisao] ${aviso}`);
+
+  if (dryRun) {
+    return {
+      competenciaSnapshot,
+      linhasGravadas: 0,
+      linhasProjetadas: rows.length,
+      vintageJaExistia,
+      linhasDescartadas: vintageJaExistia ? rows.length : 0,
+      vintageIncompleto,
+      avisos,
+      dryRun: true,
+      linhas: rows,
+    };
+  }
+
   // ON CONFLICT (competencia_snapshot, competencia_alvo) DO NOTHING.
   // ignoreDuplicates:true -> só insere o que não existe; .select() devolve apenas
   // as linhas realmente inseridas (2ª rodada = 0 linhas => idempotência provada).
@@ -87,9 +190,17 @@ export async function congelarPrevisao(
     .select("id");
   if (error) throw new Error(error.message);
 
+  const linhasGravadas = (data ?? []).length;
+
   return {
     competenciaSnapshot,
-    linhasGravadas: (data ?? []).length,
+    linhasGravadas,
     linhasProjetadas: rows.length,
+    vintageJaExistia,
+    linhasDescartadas: rows.length - linhasGravadas,
+    vintageIncompleto,
+    avisos,
+    dryRun: false,
+    linhas: rows,
   };
 }
