@@ -14,7 +14,11 @@ const Module = require("module");
 const ROOT = path.resolve(__dirname, "..");
 
 // .env -> process.env
-for (const file of [".env", ".env.local"]) {
+// PRECEDÊNCIA (igual ao Next.js): env do shell > .env.local > .env. Por isso o
+// .env.local é lido PRIMEIRO e o guard !process.env[...] impede o .env de
+// sobrescrever. (Ordem inversa fazia a chave LEGADA/JWT desativada do .env vencer
+// a sb_secret_ do .env.local -> "Legacy API keys are disabled" em qualquer script.)
+for (const file of [".env.local", ".env"]) {
   const p = path.join(ROOT, file);
   if (!fs.existsSync(p)) continue;
   for (const line of fs.readFileSync(p, "utf8").split(/\r?\n/)) {
