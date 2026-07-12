@@ -300,6 +300,56 @@ function cenarioBase({ kind, total, parcelas, aplicadas = 0 }) {
     ok(soma(doNovo) === 300, `dono certo assume o TOTAL (300,00), nao o saldo de 100 (deu ${soma(doNovo)})`);
   }
 
+  // ============ TRAVA: estorno NUNCA cai em competencia FECHADA ============
+  // Reusa detectClosedMonth (lib/cmsMonthly) em producao; aqui injetamos isClosed
+  // para simular o calendario de fechamento sem montar o banco inteiro.
+
+  // CASO D — competencia corrente FECHADA -> estorno vai para a proxima ABERTA.
+  {
+    const state = cenarioBase({ kind: "AUTO", total: 300, parcelas: 3, aplicadas: 1 });
+    const sb = makeFakeSupabase(state);
+    // 2026-07 e 2026-08 FECHADOS; 2026-09 aberto.
+    const fechados = new Set(["2026-7", "2026-8"]);
+    const isClosed = async (y, m) => fechados.has(`${y}-${m}`);
+    const res = await lib.updateDebit(sb, {
+      debitId: "D1", promoterId: "THAYNARA",
+      currentYear: CY, currentMonth: CM, isClosed,
+    });
+    console.log("\n  [D] corrente 2026-07 FECHADA (e 2026-08 tambem) -> estorno vai p/ a proxima ABERTA:");
+    mostra(state);
+    const credito = state.promoter_discounts.find((p) => Number(p.amount) < 0);
+    ok(
+      credito && credito.year === 2026 && credito.month === 9,
+      `credito pulou os fechados e caiu em 2026-09 (deu ${credito && `${credito.year}-${credito.month}`})`
+    );
+    ok(res.estorno && res.estorno.pulouMesesFechados === 2, `pulou 2 meses fechados (deu ${res.estorno && res.estorno.pulouMesesFechados})`);
+    const doNovo = state.promoter_discounts.filter((p) => p.promoter_id === "THAYNARA");
+    ok(
+      doNovo.every((p) => !fechados.has(`${p.year}-${p.month}`)),
+      "parcelas do dono certo tambem respeitam a trava (nenhuma em mes fechado)"
+    );
+    ok(doNovo[0].year === 2026 && doNovo[0].month === 9, "1a parcela do dono certo comeca na competencia ABERTA (2026-09)");
+    ok(
+      state.promoter_discounts.filter((p) => p.status === "APPLIED").every((p) => p.year === 2026 && p.month === 6 && p.amount === 100),
+      "mes fechado do erro (2026-06) segue INTACTO"
+    );
+  }
+
+  // CASO E — competencia corrente ABERTA -> cai nela (comportamento do caso A).
+  {
+    const state = cenarioBase({ kind: "AUTO", total: 300, parcelas: 3, aplicadas: 1 });
+    const sb = makeFakeSupabase(state);
+    const isClosed = async () => false; // nada fechado
+    const res = await lib.updateDebit(sb, {
+      debitId: "D1", promoterId: "THAYNARA",
+      currentYear: CY, currentMonth: CM, isClosed,
+    });
+    const credito = state.promoter_discounts.find((p) => Number(p.amount) < 0);
+    console.log(`\n  [E] corrente 2026-07 ABERTA -> credito em ${credito.year}-${String(credito.month).padStart(2, "0")}`);
+    ok(credito.year === CY && credito.month === CM, "credito cai na competencia CORRENTE (2026-07)");
+    ok(res.estorno.pulouMesesFechados === 0, "nao pulou nenhum mes (nada fechado)");
+  }
+
   console.log(`\n=== ${falhas === 0 ? "PASSOU" : "FALHOU"} — ${falhas} falha(s) ===\n`);
   process.exit(falhas === 0 ? 0 : 1);
 })().catch((e) => {

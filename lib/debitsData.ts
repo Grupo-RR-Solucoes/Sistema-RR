@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveDonaCompanyForPromoter } from "./closingMonthly.ts";
+// TRAVA de mes fechado — deteccao CANONICA do sistema (mesma do fechamento e da rota).
+// Nao duplicar essa nocao aqui: uma segunda regra de "mes fechado" seria retalho.
+import { detectClosedMonth } from "./cmsMonthly.ts";
 // RÉGUA ÚNICA do valor do débito (lib/debitRules). NÃO reimplementar aqui.
 import { debitAmountFor, fetchDebitRule, round2 } from "./debitRules.ts";
 
@@ -201,6 +204,8 @@ export async function updateDebit(
     // dono. Injetável para teste; default = mês de hoje.
     currentYear?: number;
     currentMonth?: number;
+    // Injetável só para teste (simular mês fechado). Default: detectClosedMonth real.
+    isClosed?: (year: number, month: number) => Promise<boolean>;
   }
 ): Promise<{
   debitId: string;
@@ -217,6 +222,9 @@ export async function updateDebit(
     month: number;
     debitId: string;
     parcelasOrigem: number;
+    // > 0 quando a competência corrente estava FECHADA e o crédito foi empurrado
+    // para a próxima ABERTA (mês fechado nunca é reescrito).
+    pulouMesesFechados: number;
   };
 }> {
   const { data: debit, error: eD } = await supabase
@@ -257,6 +265,7 @@ export async function updateDebit(
       installmentsTotal: params.installmentsTotal,
       currentYear: params.currentYear,
       currentMonth: params.currentMonth,
+      isClosed: params.isClosed,
       updatedBy: params.updatedBy ?? null,
     });
   }
@@ -376,6 +385,44 @@ export async function updateDebit(
 /** Tipo do lançamento de crédito gerado pela correção de dono. */
 export const ESTORNO_CORRECAO = "ESTORNO_CORRECAO";
 
+/** Quantos meses à frente procurar uma competência aberta antes de desistir. */
+const MAX_MESES_PROCURA_ABERTA = 24;
+
+/**
+ * Primeira competência ABERTA a partir de (year, month) — inclusive.
+ *
+ * REUSA a detecção canônica de mês fechado do sistema: `detectClosedMonth` de
+ * lib/cmsMonthly (que delega a `detectMonthRegime`, a mesma que a rota /api/promotores
+ * e o fechamento usam). NÃO existe uma segunda noção de "mês fechado" aqui — seria
+ * retalho: duas regras de fechamento divergindo é exatamente o bug que a régua única
+ * dos débitos veio matar.
+ *
+ * `isClosed` é injetável só para teste (simular mês fechado sem montar o banco todo);
+ * em produção o default é a função real.
+ */
+export async function resolveCompetenciaAberta(
+  supabase: SupabaseLike,
+  year: number,
+  month: number,
+  isClosed?: (y: number, m: number) => Promise<boolean>
+): Promise<{ year: number; month: number; pulou: number }> {
+  const fechado = isClosed ?? ((y: number, m: number) => detectClosedMonth(supabase as any, y, m));
+  let y = year;
+  let m = month;
+  for (let i = 0; i < MAX_MESES_PROCURA_ABERTA; i++) {
+    if (!(await fechado(y, m))) return { year: y, month: m, pulou: i };
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  throw new Error(
+    `Nenhuma competencia ABERTA encontrada a partir de ${year}-${String(month).padStart(2, "0")} ` +
+      `em ${MAX_MESES_PROCURA_ABERTA} meses. Estorno nao lancado (mes fechado nunca e reescrito).`
+  );
+}
+
 /**
  * CORREÇÃO DE DONO quando o débito JÁ FOI DESCONTADO do promotor ERRADO.
  *
@@ -409,6 +456,7 @@ async function estornarParcelasPagas(
     installmentsTotal?: number | null;
     currentYear?: number;
     currentMonth?: number;
+    isClosed?: (year: number, month: number) => Promise<boolean>;
     updatedBy: string | null;
   }
 ) {
@@ -416,8 +464,15 @@ async function estornarParcelasPagas(
   const promoterIdErrado = debit.promoter_id;
 
   const agora = new Date();
-  const cy = args.currentYear ?? agora.getUTCFullYear();
-  const cm = args.currentMonth ?? agora.getUTCMonth() + 1;
+  const hojeY = args.currentYear ?? agora.getUTCFullYear();
+  const hojeM = args.currentMonth ?? agora.getUTCMonth() + 1;
+
+  // TRAVA: o crédito do estorno (e as parcelas do dono certo) NUNCA caem em mês fechado.
+  // Se a competência corrente já estiver fechada/paga, tudo vai para a próxima ABERTA.
+  // Reusa detectClosedMonth (lib/cmsMonthly) — a detecção canônica do sistema.
+  const alvo = await resolveCompetenciaAberta(supabase, hojeY, hojeM, args.isClosed);
+  const cy = alvo.year;
+  const cm = alvo.month;
 
   const novoTotal = round2(
     args.totalAmount === null || args.totalAmount === undefined
@@ -557,6 +612,7 @@ async function estornarParcelasPagas(
       month: cm,
       debitId: estornoDebit.id,
       parcelasOrigem: aplicadas.length,
+      pulouMesesFechados: alvo.pulou,
     },
   };
 }
