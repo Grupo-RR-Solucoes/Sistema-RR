@@ -2,7 +2,7 @@
 
 import type { FormEvent } from "react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useUser } from "../../lib/auth/useUser";
 import PromotorView from "./PromotorView";
 import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
@@ -242,6 +242,16 @@ function PromotoresFullPage() {
     notes: "",
   });
   const [savingDebit, setSavingDebit] = useState(false);
+  // FRENTE DÉBITOS — edição transversal (AUTO ou MANUAL): valor, parcelas, promotor.
+  // O automático faz o trabalho inicial, mas nunca trava: dá pra parcelar um débito
+  // automático alto, corrigir o valor ou mandar pro promotor certo.
+  const [editDebitId, setEditDebitId] = useState("");
+  const [editDebitForm, setEditDebitForm] = useState({
+    totalAmount: "",
+    installmentsTotal: "",
+    promoterId: "",
+  });
+  const [savingDebitEdit, setSavingDebitEdit] = useState(false);
   const [assignTargets, setAssignTargets] = useState<Record<string, string>>({});
   const [proposalTargets, setProposalTargets] = useState<Record<string, string>>({});
   const [proposalReasons, setProposalReasons] = useState<Record<string, string>>({});
@@ -637,6 +647,54 @@ function PromotoresFullPage() {
       setError(err.message || "Erro ao cadastrar débito.");
     } finally {
       setSavingDebit(false);
+    }
+  }
+
+  // FRENTE DÉBITOS — abre a edição de um débito (auto ou manual) já com os valores atuais.
+  function startEditDebit(row: DebitRow) {
+    setEditDebitId(row.id);
+    setEditDebitForm({
+      totalAmount: String(row.total_amount ?? "").replace(".", ","),
+      installmentsTotal: String(row.installments_total ?? 1),
+      promoterId: "",
+    });
+  }
+
+  // FRENTE DÉBITOS — grava a edição. Parcelas já APLICADAS não são tocadas: o back
+  // reescreve só as PENDENTES (mês pago não muda retroativamente).
+  async function handleDebitUpdate() {
+    if (!editDebitId) return;
+    try {
+      setSavingDebitEdit(true);
+      setError("");
+      setNotice("");
+      const response = await fetch("/api/promotores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "debit_update",
+          debitId: editDebitId,
+          totalAmount: editDebitForm.totalAmount
+            ? parseBrazilianNumber(editDebitForm.totalAmount)
+            : null,
+          installmentsTotal: editDebitForm.installmentsTotal
+            ? parseBrazilianNumber(editDebitForm.installmentsTotal) || 1
+            : null,
+          promoterId: editDebitForm.promoterId || null,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Erro ao editar débito.");
+      setEditDebitId("");
+      setReloadKey((value) => value + 1);
+      setNotice(
+        `Débito atualizado: ${payload.installmentsTotal} parcela(s), ${payload.parcelasReescritas} reescrita(s), ` +
+          `${payload.parcelasPreservadas} já aplicada(s) preservada(s).`
+      );
+    } catch (err: any) {
+      setError(err.message || "Erro ao editar débito.");
+    } finally {
+      setSavingDebitEdit(false);
     }
   }
 
@@ -1745,25 +1803,100 @@ function PromotoresFullPage() {
                           <th>Parcela</th>
                           <th>Valor no mês</th>
                           <th>Saldo (falta)</th>
+                          <th></th>
                         </tr>
                       </thead>
                       <tbody>
                         {(data.debitRows ?? []).map((d) => (
-                          <tr key={d.id}>
-                            <td className="l">
-                              {d.debit_type} <small>{d.kind === "AUTO" ? "auto" : "manual"}</small>
-                            </td>
-                            <td className="l">
-                              {d.sources.length
-                                ? d.sources.map((sc) => sc.operation).filter(Boolean).join(" + ")
-                                : "—"}
-                            </td>
-                            <td className="num">
-                              {d.installment_number ?? 1}/{d.installments_total}
-                            </td>
-                            <td className="num neg">−{formatCurrency(d.parcela_mes)}</td>
-                            <td className="num">{formatCurrency(d.falta)}</td>
-                          </tr>
+                          <Fragment key={d.id}>
+                            <tr>
+                              <td className="l">
+                                {d.debit_type} <small>{d.kind === "AUTO" ? "auto" : "manual"}</small>
+                              </td>
+                              <td className="l">
+                                {d.sources.length
+                                  ? d.sources.map((sc) => sc.operation).filter(Boolean).join(" + ")
+                                  : "—"}
+                              </td>
+                              <td className="num">
+                                {d.installment_number ?? 1}/{d.installments_total}
+                              </td>
+                              <td className="num neg">−{formatCurrency(d.parcela_mes)}</td>
+                              <td className="num">{formatCurrency(d.falta)}</td>
+                              <td className="num">
+                                <button
+                                  type="button"
+                                  className="btn ghost"
+                                  onClick={() => (editDebitId === d.id ? setEditDebitId("") : startEditDebit(d))}
+                                >
+                                  {editDebitId === d.id ? "Cancelar" : "Editar / parcelar"}
+                                </button>
+                              </td>
+                            </tr>
+                            {editDebitId === d.id ? (
+                              <tr>
+                                <td colSpan={6}>
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      flexWrap: "wrap",
+                                      gap: 10,
+                                      alignItems: "flex-end",
+                                      padding: "8px 0",
+                                    }}
+                                  >
+                                    <div className="field">
+                                      <label>Valor total (R$)</label>
+                                      <input
+                                        value={editDebitForm.totalAmount}
+                                        onChange={(e) =>
+                                          setEditDebitForm((c) => ({ ...c, totalAmount: e.target.value }))
+                                        }
+                                        placeholder="0,00"
+                                      />
+                                    </div>
+                                    <div className="field">
+                                      <label>Nº parcelas</label>
+                                      <input
+                                        value={editDebitForm.installmentsTotal}
+                                        onChange={(e) =>
+                                          setEditDebitForm((c) => ({ ...c, installmentsTotal: e.target.value }))
+                                        }
+                                        placeholder="1"
+                                      />
+                                    </div>
+                                    <div className="field">
+                                      <label>Mover p/ promotor</label>
+                                      <select
+                                        value={editDebitForm.promoterId}
+                                        onChange={(e) =>
+                                          setEditDebitForm((c) => ({ ...c, promoterId: e.target.value }))
+                                        }
+                                      >
+                                        <option value="">(manter)</option>
+                                        {(data.promoterOptions ?? []).map((p) => (
+                                          <option key={p.id} value={p.id}>
+                                            {p.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="btn"
+                                      onClick={handleDebitUpdate}
+                                      disabled={savingDebitEdit}
+                                    >
+                                      {savingDebitEdit ? "Salvando..." : "Salvar"}
+                                    </button>
+                                    <small style={{ opacity: 0.7 }}>
+                                      Já descontado: {formatCurrency(d.desceu)} — parcelas aplicadas não mudam.
+                                    </small>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : null}
+                          </Fragment>
                         ))}
                       </tbody>
                     </table>

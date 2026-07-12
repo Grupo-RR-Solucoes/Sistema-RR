@@ -171,6 +171,167 @@ export async function createManualDebit(
   return { debitId, parcelas: rows.length };
 }
 
+/**
+ * EDIÇÃO TRANSVERSAL de um débito — vale para AUTO e MANUAL igualmente. O automático
+ * faz o trabalho inicial (resolve o promotor, lança o valor), mas nunca trava: sócio/
+ * auxiliar pode depois mudar o VALOR TOTAL, PARCELAR em N (eixo 2 — decisão manual
+ * sobreposta, independente de o débito ser automático) e trocar o PROMOTOR.
+ *
+ * LIMITE DURO: parcelas já APLICADAS (APPLIED) são de meses já pagos e NÃO são
+ * tocadas — nem valor, nem promotor. A edição só reescreve as PENDENTES. Por isso:
+ *   - o novo total não pode ser menor que o já descontado (não dá pra "desdescontar");
+ *   - o nº de parcelas tem que caber as já aplicadas;
+ *   - as novas parcelas começam no mês seguinte à última aplicada (ou no mês inicial
+ *     do plano, se nada foi aplicado ainda).
+ */
+export async function updateDebit(
+  supabase: SupabaseLike,
+  params: {
+    debitId: string;
+    promoterId?: string | null;
+    totalAmount?: number | null;
+    installmentsTotal?: number | null;
+    updatedBy?: string | null;
+  }
+): Promise<{
+  debitId: string;
+  totalAmount: number;
+  installmentsTotal: number;
+  desceu: number;
+  restante: number;
+  parcelasReescritas: number;
+  parcelasPreservadas: number;
+}> {
+  const { data: debit, error: eD } = await supabase
+    .from("promoter_debits")
+    .select("id, promoter_id, company_id, kind, debit_type, total_amount, installments_total, start_year, start_month")
+    .eq("id", params.debitId)
+    .single();
+  if (eD) throw eD;
+
+  const { data: parcelas, error: eP } = await supabase
+    .from("promoter_discounts")
+    .select("id, year, month, amount, status, installment_number")
+    .eq("debit_id", params.debitId)
+    .order("year", { ascending: true })
+    .order("month", { ascending: true });
+  if (eP) throw eP;
+
+  const aplicadas = (parcelas || []).filter((p: any) => p.status === "APPLIED");
+  const desceu = round2(aplicadas.reduce((s: number, p: any) => s + Number(p.amount), 0));
+
+  const novoTotal = round2(
+    params.totalAmount === null || params.totalAmount === undefined
+      ? Number(debit.total_amount)
+      : params.totalAmount
+  );
+  if (novoTotal < desceu - 0.005) {
+    throw new Error(
+      `Total (${novoTotal.toFixed(2)}) menor que o ja descontado em parcelas pagas (${desceu.toFixed(2)}). ` +
+        `Parcelas APLICADAS nao sao alteradas retroativamente.`
+    );
+  }
+  const restante = round2(novoTotal - desceu);
+
+  const n = Math.max(
+    1,
+    Math.floor(
+      params.installmentsTotal === null || params.installmentsTotal === undefined
+        ? Number(debit.installments_total) || 1
+        : params.installmentsTotal
+    )
+  );
+  const pendentesAGerar = n - aplicadas.length;
+  if (pendentesAGerar < 1 && restante > 0.005) {
+    throw new Error(
+      `${n} parcela(s) nao comporta(m) as ${aplicadas.length} ja aplicada(s) mais o saldo de ${restante.toFixed(2)}.`
+    );
+  }
+
+  const promoterId = params.promoterId || debit.promoter_id;
+  const trocouPromotor = promoterId !== debit.promoter_id;
+  // Promotor novo => empresa DONA determinística do promotor na competência (mesma
+  // régua do fechamento). Sem troca, mantém a empresa que já estava no débito.
+  const companyId = trocouPromotor
+    ? await resolveDonaCompanyForPromoter(supabase, {
+        year: debit.start_year,
+        month: debit.start_month,
+        promoterId,
+      })
+    : debit.company_id;
+
+  // Apaga só as PENDENTES (as APPLIED ficam como estão — mês já pago).
+  const idsPendentes = (parcelas || []).filter((p: any) => p.status !== "APPLIED").map((p: any) => p.id);
+  if (idsPendentes.length) {
+    const { error } = await supabase.from("promoter_discounts").delete().in("id", idsPendentes);
+    if (error) throw error;
+  }
+
+  // Regera as pendentes a partir do mês seguinte à última aplicada.
+  const rows: any[] = [];
+  if (restante > 0.005 && pendentesAGerar > 0) {
+    const ultima = aplicadas[aplicadas.length - 1];
+    let y = ultima ? Number(ultima.year) : Number(debit.start_year);
+    let m = ultima ? Number(ultima.month) + 1 : Number(debit.start_month);
+    while (m > 12) {
+      m -= 12;
+      y += 1;
+    }
+    const base = round2(restante / pendentesAGerar);
+    let acc = 0;
+    for (let i = 0; i < pendentesAGerar; i++) {
+      const amount = i === pendentesAGerar - 1 ? round2(restante - acc) : base;
+      acc = round2(acc + base);
+      rows.push({
+        promoter_id: promoterId,
+        company_id: companyId,
+        year: y,
+        month: m,
+        discount_type: debit.debit_type,
+        amount,
+        installments: n,
+        installment_number: aplicadas.length + i + 1,
+        apply_to_company: false,
+        debit_id: debit.id,
+        status: "PENDING",
+        notes: "Parcela reescrita na edicao do debito.",
+      });
+      m += 1;
+      if (m > 12) {
+        m = 1;
+        y += 1;
+      }
+    }
+    const { error } = await supabase.from("promoter_discounts").insert(rows);
+    if (error) throw error;
+  }
+
+  // status: 'PAID' quando não sobrou saldo e já houve parcela aplicada. O CHECK da
+  // tabela só aceita ACTIVE|PAID|CANCELLED — não inventar valor novo aqui.
+  // A tabela não tem coluna updated_by; a autoria da edição fica no audit_logs (rota).
+  const { error: eU } = await supabase
+    .from("promoter_debits")
+    .update({
+      promoter_id: promoterId,
+      company_id: companyId,
+      total_amount: novoTotal,
+      installments_total: n,
+      status: restante <= 0.005 && aplicadas.length > 0 ? "PAID" : "ACTIVE",
+    })
+    .eq("id", debit.id);
+  if (eU) throw eU;
+
+  return {
+    debitId: debit.id,
+    totalAmount: novoTotal,
+    installmentsTotal: n,
+    desceu,
+    restante,
+    parcelasReescritas: rows.length,
+    parcelasPreservadas: aplicadas.length,
+  };
+}
+
 // Atribui um item da FILA a um promotor e cria o débito (AUTO) + source + parcela.
 export async function assignQueuedDebit(
   supabase: SupabaseLike,
