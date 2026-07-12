@@ -30,6 +30,13 @@ type AgMes = {
   recebidoAvista: number | null;
   gapAvistaInformativo: number | null;
   previstoDiferido: number | null;
+  // CONFRONTO CONGELADO — o que se previu ENTÃO (snapshot de um fechamento anterior),
+  // não o previsto re-derivado com o que sabemos hoje. É o que mede o erro da previsão.
+  // Só existe em mês FECHADO que tenha um snapshot com lead (ver agregador).
+  previstoPrtCongelado: number | null;
+  gapPrtCongelado: number | null;
+  previstoAvistaCongelado: number | null;
+  snapshotCongeladoUsado: string | null;
   avistaFallback: { competenciaFornecedora: string; contratos: number } | null;
   cobertura: Cobertura;
 };
@@ -107,6 +114,24 @@ export default function RecebiveisPage() {
 
   const ag = data?.agregador ?? null;
   const inad = data?.inadimplencia ?? null;
+
+  // O quadro mês a mês vira DUAS seções, por regime — mês fechado e mês futuro
+  // respondem perguntas diferentes (confronto vs decomposição).
+  const mesesFechados = useMemo(() => (ag ? ag.meses.filter((m) => m.fechado) : []), [ag]);
+  const mesesProjecao = useMemo(() => (ag ? ag.meses.filter((m) => !m.fechado) : []), [ag]);
+
+  // Nenhum mês fechado tem confronto congelado (estado de hoje: o único snapshot é o do
+  // último fechamento, e ele só tem lead para o FUTURO). A tela explica em vez de exibir
+  // uma coluna muda de traços.
+  const semConfrontoCongelado = useMemo(
+    () => mesesFechados.length > 0 && mesesFechados.every((m) => m.gapPrtCongelado == null),
+    [mesesFechados],
+  );
+  // Coluna "Previu então" na projeção só aparece se houver vintage com lead.
+  const temCongeladoNaProjecao = useMemo(
+    () => mesesProjecao.some((m) => m.previstoPrtCongelado != null),
+    [mesesProjecao],
+  );
 
   // KPIs: recebido do último fechado, previsto do 1º futuro, carteira PRT (base).
   const kpis = useMemo(() => {
@@ -240,64 +265,164 @@ export default function RecebiveisPage() {
               )}
             </section>
 
+            {/* QUADRO MÊS A MÊS — duas seções, porque mês fechado e mês futuro respondem
+                perguntas DIFERENTES e uma tabela única de 9 colunas obriga o leitor a
+                ignorar metade das células em cada linha.
+                  FECHADO  -> "a previsão acertou?": previu ENTÃO x recebido x erro.
+                              A decomposição do previsto-agora não interessa: o mês já
+                              aconteceu, o dinheiro já entrou.
+                  PROJEÇÃO -> "o que ainda vai entrar?": a decomposição do previsto
+                              (PRT + à vista + diferido). Não há erro a medir. */}
             <section className="card">
               <div className="card-head">
                 <div>
-                  <h2>Quadro mês a mês</h2>
-                  <p className="csub">Recebido por produto · previsto · gap PRT (acionável)</p>
+                  <h2>Fechados · a previsão acertou?</h2>
+                  <p className="csub">
+                    Previu ENTÃO (congelado no fechamento anterior) × recebido de verdade ·
+                    o erro é o que mede a qualidade da previsão
+                  </p>
                 </div>
               </div>
-              <Table className="fc-tbl">
-                <thead>
-                  <tr>
-                    <th>Competência</th>
-                    <th className="r">Recebido</th>
-                    <th className="r">Prev. PRT</th>
-                    <th className="r">Prev. à vista</th>
-                    <th className="r">Prev. diferido</th>
-                    <th className="r">Gap PRT</th>
-                    <th>Cobertura</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ag.meses.map((m) => {
-                    const recebido = m.fechado ? (m.recebidoPrt ?? 0) + (m.recebidoAvista ?? 0) : null;
-                    const gapTone = m.gapPrt == null ? "" : m.gapPrt < -0.005 ? "neg" : "pos";
-                    return (
-                      <tr key={m.competencia}>
-                        <td>
-                          <span className="comp">{fmtComp(m.competencia)}</span>{" "}
-                          <Chip variant={m.fechado ? "ok" : "neutral"}>{m.fechado ? "fechado" : "futuro"}</Chip>
-                        </td>
-                        <Num>{brl(recebido)}</Num>
-                        <Num>{brl(m.previstoPrt)}</Num>
-                        <Num>{brl(m.previstoAvista)}</Num>
-                        <Num>{brl(m.previstoDiferido)}</Num>
-                        <Num className={`gap ${gapTone}`}>{m.gapPrt == null ? "—" : brl2(m.gapPrt)}</Num>
-                        <td className="cob" title={m.cobertura.nota}>
-                          {m.cobertura.incluido.length > 0 ? m.cobertura.incluido.map((x) => x.split(" (")[0]).join(" + ") : "—"}
-                          {m.avistaFallback ? (
-                            <span
-                              className="fb-badge"
-                              role="note"
-                              title={fallbackDesc(m.avistaFallback.competenciaFornecedora)}
-                              aria-label={fallbackDesc(m.avistaFallback.competenciaFornecedora)}
-                            >
-                              <Chip variant="warn">
-                                Régua TRP · {fmtComp(m.avistaFallback.competenciaFornecedora)}
-                                {m.avistaFallback.contratos > 0 ? (
-                                  <span className="fb-n"> · {m.avistaFallback.contratos} contratos</span>
-                                ) : null}
-                              </Chip>
-                            </span>
-                          ) : null}
-                          <span className="falta">+{m.cobertura.aIncluir.length} a incluir</span>
-                        </td>
+              {mesesFechados.length === 0 ? (
+                <EmptyState title="Nenhuma competência fechada no período." />
+              ) : (
+                <>
+                  <Table className="fc-tbl">
+                    <thead>
+                      <tr>
+                        <th>Competência</th>
+                        <th className="r">Previu então (PRT)</th>
+                        <th className="r">Recebido PRT</th>
+                        <th className="r">Erro da previsão</th>
+                        <th className="r">Recebido total</th>
+                        <th>Cobertura</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </Table>
+                    </thead>
+                    <tbody>
+                      {mesesFechados.map((m) => {
+                        // Erro = recebido PRT − previsto PRT CONGELADO (like-for-like, mesma
+                        // competência). Só existe com snapshot de lead — sem ele, "—".
+                        const erroTone =
+                          m.gapPrtCongelado == null ? "" : m.gapPrtCongelado < -0.005 ? "neg" : "pos";
+                        const congeladoTitle = m.snapshotCongeladoUsado
+                          ? `Previsto no fechamento de ${fmtComp(m.snapshotCongeladoUsado)}`
+                          : "Sem snapshot congelado ANTERIOR a esta competência — nada a confrontar";
+                        const recebidoTotal = (m.recebidoPrt ?? 0) + (m.recebidoAvista ?? 0);
+                        return (
+                          <tr key={m.competencia}>
+                            <td>
+                              <span className="comp">{fmtComp(m.competencia)}</span>{" "}
+                              <Chip variant="ok">fechado</Chip>
+                            </td>
+                            <Num title={congeladoTitle}>
+                              {m.previstoPrtCongelado == null ? "—" : brl(m.previstoPrtCongelado)}
+                            </Num>
+                            <Num>{brl(m.recebidoPrt)}</Num>
+                            <Num className={`gap ${erroTone}`} title={congeladoTitle}>
+                              {m.gapPrtCongelado == null ? "—" : brl2(m.gapPrtCongelado)}
+                            </Num>
+                            <Num>{brl(recebidoTotal)}</Num>
+                            <td className="cob" title={m.cobertura.nota}>
+                              {m.cobertura.incluido.length > 0
+                                ? m.cobertura.incluido.map((x) => x.split(" (")[0]).join(" + ")
+                                : "—"}
+                              <span className="falta">+{m.cobertura.aIncluir.length} a incluir</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </Table>
+                  {/* Estado de HOJE: o único snapshot é o do último fechamento, e ele só tem
+                      lead para meses FUTUROS — nenhum mês fechou depois dele. Em vez de uma
+                      coluna de "—" sem explicação, dizemos por que ainda não há confronto. */}
+                  {semConfrontoCongelado ? (
+                    <Banner variant="info">
+                      Ainda não há confronto: o erro de previsão só aparece quando fechar a primeira
+                      competência POSTERIOR a um snapshot congelado. Até lá &quot;Previu então&quot;
+                      fica vazio — não é falha, é falta de histórico.
+                    </Banner>
+                  ) : null}
+                </>
+              )}
+            </section>
+
+            <section className="card">
+              <div className="card-head">
+                <div>
+                  <h2>Projeção · o que a produção já feita ainda vai liberar</h2>
+                  <p className="csub">
+                    Decomposição do previsto: direito contratado (PRT) + à vista da produção
+                    aberta + cauda do diferido · sem projetar venda nova
+                  </p>
+                </div>
+              </div>
+              {mesesProjecao.length === 0 ? (
+                <EmptyState title="Sem competências futuras no horizonte." />
+              ) : (
+                <Table className="fc-tbl">
+                  <thead>
+                    <tr>
+                      <th>Competência</th>
+                      <th className="r">Prev. PRT</th>
+                      <th className="r">Prev. à vista</th>
+                      <th className="r">Prev. diferido</th>
+                      <th className="r">Previsto total</th>
+                      {/* Coluna CONDICIONAL: só existe se algum mês da projeção tiver snapshot
+                          com lead. Sem vintage, não vira uma coluna de traços. */}
+                      {temCongeladoNaProjecao ? <th className="r">Previu então (PRT)</th> : null}
+                      <th>Cobertura</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mesesProjecao.map((m) => {
+                      const total =
+                        (m.previstoPrt ?? 0) + (m.previstoAvista ?? 0) + (m.previstoDiferido ?? 0);
+                      const congeladoTitle = m.snapshotCongeladoUsado
+                        ? `Previsto no fechamento de ${fmtComp(m.snapshotCongeladoUsado)}`
+                        : "Sem snapshot congelado anterior a esta competência";
+                      return (
+                        <tr key={m.competencia}>
+                          <td>
+                            <span className="comp">{fmtComp(m.competencia)}</span>{" "}
+                            <Chip variant="neutral">futuro</Chip>
+                          </td>
+                          <Num>{brl(m.previstoPrt)}</Num>
+                          <Num>{brl(m.previstoAvista)}</Num>
+                          <Num>{brl(m.previstoDiferido)}</Num>
+                          <Num>{brl(total)}</Num>
+                          {temCongeladoNaProjecao ? (
+                            <Num title={congeladoTitle}>
+                              {m.previstoPrtCongelado == null ? "—" : brl(m.previstoPrtCongelado)}
+                            </Num>
+                          ) : null}
+                          <td className="cob" title={m.cobertura.nota}>
+                            {m.cobertura.incluido.length > 0
+                              ? m.cobertura.incluido.map((x) => x.split(" (")[0]).join(" + ")
+                              : "—"}
+                            {m.avistaFallback ? (
+                              <span
+                                className="fb-badge"
+                                role="note"
+                                title={fallbackDesc(m.avistaFallback.competenciaFornecedora)}
+                                aria-label={fallbackDesc(m.avistaFallback.competenciaFornecedora)}
+                              >
+                                <Chip variant="warn">
+                                  Régua TRP · {fmtComp(m.avistaFallback.competenciaFornecedora)}
+                                  {m.avistaFallback.contratos > 0 ? (
+                                    <span className="fb-n"> · {m.avistaFallback.contratos} contratos</span>
+                                  ) : null}
+                                </Chip>
+                              </span>
+                            ) : null}
+                            <span className="falta">+{m.cobertura.aIncluir.length} a incluir</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+              )}
             </section>
 
             <section className="card">

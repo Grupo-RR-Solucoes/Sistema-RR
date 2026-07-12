@@ -84,7 +84,15 @@ export async function POST(req: Request) {
     // derruba o import. Idempotente (ON CONFLICT DO NOTHING). SÓ nesta rota
     // (fechamento corrente), NÃO na import/closing-history (backfill — ali o
     // previsto seria contaminado pelo estoque atual).
-    let congelamentoPrevisao: { ran: boolean; linhas?: number; snapshot?: string; error?: string } = {
+    let congelamentoPrevisao: {
+      ran: boolean;
+      linhas?: number;
+      snapshot?: string;
+      error?: string;
+      vintageJaExistia?: boolean;
+      vintageIncompleto?: boolean;
+      avisos?: string[];
+    } = {
       ran: false,
     };
     try {
@@ -93,12 +101,22 @@ export async function POST(req: Request) {
         ran: true,
         linhas: congel.linhasGravadas,
         snapshot: congel.competenciaSnapshot,
+        // Anti-silêncio: o import passa a DIZER quando o congelamento não gravou nada
+        // porque o vintage já existia — e quando o vintage gravado está incompleto.
+        vintageJaExistia: congel.vintageJaExistia,
+        vintageIncompleto: congel.vintageIncompleto,
+        avisos: congel.avisos.length ? congel.avisos : undefined,
       };
       console.log(
         `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
           `congelamento de previsão: ${congel.linhasGravadas} novas linhas ` +
           `(snapshot ${congel.competenciaSnapshot}, ${congel.linhasProjetadas} projetadas).`
       );
+      for (const aviso of congel.avisos) {
+        console.warn(
+          `[import closing ${year}-${String(month).padStart(2, "0")}] congelamento: ${aviso}`
+        );
+      }
     } catch (congelError) {
       const message =
         congelError instanceof Error ? congelError.message : "Erro desconhecido no congelamento.";
