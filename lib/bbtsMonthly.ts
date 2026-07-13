@@ -314,6 +314,8 @@ export async function consolidateMonthlyFromBbts(
     promotores: table.length,
     ignoradas: { balde: ignoradasBalde, cancelada: ignoradasCancel, srcc: ignoradasSrcc },
     gravadas: dryRun ? 0 : upserts.length,
+    // Payload EXATO gravado (ou que seria gravado, em dryRun) — ver closingMonthly.
+    payload: upserts,
     avisos,
     propostas, // detalhe por proposta (conferência)
     table,
