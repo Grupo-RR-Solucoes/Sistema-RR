@@ -510,7 +510,9 @@ export default function ImportacoesPage() {
         {/* ===================== ABA BASE OPERACIONAL ===================== */}
         {activeSection === "base" ? (
           <>
-            {/* TRP self-service (F6b) — upload + revisão (socio+funcionario; confirmar só socio, no-op nesta fase) */}
+            {/* TRP self-service (F6b) — upload + revisão do PDF da TRP (sócio+funcionário
+                veem; só sócio confirma). Confirmar GRAVA de verdade desde a F6b.3:
+                cria a versão ativa em trp_rule_versions, que é a fonte do motor. */}
             <TrpUploadReview canConfirm={!isFuncionario} />
 
             {isFuncionario ? (

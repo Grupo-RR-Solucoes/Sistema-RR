@@ -8,8 +8,10 @@
 // teto 6%) e a MESMA vigencia holiday-aware (competenciaDaData). Vigencia/fallback
 // identicos entre as fontes — provado nos gates F3 (db x json) e F5 (json x hardcode).
 //
-// Fonte da regra: a mesma maquinaria que a AUDITORIA usa. trp_credit_rules +
-// creditLookup.ts continuam como espelho SQL/validacao, nao como fonte do calculo.
+// Fonte da regra: a mesma maquinaria que a AUDITORIA usa (RegraMes -> matriz ->
+// lookupPctInRegra). A fonte VIVA e trp_rule_versions (db); o JSON e o fallback
+// historico/rollback. A tabela trp_credit_rules (matriz achatada) esta MORTA:
+// nenhum codigo le dela hoje — nao usar como referencia.
 //
 // Seguranca: sem match / competencia sem regra, retorna null e o chamador MANTEM
 // o comportamento atual (le o % do import diario). Nao mexe em mes fechado (cms).

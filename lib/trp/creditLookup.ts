@@ -1,10 +1,14 @@
 // ETAPA 2B — Lookup TRP Crédito PF · ISOLADO, NÃO plugado no motor.
 //
-// Função pura que, dada a matriz da TRP (linhas de trp_credit_rules) e uma
-// operação {tabela_ref, juros, prazo, faixa}, retorna o % à vista que a TRP
-// prevê. Usada para CONFERIR o que a Promotiva pagou e (futuro/Etapa 3) para
-// eventualmente CALCULAR. O motor atual NÃO usa isto — continua lendo o % do
-// import diário (raw_payload).
+// Função pura que, dada a matriz da TRP ACHATADA (linhas no formato TrpCreditRule
+// abaixo) e uma operação {tabela_ref, juros, prazo, faixa}, retorna o % à vista
+// que a TRP prevê.
+//
+// ATENÇÃO — histórico: esse formato achatado nasceu da tabela trp_credit_rules,
+// que hoje está MORTA (nenhum código lê dela). A matriz VIVA vem do RegraMes de
+// trp_rule_versions (TRP_SOURCE=db; JSON como fallback) e o motor a consulta por
+// getMatrizTRPParaContrato/lookupPctInRegra, não por esta função — que segue sem
+// chamadores. Mantida por ora; não usar como referência da fonte.
 //
 // Convenções:
 //   - juros_min/max e prazo_min/max: null = limite aberto ("A partir de",
