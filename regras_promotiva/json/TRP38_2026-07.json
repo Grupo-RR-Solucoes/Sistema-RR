@@ -1,0 +1,442 @@
+{
+  "FGTS": {
+    "celulas_prazo": [
+      {
+        "pct_geral": 0.042,
+        "prazo_max": 84,
+        "prazo_min": 36
+      }
+    ]
+  },
+  "SIAPE": {
+    "celulas_taxa_prazo": [
+      {
+        "tx_max": 0.0167,
+        "tx_min": 0.0164,
+        "Faixa 1": 0.0094,
+        "Faixa 2": 0.0095,
+        "Faixa 3": 0.0097,
+        "Faixa 4": 0.0102,
+        "Faixa 5": 0.0103
+      },
+      {
+        "tx_max": 0.0179,
+        "tx_min": 0.0168,
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258,
+        "prazo_max": 999,
+        "prazo_min": 48
+      },
+      {
+        "Faixa 1": 0.0321,
+        "Faixa 2": 0.0323,
+        "Faixa 3": 0.0334,
+        "Faixa 4": 0.0348,
+        "Faixa 5": 0.0352
+      }
+    ]
+  },
+  "_meta": {
+    "regime": "VOLUME_5_FAIXAS",
+    "categorias": [
+      "Faixa 1",
+      "Faixa 2",
+      "Faixa 3",
+      "Faixa 4",
+      "Faixa 5"
+    ],
+    "competencia": "2026-07",
+    "vigencia_fim": "2026-07-30",
+    "vigencia_inicio": "2026-06-30"
+  },
+  "INSS_NOVO": {
+    "celulas_prazo": [
+      {
+        "Faixa 1": 0.0196,
+        "Faixa 2": 0.0197,
+        "Faixa 3": 0.0203,
+        "Faixa 4": 0.0212,
+        "Faixa 5": 0.0215,
+        "prazo_max": 60,
+        "prazo_min": 48
+      },
+      {
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258,
+        "prazo_max": 84,
+        "prazo_min": 61
+      },
+      {
+        "Faixa 1": 0.0321,
+        "Faixa 2": 0.0323,
+        "Faixa 3": 0.0334,
+        "Faixa 4": 0.0348,
+        "Faixa 5": 0.0352,
+        "prazo_max": 999,
+        "prazo_min": 85
+      }
+    ]
+  },
+  "INSS_RENOV": {
+    "celulas_taxa_prazo": [
+      {
+        "Faixa 1": 0.0196,
+        "Faixa 2": 0.0197,
+        "Faixa 3": 0.0203,
+        "Faixa 4": 0.0212,
+        "Faixa 5": 0.0215,
+        "prazo_max": 60,
+        "prazo_min": 48
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.01,
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258,
+        "prazo_max": 84,
+        "prazo_min": 61
+      },
+      {
+        "Faixa 1": 0.0321,
+        "Faixa 2": 0.0323,
+        "Faixa 3": 0.0334,
+        "Faixa 4": 0.0348,
+        "Faixa 5": 0.0352,
+        "prazo_max": 999,
+        "prazo_min": 85
+      }
+    ]
+  },
+  "CONSIG_SP_MG": {
+    "celulas_taxa_prazo": [
+      {
+        "tx_max": 0.0179,
+        "tx_min": 0.0172,
+        "Faixa 1": 0.0125,
+        "Faixa 2": 0.0126,
+        "Faixa 3": 0.013,
+        "Faixa 4": 0.0136,
+        "Faixa 5": 0.0137
+      },
+      {
+        "tx_max": 0.0189,
+        "tx_min": 0.018,
+        "Faixa 1": 0.0243,
+        "Faixa 2": 0.0244,
+        "Faixa 3": 0.0252,
+        "Faixa 4": 0.0263,
+        "Faixa 5": 0.0266
+      },
+      {
+        "tx_max": 0.0199,
+        "tx_min": 0.019,
+        "Faixa 1": 0.0353,
+        "Faixa 2": 0.0355,
+        "Faixa 3": 0.0366,
+        "Faixa 4": 0.0382,
+        "Faixa 5": 0.0387
+      },
+      {
+        "tx_max": 0.0209,
+        "tx_min": 0.02,
+        "Faixa 1": 0.0431,
+        "Faixa 2": 0.0434,
+        "Faixa 3": 0.0448,
+        "Faixa 4": 0.0467,
+        "Faixa 5": 0.0473
+      },
+      {
+        "tx_max": 0.0219,
+        "tx_min": 0.021,
+        "Faixa 1": 0.051,
+        "Faixa 2": 0.0513,
+        "Faixa 3": 0.0529,
+        "Faixa 4": 0.0552,
+        "Faixa 5": 0.0559,
+        "prazo_max": 999,
+        "prazo_min": 36
+      },
+      {
+        "tx_max": 0.0229,
+        "tx_min": 0.022,
+        "Faixa 1": 0.0588,
+        "Faixa 2": 0.0592,
+        "Faixa 3": 0.0611,
+        "Faixa 4": 0.0637,
+        "Faixa 5": 0.0645
+      },
+      {
+        "tx_max": 0.0239,
+        "tx_min": 0.023,
+        "Faixa 1": 0.0667,
+        "Faixa 2": 0.0671,
+        "Faixa 3": 0.0692,
+        "Faixa 4": 0.0722,
+        "Faixa 5": 0.0731
+      },
+      {
+        "tx_max": 0.0249,
+        "tx_min": 0.024,
+        "Faixa 1": 0.0785,
+        "Faixa 2": 0.079,
+        "Faixa 3": 0.0815,
+        "Faixa 4": 0.085,
+        "Faixa 5": 0.086
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.025,
+        "Faixa 1": 0.0902,
+        "Faixa 2": 0.0908,
+        "Faixa 3": 0.0937,
+        "Faixa 4": 0.0977,
+        "Faixa 5": 0.0989
+      }
+    ]
+  },
+  "CONSIG_PRIVADO": {
+    "celulas_taxa_prazo": [
+      {
+        "tx_max": 999,
+        "tx_min": 0.0254,
+        "Faixa 1": 0.0078,
+        "Faixa 2": 0.0079,
+        "Faixa 3": 0.0081,
+        "Faixa 4": 0.0085,
+        "Faixa 5": 0.0086,
+        "prazo_max": 35,
+        "prazo_min": 18
+      },
+      {
+        "tx_max": 0.0299,
+        "tx_min": 0.0254,
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258,
+        "prazo_max": 999,
+        "prazo_min": 36
+      },
+      {
+        "tx_max": 0.035,
+        "tx_min": 0.03,
+        "Faixa 1": 0.0314,
+        "Faixa 2": 0.0316,
+        "Faixa 3": 0.0326,
+        "Faixa 4": 0.034,
+        "Faixa 5": 0.0344,
+        "prazo_max": 999,
+        "prazo_min": 36
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.0351,
+        "Faixa 1": 0.0392,
+        "Faixa 2": 0.0395,
+        "Faixa 3": 0.0407,
+        "Faixa 4": 0.0425,
+        "Faixa 5": 0.043,
+        "prazo_max": 999,
+        "prazo_min": 36
+      }
+    ]
+  },
+  "CONSIG_PUBLICO": {
+    "celulas_taxa_prazo": [
+      {
+        "tx_max": 0.0177,
+        "tx_min": 0.0175,
+        "Faixa 1": 0.0078,
+        "Faixa 2": 0.0079,
+        "Faixa 3": 0.0081,
+        "Faixa 4": 0.0085,
+        "Faixa 5": 0.0086
+      },
+      {
+        "tx_max": 0.0187,
+        "tx_min": 0.0178,
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258
+      },
+      {
+        "tx_max": 0.0197,
+        "tx_min": 0.0188,
+        "Faixa 1": 0.0353,
+        "Faixa 2": 0.0355,
+        "Faixa 3": 0.0366,
+        "Faixa 4": 0.0382,
+        "Faixa 5": 0.0387
+      },
+      {
+        "tx_max": 0.0207,
+        "tx_min": 0.0198,
+        "Faixa 1": 0.0431,
+        "Faixa 2": 0.0434,
+        "Faixa 3": 0.0448,
+        "Faixa 4": 0.0467,
+        "Faixa 5": 0.0473
+      },
+      {
+        "tx_max": 0.0217,
+        "tx_min": 0.0208,
+        "Faixa 1": 0.0471,
+        "Faixa 2": 0.0474,
+        "Faixa 3": 0.0489,
+        "Faixa 4": 0.051,
+        "Faixa 5": 0.0516,
+        "prazo_max": 999,
+        "prazo_min": 36
+      },
+      {
+        "tx_max": 0.0227,
+        "tx_min": 0.0218,
+        "Faixa 1": 0.0588,
+        "Faixa 2": 0.0592,
+        "Faixa 3": 0.0611,
+        "Faixa 4": 0.0637,
+        "Faixa 5": 0.0645
+      },
+      {
+        "tx_max": 0.0237,
+        "tx_min": 0.0228,
+        "Faixa 1": 0.0667,
+        "Faixa 2": 0.0671,
+        "Faixa 3": 0.0692,
+        "Faixa 4": 0.0722,
+        "Faixa 5": 0.0731
+      },
+      {
+        "tx_max": 0.0247,
+        "tx_min": 0.0238,
+        "Faixa 1": 0.0785,
+        "Faixa 2": 0.079,
+        "Faixa 3": 0.0815,
+        "Faixa 4": 0.085,
+        "Faixa 5": 0.086
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.0248,
+        "Faixa 1": 0.0902,
+        "Faixa 2": 0.0908,
+        "Faixa 3": 0.0937,
+        "Faixa 4": 0.0977,
+        "Faixa 5": 0.0989
+      }
+    ]
+  },
+  "NAO_CONSIGNADO": {
+    "celulas_taxa": [
+      {
+        "tx_max": 0.0337,
+        "tx_min": 0.0292,
+        "Faixa 1": 0.0196,
+        "Faixa 2": 0.0197,
+        "Faixa 3": 0.0203,
+        "Faixa 4": 0.0212,
+        "Faixa 5": 0.0215
+      },
+      {
+        "tx_max": 0.0383,
+        "tx_min": 0.0338,
+        "Faixa 1": 0.0274,
+        "Faixa 2": 0.0276,
+        "Faixa 3": 0.0285,
+        "Faixa 4": 0.0297,
+        "Faixa 5": 0.0301
+      },
+      {
+        "tx_max": 0.0429,
+        "tx_min": 0.0384,
+        "Faixa 1": 0.0353,
+        "Faixa 2": 0.0355,
+        "Faixa 3": 0.0366,
+        "Faixa 4": 0.0382,
+        "Faixa 5": 0.0387
+      },
+      {
+        "tx_max": 0.0475,
+        "tx_min": 0.043,
+        "Faixa 1": 0.0431,
+        "Faixa 2": 0.0434,
+        "Faixa 3": 0.0448,
+        "Faixa 4": 0.0467,
+        "Faixa 5": 0.0473
+      },
+      {
+        "tx_max": 0.0538,
+        "tx_min": 0.0476,
+        "Faixa 1": 0.0549,
+        "Faixa 2": 0.0553,
+        "Faixa 3": 0.057,
+        "Faixa 4": 0.0595,
+        "Faixa 5": 0.0602
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.0539,
+        "Faixa 1": 0.0824,
+        "Faixa 2": 0.0829,
+        "Faixa 3": 0.0855,
+        "Faixa 4": 0.0892,
+        "Faixa 5": 0.0903
+      }
+    ]
+  },
+  "PORTAB_PRIVADO": {
+    "celulas_taxa": [
+      {
+        "tx_max": 0.0299,
+        "tx_min": 0.0254,
+        "pct_geral": 0.0045
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.03,
+        "pct_geral": 0.018
+      }
+    ]
+  },
+  "PORTAB_PUBLICO": {
+    "celulas_taxa": [
+      {
+        "tx_max": 0.0189,
+        "tx_min": 0.0173,
+        "pct_geral": 0.0072
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.019,
+        "pct_geral": 0.0225
+      }
+    ]
+  },
+  "ADIANTAMENTO_13": {
+    "celulas_taxa_prazo": [
+      {
+        "tx_max": 999,
+        "tx_min": 0.0325,
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258,
+        "prazo_max": 999,
+        "prazo_min": 5
+      }
+    ]
+  }
+}

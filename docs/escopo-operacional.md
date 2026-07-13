@@ -182,3 +182,23 @@ Exemplo: sem TRP de julho subida, uma operacao de julho e calculada com os
 percentuais da TRP de junho, aplicados na vigencia de julho; as telas mostram
 "Julho usando TRP de junho — TRP de julho nao subida". Ao subir a TRP de julho
 pela tela de importacao, julho deixa de ser fallback e passa a usar a propria TRP.
+
+## 14. Ritual — toda TRP subida pela tela vira JSON versionado no repo
+
+O motor le a regra de credito de `trp_rule_versions` (TRP_SOURCE=db). Uma TRP
+comitada pela TELA (upload de PDF) passa a existir SO no banco: se o banco cair,
+a regra que produz as comissoes daquela competencia se perde — as competencias
+antigas (abr/mai/jun 2026) sobrevivem porque nasceram de JSON no repo.
+
+Por isso, no MESMO dia em que uma TRP nova for comitada pela tela:
+
+1. `node scripts/trp_export_rule_version.cjs <YYYY-MM> <TRPxx_YYYY-MM.json>`
+   (exporta a regra ATIVA do banco para `regras_promotiva/json/`)
+2. `node scripts/trp_seed_verify_deepequal.cjs` (prova que o arquivo e copia fiel
+   do que esta no banco — depois de acrescentar a competencia na lista do script)
+3. acrescentar a competencia em `scripts/trp_seed_rule_versions.gen.cjs`
+   (COMPETENCIAS), regerar `supabase/seeds/trp_rule_versions_2026.seed.sql` e
+   commitar o JSON.
+
+Feito isso, o seed reconstroi a tabela inteira num banco vazio (disaster
+recovery). Nao esta automatizado: e passo manual de quem sobe a TRP.
