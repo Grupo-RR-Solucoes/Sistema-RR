@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { detectClosedMonth } from "@/lib/cmsMonthly";
+import { detectMonthRegime } from "@/lib/cmsMonthly";
 import { todayInFortaleza } from "@/lib/dateFortaleza";
 import {
   fetchInsuranceSlipTiers,
@@ -181,7 +181,12 @@ export async function buildProjecaoMetas(
 
   const [base, closed, allPmr, shareTiers, gestores] = await Promise.all([
     loadPromoterAnalyticsBase(supabase, { year, month, companyId: input.companyId }),
-    detectClosedMonth(supabase, year, month).catch(() => false),
+    // MOV 2: enum canonico. A pergunta daqui e binaria — "o mes ja acabou?" — e
+    // tanto 'cms' quanto 'fechamento' respondem SIM. Por isso `!== 'open'`, nunca
+    // `=== 'fechamento'` (isso trataria jan-mai como mes em curso).
+    detectMonthRegime(supabase, year, month)
+      .then((regime) => regime !== "open")
+      .catch(() => false),
     // PMR: production_value (fonte dos meses FECHADOS na série híbrida) +
     // insurance_penetration_percent (penetração dos meses só-PMR).
     fetchAllRows<{ promoter_id: string; year: number; month: number; production_value: number; insurance_penetration_percent?: number | null }>(

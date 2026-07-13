@@ -21,7 +21,9 @@ import {
   resolvePromoterShareSync,
 } from "@/lib/proposalDetailing";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-import { detectClosedMonth } from "@/lib/cmsMonthly";
+// detectClosedMonth ainda serve o GET (leitura de fonte) — esse e o GRUPO B do
+// Movimento 2, migra depois. PUT/DELETE ja usam o enum: a pergunta la e binaria.
+import { detectClosedMonth, detectMonthRegime } from "@/lib/cmsMonthly";
 import { buildCmsProposalRows, buildCmsProposalRowsBatch } from "@/lib/promoterReportData";
 
 // Mês FECHADO (cms) — mapeia a CmsProposalRow (ground truth pago) para o shape
@@ -606,10 +608,22 @@ export async function POST(req: Request) {
         );
       }
       const d = new Date(rec.movement_date);
-      const closed = await detectClosedMonth(supabase, d.getUTCFullYear(), d.getUTCMonth() + 1).catch(() => false);
-      if (closed) {
+      // MOV 2: enum canonico. A pergunta e binaria — "da pra editar?" — e a resposta
+      // e "so em mes ABERTO". Mes 'cms' e mes 'fechamento' bloqueiam igual, por isso
+      // `!== 'open'`. Usar `=== 'fechamento'` aqui liberaria a edicao de jan-mai.
+      const regime = await detectMonthRegime(supabase, d.getUTCFullYear(), d.getUTCMonth() + 1).catch(
+        () => "open" as const
+      );
+      if (regime !== "open") {
         return NextResponse.json(
-          { error: "Mês consolidado via cms (valores finais da Promotiva) — não editável." },
+          {
+            // A mensagem antiga dizia "consolidado via cms" para QUALQUER mes fechado —
+            // mentia em jun+, que fecha por FECHAMENTO, nao por cms.
+            error:
+              regime === "cms"
+                ? "Competencia fechada (consolidada via cms, valores finais da Promotiva) — edicao bloqueada."
+                : "Competencia fechada (consolidada pelo fechamento) — edicao bloqueada.",
+          },
           { status: 403 }
         );
       }
@@ -731,10 +745,22 @@ export async function DELETE(req: Request) {
         );
       }
       const d = new Date(rec.movement_date);
-      const closed = await detectClosedMonth(supabase, d.getUTCFullYear(), d.getUTCMonth() + 1).catch(() => false);
-      if (closed) {
+      // MOV 2: enum canonico. A pergunta e binaria — "da pra editar?" — e a resposta
+      // e "so em mes ABERTO". Mes 'cms' e mes 'fechamento' bloqueiam igual, por isso
+      // `!== 'open'`. Usar `=== 'fechamento'` aqui liberaria a edicao de jan-mai.
+      const regime = await detectMonthRegime(supabase, d.getUTCFullYear(), d.getUTCMonth() + 1).catch(
+        () => "open" as const
+      );
+      if (regime !== "open") {
         return NextResponse.json(
-          { error: "Mês consolidado via cms (valores finais da Promotiva) — não editável." },
+          {
+            // A mensagem antiga dizia "consolidado via cms" para QUALQUER mes fechado —
+            // mentia em jun+, que fecha por FECHAMENTO, nao por cms.
+            error:
+              regime === "cms"
+                ? "Competencia fechada (consolidada via cms, valores finais da Promotiva) — edicao bloqueada."
+                : "Competencia fechada (consolidada pelo fechamento) — edicao bloqueada.",
+          },
           { status: 403 }
         );
       }
