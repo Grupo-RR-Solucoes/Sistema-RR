@@ -67,11 +67,28 @@ export type BbtsSeguroRow = {
   tratamento?: string | null; // "calculo" => entra na produção; "debito" => fora (débito do promotor)
 };
 
+/**
+ * Uma parcela do PAGAMENTO PRT (seção "Propostas do PAGAMENTO PRT" do PDF).
+ *
+ * O PRT é a 2a PERNA do pagamento da BBTS: pela tabela (pág. 8), o recebimento à
+ * vista é capado em 6% e o EXCEDENTE é pago a prazo — "diferença percentual a
+ * receber dividido pelo prazo da operação". Uma linha por contrato por mês.
+ * Os contratos aqui são ANTIGOS (de competências passadas), não os do AVT do mês.
+ */
+export type BbtsPrtRow = {
+  contrato: string;
+  data: string; // data do pagamento da parcela ("01/07/2026")
+  n_parcela: number; // nº da parcela paga neste mês
+  valor_parcela: number;
+  qt_parcela?: number | null; // total de parcelas (o PDF traz "#N/D" em algumas)
+};
+
 export type BbtsClosingInput = {
   year: number;
   month: number;
   credito: BbtsCreditoRow[];
   seguro?: BbtsSeguroRow[];
+  prt?: BbtsPrtRow[];
   // Âncoras declaradas pela própria extração (self-describing). Se presente,
   // sobrepõe o const hardcoded — o arquivo v3 traz 19 propostas / 271.210,84.
   _ancoras?: {
@@ -79,6 +96,7 @@ export type BbtsClosingInput = {
     credito_valor_financiado?: number;
     credito_pag_avista?: number;
     seguro_calculo?: number;
+    prt_valor?: number;
   };
 };
 
@@ -97,6 +115,8 @@ export type BbtsClosingResult = {
   com_seguro: number; // linhas de produção que receberam insurance_value
   seguro_only_lines: number; // linhas de produção criadas só p/ seguro órfão (sem crédito)
   debitos: Array<{ contrato: string; valor_seguro: number; tipo: string | null }>; // fora da produção
+  prt_parcelas: number; // linhas da seção PRT gravadas em bbts_prt_parcelas
+  prt_valor: number; // Σ das parcelas PRT do mês
   gravadas: number;
   ancora_detalhe: Record<string, { esperado: number; obtido: number; delta: number; ok: boolean }>;
   amostra: Array<Record<string, unknown>>;
@@ -201,6 +221,8 @@ export async function importBbtsClosing(
     com_seguro: 0,
     seguro_only_lines: 0,
     debitos: seguroDebito.map((s) => ({ contrato: String(s.contrato).trim(), valor_seguro: Number(s.valor_seguro) || 0, tipo: s.tipo ?? null })),
+    prt_parcelas: 0,
+    prt_valor: round2((input.prt ?? []).reduce((a, p) => a + (Number(p.valor_parcela) || 0), 0)),
     gravadas: 0,
     ancora_detalhe: detalhe,
     amostra: [],
@@ -256,7 +278,10 @@ export async function importBbtsClosing(
       promoter_source: source,
       proposal_number: contrato,
       contract_number: contrato,
-      product_description: r.produto ?? null,
+      // O ROTEAMENTO da auditoria (inferCreditTable) lê daqui. O "Nome do Convênio"
+      // do PDF é o produto semântico ("INSS Novo", "INSS Renovação", "Não
+      // Consignado - 13º salário"); a "Linha do Produto" é o fallback.
+      product_description: r.categoria ?? r.produto ?? null,
       convenio_code: r.nr_convenio == null ? null : String(r.nr_convenio),
       convenio_type: r.linha_credito ?? null,
       convenio_segment: r.segmento ?? null,
@@ -283,6 +308,12 @@ export async function importBbtsClosing(
       promoter_commission_percent: null,
       insurance_commission_amount: null,
       insurance_commission_percent: null,
+      // O QUE A BBTS PAGOU — colunas de 1a classe (antes só em raw_payload/JSONB,
+      // opaco p/ SQL e sujeito a ser apagado num merge). É o lado "pago" da
+      // auditoria da ADS. Migration 20260712_000003.
+      bbts_pag_avista: Number(r.pag_avista) || 0,
+      bbts_taxa_relatorio: r.taxa_relatorio ?? null,
+      bbts_seguro_pago: seg ? Number(seg.valor_seguro) || 0 : 0,
       raw_payload: {
         ...r,
         __bbts_meta: {
@@ -292,6 +323,8 @@ export async function importBbtsClosing(
           pag_avista_relatorio: Number(r.pag_avista) || 0,
           taxa_relatorio: r.taxa_relatorio ?? null,
           categoria: r.categoria ?? null,
+          produto: r.produto ?? null,
+          linha_credito: r.linha_credito ?? null,
           seguro_tipo: seg?.tipo ?? null,
           seguro_base: seguroBase,
           seguro_valor_relatorio: seg ? Number(seg.valor_seguro) || 0 : 0,
@@ -401,6 +434,36 @@ export async function importBbtsClosing(
     result.gravadas = merged.inserted + merged.updated;
 
     await supabase.from("daily_imports").update({ status: "COMPLETED", rows_count: records.length }).eq("id", log.id);
+  }
+
+  // 6. PRT — a 2a perna do pagamento. Uma linha por (contrato, competência,
+  //    parcela) em bbts_prt_parcelas (tabela própria: NÃO usa
+  //    monthly_closing_entries, que é o universo da Promotiva — misturar a ADSlá
+  //    contaminaria o ciclo PRT do RR, que soma por competência sem filtrar
+  //    empresa). Upsert idempotente. Os contratos daqui são de competências
+  //    ANTIGAS: podem nem existir em daily_production_records.
+  const prtRows = input.prt ?? [];
+  if (!dryRun && prtRows.length > 0) {
+    const competencia = `${input.year}-${String(input.month).padStart(2, "0")}-01`;
+    const payload = prtRows.map((p) => ({
+      company_id: BBTS_COMPANY_ID,
+      competencia,
+      proposal_number: String(p.contrato).trim(),
+      n_parcela: p.n_parcela,
+      valor_parcela: Number(p.valor_parcela) || 0,
+      qt_parcela: p.qt_parcela ?? null,
+      data_pagamento: parseDateBR(p.data),
+      source_filename: opts?.fileName ?? null,
+    }));
+    const { error: prtErr } = await supabase
+      .from("bbts_prt_parcelas")
+      .upsert(payload, { onConflict: "company_id,proposal_number,competencia,n_parcela" });
+    if (prtErr) {
+      // NÃO derruba o import do crédito (já gravado): sinaliza.
+      (result as any).prt_aviso = `Falha ao gravar parcelas PRT: ${prtErr.message}`;
+    } else {
+      result.prt_parcelas = payload.length;
+    }
   }
 
   // VIRADA DÉBITOS — persiste os cancelamentos ADS (tratamento='debito') que antes

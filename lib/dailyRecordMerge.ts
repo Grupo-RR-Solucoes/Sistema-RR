@@ -87,6 +87,47 @@ const PROMOTER_COLUMNS = new Set([
 
 const CONTROL_KEYS = new Set(["__createIfMissing"]);
 
+/**
+ * Blocos ANINHADOS do raw_payload que NUNCA podem ser perdidos num merge.
+ *
+ * BUG QUE ISTO CORRIGE (perda silenciosa): o merge do raw_payload era SHALLOW
+ * ({...base, ...novo}). O fechamento da ADS (owner FULL) grava em
+ * raw_payload.__bbts_meta o que a BBTS PAGOU (pag_avista_relatorio,
+ * taxa_relatorio, seguro_valor_relatorio). A diária da ADS (owner CREDIT) também
+ * grava um __bbts_meta — mas SEM esses campos. Como o spread substitui a chave
+ * INTEIRA, reimportar a diária depois do fechamento APAGAVA o "pago" — e ninguém
+ * percebia, porque nada lia esses campos ainda. A auditoria da ADS lê.
+ *
+ * Regra agora: para estas chaves, quando os dois lados são objetos, mescla-se
+ * campo a campo (o novo vence por campo, o antigo sobrevive no que o novo não
+ * define). Vale inclusive para o owner FULL — que no resto continua
+ * sobrescrevendo o raw_payload como antes (comportamento do RR intacto: o RR não
+ * tem __bbts_meta).
+ */
+const NESTED_TRACE_KEYS = ["__bbts_meta"] as const;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * @param deep true (donos parciais): mescla o raw_payload no topo (comportamento
+ *   atual) — false (FULL): o novo raw_payload substitui o antigo.
+ *   Em AMBOS os casos os NESTED_TRACE_KEYS são preservados campo a campo.
+ */
+export function mergeRawPayload(base: unknown, incoming: unknown, deep: boolean): Record<string, unknown> {
+  const b = isPlainObject(base) ? base : {};
+  const i = isPlainObject(incoming) ? incoming : {};
+  const out: Record<string, unknown> = deep ? { ...b, ...i } : { ...i };
+  for (const k of NESTED_TRACE_KEYS) {
+    const bv = b[k];
+    const iv = i[k];
+    if (isPlainObject(bv) && isPlainObject(iv)) out[k] = { ...bv, ...iv };
+    else if (isPlainObject(bv) && iv === undefined) out[k] = bv;
+  }
+  return out;
+}
+
 export type DailyMergeRecord = Record<string, unknown> & {
   company_id: string;
   proposal_number: string;
@@ -189,15 +230,12 @@ export async function mergeDailyProductionRecords(
         }
       }
 
-      // raw_payload: donos parciais mesclam (shallow) p/ manter o trace do outro
-      // lado; FULL sobrescreve (comportamento antigo).
+      // raw_payload: donos parciais mesclam no topo; FULL sobrescreve (como antes).
+      // Em ambos, os blocos de trace aninhados (__bbts_meta) são preservados campo
+      // a campo — ver NESTED_TRACE_KEYS: sem isso, reimportar a diária da ADS
+      // apagava o que a BBTS pagou.
       if ("raw_payload" in rec) {
-        if (mergeRaw) {
-          const base = (existing.raw_payload && typeof existing.raw_payload === "object") ? existing.raw_payload : {};
-          upd.raw_payload = { ...base, ...(rec.raw_payload as object) };
-        } else {
-          upd.raw_payload = rec.raw_payload;
-        }
+        upd.raw_payload = mergeRawPayload(existing.raw_payload, rec.raw_payload, mergeRaw);
       }
       toUpdate.push(upd);
       result.updated += 1;
