@@ -857,12 +857,26 @@ export default function ImportacoesPage() {
             <PmrReconsolidarCard canConfirm={!isFuncionario} />
             <div className={`two-up${isFuncionario ? " locked" : ""}`}>
               <section className="ucard">
+                {/* O cabeçalho acompanha o MODO do card: ao escolher a ADS no seletor de
+                    empresa, o formulário troca o .xlsx pelos 2 PDFs (crédito + seguro) —
+                    o título, o subtítulo e o selo de formato precisam trocar junto, senão
+                    o card parece servir só ao RR e o caminho do import ADS fica escondido. */}
                 <div className="ucard-head">
                   <div className="tt">
                     <span className="badge"><IcoFile /></span>
-                    <div><h3>Importar fechamento</h3><p className="csub">Planilha final da competência, por CNPJ.</p></div>
+                    {form.companyId === ADS_COMPANY_ID ? (
+                      <div>
+                        <h3>Importar fechamento ADS</h3>
+                        <p className="csub">2 PDFs (crédito + seguro). A competência vem do próprio PDF.</p>
+                      </div>
+                    ) : (
+                      <div>
+                        <h3>Importar fechamento</h3>
+                        <p className="csub">Planilha final da competência, por CNPJ.</p>
+                      </div>
+                    )}
                   </div>
-                  <span className="fmt">.xlsx</span>
+                  <span className="fmt">{form.companyId === ADS_COMPANY_ID ? ".pdf" : ".xlsx"}</span>
                 </div>
                 <form onSubmit={handleMonthlyClosingSubmit}>
                   <div className="frow">
