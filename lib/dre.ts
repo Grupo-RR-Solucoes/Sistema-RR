@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { fetchAllRows } from "@/lib/queryHelpers";
-import { detectClosedMonth } from "@/lib/cmsMonthly";
+import { detectMonthRegime, analyticsRegimeArgs, type MonthRegime } from "@/lib/cmsMonthly";
 import { loadPromoterAnalyticsBase } from "@/lib/promoterAnalytics";
 import { receitaFechamentoDoMes, type FechamentoRow } from "@/lib/rbt12";
 
@@ -96,33 +96,48 @@ type ExpenseRow = {
 type ManualRow = { company_id: string; ano: number; mes: number; valor: number | string | null };
 
 // Meses elegíveis ao DRE = INTERSEÇÃO de duas condições (ambas necessárias):
-//   1. cms-fechado (detectClosedMonth): cms_imports COMPLETED p/ todas as ativas
-//      => comissões finais (cms), não estimativa do motor.
+//   1. mês FECHADO (regime != 'open') => comissões finais consolidadas, não
+//      estimativa do motor.
 //   2. tem FECHAMENTO real (fechamento_mensal_empresa) => receita existe.
-// As duas NÃO coincidem nos dados (ex.: mês cms-fechado sem fechamento daria
-// receita 0 + comissões cheias = resultado falso). Só meses com os DOIS entram.
+// As duas NÃO coincidem nos dados (mês fechado sem fechamento daria receita 0 +
+// comissões cheias = resultado falso). Só meses com os DOIS entram.
+//
+// MOV 2 (Grupo B): a condição (1) REIMPLEMENTAVA a cobertura, lendo só cms_imports
+// e ignorando monthly_closing_imports. Efeito: os meses de regime 'fechamento'
+// (abril, junho+) NUNCA apareciam na lista de períodos — o DRE simplesmente não
+// sabia que existiam, e o guard de fechamento abaixo era inalcançável para eles.
+//
+// Agora a cobertura é a CANÔNICA: os candidatos saem das DUAS tabelas de import e
+// quem decide é o detectMonthRegime — a mesma função que /promotores, o dashboard e
+// o relatório usam. Não há segunda regra de "mês fechado" aqui.
 async function listClosedPeriods(supabase: SupabaseClient): Promise<DrePeriod[]> {
   const { data: companiesData, error: companiesError } = await supabase
     .from("companies")
     .select("id, cnpj, active");
   if (companiesError) return [];
   const allCompanies = (companiesData || []) as Array<{ id: string; cnpj: string; active?: boolean | null }>;
-  const totalActive = allCompanies.filter((c) => c.active === true).length;
-  if (totalActive === 0) return [];
   const realCnpjs = new Set(allCompanies.filter((c) => !String(c.cnpj).startsWith("TEMP-")).map((c) => c.cnpj));
 
-  const { data: imports, error } = await supabase
-    .from("cms_imports")
-    .select("company_id, prod_year, prod_month")
-    .eq("status", "COMPLETED");
-  if (error) return [];
-
-  const byPeriod = new Map<string, { year: number; month: number; set: Set<string> }>();
-  for (const r of (imports || []) as Array<{ company_id: string; prod_year: number; prod_month: number }>) {
-    const k = periodKey(r.prod_year, r.prod_month);
-    if (!byPeriod.has(k)) byPeriod.set(k, { year: r.prod_year, month: r.prod_month, set: new Set() });
-    byPeriod.get(k)!.set.add(r.company_id);
+  // CANDIDATOS: toda competência que tem QUALQUER import concluído — de cms
+  // (jan-mai) ou de fechamento (jun+). Quem filtra é o regime, logo abaixo.
+  const candidatos = new Map<string, { year: number; month: number }>();
+  try {
+    const cms = await fetchAllRows<{ prod_year: number; prod_month: number }>(() =>
+      supabase.from("cms_imports").select("prod_year, prod_month").eq("status", "COMPLETED")
+    );
+    for (const r of cms) candidatos.set(periodKey(r.prod_year, r.prod_month), { year: r.prod_year, month: r.prod_month });
+  } catch {
+    /* tabela ausente — sem candidatos de cms */
   }
+  try {
+    const fech = await fetchAllRows<{ year: number; month: number }>(() =>
+      supabase.from("monthly_closing_imports").select("year, month").eq("status", "COMPLETED")
+    );
+    for (const r of fech) candidatos.set(periodKey(r.year, r.month), { year: r.year, month: r.month });
+  } catch {
+    /* tabela ausente — sem candidatos de fechamento */
+  }
+  if (candidatos.size === 0) return [];
 
   // Competências com fechamento real (receita disponível).
   const fechamentoPeriods = new Set<string>();
@@ -137,12 +152,35 @@ async function listClosedPeriods(supabase: SupabaseClient): Promise<DrePeriod[]>
     return [];
   }
 
+  // Competências que têm o LADO DA COMISSÃO (PMR consolidado).
+  //
+  // O simétrico da guarda de receita, e igualmente necessário: alargar a cobertura
+  // para os meses de 'fechamento' trouxe competências ANTIGAS (set-dez/2025) que têm
+  // fechamento importado mas NENHUMA linha de PMR — o DRE exibiria receita cheia com
+  // comissão 0 e um lucro fabricado (ex.: set/2025 daria R$ 239.396,92 de "resultado").
+  // "receita 0 + comissões cheias" e "receita cheia + comissões 0" são o MESMO defeito.
+  const comissaoPeriods = new Set<string>();
+  try {
+    const pmr = await fetchAllRows<{ year: number; month: number }>(() =>
+      supabase.from("promoter_monthly_results").select("year, month")
+    );
+    for (const r of pmr) comissaoPeriods.add(periodKey(r.year, r.month));
+  } catch {
+    return [];
+  }
+
   const periods: DrePeriod[] = [];
-  for (const { year, month, set } of byPeriod.values()) {
-    const k = periodKey(year, month);
-    if (set.size >= totalActive && fechamentoPeriods.has(k)) {
-      periods.push({ year, month, key: k, label: periodLabel(year, month) });
+  for (const [k, { year, month }] of candidatos) {
+    if (!fechamentoPeriods.has(k)) continue; // sem receita realizada: fora
+    if (!comissaoPeriods.has(k)) continue; // sem base de comissão: fora
+    let regime: MonthRegime = "open";
+    try {
+      regime = await detectMonthRegime(supabase, year, month);
+    } catch {
+      regime = "open";
     }
+    if (regime === "open") continue; // ainda não fechado
+    periods.push({ year, month, key: k, label: periodLabel(year, month) });
   }
   periods.sort((a, b) => b.year - a.year || b.month - a.month);
   return periods;
@@ -172,12 +210,16 @@ export async function buildDre(
   }
 
   // Guarda dura: se a competência pedida não está fechada, não monta resultado.
-  let closed = false;
+  // MOV 2: enum canônico. `closed` é `regime !== 'open'` (cms E fechamento fecham),
+  // NUNCA `=== 'fechamento'` — isso trataria jan-mai como aberto e derrubaria o DRE
+  // histórico inteiro.
+  let regimeSel: MonthRegime = "open";
   try {
-    closed = await detectClosedMonth(supabase, selected.year, selected.month);
+    regimeSel = await detectMonthRegime(supabase, selected.year, selected.month);
   } catch {
-    closed = false;
+    regimeSel = "open";
   }
+  const closed = regimeSel !== "open";
   if (!closed) {
     return {
       closed: false,
@@ -283,23 +325,42 @@ export async function buildDre(
   }
 
   // ---- COMISSÕES PAGAS: Σ payable_commission_value dos ATIVOS por CNPJ ----
-  // Mesma base/eixo do relatório geral/equipe (mês fechado => promoter_monthly_results
-  // do cms; respeita a regra cms/motor por construção).
-  // DRE só monta para mês FECHADO (guard `if (!closed) return` acima) → CALCULATED (PMR/cms).
-  const base = await loadPromoterAnalyticsBase(supabase, { year: selected.year, month: selected.month, closed: true });
+  // Mesma base/eixo do relatório geral/equipe. DRE só monta para mês FECHADO (guard
+  // acima) → CALCULATED (PMR).
+  //
+  // MOV 2: passa closedSource (via analyticsRegimeArgs, o helper canônico). Sem ele o
+  // analytics caía no `.find()` legado — 1 linha do PMR por promotor, sem filtrar
+  // source: truncava quem tem linha RR + linha ADS e deixava entrar promotor sem
+  // linha no ledger fechado (inclusive CHAVE MASTER).
+  const base = await loadPromoterAnalyticsBase(supabase, {
+    year: selected.year,
+    month: selected.month,
+    ...analyticsRegimeArgs(regimeSel),
+  });
+  // GUARDA DURA (simétrica à guarda de receita): sem base de comissão, o DRE exibiria
+  // receita cheia com comissão 0 — um lucro fabricado. Não monta. Antes isto era só um
+  // alerta, e o número falso ia para a tela do mesmo jeito. Alcançável quando a
+  // competência é pedida direto (year/month na URL), fora da lista de períodos.
   if (base.latestPeriod.year !== selected.year || base.latestPeriod.month !== selected.month) {
-    alerts.push(
-      `Sem produção de promotores em ${selected.label} na base analítica — comissões exibidas como 0.`
-    );
+    return {
+      closed: false,
+      period: selected,
+      periods,
+      companies: [],
+      group: null,
+      alerts: [
+        `Sem produção de promotores em ${selected.label} na base consolidada (PMR) — o DRE não ` +
+          "monta: exibir a receita do fechamento com comissão 0 daria um resultado falso.",
+      ],
+    };
   }
+  // A guarda dura acima já garantiu que a base é da competência selecionada.
   const comissaoByCompany = new Map<string, number>();
-  if (base.latestPeriod.year === selected.year && base.latestPeriod.month === selected.month) {
-    for (const row of base.filteredSummaryRows) {
-      if (!row.active) continue;
-      const cid = row.company_id || "";
-      if (!cid) continue;
-      comissaoByCompany.set(cid, toNum(comissaoByCompany.get(cid)) + toNum(row.payable_commission_value));
-    }
+  for (const row of base.filteredSummaryRows) {
+    if (!row.active) continue; // regra do DRE (pré-existente): só promotor ATIVO
+    const cid = row.company_id || "";
+    if (!cid) continue;
+    comissaoByCompany.set(cid, toNum(comissaoByCompany.get(cid)) + toNum(row.payable_commission_value));
   }
 
   // ---- DESPESAS: financial_expenses do mês, por CNPJ (+ escopo grupo) ----
@@ -329,8 +390,36 @@ export async function buildDre(
     );
   }
 
+  // ---- empresas SEM receita realizada na competência ----
+  // O princípio já está no topo deste arquivo, mas só era aplicado ao MÊS: "receita 0
+  // + comissões cheias = resultado falso". Vale igual por CNPJ.
+  //
+  // Caso real (achado ao ligar o regime 'fechamento'): a ADS Consultoria Negocial tem
+  // CNPJ real (não-TEMP), está active=false e NÃO tem linha em fechamento_mensal_empresa
+  // — a receita dela não entra por esse caminho. Mas o PMR tem comissão de promotor na
+  // ADS (source 'bbts'), e a linha consolidada do promotor carrega o company_id da linha
+  // de MAIOR produção: quem só produziu na ADS cai na ADS. Sem esta guarda, o DRE
+  // fabricaria um prejuízo (receita 0 − comissão) num CNPJ que não fatura por aqui.
+  //
+  // A comissão excluída NÃO some em silêncio: vira alerta com o valor.
+  const semReceita = companies.filter(
+    (c) => toNum(receitaFechamentoByCompany.get(c.id)) === 0 && toNum(receitaComplementarByCompany.get(c.id)) === 0
+  );
+  const companiesComReceita = companies.filter((c) => !semReceita.some((s) => s.id === c.id));
+  for (const c of semReceita) {
+    const comissaoFora = round(toNum(comissaoByCompany.get(c.id)));
+    if (comissaoFora > 0) {
+      alerts.push(
+        `${c.name} (${c.cnpj}) tem ${comissaoFora.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ` +
+          "em comissões no mês, mas NENHUMA receita realizada em fechamento_mensal_empresa — a receita dessa " +
+          "empresa não entra por esse caminho. Ficou FORA do DRE (incluí-la geraria um prejuízo falso: receita 0 " +
+          "menos comissão). Esse valor não está no resultado do grupo."
+      );
+    }
+  }
+
   // ---- monta linhas por CNPJ ----
-  const companyLines: DreLine[] = companies.map((c) => {
+  const companyLines: DreLine[] = companiesComReceita.map((c) => {
     const receitaFechamento = round(toNum(receitaFechamentoByCompany.get(c.id)));
     const receitaComplementar = round(toNum(receitaComplementarByCompany.get(c.id)));
     const receita = round(receitaFechamento + receitaComplementar);
