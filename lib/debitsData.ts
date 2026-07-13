@@ -2,7 +2,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveDonaCompanyForPromoter } from "./closingMonthly.ts";
 // TRAVA de mes fechado — deteccao CANONICA do sistema (mesma do fechamento e da rota).
 // Nao duplicar essa nocao aqui: uma segunda regra de "mes fechado" seria retalho.
-import { detectClosedMonth } from "./cmsMonthly.ts";
+// MOV 2: passa a ler o ENUM (detectMonthRegime) em vez do booleano colapsado.
+// Aqui a pergunta e binaria de verdade — "da pra lancar parcela nesta competencia?"
+// — e a resposta e "so se ela estiver ABERTA". Mes 'cms' e mes 'fechamento' sao
+// IGUALMENTE proibidos, entao a condicao e `regime !== 'open'`. Usar
+// `regime === 'fechamento'` aqui seria o bug: trataria jan-mai (cms) como aberto.
+import { detectMonthRegime } from "./cmsMonthly.ts";
 // RÉGUA ÚNICA do valor do débito (lib/debitRules). NÃO reimplementar aqui.
 import { debitAmountFor, fetchDebitRule, round2 } from "./debitRules.ts";
 
@@ -204,7 +209,7 @@ export async function updateDebit(
     // dono. Injetável para teste; default = mês de hoje.
     currentYear?: number;
     currentMonth?: number;
-    // Injetável só para teste (simular mês fechado). Default: detectClosedMonth real.
+    // Injetável só para teste (simular mês fechado). Default: o regime real.
     isClosed?: (year: number, month: number) => Promise<boolean>;
   }
 ): Promise<{
@@ -391,9 +396,9 @@ const MAX_MESES_PROCURA_ABERTA = 24;
 /**
  * Primeira competência ABERTA a partir de (year, month) — inclusive.
  *
- * REUSA a detecção canônica de mês fechado do sistema: `detectClosedMonth` de
- * lib/cmsMonthly (que delega a `detectMonthRegime`, a mesma que a rota /api/promotores
- * e o fechamento usam). NÃO existe uma segunda noção de "mês fechado" aqui — seria
+ * REUSA a detecção canônica de mês fechado do sistema: `detectMonthRegime` de
+ * lib/cmsMonthly (a mesma que a rota /api/promotores e o fechamento usam), com a
+ * condição `regime !== 'open'`. NÃO existe uma segunda noção de "mês fechado" aqui — seria
  * retalho: duas regras de fechamento divergindo é exatamente o bug que a régua única
  * dos débitos veio matar.
  *
@@ -406,7 +411,12 @@ export async function resolveCompetenciaAberta(
   month: number,
   isClosed?: (y: number, m: number) => Promise<boolean>
 ): Promise<{ year: number; month: number; pulou: number }> {
-  const fechado = isClosed ?? ((y: number, m: number) => detectClosedMonth(supabase as any, y, m));
+  // `isClosed` (booleano) segue sendo a costura de TESTE — o que muda e so o
+  // default de producao, que agora deriva do enum canonico: fechado = nao-aberto.
+  const fechado =
+    isClosed ??
+    (async (y: number, m: number) =>
+      (await detectMonthRegime(supabase as any, y, m)) !== "open");
   let y = year;
   let m = month;
   for (let i = 0; i < MAX_MESES_PROCURA_ABERTA; i++) {
@@ -469,7 +479,7 @@ async function estornarParcelasPagas(
 
   // TRAVA: o crédito do estorno (e as parcelas do dono certo) NUNCA caem em mês fechado.
   // Se a competência corrente já estiver fechada/paga, tudo vai para a próxima ABERTA.
-  // Reusa detectClosedMonth (lib/cmsMonthly) — a detecção canônica do sistema.
+  // Reusa detectMonthRegime (lib/cmsMonthly) — a detecção canônica do sistema.
   const alvo = await resolveCompetenciaAberta(supabase, hojeY, hojeM, args.isClosed);
   const cy = alvo.year;
   const cm = alvo.month;
