@@ -21,10 +21,13 @@ import {
   resolvePromoterShareSync,
 } from "@/lib/proposalDetailing";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
-// detectClosedMonth ainda serve o GET (leitura de fonte) — esse e o GRUPO B do
-// Movimento 2, migra depois. PUT/DELETE ja usam o enum: a pergunta la e binaria.
-import { detectClosedMonth, detectMonthRegime } from "@/lib/cmsMonthly";
+// MOV 2 completo neste arquivo: o booleano detectClosedMonth saiu de vez. GET usa o
+// enum para escolher a FONTE (3 estados); PUT/DELETE usam para a pergunta binaria
+// "esta aberto?" (regime !== 'open').
+import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { buildCmsProposalRows, buildCmsProposalRowsBatch } from "@/lib/promoterReportData";
+// A MESMA funcao que /api/promotores/route.ts:208 usa para as linhas do fechamento.
+import { buildClosingProposalRows } from "@/lib/closingProposalRows";
 
 // Mês FECHADO (cms) — mapeia a CmsProposalRow (ground truth pago) para o shape
 // que a tela /comissoes/editar renderiza, em modo READ-ONLY. Sem chave de edição
@@ -201,20 +204,26 @@ export async function GET(req: Request) {
       );
     }
 
-    // Mês FECHADO por cms -> a produção vive em cms_promoter_entries (ground
-    // truth pago), NÃO no daily. Retorna as linhas do cms em READ-ONLY (mesma
-    // fonte do PromotorView/relatório). Sem caminho de edição.
-    let closedMonth = false;
-    try {
-      closedMonth = await detectClosedMonth(supabase, year, month);
-    } catch {
-      closedMonth = false;
-    }
-    if (closedMonth) {
+    // Mês FECHADO -> a produção NÃO vive no daily; vem da fonte consolidada da
+    // competência, em READ-ONLY (sem caminho de edição; o PUT/DELETE devolvem 403).
+    //
+    // MOV 2 (Grupo B): a fonte sai do REGIME, não do booleano. Antes, QUALQUER mês
+    // fechado lia cms_promoter_entries — mas o cms só tem jan-mai. Em abril e junho
+    // (regime 'fechamento') o cms devolve 0 linhas e o editor de propostas ficava
+    // VAZIO, ainda por cima rotulado proposalSource:"cms" (mentindo a fonte).
+    //
+    //   'cms'        -> buildCmsProposalRows (jan-mai). INALTERADO.
+    //   'fechamento' -> buildClosingProposalRows — o MESMO que /api/promotores usa
+    //                   (route.ts:208) para listar as linhas do fechamento.
+    //   'open'       -> cai no caminho diário abaixo. INALTERADO.
+    const regime = await detectMonthRegime(supabase, year, month).catch(
+      () => "open" as MonthRegime
+    );
+    if (regime !== "open") {
       let ids: string[] = [];
       if (promoterId) {
         ids = [promoterId];
-      } else {
+      } else if (regime === "cms") {
         let q = supabase
           .from("cms_promoter_entries")
           .select("promoter_id")
@@ -224,23 +233,65 @@ export async function GET(req: Request) {
         if (companyId) q = q.eq("company_id", companyId);
         const { data } = await q;
         ids = [...new Set((data || []).map((r: any) => r.promoter_id as string))];
+      } else {
+        // regime 'fechamento': o universo de promotores da competência é o PMR
+        // FECHADO (source IN ('fechamento','bbts')) — a mesma fatia que o Movimento 1
+        // escreve e que /promotores e o dashboard leem.
+        let q = supabase
+          .from("promoter_monthly_results")
+          .select("promoter_id")
+          .eq("year", year)
+          .eq("month", month)
+          .in("source", ["fechamento", "bbts"])
+          .not("promoter_id", "is", null);
+        if (companyId) q = q.eq("company_id", companyId);
+        const { data } = await q;
+        ids = [...new Set((data || []).map((r: any) => r.promoter_id as string))];
       }
       if (ids.length === 0) {
-        return NextResponse.json({ rows: [], promoterInsuranceSummaries: [], closed: true, proposalSource: "cms" });
+        return NextResponse.json({
+          rows: [],
+          promoterInsuranceSummaries: [],
+          closed: true,
+          proposalSource: regime,
+        });
       }
       const { data: proms } = await supabase.from("promoters").select("id, name").in("id", ids);
       const nameById = new Map((proms || []).map((p: any) => [p.id, p.name as string]));
-      const cmsRows: any[] = [];
-      if (ids.length === 1) {
-        const list = await buildCmsProposalRows(supabase, ids[0], year, month);
-        for (const r of list) cmsRows.push(mapCmsRowToEditor(r, nameById.get(ids[0]) || ""));
+      const closedRows: any[] = [];
+
+      if (regime === "cms") {
+        if (ids.length === 1) {
+          const list = await buildCmsProposalRows(supabase, ids[0], year, month);
+          for (const r of list) closedRows.push(mapCmsRowToEditor(r, nameById.get(ids[0]) || ""));
+        } else {
+          const byProm = await buildCmsProposalRowsBatch(supabase, ids, year, month);
+          for (const [pid, list] of byProm) {
+            for (const r of list) closedRows.push(mapCmsRowToEditor(r, nameById.get(pid) || ""));
+          }
+        }
       } else {
-        const byProm = await buildCmsProposalRowsBatch(supabase, ids, year, month);
-        for (const [pid, list] of byProm) {
-          for (const r of list) cmsRows.push(mapCmsRowToEditor(r, nameById.get(pid) || ""));
+        // buildClosingProposalRows é POR PROMOTOR (não há variante batch, ao
+        // contrário do cms). Paraleliza em blocos para não virar N round-trips
+        // sequenciais quando a competência inteira é pedida (~46 promotores).
+        for (let i = 0; i < ids.length; i += 8) {
+          const bloco = ids.slice(i, i + 8);
+          const listas = await Promise.all(
+            bloco.map((pid) => buildClosingProposalRows(supabase, pid, year, month))
+          );
+          listas.forEach((list, k) => {
+            for (const r of list) closedRows.push(mapCmsRowToEditor(r, nameById.get(bloco[k]) || ""));
+          });
         }
       }
-      return NextResponse.json({ rows: cmsRows, promoterInsuranceSummaries: [], closed: true, proposalSource: "cms" });
+
+      // proposalSource diz a fonte REAL ('cms' | 'fechamento'), não "cms" fixo.
+      return NextResponse.json({
+        rows: closedRows,
+        promoterInsuranceSummaries: [],
+        closed: true,
+        proposalSource: regime,
+      });
     }
 
     const { start, end } = getMonthRange(year, month);
