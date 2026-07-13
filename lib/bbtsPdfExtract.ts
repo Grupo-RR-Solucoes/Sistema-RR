@@ -274,6 +274,11 @@ export async function extractBbtsCreditoPdf(data: Uint8Array): Promise<CreditoEx
       nr_convenio: nrConvenio,
       juros_mensal: Number.isFinite(jurosMensal) ? jurosMensal : null,
       parcelas: Number.isFinite(parcelas) ? parcelas : null,
+      // "Prazo da Operação" — era LIDO e DESCARTADO. A tabela da BBTS indexa os
+      // produtos NÃO consignados (13o salário, CDC FGTS) por "Prazo (meses)", não
+      // por "Parcelas": sem este campo, o 13o (1 parcela / 19 meses) cairia fora da
+      // tabela por engano. Ver conferenciaBbts.prazoDaTabela().
+      prazo_operacao: Number.isFinite(prazo) ? prazo : null,
       cancelamento: /^SIM$/i.test(m[9]),
     });
   }

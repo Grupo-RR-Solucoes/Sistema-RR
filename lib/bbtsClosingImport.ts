@@ -56,6 +56,7 @@ export type BbtsCreditoRow = {
   categoria?: string | null; // "INSS Novo"
   juros_mensal?: number | null; // 1,85 (taxa mensal p/ a TRP no BBTS-2c)
   parcelas?: number | null; // 108
+  prazo_operacao?: number | null; // "Prazo da Operação" (109) — a tabela BBTS indexa 13o/FGTS por PRAZO, não por parcelas
   cancelamento?: boolean | null; // Cancelamento == SIM
 };
 
@@ -325,6 +326,7 @@ export async function importBbtsClosing(
           categoria: r.categoria ?? null,
           produto: r.produto ?? null,
           linha_credito: r.linha_credito ?? null,
+          prazo_operacao: r.prazo_operacao ?? null,
           seguro_tipo: seg?.tipo ?? null,
           seguro_base: seguroBase,
           seguro_valor_relatorio: seg ? Number(seg.valor_seguro) || 0 : 0,
