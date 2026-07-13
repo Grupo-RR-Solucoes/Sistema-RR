@@ -9,13 +9,15 @@ import {
   loadPromoterAnalyticsBase,
   selectPromoterView,
 } from "@/lib/promoterAnalytics";
-import { detectClosedMonth } from "@/lib/cmsMonthly";
+import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import {
   buildCmsProposalRows,
   buildCmsProposalRowsBatch,
   isColetivaJKey,
   COLETIVA_MASK,
 } from "@/lib/promoterReportData";
+// Linhas do fechamento — a MESMA funcao que /api/promotores:208 e o proposals GET usam.
+import { buildClosingProposalRows } from "@/lib/closingProposalRows";
 import { construirXlsxNavy, type Aba } from "@/lib/xlsxReport";
 
 export type ReportKind = "financeiro" | "fechamento" | "auditoria" | "promotores" | "seguro";
@@ -171,19 +173,75 @@ function normalizeReportFormat(input?: string | null): ReportFormat {
 }
 
 // Regime do mês p/ os relatórios: ABERTO(false)=LIVE_BASE (daily ao vivo),
-// FECHADO(true)=CALCULATED (PMR/cms). Sem year/month explícitos => undefined
-// (mantém CALCULATED, comportamento anterior). Erro/tabela ausente => false.
-async function resolveReportClosed(
+// MOV 2 (Grupo B): o relatório passa a resolver o REGIME (enum), não o booleano.
+//
+// Por que isso muda número: o booleano só dizia "fechado", e o analytics era chamado
+// SEM `closedSource`. Sem closedSource, promoterAnalytics cai no `.find()` legado —
+// pega UMA linha do PMR por promotor, sem filtrar source. Promotor com linha RR
+// (source 'fechamento') E linha ADS (source 'bbts') era TRUNCADO: entrava só uma das
+// empresas. Com closedSource, o analytics soma as duas (consolidatedSummaryRows).
+//
+// Sem year/month explícitos => undefined (mantém o comportamento anterior).
+// Erro/tabela ausente => 'open'.
+async function resolveReportRegime(
   supabase: SupabaseClient,
   year?: number,
   month?: number
-): Promise<boolean | undefined> {
+): Promise<MonthRegime | undefined> {
   if (!year || !month) return undefined;
   try {
-    return await detectClosedMonth(supabase, year, month);
+    return await detectMonthRegime(supabase, year, month);
   } catch {
-    return false;
+    return "open";
   }
+}
+
+/**
+ * Os 2 argumentos de regime que o analytics espera — o MESMO par que
+ * /api/promotores/route.ts:158 e /api/dashboard montam. Um só lugar para não
+ * espalhar a derivação (e para ninguém escrever `=== 'fechamento'` por reflexo,
+ * que trataria jan-mai como aberto).
+ */
+function analyticsRegimeArgs(regime: MonthRegime | undefined): {
+  closed: boolean | undefined;
+  closedSource: "cms" | "fechamento" | undefined;
+} {
+  if (regime === undefined) return { closed: undefined, closedSource: undefined };
+  return {
+    closed: regime !== "open",
+    closedSource: regime === "open" ? undefined : regime,
+  };
+}
+
+/**
+ * Linhas de proposta do mês FECHADO, por regime — o par que o /promotores e o
+ * proposals GET já usam:
+ *   'cms'        -> buildCmsProposalRows(Batch)   (jan-mai)
+ *   'fechamento' -> buildClosingProposalRows      (jun+; é POR PROMOTOR, sem batch,
+ *                   então paraleliza em blocos)
+ * Antes o relatório mandava QUALQUER mês fechado no cms — e o cms não tem jun+,
+ * então o PDF saía sem linha nenhuma nessas competências.
+ */
+async function buildClosedProposalRowsBatch(
+  supabase: SupabaseClient,
+  promoterIds: string[],
+  year: number,
+  month: number,
+  regime: MonthRegime
+): Promise<Map<string, Awaited<ReturnType<typeof buildCmsProposalRows>>>> {
+  if (!promoterIds.length) return new Map();
+  if (regime === "cms") {
+    return await buildCmsProposalRowsBatch(supabase, promoterIds, year, month);
+  }
+  const out = new Map<string, Awaited<ReturnType<typeof buildCmsProposalRows>>>();
+  for (let i = 0; i < promoterIds.length; i += 8) {
+    const bloco = promoterIds.slice(i, i + 8);
+    const listas = await Promise.all(
+      bloco.map((pid) => buildClosingProposalRows(supabase, pid, year, month))
+    );
+    listas.forEach((list, k) => out.set(bloco[k], list));
+  }
+  return out;
 }
 
 function normalizePromoterReportScope(input?: string | null): PromoterReportScope {
@@ -1862,13 +1920,13 @@ export async function buildReportPreview(
   // NUNCA buildClosingAnalytics / getInsurancePercentByTerm (legado proibido).
   // ============================================================
   if (reportType === "seguro") {
-    const closed = await resolveReportClosed(supabase, input.year, input.month);
+    const regime = await resolveReportRegime(supabase, input.year, input.month);
     const data = await buildPromoterAnalytics(supabase, {
       year: input.year,
       month: input.month,
       companyId: input.companyId,
       promoterId: input.promoterId,
-      closed,
+      ...analyticsRegimeArgs(regime),
     });
     const year = data.selectedPeriod?.year ?? input.year;
     const month = data.selectedPeriod?.month ?? input.month;
@@ -1971,7 +2029,7 @@ export async function buildReportPreview(
     month: input.month,
     companyId: input.companyId,
     promoterId: input.promoterId,
-    closed: await resolveReportClosed(supabase, input.year, input.month),
+    ...analyticsRegimeArgs(await resolveReportRegime(supabase, input.year, input.month)),
   });
   const promoterScope = normalizePromoterReportScope(input.scope);
   const selectedPromoter =
@@ -2095,13 +2153,14 @@ async function buildSeguroDatasets(
   supabase: SupabaseClient,
   input: ReportFilters
 ) {
-  const closed = await resolveReportClosed(supabase, input.year, input.month);
+  const regime = await resolveReportRegime(supabase, input.year, input.month);
+  const closed = regime === undefined ? undefined : regime !== "open";
   const data = await buildPromoterAnalytics(supabase, {
     year: input.year,
     month: input.month,
     companyId: input.companyId,
     promoterId: input.promoterId,
-    closed,
+    ...analyticsRegimeArgs(regime),
   });
   const year = data.selectedPeriod?.year ?? input.year;
   const month = data.selectedPeriod?.month ?? input.month;
@@ -2189,13 +2248,15 @@ async function buildSeguroDatasets(
     premio: number;
     tem_seguro: string;
   }> = [];
-  if (closed === true) {
+  if (closed === true && regime) {
     const nameById = new Map(promoterRows.map((r) => [r.promoter_id, r.promoter_name]));
-    const batch = await buildCmsProposalRowsBatch(
+    // Fonte por REGIME: cms (jan-mai) ou fechamento (jun+). Antes ia sempre no cms.
+    const batch = await buildClosedProposalRowsBatch(
       supabase,
       promoterRows.map((r) => r.promoter_id),
       year as number,
-      month as number
+      month as number,
+      regime
     );
     for (const [pid, rows] of batch) {
       for (const row of rows) {
@@ -2400,14 +2461,16 @@ export async function buildReportExport(
   }
 
   // Regime do mês (1 resolução): aberto=LIVE_BASE, fechado=CALCULATED. Reusado no
-  // swap cms abaixo (evita 2ª chamada a detectClosedMonth).
-  const closedForExport = await resolveReportClosed(supabase, input.year, input.month);
+  // swap das proposalRows abaixo (evita 2ª chamada ao detector).
+  const regimeExport = await resolveReportRegime(supabase, input.year, input.month);
+  const closedForExport =
+    regimeExport === undefined ? undefined : regimeExport !== "open";
   let data = await buildPromoterAnalytics(supabase, {
     year: input.year,
     month: input.month,
     companyId: input.companyId,
     promoterId: input.promoterId,
-    closed: closedForExport,
+    ...analyticsRegimeArgs(regimeExport),
   });
   const promoterScope = normalizePromoterReportScope(input.scope);
   const teamOrder = normalizeTeamOrder(input.order);
@@ -2426,14 +2489,19 @@ export async function buildReportExport(
     data.selectedPromoterId
   ) {
     const closed = closedForExport === true; // reusa a resolução acima
-    if (closed) {
-      const cmsRows = await buildCmsProposalRows(
-        supabase,
-        data.selectedPromoterId,
-        input.year,
-        input.month
-      );
-      data = { ...data, proposalRows: cmsRows as typeof data.proposalRows };
+    if (closed && regimeExport) {
+      // Fonte por REGIME: cms (jan-mai) ou fechamento (jun+). Antes ia sempre no cms —
+      // e o cms não tem jun+, então o PDF do promotor saía sem linha nenhuma.
+      const closedRows =
+        regimeExport === "cms"
+          ? await buildCmsProposalRows(supabase, data.selectedPromoterId, input.year, input.month)
+          : await buildClosingProposalRows(
+              supabase,
+              data.selectedPromoterId,
+              input.year,
+              input.month
+            );
+      data = { ...data, proposalRows: closedRows as typeof data.proposalRows };
     }
   }
 
@@ -2549,11 +2617,12 @@ export async function buildPromoterBatchExport(
 
   // Fetch-once: 1 base com TODAS as 9 queries; fatiamos N vezes em memoria.
   // closed: aberto=LIVE_BASE, fechado=CALCULATED (resolvido do período do input).
+  const regimeLote = await resolveReportRegime(supabase, input.year, input.month);
   const base = await loadPromoterAnalyticsBase(supabase, {
     year: input.year,
     month: input.month,
     companyId: input.companyId,
-    closed: await resolveReportClosed(supabase, input.year, input.month),
+    ...analyticsRegimeArgs(regimeLote),
   });
 
   const period = base.latestPeriod;
@@ -2564,21 +2633,18 @@ export async function buildPromoterBatchExport(
   // Ordem = filteredSummaryRows (maior comissao a pagar primeiro, igual a tela).
   const promotersInScope = base.filteredSummaryRows.filter((row) => row.active);
 
-  // Mes FECHADO -> proposalRows do cms (ground truth), igual ao individual.
-  // 1 query .in agrupada em vez de N round-trips.
-  let closed = false;
-  try {
-    closed = await detectClosedMonth(supabase, period.year, period.month);
-  } catch {
-    closed = false;
-  }
+  // Mes FECHADO -> proposalRows da fonte da competencia (cms OU fechamento), igual
+  // ao individual. Agrupado, em vez de N round-trips.
+  const regimePeriodo = await resolveReportRegime(supabase, period.year, period.month);
+  const closed = regimePeriodo !== undefined && regimePeriodo !== "open";
   const cmsByPromoter =
-    closed && promotersInScope.length > 0
-      ? await buildCmsProposalRowsBatch(
+    closed && regimePeriodo && promotersInScope.length > 0
+      ? await buildClosedProposalRowsBatch(
           supabase,
           promotersInScope.map((row) => row.promoter_id),
           period.year,
-          period.month
+          period.month,
+          regimePeriodo
         )
       : new Map<string, Awaited<ReturnType<typeof buildCmsProposalRows>>>();
 
