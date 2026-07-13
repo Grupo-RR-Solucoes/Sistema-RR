@@ -453,7 +453,11 @@ function resolveTargetStatus(
   if (target2 > 0 && productionValue >= target2) return "META_2";
   if (target1 > 0 && productionValue >= target1) return "META_1";
   if (target > 0 && productionValue >= target) return "META";
-  return "ABAIXO";
+  // BELOW_META e o vocabulario do PMR (o que os 5 consolidadores gravam na
+  // coluna target_status). Este caminho vivo devolvia "ABAIXO", entao o MESMO
+  // promotor mudava de string conforme o regime do mes (fechado lia BELOW_META
+  // do PMR; aberto computava ABAIXO aqui).
+  return "BELOW_META";
 }
 
 // ETAPA 7 — base fetch-once: as 9 queries + summaryRows de TODOS os promotores

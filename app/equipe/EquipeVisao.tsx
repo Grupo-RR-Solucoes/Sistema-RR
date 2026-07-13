@@ -34,7 +34,7 @@ const STATUS_LABEL: Record<TargetStatus, string> = {
   META_2: "Meta 2",
   META_1: "Meta 1",
   META: "Bateu a meta",
-  ABAIXO: "Abaixo",
+  BELOW_META: "Abaixo",
   SEM_META: "Sem meta",
 };
 
