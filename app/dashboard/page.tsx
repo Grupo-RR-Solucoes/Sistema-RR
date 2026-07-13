@@ -28,6 +28,10 @@ type Projecao = {
 };
 type Payload = {
   periodoLabel: string;
+  // MOV 2 (A): competência renderizada + regime dela ('cms' | 'fechamento' | 'open').
+  year: number;
+  month: number;
+  regime: "cms" | "fechamento" | "open";
   producaoGrupoMes: number;
   producaoParcial: boolean;
   producaoNaoAtribuida: number;
@@ -64,22 +68,27 @@ function mm2(v?: number) {
 export default function DashboardPage() {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState("");
+  // MOV 2 (A): competência selecionada. null = mês corrente (a rota resolve o
+  // default), preservando exatamente o comportamento anterior no primeiro load.
+  const [comp, setComp] = useState<{ year: number; month: number } | null>(null);
 
   useEffect(() => {
     let cancel = false;
-    fetch("/api/dashboard")
+    const qs = comp ? `?year=${comp.year}&month=${comp.month}` : "";
+    setError("");
+    fetch(`/api/dashboard${qs}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Erro ao carregar o dashboard."))))
       .then((j) => { if (!cancel) setData(j); })
       .catch((e) => { if (!cancel) setError(e.message || "Erro ao carregar o dashboard."); });
     return () => { cancel = true; };
-  }, []);
+  }, [comp]);
 
   return (
     <div className="rrdash">
       <UiStyles />
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
-        <Header data={data} />
+        <Header data={data} comp={comp} onComp={setComp} />
         <Seguridade data={data} />
         {data?.projecao?.show ? <AlertProjecao p={data.projecao} /> : null}
         <ChartCard data={data} error={error} />
@@ -91,7 +100,21 @@ export default function DashboardPage() {
   );
 }
 
-function Header({ data }: { data: Payload | null }) {
+const REGIME_LABEL: Record<string, string> = {
+  fechamento: "fechado",
+  cms: "fechado (cms)",
+  open: "produção corrente",
+};
+
+function Header({
+  data,
+  comp,
+  onComp,
+}: {
+  data: Payload | null;
+  comp: { year: number; month: number } | null;
+  onComp: (c: { year: number; month: number } | null) => void;
+}) {
   const prod = data ? brl0(data.producaoGrupoMes) : "—";
   const brutaEmpresa = data ? brl0(data.comissaoBrutaEmpresa) : "—";
   // sublabel do bruto: mês/estado + (se houver) a parcela ainda não atribuída,
@@ -123,6 +146,14 @@ function Header({ data }: { data: Payload | null }) {
       ) : null}
     </>
   );
+  // MOV 2 (A): opções do seletor = os meses que a própria série já traz (não
+  // inventa lista: se o mês não tem dado, não aparece). O valor selecionado é a
+  // competência que a rota devolveu — assim o seletor reflete o que está na tela.
+  const ano = data?.year ?? new Date().getFullYear();
+  const opcoes = (data?.producaoMensal || []).map((p) => ({ month: p.month, label: p.mes }));
+  const selKey = data ? `${data.year}-${data.month}` : "";
+  const regimeTxt = data ? REGIME_LABEL[data.regime] ?? data.regime : "—";
+
   return (
     <HeaderNavy
       brand="GRUPO RR CRED"
@@ -130,7 +161,29 @@ function Header({ data }: { data: Payload | null }) {
       badge={
         <span className="badge">
           <span className="dot" />
-          {data?.periodoLabel ?? "—"} · produção corrente
+          {opcoes.length > 0 ? (
+            <select
+              className="compsel"
+              value={selKey}
+              onChange={(e) => {
+                const [y, m] = e.target.value.split("-").map(Number);
+                // Voltar ao mês corrente = limpar a query (comp = null).
+                const corrente = !comp && data && y === data.year && m === data.month;
+                onComp(corrente ? null : { year: y, month: m });
+              }}
+              aria-label="Competência"
+            >
+              {opcoes.map((o) => (
+                <option key={o.month} value={`${ano}-${o.month}`}>
+                  {o.label}/{ano}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <>{data?.periodoLabel ?? "—"}</>
+          )}
+          {" · "}
+          {regimeTxt}
         </span>
       }
     >
@@ -407,6 +460,10 @@ const CSS = `
 /* bloco navy + marca + h1 agora vêm do <HeaderNavy> do kit */
 .rrdash .badge{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:500;color:#C9D2E8;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);padding:7px 13px;border-radius:999px;white-space:nowrap;}
 .rrdash .badge .dot{width:6px;height:6px;border-radius:50%;background:var(--green-soft);}
+/* MOV 2 (A): seletor de competencia embutido no badge do header (navy). */
+.rrdash .badge .compsel{appearance:none;background:transparent;border:0;color:#fff;font:inherit;font-weight:600;cursor:pointer;padding:0 16px 0 0;outline:none;background-image:linear-gradient(45deg,transparent 50%,#C9D2E8 50%),linear-gradient(135deg,#C9D2E8 50%,transparent 50%);background-position:right 6px center,right 1px center;background-size:5px 5px,5px 5px;background-repeat:no-repeat;}
+.rrdash .badge .compsel:focus-visible{outline:2px solid var(--accent,#FFF000);outline-offset:2px;border-radius:4px;}
+.rrdash .badge .compsel option{color:#14213d;background:#fff;}
 /* faixa de stats agora vem do <KpiBand> do kit; .pending (link custom no sub) fica */
 .rrdash .pending{display:inline-block;margin-top:7px;font-size:11.5px;font-weight:500;color:var(--gold-soft,#E7BE6A);text-decoration:none;border-bottom:1px dashed rgba(231,190,106,.45);padding-bottom:1px;transition:color .14s,border-color .14s;}
 .rrdash .pending:hover{color:#fff;border-color:rgba(255,255,255,.5);}

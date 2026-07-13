@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import { buildClosingAnalytics } from "@/lib/closingAnalytics";
-import { detectClosedMonth } from "@/lib/cmsMonthly";
+import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { calcularRbt12 } from "@/lib/rbt12";
 import { buildProjecaoMetas, consolidarGrupo, consolidarGrupoEquipe } from "@/lib/projecaoMetas";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
@@ -109,7 +109,7 @@ function isValidDailyRecord(r: DailyUnassignedRow) {
   return true;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     const { supabase } = await withSocioAnon();
 
@@ -118,11 +118,32 @@ export async function GET() {
     // 21h → julho). Assim, 30/06 resolve para JUNHO. O rótulo do header
     // ("<mês>/<ano> · produção corrente") deriva de periodoLabel = MES[month-1]/year,
     // então passa a exibir jun/2026 automaticamente.
-    const { year, month } = nowInFortaleza();
+    //
+    // MOV 2 (A): a competência agora vem da QUERY (?year&month) — antes o dashboard
+    // era preso ao mês corrente e NUNCA renderizava um mês fechado, o que deixava o
+    // ramo de mês fechado abaixo como código morto. Sem query, o default é o mês
+    // corrente: o comportamento de hoje fica idêntico.
+    const url = new URL(req.url);
+    const agora = nowInFortaleza();
+    const qYear = Number(url.searchParams.get("year") || 0);
+    const qMonth = Number(url.searchParams.get("month") || 0);
+    const year = qYear >= 2000 && qYear <= 2999 ? qYear : agora.year;
+    const month = qMonth >= 1 && qMonth <= 12 ? qMonth : agora.month;
 
-    // Regime do mês precisa ser conhecido ANTES do analytics (decide CALCULATED/PMR
-    // vs LIVE_BASE/daily). Resolve sequencialmente; o resto segue em paralelo.
-    const monthClosed = await detectClosedMonth(supabase, year, month).catch(() => false);
+    // REGIME (enum canônico), não o booleano colapsado. Aqui a pergunta é de FONTE
+    // (3 respostas: cms / fechamento / open), não "está aberto?". O booleano
+    // detectClosedMonth mandava o mês 'fechamento' (jun+) ler cms_promoter_entries,
+    // que NÃO tem jun+ — a comissão-empresa e a penetração vinham 0.
+    //
+    // closedSource: EXATAMENTE o padrão de /api/promotores/route.ts:158 — o analytics
+    // monta consolidatedSummaryRows filtrando source IN ('cms') ou ('fechamento','bbts').
+    // O dashboard passa a ler o PMR fechado PELO MESMO caminho (summaryRows), em vez
+    // de consultar o cms por conta própria. Assim as duas telas leem a mesma coisa.
+    const regime = await detectMonthRegime(supabase, year, month).catch(
+      () => "open" as MonthRegime
+    );
+    const monthClosed = regime !== "open";
+    const closedSource = regime === "open" ? undefined : regime;
 
     const [
       pmrRows,
@@ -144,7 +165,7 @@ export async function GET() {
         buildProjecaoMetas(supabase, { year, month }),
         // motor: comissão bruta/seguro do grupo no mês corrente. closed=monthClosed
         // → mês ABERTO usa LIVE_BASE (daily ao vivo), alinhado à projeção.
-        buildPromoterAnalytics(supabase, { year, month, closed: monthClosed }),
+        buildPromoterAnalytics(supabase, { year, month, closed: monthClosed, closedSource }),
         // CNPJs do grupo (4 ativas) — para somar só produção do grupo.
         fetchAllRows<{ id: string }>(() =>
           supabase.from("companies").select("id").eq("active", true)
@@ -279,7 +300,8 @@ export async function GET() {
     // fechado (cms) tudo já está atribuído por j_key.
     let comissaoBrutaEmpresaNaoAtribuida = 0;
     let comissaoBrutaEmpresaNaoAtribuidaCount = 0;
-    if (monthClosed) {
+    if (regime === "cms") {
+      // jan-mai: seed do financeiro. Ground truth = COMISSÃO PF do cms. INALTERADO.
       const entries = await fetchAllRows<{ company_commission: number | null }>(() =>
         supabase
           .from("cms_promoter_entries")
@@ -289,6 +311,25 @@ export async function GET() {
       );
       comissaoBrutaEmpresa = roundMoney(
         entries.reduce((sum, r) => sum + toNumber(r.company_commission), 0)
+      );
+      comissaoBrutaEmpresaLabel = `${MES[month - 1]}/${year} · fechado`;
+    } else if (regime === "fechamento") {
+      // jun+ (e abril): NÃO existe cms — o booleano antigo mandava ler cms aqui e
+      // trazia 0. A comissão-EMPRESA de crédito também NÃO existe no PMR (o PMR
+      // guarda a comissão do PROMOTOR; promoterAnalytics só calcula
+      // companyGrossCommission no caminho vivo, dentro de `if (!closedSource)`).
+      // A fonte certa é o fechamento: valor_avista = Σ da COMISSÃO PF das linhas
+      // CASH (monthlyClosingImport acumula exatamente isso). É a MESMA tabela que o
+      // seguro do grupo já usa aqui embaixo (valor_seguro) e a mesma do financeiro/DRE.
+      const fechAvista = await fetchAllRows<{ valor_avista: number | null }>(() =>
+        supabase
+          .from("fechamento_mensal_empresa")
+          .select("valor_avista")
+          .eq("ano", year)
+          .eq("mes", month)
+      );
+      comissaoBrutaEmpresa = roundMoney(
+        fechAvista.reduce((sum, r) => sum + toNumber(r.valor_avista), 0)
       );
       comissaoBrutaEmpresaLabel = `${MES[month - 1]}/${year} · fechado`;
     } else {
@@ -317,21 +358,10 @@ export async function GET() {
     let seguroLabel = "";
     let seguroMasterSemRegra = 0;
     if (monthClosed) {
-      // Ground truth do fechamento (já inclui tudo; sem master separado no fechado).
-      const cmsSeguro = await fetchAllRows<{
-        promoter_insurance: number | null;
-        penetration: number | null;
-        net_value: number | null;
-      }>(() =>
-        supabase
-          .from("cms_promoter_entries")
-          .select("promoter_insurance, penetration, net_value")
-          .eq("prod_year", year)
-          .eq("prod_month", month)
-      );
       // TOTAL do grupo = comissão-EMPRESA do fechamento (fechamento_mensal_empresa.
       // valor_seguro) — MESMA fonte do financeiro/DRE. NÃO o share do promotor
       // (cms.promoter_insurance), que é a camada de repasse, não o ganho da empresa.
+      // Vale para os DOIS regimes fechados (cms e fechamento) — já estava certo.
       const fechSeguro = await fetchAllRows<{ valor_seguro: number | null }>(() =>
         supabase
           .from("fechamento_mensal_empresa")
@@ -342,16 +372,43 @@ export async function GET() {
       comissaoSeguroGrupo = roundMoney(
         fechSeguro.reduce((sum, r) => sum + toNumber(r.valor_seguro), 0)
       );
-      // Penetração ponderada = Σ(penetration_i × net_value_i) / Σ net_value_i (cms).
-      // INALTERADA — penetração independe de empresa vs share.
-      let penNum = 0;
-      let penDen = 0;
-      for (const r of cmsSeguro) {
-        const nv = toNumber(r.net_value);
-        penNum += toNumber(r.penetration) * nv;
-        penDen += nv;
+
+      // PENETRAÇÃO ponderada — a fonte muda com o regime.
+      if (regime === "cms") {
+        // jan-mai: Σ(penetration_i × net_value_i) / Σ net_value_i (cms). INALTERADO.
+        const cmsSeguro = await fetchAllRows<{
+          penetration: number | null;
+          net_value: number | null;
+        }>(() =>
+          supabase
+            .from("cms_promoter_entries")
+            .select("penetration, net_value")
+            .eq("prod_year", year)
+            .eq("prod_month", month)
+        );
+        let penNum = 0;
+        let penDen = 0;
+        for (const r of cmsSeguro) {
+          const nv = toNumber(r.net_value);
+          penNum += toNumber(r.penetration) * nv;
+          penDen += nv;
+        }
+        penetracaoSeguroGrupo = penDen > 0 ? penNum / penDen : 0;
+      } else {
+        // jun+ (e abril): o cms não tem essas competências — lia 0. Agora vem do PMR
+        // FECHADO, pelo MESMO summaryRows que /promotores usa (consolidatedSummaryRows,
+        // source IN ('fechamento','bbts'), já somando RR+ADS por promotor).
+        // MESMA FÓRMULA do ramo cms — ponderada pela produção; só a fonte muda.
+        // (insurance_penetration_percent vem em 0..100; penetracaoSeguroGrupo é 0..1.)
+        let penNum = 0;
+        let penDen = 0;
+        for (const r of promoterAnalytics.summaryRows || []) {
+          const prod = toNumber(r.production_value);
+          penNum += (toNumber(r.insurance_penetration_percent) / 100) * prod;
+          penDen += prod;
+        }
+        penetracaoSeguroGrupo = penDen > 0 ? penNum / penDen : 0;
       }
-      penetracaoSeguroGrupo = penDen > 0 ? penNum / penDen : 0;
       seguroLabel = `${MES[month - 1]}/${year} · fechado`;
     } else {
       // ATRIBUÍDO: Σ summaryRows.insurance_commission_value (PMR via analytics;
@@ -407,6 +464,11 @@ export async function GET() {
 
     return NextResponse.json({
       periodoLabel: `${MES[month - 1]}/${year}`,
+      // MOV 2 (A): a competência renderizada e o regime dela — a tela usa para
+      // montar o seletor e para rotular a origem do número.
+      year,
+      month,
+      regime,
       producaoGrupoMes,
       producaoParcial: true,
       producaoNaoAtribuida,
