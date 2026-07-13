@@ -20,6 +20,9 @@ import {
   type DailyAcc,
   type PmrPonto,
 } from "@/lib/historicoMensal";
+// MOV 3: o regime da competência — o MESMO enum canônico que /promotores, o
+// dashboard, o relatório e o DRE usam. O /equipe era o último leitor fora do consenso.
+import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 
 /**
  * F4 — Visão do gestor. Monta a produção/desempenho do TIME do gestor logado,
@@ -224,6 +227,10 @@ interface Acc {
   insuredGross: number;
   insurance: number;
   count: number;
+  // MOV 3: em mês FECHADO a penetração vem PRONTA do PMR (já ponderada RR+ADS) —
+  // não há gross/insuredGross para recomputá-la, e recomputar do diário é exatamente
+  // o que saiu daqui. Percentual 0-100 (convenção do /equipe). null = sem dado.
+  penOverride?: number | null;
 }
 function emptyAcc(): Acc {
   return { net: 0, gross: 0, insuredGross: 0, insurance: 0, count: 0 };
@@ -237,6 +244,7 @@ function addRow(acc: Acc, r: ViewRow) {
   acc.count += 1;
 }
 function penetration(acc: Acc): number {
+  if (acc.penOverride !== undefined) return acc.penOverride ?? 0;
   return acc.gross > 0 ? (acc.insuredGross / acc.gross) * 100 : 0;
 }
 
@@ -260,6 +268,10 @@ export function assembleTeamProduction(
   // Fonte dos meses FECHADOS da série (PMR). Vazio => série cai no daily (mesmo
   // comportamento anterior). Injetado por buildTeamProduction via service_role.
   pmrByPromoterYm: Map<string, Map<string, PmrPonto>> = new Map(),
+  // MOV 3: regime da competência SELECIONADA. 'open' => linhas do período vêm do
+  // diário (comportamento anterior). Fechado ('cms' | 'fechamento') => vêm do PMR.
+  // Default 'open' preserva o comportamento de quem chamar sem o argumento.
+  regime: MonthRegime = "open",
 ): TeamProductionPayload {
   // ---- competências disponíveis (dos registros + das metas) ----
   const periodsMap = new Map<string, TeamPeriod>();
@@ -304,17 +316,50 @@ export function assembleTeamProduction(
   const projetar = (acum: number) =>
     periodoCompleto ? acum : diasDecorridos > 0 ? (acum / diasDecorridos) * total : 0;
 
-  // ---- agrega produção elegível do PERÍODO selecionado, por promotor ----
+  // ---- produção do PERÍODO selecionado, por promotor ----
+  //
+  // MOV 3 — o /equipe era o ÚLTIMO leitor fora do consenso: em mês FECHADO ele
+  // recomputava do diário (vw_team_production) em vez de derivar do PMR. Diário e
+  // fechamento são universos diferentes — o diário é o que o promotor lançou, o
+  // fechamento é o que o banco PAGOU —, então a tela mostrava produção que o banco
+  // não pagou (ex.: jun/2026, a proposta 213615547 de R$ 80.000,00 é SRCC no
+  // fechamento mas vem com is_srcc_restricted=false no diário).
+  //
+  // FECHADO ('cms' | 'fechamento') -> deriva do PMR. ABERTO -> recomputa do diário,
+  // que ali é o CERTO (o mês é provisório e o fechamento ainda não existe).
+  // A condição é `!== 'open'`, NUNCA `=== 'fechamento'` (isso trataria jan-mai como
+  // mês aberto).
+  //
+  // ESCOPO DE TIME PRESERVADO: só entram promotores que já estavam autorizados pela
+  // view/metas (o mapa do PMR é buscado apenas para `allIds`). Nenhum promotor de
+  // fora do time do gestor aparece por vir do PMR.
+  const periodoFechado = regime !== "open";
   const perPromoter = new Map<string, Acc>();
-  for (const r of rows) {
-    if (!isEligible(r)) continue;
-    const p = extractYearMonth(r);
-    if (!p || p.year !== period.year || p.month !== period.month) continue;
-    const pid = r.assigned_promoter_id;
-    if (!pid) continue; // sem balde/não-atribuído
-    const acc = perPromoter.get(pid) ?? emptyAcc();
-    addRow(acc, r);
-    perPromoter.set(pid, acc);
+
+  if (periodoFechado) {
+    const pk = ymKeyHelper(period.year, period.month);
+    for (const [pid, porYm] of pmrByPromoterYm) {
+      const ponto = porYm.get(pk);
+      if (!ponto) continue;
+      const acc = emptyAcc();
+      acc.net = ponto.production;
+      // A penetração do mês fechado JÁ vem consolidada do PMR (e ponderada RR+ADS).
+      // Não há gross/insuredGross para recomputá-la — nem deve haver: recomputar do
+      // diário é justamente o que estamos tirando.
+      acc.penOverride = ponto.penetracao == null ? null : ponto.penetracao * 100;
+      perPromoter.set(pid, acc);
+    }
+  } else {
+    for (const r of rows) {
+      if (!isEligible(r)) continue;
+      const p = extractYearMonth(r);
+      if (!p || p.year !== period.year || p.month !== period.month) continue;
+      const pid = r.assigned_promoter_id;
+      if (!pid) continue; // sem balde/não-atribuído
+      const acc = perPromoter.get(pid) ?? emptyAcc();
+      addRow(acc, r);
+      perPromoter.set(pid, acc);
+    }
   }
 
   // metas do período por promotor (já restritas ao time pela policy F3)
@@ -361,12 +406,19 @@ export function assembleTeamProduction(
     tInsurance = 0,
     tCount = 0,
     tMeta = 0;
+  // Penetração do GRUPO em mês fechado: não dá para usar tInsuredGross/tGross (o PMR
+  // não traz gross). É a média PONDERADA pela produção — a mesma forma que o
+  // dashboard usa no regime 'fechamento'.
+  let penNumTot = 0,
+    penDenTot = 0;
   for (const acc of perPromoter.values()) {
     tNet += acc.net;
     tGross += acc.gross;
     tInsuredGross += acc.insuredGross;
     tInsurance += acc.insurance;
     tCount += acc.count;
+    penNumTot += (penetration(acc) / 100) * acc.net;
+    penDenTot += acc.net;
   }
   for (const t of targetByPid.values()) tMeta += toNumber(t.meta);
 
@@ -448,7 +500,15 @@ export function assembleTeamProduction(
       gross_value: tGross,
       proposal_count: tCount,
       insurance_production: tInsurance,
-      insurance_penetration_percent: tGross > 0 ? (tInsuredGross / tGross) * 100 : 0,
+      // Mês ABERTO: Σ segurado / Σ gross (diário), como sempre. Mês FECHADO: média
+      // ponderada pela produção do PMR (o PMR não tem gross).
+      insurance_penetration_percent: periodoFechado
+        ? penDenTot > 0
+          ? (penNumTot / penDenTot) * 100
+          : 0
+        : tGross > 0
+          ? (tInsuredGross / tGross) * 100
+          : 0,
       meta: tMeta,
       attainment_percent: tMeta > 0 ? (tNet / tMeta) * 100 : null,
     },
@@ -529,9 +589,20 @@ export async function buildTeamProduction(
     }
   }
 
-  // PMR (production_value + penetração) dos MESES FECHADOS, só dos ids já
-  // autorizados (mesmo escopo dos nomes). Via service_role: selecionamos APENAS
-  // produção/penetração — nada de comissão. Tolerante: erro → série cai no daily.
+  // PMR (production_value + penetração) — só dos ids já autorizados (mesmo escopo
+  // dos nomes). Via service_role: selecionamos APENAS produção/penetração — NADA de
+  // comissão. O gestor não pode ver comissão, e essas 2 colunas são tudo que a tela
+  // renderiza. Tolerante: erro → cai no daily (comportamento anterior).
+  //
+  // MOV 3: este mapa passa a alimentar TAMBÉM as linhas do período (não só a série
+  // histórica) quando a competência está FECHADA. Mesma query, mesmo client, mesmas
+  // colunas — não há caminho novo.
+  //
+  // SOMA por (promotor, competência), NÃO overwrite: promotor com linha RR
+  // (source 'fechamento') E linha ADS (source 'bbts') tem DUAS linhas no PMR. O
+  // `inner.set()` anterior mantinha só a última — o mesmo truncamento que o
+  // Movimento 2 matou no relatório e no DRE, vivo aqui. A penetração consolidada é
+  // a média PONDERADA pela produção (não dá para somar percentuais).
   const pmrByPromoterYm = new Map<string, Map<string, PmrPonto>>();
   if (allIds.size > 0) {
     const { data: pmrData, error: pmrErr } = await admin
@@ -539,6 +610,9 @@ export async function buildTeamProduction(
       .select("promoter_id, year, month, production_value, insurance_penetration_percent")
       .in("promoter_id", Array.from(allIds));
     if (!pmrErr) {
+      // acumuladores da ponderação: Σ(pen × prod) e Σ prod.
+      const penNum = new Map<string, number>();
+      const penDen = new Map<string, number>();
       for (const p of (pmrData ?? []) as Array<{
         promoter_id: string;
         year: number;
@@ -552,14 +626,49 @@ export async function buildTeamProduction(
           inner = new Map<string, PmrPonto>();
           pmrByPromoterYm.set(p.promoter_id, inner);
         }
+        const prod = Number(p.production_value ?? 0) || 0;
+        const pen =
+          p.insurance_penetration_percent == null
+            ? null
+            : (Number(p.insurance_penetration_percent) || 0) / 100;
+
+        const agg = k + "|" + p.promoter_id;
+        if (pen != null) penNum.set(agg, (penNum.get(agg) ?? 0) + pen * prod);
+        penDen.set(agg, (penDen.get(agg) ?? 0) + prod);
+
+        const prev = inner.get(k);
+        const den = penDen.get(agg) ?? 0;
         inner.set(k, {
-          production: Number(p.production_value ?? 0) || 0,
-          penetracao: p.insurance_penetration_percent == null ? null : (Number(p.insurance_penetration_percent) || 0) / 100,
+          production: (prev?.production ?? 0) + prod,
+          penetracao: den > 0 ? (penNum.get(agg) ?? 0) / den : prev?.penetracao ?? pen,
         });
       }
     }
   }
 
+  // REGIME da competência selecionada — o enum canônico, o mesmo que /promotores, o
+  // dashboard, o relatório e o DRE usam. Decide de ONDE vêm as linhas do período:
+  // fechado => PMR (o ledger); aberto => diário (ali recomputar é o certo, o mês é
+  // provisório). Tolerante: erro → 'open' (comportamento anterior).
   const refDate = todayInFortaleza();
-  return assembleTeamProduction(rows, targets, nameById, supById, opts, refDate, gestorOverrides, pmrByPromoterYm);
+  const selYear = opts.year ?? refDate.getUTCFullYear();
+  const selMonth = opts.month ?? refDate.getUTCMonth() + 1;
+  let regime: MonthRegime = "open";
+  try {
+    regime = await detectMonthRegime(admin, selYear, selMonth);
+  } catch {
+    regime = "open";
+  }
+
+  return assembleTeamProduction(
+    rows,
+    targets,
+    nameById,
+    supById,
+    opts,
+    refDate,
+    gestorOverrides,
+    pmrByPromoterYm,
+    regime
+  );
 }
