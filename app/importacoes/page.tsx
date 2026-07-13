@@ -8,6 +8,7 @@ import { useUser } from "../../lib/auth/useUser";
 import EmptyStatePanel from "../../components/EmptyStatePanel";
 import FeedbackBanner from "../../components/FeedbackBanner";
 import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+import BbtsUploadReview from "@/components/bbts/BbtsUploadReview";
 import TrpUploadReview from "@/components/trp/TrpUploadReview";
 
 // ============================================================
@@ -514,6 +515,11 @@ export default function ImportacoesPage() {
                 veem; só sócio confirma). Confirmar GRAVA de verdade desde a F6b.3:
                 cria a versão ativa em trp_rule_versions, que é a fonte do motor. */}
             <TrpUploadReview canConfirm={!isFuncionario} />
+
+            {/* Régua BBTS (auditoria ADS, 1A) — mesmo fluxo self-service da TRP, para a
+                TABELA DE PAGAMENTO da BBTS. Grava em bbts_rule_versions; NÃO muda a
+                comissão do promotor na ADS (essa continua saindo da TRP da Promotiva). */}
+            <BbtsUploadReview canConfirm={!isFuncionario} />
 
             {isFuncionario ? (
               <div className="lockbar"><IcoLock /><span><b>Disponível apenas para sócio.</b> Você pode consultar o histórico das cargas.</span></div>

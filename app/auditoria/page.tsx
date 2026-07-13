@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { UiStyles, HeaderNavy, KpiHero } from "@/components/ui";
 import ConferenciaAvistaSection from "../../components/auditoria/ConferenciaAvistaSection";
+import ConferenciaBbtsSection from "../../components/auditoria/ConferenciaBbtsSection";
 import ConferenciaTrpSection from "../../components/auditoria/ConferenciaTrpSection";
 import HistoricalFindingsSection from "../../components/auditoria/HistoricalFindingsSection";
 import InadimplenciaSection from "../../components/auditoria/InadimplenciaSection";
@@ -134,6 +135,10 @@ export default function AuditoriaPage() {
 
         {/* CONFERÊNCIA TRP × REALIZADO — régua versionada, teto 6% liso (distinta da à-vista viva) */}
         <ConferenciaTrpSection />
+
+        {/* CONFERÊNCIA BBTS × REALIZADO (ADS) — espelho da TRP, do outro lado do balcão:
+            régua = tabela da BBTS (Faixa 4 do acordo), realizado = o que a BBTS pagou. */}
+        <ConferenciaBbtsSection />
 
         {/* INADIMPLÊNCIA PRT — fila de cobrança (Camada 4, monitor automático) */}
         <InadimplenciaSection />
