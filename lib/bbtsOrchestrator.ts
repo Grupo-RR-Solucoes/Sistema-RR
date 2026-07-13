@@ -222,6 +222,9 @@ export async function consolidateMonthlyGroup(
   return {
     dry_run: dryRun,
     promotores: pids.length,
+    // Uniao do payload das DUAS linhas (RR + ADS) — o conjunto que DEFINE o PMR
+    // fechado da competencia. A reconciliacao apaga o que sobrar fora daqui.
+    payload: [...(rrRes.payload ?? []), ...(adsRes.payload ?? [])] as any[],
     rows,
     totals: {
       credito_rr: rows.reduce((s, r) => s + r.credito_rr, 0),

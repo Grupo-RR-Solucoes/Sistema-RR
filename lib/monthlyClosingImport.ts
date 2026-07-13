@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { reconsolidarCompetenciaFechada } from "@/lib/reconsolidarCompetencia";
 
 type CompanyRow = {
   id: string;
@@ -1397,6 +1398,40 @@ async function runImportPipeline(ctx: ImportContext) {
     month: targetMonth,
     createdBy: input.createdBy ?? null,
   });
+
+  // ============================================================
+  // MOVIMENTO 1 — LEDGER: o PMR FECHADO passa a ser escrito PELA ROTA.
+  //
+  // Roda ANTES de markImportCompleted e NAO e best-effort: se a consolidacao
+  // falhar, o erro sobe, o import NAO e marcado COMPLETED e a competencia NAO
+  // fica "fechada" para os leitores. Invariante: regime fechado => PMR fechado
+  // existe. (Antes disto o PMR fechado dependia de alguem rodar
+  // scripts/rodarClosingMonthly + rodarBbtsOrchestrator na mao.)
+  //
+  // empresaEmVoo: o import e POR EMPRESA e este COMPLETED esta a 1 linha de
+  // acontecer. Sem antecipa-lo, a ULTIMA empresa da competencia nao veria o mes
+  // fechar (ela mesma ainda nao esta marcada) e o PMR jamais seria escrito.
+  //
+  // Nao perturba a ordem do Forecast: reconsolidar le monthly_closing_entries +
+  // daily + monthly_targets e escreve promoter_monthly_results. NAO le nem
+  // escreve carteira_contrato/producao_contrato/previsao_snapshot. A cadeia
+  // materializar -> congelarPrevisao (na rota) segue intacta e na mesma ordem.
+  // ============================================================
+  const pmrFechado = await reconsolidarCompetenciaFechada(supabaseAdmin, {
+    year: targetYear,
+    month: targetMonth,
+    dryRun: false,
+    empresaEmVoo: company.id,
+  });
+  console.log(
+    `[import ${importId}] PMR fechado: ${
+      pmrFechado.ran
+        ? `regime=${pmrFechado.regime}, ${pmrFechado.gravadas} linhas, ` +
+          `reconciliacao(daily=${pmrFechado.reconciliacao?.apagadas_daily}, ` +
+          `orfaos=${pmrFechado.reconciliacao?.apagadas_orfaos})`
+        : `nao rodou (regime=${pmrFechado.regime}) — ${pmrFechado.motivo}`
+    }`
+  );
 
   await markImportCompleted(supabaseAdmin, importId);
 

@@ -56,7 +56,14 @@ export type MonthRegime = "cms" | "fechamento" | "open";
 export async function detectMonthRegime(
   supabase: SupabaseClient,
   year: number,
-  month: number
+  month: number,
+  // empresaEmVoo: o import de fechamento e POR EMPRESA e so marca COMPLETED no
+  // fim do pipeline. Para o pipeline decidir, ANTES de marcar, se a competencia
+  // fecha COM ele, a empresa em voo entra na cobertura como se ja estivesse
+  // COMPLETED. Sem isso a ultima empresa nunca veria o mes fechar (ela mesma
+  // ainda nao esta marcada) e o PMR fechado jamais seria escrito pela rota.
+  // Nao muda a regra do regime — so antecipa um COMPLETED que esta a 1 passo.
+  opts?: { empresaEmVoo?: string | null }
 ): Promise<MonthRegime> {
   const { data: active, error: companiesError } = await supabase
     .from("companies")
@@ -88,6 +95,7 @@ export async function detectMonthRegime(
     .eq("status", "COMPLETED");
   if (!closingError) {
     const covered = new Set((closingImports || []).map((row: any) => row.company_id));
+    if (opts?.empresaEmVoo) covered.add(opts.empresaEmVoo);
     if (covered.size >= totalActive) return "fechamento";
   }
 

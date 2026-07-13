@@ -506,6 +506,11 @@ export async function consolidateMonthlyFromClosing(
     dry_run: dryRun,
     promoters_calculated: upserts.length,
     gravadas: dryRun ? 0 : upserts.length,
+    // Payload EXATO que foi (ou seria, em dryRun) gravado no PMR. A reconciliacao
+    // da competencia usa as chaves disto para saber o que e o PMR fechado NOVO —
+    // e, por exclusao, o que virou orfao. O gate de paridade compara este payload
+    // contra o que esta no banco. So expoe o que ja estava em `upserts`.
+    payload: upserts,
     table,
     // Diagnóstico / UI futura.
     contratos_processados: contratos.length,
