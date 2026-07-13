@@ -24,6 +24,7 @@ import { consolidateMonthlyFromClosing } from "./closingMonthly.ts";
 import { consolidateMonthlyFromBbts, BBTS_COMPANY_ID } from "./bbtsMonthly.ts";
 import { insuranceShareForPenetration } from "./insurancePenetration.ts";
 import { fetchPromoterShareData } from "./proposalDetailing.ts";
+import { getProductionPeriodFromValue, getProductionPeriodKey } from "./productionPeriod.ts";
 
 const BBTS_KEY = "JJ552710";
 
@@ -106,8 +107,12 @@ export async function consolidateMonthlyGroup(
   }
 
   // ---- B. Soma ADS (diário ADS atribuído, válido: PRODUCAO && !cancel && !srcc) ----
+  // COMPETÊNCIA: mesmo predicado do consolidateMonthlyFromBbts (movement_date ->
+  // contract_date -> proposal_date via getProductionPeriodFromValue). Sem ele a
+  // query somava a ADS INTEIRA de todos os meses na penetração consolidada.
   const ads = new Map<string, { prod: number; liqSeg: number }>();
   {
+    const compKey = getProductionPeriodKey(year, month);
     const rows = await fetchAllPaged<any>(() =>
       supabase.from("daily_production_records")
         .select("assigned_promoter_id, gross_value, insurance_value, status, is_srcc_restricted, movement_date, contract_date, proposal_date, raw_payload")
@@ -116,6 +121,11 @@ export async function consolidateMonthlyGroup(
     for (const r of rows) {
       const pid = r.assigned_promoter_id;
       if (!pid) continue;
+      const per =
+        getProductionPeriodFromValue(r.movement_date) ||
+        getProductionPeriodFromValue(r.contract_date) ||
+        getProductionPeriodFromValue(r.proposal_date);
+      if (!per || getProductionPeriodKey(per.year, per.month) !== compKey) continue;
       const meta = (r.raw_payload && r.raw_payload.__bbts_meta) || {};
       const st = normText(r.status);
       if (!(st === "PRODUCAO" || st === "PRODUCTION")) continue;

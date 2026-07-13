@@ -75,7 +75,7 @@ interface TargetRow {
   meta_2: number | null;
 }
 
-export type TargetStatus = "META_2" | "META_1" | "META" | "ABAIXO" | "SEM_META";
+export type TargetStatus = "META_2" | "META_1" | "META" | "BELOW_META" | "SEM_META";
 
 export interface TeamPromoterRow {
   promoter_id: string;
@@ -215,7 +215,7 @@ function resolveTargetStatus(prod: number, meta: number, m1: number, m2: number)
   if (m2 > 0 && prod >= m2) return "META_2";
   if (m1 > 0 && prod >= m1) return "META_1";
   if (meta > 0 && prod >= meta) return "META";
-  return "ABAIXO";
+  return "BELOW_META";
 }
 
 interface Acc {

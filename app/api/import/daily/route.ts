@@ -245,11 +245,16 @@ async function invalidateMonthlySnapshots(
 
       if (expectedError) throw expectedError;
 
+      // SO as linhas que o proprio import diario gera (source='daily', gravado
+      // por /api/calculate/monthly). Sem esse filtro o re-import de uma diaria
+      // apagava tambem o PMR FECHADO da competencia (source cms/fechamento/bbts),
+      // que e escrito por outro pipeline e nao seria regenerado.
       const { error: promoterError } = await supabase
         .from("promoter_monthly_results")
         .delete()
         .eq("year", period.year)
         .eq("month", period.month)
+        .eq("source", "daily")
         .in("company_id", companyChunk);
 
       if (promoterError) throw promoterError;
