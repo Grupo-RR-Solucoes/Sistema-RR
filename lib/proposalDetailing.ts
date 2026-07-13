@@ -605,8 +605,9 @@ export async function fetchPromoterShareData(
   // FRENTE C: escala (goal_repasse) + metas + produção VÁLIDA do mês.
   goalRepasseMap: Map<string, GoalRepasseRow>;
   targetsMap: Map<string, { meta1: number; meta2: number }>;
-  // produção VÁLIDA (PRODUÇÃO && !cancelado && !srcc) — == productionValue do
-  // motor. Separado de monthlyVolumesMap (TODOS os records, usado p/ ENTRANTE).
+  // produção VÁLIDA (PRODUÇÃO && !cancelado && !srcc) — == productionValue do motor.
+  // MOV 3: o monthlyVolumesMap (escala ENTRANTE) passou a usar o MESMO filtro — antes
+  // somava TODOS os records, inflando a faixa com cancelada/SRCC.
   frenteCProductionMap: Map<string, number>;
 }> {
   const profilesMap = new Map<string, SharePromoterProfile>();
@@ -719,21 +720,32 @@ export async function fetchPromoterShareData(
     };
     if (!r.assigned_promoter_id) continue;
     const net = Number(r.net_value ?? 0);
-    // monthlyVolumesMap = TODOS os records (escala ENTRANTE por volume).
+
+    // ELEGIBILIDADE — a MESMA para os dois mapas (espelha validRecords do motor:
+    // isProductionStatus && !cancellation_date && !is_srcc_restricted).
+    //
+    // MOV 3 (faxina): o monthlyVolumesMap somava TODOS os records — inclusive
+    // CANCELADA e SRCC — e esse volume é o que decide a faixa da escala ENTRANTE
+    // (nível 3 da cascata de resolvePromoterShareSync). Volume inflado = faixa mais
+    // alta = repasse maior. Hoje o impacto é ZERO porque todos os promotores resolvem
+    // nos níveis 1-2 (PROFILE_ACORDO_FIXO) e a escala ENTRANTE nunca é alcançada —
+    // mas era uma mina: bastava um promotor cair no nível 3 para ser pago pela faixa
+    // errada. Fechar a fonte é barato; o gate prova que ninguém muda de faixa.
+    const st = normalizeText(r.status);
+    const isProd = st === "PRODUCAO" || st === "PRODUCTION";
+    const valido = isProd && !r.cancellation_date && !r.is_srcc_restricted;
+    if (!valido) continue;
+
+    // monthlyVolumesMap = volume da escala ENTRANTE (por faixa).
     monthlyVolumesMap.set(
       r.assigned_promoter_id,
       (monthlyVolumesMap.get(r.assigned_promoter_id) ?? 0) + net
     );
-    // frenteCProductionMap = produção VÁLIDA — espelha validRecords do motor
-    // (isProductionStatus && !cancellation_date && !is_srcc_restricted).
-    const st = normalizeText(r.status);
-    const isProd = st === "PRODUCAO" || st === "PRODUCTION";
-    if (isProd && !r.cancellation_date && !r.is_srcc_restricted) {
-      frenteCProductionMap.set(
-        r.assigned_promoter_id,
-        (frenteCProductionMap.get(r.assigned_promoter_id) ?? 0) + net
-      );
-    }
+    // frenteCProductionMap = produção válida da Frente C.
+    frenteCProductionMap.set(
+      r.assigned_promoter_id,
+      (frenteCProductionMap.get(r.assigned_promoter_id) ?? 0) + net
+    );
   }
 
   // 4. FRENTE C — escala de repasse da competência + metas (meta_1/meta_2).

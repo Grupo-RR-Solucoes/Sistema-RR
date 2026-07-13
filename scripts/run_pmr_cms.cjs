@@ -14,7 +14,7 @@ require("./_ts_register.cjs");
 const fs = require("fs");
 const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
-const { detectClosedMonth, consolidateMonthlyFromCms } = require("../lib/cmsMonthly.ts");
+const { detectMonthRegime, consolidateMonthlyFromCms } = require("../lib/cmsMonthly.ts");
 
 const sb = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -56,7 +56,9 @@ async function fetchAll(table, sel, filt) {
   // ---------- GRAVA PMR (cms) ----------
   console.log("===================== PASSO 3 — GRAVAR PMR (source=cms) =====================");
   for (const m of MONTHS) {
-    const closed = await detectClosedMonth(sb, YEAR, m);
+    // MOV 3: detectClosedMonth foi REMOVIDO (booleano colapsado). A pergunta aqui e
+    // binaria — "da pra gravar?" — entao e `regime !== open` (cms E fechamento fecham).
+    const closed = (await detectMonthRegime(sb, YEAR, m)) !== "open";
     if (!closed) {
       console.log(`!! ${MES[m]}/${YEAR} NAO esta fechado (cms incompleto) — PULADO. NAO deveria ocorrer.`);
       continue;

@@ -294,13 +294,6 @@ function getInsurancePercentByTerm(prazo: number, insuranceType: string) {
   return 0.0015;
 }
 
-function getComissaoPromotorSeguro(penetracao: number): number {
-  if (penetracao >= 0.6) return 0.4;
-  if (penetracao >= 0.4) return 0.3;
-  if (penetracao >= 0.2) return 0.2;
-  return 0.1;
-}
-
 function getBandPercent(rule: CreditRule, band: BandKey) {
   if (rule.generalRate !== undefined) {
     return rule.generalRate / 100;
@@ -582,9 +575,7 @@ export function calcularOperacao(op: Operation, opts?: CalcularOperacaoOpts) {
   const cashCapPercent = cashPolicy.percent;
   const comissaoTotalCredito = op.valor_liquido * totalCreditPercent;
   const avistaEmpresa = Math.min(comissaoTotalCredito, op.valor_liquido * cashCapPercent);
-  const avistaPromotor = Math.min(comissaoTotalCredito, op.valor_liquido * 0.058);
   const diferido = Math.max(comissaoTotalCredito - avistaEmpresa, 0);
-  const spreadEmpresa = Math.max(avistaEmpresa - avistaPromotor, 0);
 
   const insuranceType = normalizeText(op.insurance_type);
   let comissaoSeguroEmpresa = 0;
@@ -598,17 +589,22 @@ export function calcularOperacao(op: Operation, opts?: CalcularOperacaoOpts) {
     ? op.valor_seguro / op.valor_bruto
     : 0;
 
-  let comissaoSeguroPromotor = 0;
-
-  if (op.tem_seguro) {
-    const percPromotor = getComissaoPromotorSeguro(penetracao);
-    comissaoSeguroPromotor = comissaoSeguroEmpresa * percPromotor;
-  }
-
   const parcelas = op.prazo > 0 ? op.prazo : 0;
   const valorParcela = parcelas > 0 ? diferido / parcelas : 0;
 
   return {
+    // MOV 3 (faxina) — REMOVIDOS por serem CÓDIGO MORTO (zero leitores, provado por
+    // grep nos 6 consumidores de calcularOperacao + scripts):
+    //   credito.avista_promotor, credito.spreadEmpresa, seguro.promotor, total_geral.
+    // O que sobrou é o que alguém realmente lê: credito.{regra, faixa_producao,
+    // percentual, percentual_avista_empresa, total, avista_empresa, diferido},
+    // seguro.empresa e diferido.{total, parcelas, valorParcela}.
+    //
+    // Junto saiu getComissaoPromotorSeguro (cortes 0,6/0,4/0,2) — uma SEGUNDA escala
+    // de penetração de seguro, incompatível com a oficial de lib/insurancePenetration
+    // (0,30/0,21/0,11). Ela só alimentava seguro.promotor/total_geral.promotor, que
+    // ninguém lia. Era uma mina: bastava alguém plugar o campo para pagar seguro pela
+    // régua errada. A régua oficial é insuranceShareForPenetration.
     credito: {
       regra: creditPercentInfo.tableKey,
       faixa_producao: productionBand,
@@ -616,23 +612,16 @@ export function calcularOperacao(op: Operation, opts?: CalcularOperacaoOpts) {
       percentual_avista_empresa: cashCapPercent,
       total: comissaoTotalCredito,
       avista_empresa: avistaEmpresa,
-      avista_promotor: avistaPromotor,
       diferido,
-      spreadEmpresa,
     },
     seguro: {
       empresa: comissaoSeguroEmpresa,
-      promotor: comissaoSeguroPromotor,
       penetracao,
     },
     diferido: {
       total: diferido,
       parcelas,
       valorParcela,
-    },
-    total_geral: {
-      empresa: avistaEmpresa + spreadEmpresa + comissaoSeguroEmpresa,
-      promotor: avistaPromotor + comissaoSeguroPromotor,
     },
   };
 }
