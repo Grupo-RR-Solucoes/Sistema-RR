@@ -102,6 +102,30 @@ export async function detectMonthRegime(
   return "open";
 }
 
+/**
+ * O par de argumentos de REGIME que promoterAnalytics espera — o MESMO que
+ * /api/promotores:158, /api/dashboard e lib/report montam.
+ *
+ * Mora aqui, ao lado do detectMonthRegime, porque a derivacao E parte da regra de
+ * regime: um so lugar decide o que "fechado" significa para o analytics. Sem
+ * closedSource o analytics cai no `.find()` legado (1 linha do PMR por promotor,
+ * sem filtrar source) — que trunca promotor com linha RR + linha ADS e ainda deixa
+ * entrar promotor sem linha no ledger fechado.
+ *
+ * ARMADILHA: `closed` e `regime !== 'open'`, NUNCA `regime === 'fechamento'` —
+ * isso trataria jan-mai (cms) como mes aberto.
+ */
+export function analyticsRegimeArgs(regime: MonthRegime | undefined): {
+  closed: boolean | undefined;
+  closedSource: "cms" | "fechamento" | undefined;
+} {
+  if (regime === undefined) return { closed: undefined, closedSource: undefined };
+  return {
+    closed: regime !== "open",
+    closedSource: regime === "open" ? undefined : regime,
+  };
+}
+
 // MES FECHADO = regime != 'open' (cms OU fechamento cobrem as ativas). Assinatura
 // preservada para os chamadores existentes (route /promotores usa detectMonthRegime
 // diretamente para escolher a fonte; dre/projecao seguem so com o boolean).

@@ -9,7 +9,9 @@ import {
   loadPromoterAnalyticsBase,
   selectPromoterView,
 } from "@/lib/promoterAnalytics";
-import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
+// analyticsRegimeArgs mora em cmsMonthly (ao lado do detectMonthRegime): a derivacao
+// de closed/closedSource E parte da regra de regime, e um so lugar a define.
+import { detectMonthRegime, analyticsRegimeArgs, type MonthRegime } from "@/lib/cmsMonthly";
 import {
   buildCmsProposalRows,
   buildCmsProposalRowsBatch,
@@ -194,23 +196,6 @@ async function resolveReportRegime(
   } catch {
     return "open";
   }
-}
-
-/**
- * Os 2 argumentos de regime que o analytics espera — o MESMO par que
- * /api/promotores/route.ts:158 e /api/dashboard montam. Um só lugar para não
- * espalhar a derivação (e para ninguém escrever `=== 'fechamento'` por reflexo,
- * que trataria jan-mai como aberto).
- */
-function analyticsRegimeArgs(regime: MonthRegime | undefined): {
-  closed: boolean | undefined;
-  closedSource: "cms" | "fechamento" | undefined;
-} {
-  if (regime === undefined) return { closed: undefined, closedSource: undefined };
-  return {
-    closed: regime !== "open",
-    closedSource: regime === "open" ? undefined : regime,
-  };
 }
 
 /**
