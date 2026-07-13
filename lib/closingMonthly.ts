@@ -50,7 +50,10 @@ import {
   insuranceShareForPenetration,
 } from "./insurancePenetration.ts";
 
-// Chave master BBTS/ADS — excluída desta consolidação (frente futura).
+// Chave master BBTS/ADS — excluída DESTA consolidação (a da RR, via fechamento).
+// A produção da ADS/BBTS tem consolidador próprio: lib/bbtsMonthly.ts (PMR da ADS
+// a partir do diário), orquestrado por promotor com a RR em lib/bbtsOrchestrator.ts
+// (as escalas olham RR+ADS somadas). Aqui a chave só é filtrada para não duplicar.
 const BBTS_KEY = "JJ552710";
 // Teto à vista 5,80% (decimal); acima disso o contrato está na "faixa 5,80%" e a
 // Frente C aplica a escala de repasse.
@@ -259,7 +262,8 @@ export async function consolidateMonthlyFromClosing(
   // 1. Base do fechamento (à vista + seguro embutido; SRCC="Sim" em restritas).
   const base = await loadClosingPromoterBase(supabase, { year, month, companyId });
 
-  // 2. Exclui a chave BBTS (JJ552710) de TUDO — frente futura cuida dela.
+  // 2. Exclui a chave BBTS (JJ552710) de TUDO — quem consolida a ADS/BBTS é
+  //    bbtsMonthly (via bbtsOrchestrator), não esta função.
   const isBbts = (c: ClosingContrato) => normKey(c.chaveJ) === BBTS_KEY;
   const contratos = base.contratos.filter((c) => !isBbts(c));
   const restritas = base.restritas.filter((c) => !isBbts(c));

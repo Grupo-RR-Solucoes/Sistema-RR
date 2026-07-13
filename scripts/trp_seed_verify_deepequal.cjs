@@ -23,6 +23,10 @@ const COMPETENCIAS = [
   { comp: "2026-04", firstDay: "2026-04-01", file: "TRP35_2026-04.json" },
   { comp: "2026-05", firstDay: "2026-05-01", file: "TRP36_2026-05.json" },
   { comp: "2026-06", firstDay: "2026-06-01", file: "TRP37_2026-06.json" },
+  // Julho nasceu na TELA (upload de PDF, F6b.3) e foi exportado de volta para o
+  // repo por scripts/trp_export_rule_version.cjs — aqui o arquivo prova ser cópia
+  // fiel da regra ATIVA que o motor usa em prod (backup reconstrutível).
+  { comp: "2026-07", firstDay: "2026-07-01", file: "TRP38_2026-07.json" },
 ];
 
 function loadEnv() {

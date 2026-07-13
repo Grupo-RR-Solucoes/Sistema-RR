@@ -1,15 +1,20 @@
 -- ============================================================================
--- SEED: trp_rule_versions — abr/mai/jun 2026 (Fase 2 TRP self-service)
+-- SEED: trp_rule_versions — abr/mai/jun/jul 2026 (TRP self-service)
 -- GERADO por scripts/trp_seed_rule_versions.gen.cjs — NÃO editar à mão.
+-- (supersede trp_rule_versions_abr_mai_jun_2026.seed.sql: mesmo conteúdo + jul.)
 --
--- Bootstrap da fonte versionada: 1 linha por competência, version_no=1,
--- is_active=true. regra_json = cópia FIEL do JSON canônico (mesmo texto que o
--- motor importa hoje). valid_from/valid_until = vigência holiday-aware do util
--- lib/trp/vigencia.ts. ZERO mudança de comportamento: o motor segue no JSON
--- (flag TRP_SOURCE=json). Rodar no Studio (SQL editor).
+-- Fonte versionada: 1 linha por competência, version_no=1, is_active=true.
+-- regra_json = cópia FIEL do JSON canônico do repo. valid_from/valid_until =
+-- vigência holiday-aware do util lib/trp/vigencia.ts.
+--
+-- Este seed é o CAMINHO DE RECONSTRUÇÃO da tabela (disaster recovery): rodá-lo
+-- num banco vazio devolve as 4 competências que o motor usa hoje em prod
+-- (TRP_SOURCE=db). Julho veio da tela (F6b.3) e foi exportado de volta para o
+-- repo — deep-equal provado por scripts/trp_seed_verify_deepequal.cjs.
 --
 -- Idempotente: ON CONFLICT (competencia, version_no) DO UPDATE — rodar 2x é
--- seguro e reescreve a mesma linha. Transacional.
+-- seguro e reescreve a mesma linha. Transacional. NÃO cria versão nova: se a
+-- competência já tem version_no=1 ativa no banco, o upsert cai nela mesma.
 -- ============================================================================
 
 begin;
@@ -17,7 +22,7 @@ begin;
 -- ---- 2026-04 (TRP35_2026-04.json) — TRP Nº 2026/187 ----
 insert into trp_rule_versions
   (competencia, regime, valid_from, valid_until, version_no, is_active,
-   trp_doc_ref, source_filename, notes, regra_json)
+   trp_doc_ref, source_filename, source_sha256, parser_version, notes, regra_json)
 values (
   date '2026-04-01',
   'VOLUME_5_FAIXAS',
@@ -27,6 +32,8 @@ values (
   true,
   'TRP Nº 2026/187',
   'TRP35 - PROMOTIVA 042026.pdf',
+  null,
+  null,
   'F2 bootstrap seed — fonte: regras_promotiva/json/TRP35_2026-04.json',
   $rulejson${
   "_meta": {
@@ -193,13 +200,15 @@ on conflict (competencia, version_no) do update set
   is_active       = excluded.is_active,
   trp_doc_ref     = excluded.trp_doc_ref,
   source_filename = excluded.source_filename,
+  source_sha256   = excluded.source_sha256,
+  parser_version  = excluded.parser_version,
   notes           = excluded.notes,
   regra_json      = excluded.regra_json;
 
 -- ---- 2026-05 (TRP36_2026-05.json) — TRP Nº 2026/194 ----
 insert into trp_rule_versions
   (competencia, regime, valid_from, valid_until, version_no, is_active,
-   trp_doc_ref, source_filename, notes, regra_json)
+   trp_doc_ref, source_filename, source_sha256, parser_version, notes, regra_json)
 values (
   date '2026-05-01',
   'VOLUME_5_FAIXAS',
@@ -209,6 +218,8 @@ values (
   true,
   'TRP Nº 2026/194',
   'TRP36 - PROMOTIVA 052026.pdf',
+  null,
+  null,
   'F2 bootstrap seed — fonte: regras_promotiva/json/TRP36_2026-05.json',
   $rulejson${
  "_meta": {
@@ -726,13 +737,15 @@ on conflict (competencia, version_no) do update set
   is_active       = excluded.is_active,
   trp_doc_ref     = excluded.trp_doc_ref,
   source_filename = excluded.source_filename,
+  source_sha256   = excluded.source_sha256,
+  parser_version  = excluded.parser_version,
   notes           = excluded.notes,
   regra_json      = excluded.regra_json;
 
 -- ---- 2026-06 (TRP37_2026-06.json) — TRP Nº 2026/201 ----
 insert into trp_rule_versions
   (competencia, regime, valid_from, valid_until, version_no, is_active,
-   trp_doc_ref, source_filename, notes, regra_json)
+   trp_doc_ref, source_filename, source_sha256, parser_version, notes, regra_json)
 values (
   date '2026-06-01',
   'VOLUME_5_FAIXAS',
@@ -742,6 +755,8 @@ values (
   true,
   'TRP Nº 2026/201',
   'TRP37 - PROMOTIVA 062026.pdf',
+  null,
+  null,
   'F2 bootstrap seed — fonte: regras_promotiva/json/TRP37_2026-06.json',
   $rulejson${
   "_meta": {
@@ -1257,6 +1272,480 @@ on conflict (competencia, version_no) do update set
   is_active       = excluded.is_active,
   trp_doc_ref     = excluded.trp_doc_ref,
   source_filename = excluded.source_filename,
+  source_sha256   = excluded.source_sha256,
+  parser_version  = excluded.parser_version,
+  notes           = excluded.notes,
+  regra_json      = excluded.regra_json;
+
+-- ---- 2026-07 (TRP38_2026-07.json) — sem doc ----
+insert into trp_rule_versions
+  (competencia, regime, valid_from, valid_until, version_no, is_active,
+   trp_doc_ref, source_filename, source_sha256, parser_version, notes, regra_json)
+values (
+  date '2026-07-01',
+  'VOLUME_5_FAIXAS',
+  date '2026-06-30',
+  date '2026-07-30',
+  1,
+  true,
+  null,
+  'TRP38 - PROMOTIVA 072026.pdf',
+  '34875e6dfc9ca1e6f808ed999d00a15c36fa7737ed7fcb14a19b6754f0e29342',
+  'f6a-unpdf-1',
+  'Backup do commit pela tela (F6b.3) — fonte: regras_promotiva/json/TRP38_2026-07.json',
+  $rulejson${
+  "FGTS": {
+    "celulas_prazo": [
+      {
+        "pct_geral": 0.042,
+        "prazo_max": 84,
+        "prazo_min": 36
+      }
+    ]
+  },
+  "SIAPE": {
+    "celulas_taxa_prazo": [
+      {
+        "tx_max": 0.0167,
+        "tx_min": 0.0164,
+        "Faixa 1": 0.0094,
+        "Faixa 2": 0.0095,
+        "Faixa 3": 0.0097,
+        "Faixa 4": 0.0102,
+        "Faixa 5": 0.0103
+      },
+      {
+        "tx_max": 0.0179,
+        "tx_min": 0.0168,
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258,
+        "prazo_max": 999,
+        "prazo_min": 48
+      },
+      {
+        "Faixa 1": 0.0321,
+        "Faixa 2": 0.0323,
+        "Faixa 3": 0.0334,
+        "Faixa 4": 0.0348,
+        "Faixa 5": 0.0352
+      }
+    ]
+  },
+  "_meta": {
+    "regime": "VOLUME_5_FAIXAS",
+    "categorias": [
+      "Faixa 1",
+      "Faixa 2",
+      "Faixa 3",
+      "Faixa 4",
+      "Faixa 5"
+    ],
+    "competencia": "2026-07",
+    "vigencia_fim": "2026-07-30",
+    "vigencia_inicio": "2026-06-30"
+  },
+  "INSS_NOVO": {
+    "celulas_prazo": [
+      {
+        "Faixa 1": 0.0196,
+        "Faixa 2": 0.0197,
+        "Faixa 3": 0.0203,
+        "Faixa 4": 0.0212,
+        "Faixa 5": 0.0215,
+        "prazo_max": 60,
+        "prazo_min": 48
+      },
+      {
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258,
+        "prazo_max": 84,
+        "prazo_min": 61
+      },
+      {
+        "Faixa 1": 0.0321,
+        "Faixa 2": 0.0323,
+        "Faixa 3": 0.0334,
+        "Faixa 4": 0.0348,
+        "Faixa 5": 0.0352,
+        "prazo_max": 999,
+        "prazo_min": 85
+      }
+    ]
+  },
+  "INSS_RENOV": {
+    "celulas_taxa_prazo": [
+      {
+        "Faixa 1": 0.0196,
+        "Faixa 2": 0.0197,
+        "Faixa 3": 0.0203,
+        "Faixa 4": 0.0212,
+        "Faixa 5": 0.0215,
+        "prazo_max": 60,
+        "prazo_min": 48
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.01,
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258,
+        "prazo_max": 84,
+        "prazo_min": 61
+      },
+      {
+        "Faixa 1": 0.0321,
+        "Faixa 2": 0.0323,
+        "Faixa 3": 0.0334,
+        "Faixa 4": 0.0348,
+        "Faixa 5": 0.0352,
+        "prazo_max": 999,
+        "prazo_min": 85
+      }
+    ]
+  },
+  "CONSIG_SP_MG": {
+    "celulas_taxa_prazo": [
+      {
+        "tx_max": 0.0179,
+        "tx_min": 0.0172,
+        "Faixa 1": 0.0125,
+        "Faixa 2": 0.0126,
+        "Faixa 3": 0.013,
+        "Faixa 4": 0.0136,
+        "Faixa 5": 0.0137
+      },
+      {
+        "tx_max": 0.0189,
+        "tx_min": 0.018,
+        "Faixa 1": 0.0243,
+        "Faixa 2": 0.0244,
+        "Faixa 3": 0.0252,
+        "Faixa 4": 0.0263,
+        "Faixa 5": 0.0266
+      },
+      {
+        "tx_max": 0.0199,
+        "tx_min": 0.019,
+        "Faixa 1": 0.0353,
+        "Faixa 2": 0.0355,
+        "Faixa 3": 0.0366,
+        "Faixa 4": 0.0382,
+        "Faixa 5": 0.0387
+      },
+      {
+        "tx_max": 0.0209,
+        "tx_min": 0.02,
+        "Faixa 1": 0.0431,
+        "Faixa 2": 0.0434,
+        "Faixa 3": 0.0448,
+        "Faixa 4": 0.0467,
+        "Faixa 5": 0.0473
+      },
+      {
+        "tx_max": 0.0219,
+        "tx_min": 0.021,
+        "Faixa 1": 0.051,
+        "Faixa 2": 0.0513,
+        "Faixa 3": 0.0529,
+        "Faixa 4": 0.0552,
+        "Faixa 5": 0.0559,
+        "prazo_max": 999,
+        "prazo_min": 36
+      },
+      {
+        "tx_max": 0.0229,
+        "tx_min": 0.022,
+        "Faixa 1": 0.0588,
+        "Faixa 2": 0.0592,
+        "Faixa 3": 0.0611,
+        "Faixa 4": 0.0637,
+        "Faixa 5": 0.0645
+      },
+      {
+        "tx_max": 0.0239,
+        "tx_min": 0.023,
+        "Faixa 1": 0.0667,
+        "Faixa 2": 0.0671,
+        "Faixa 3": 0.0692,
+        "Faixa 4": 0.0722,
+        "Faixa 5": 0.0731
+      },
+      {
+        "tx_max": 0.0249,
+        "tx_min": 0.024,
+        "Faixa 1": 0.0785,
+        "Faixa 2": 0.079,
+        "Faixa 3": 0.0815,
+        "Faixa 4": 0.085,
+        "Faixa 5": 0.086
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.025,
+        "Faixa 1": 0.0902,
+        "Faixa 2": 0.0908,
+        "Faixa 3": 0.0937,
+        "Faixa 4": 0.0977,
+        "Faixa 5": 0.0989
+      }
+    ]
+  },
+  "CONSIG_PRIVADO": {
+    "celulas_taxa_prazo": [
+      {
+        "tx_max": 999,
+        "tx_min": 0.0254,
+        "Faixa 1": 0.0078,
+        "Faixa 2": 0.0079,
+        "Faixa 3": 0.0081,
+        "Faixa 4": 0.0085,
+        "Faixa 5": 0.0086,
+        "prazo_max": 35,
+        "prazo_min": 18
+      },
+      {
+        "tx_max": 0.0299,
+        "tx_min": 0.0254,
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258,
+        "prazo_max": 999,
+        "prazo_min": 36
+      },
+      {
+        "tx_max": 0.035,
+        "tx_min": 0.03,
+        "Faixa 1": 0.0314,
+        "Faixa 2": 0.0316,
+        "Faixa 3": 0.0326,
+        "Faixa 4": 0.034,
+        "Faixa 5": 0.0344,
+        "prazo_max": 999,
+        "prazo_min": 36
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.0351,
+        "Faixa 1": 0.0392,
+        "Faixa 2": 0.0395,
+        "Faixa 3": 0.0407,
+        "Faixa 4": 0.0425,
+        "Faixa 5": 0.043,
+        "prazo_max": 999,
+        "prazo_min": 36
+      }
+    ]
+  },
+  "CONSIG_PUBLICO": {
+    "celulas_taxa_prazo": [
+      {
+        "tx_max": 0.0177,
+        "tx_min": 0.0175,
+        "Faixa 1": 0.0078,
+        "Faixa 2": 0.0079,
+        "Faixa 3": 0.0081,
+        "Faixa 4": 0.0085,
+        "Faixa 5": 0.0086
+      },
+      {
+        "tx_max": 0.0187,
+        "tx_min": 0.0178,
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258
+      },
+      {
+        "tx_max": 0.0197,
+        "tx_min": 0.0188,
+        "Faixa 1": 0.0353,
+        "Faixa 2": 0.0355,
+        "Faixa 3": 0.0366,
+        "Faixa 4": 0.0382,
+        "Faixa 5": 0.0387
+      },
+      {
+        "tx_max": 0.0207,
+        "tx_min": 0.0198,
+        "Faixa 1": 0.0431,
+        "Faixa 2": 0.0434,
+        "Faixa 3": 0.0448,
+        "Faixa 4": 0.0467,
+        "Faixa 5": 0.0473
+      },
+      {
+        "tx_max": 0.0217,
+        "tx_min": 0.0208,
+        "Faixa 1": 0.0471,
+        "Faixa 2": 0.0474,
+        "Faixa 3": 0.0489,
+        "Faixa 4": 0.051,
+        "Faixa 5": 0.0516,
+        "prazo_max": 999,
+        "prazo_min": 36
+      },
+      {
+        "tx_max": 0.0227,
+        "tx_min": 0.0218,
+        "Faixa 1": 0.0588,
+        "Faixa 2": 0.0592,
+        "Faixa 3": 0.0611,
+        "Faixa 4": 0.0637,
+        "Faixa 5": 0.0645
+      },
+      {
+        "tx_max": 0.0237,
+        "tx_min": 0.0228,
+        "Faixa 1": 0.0667,
+        "Faixa 2": 0.0671,
+        "Faixa 3": 0.0692,
+        "Faixa 4": 0.0722,
+        "Faixa 5": 0.0731
+      },
+      {
+        "tx_max": 0.0247,
+        "tx_min": 0.0238,
+        "Faixa 1": 0.0785,
+        "Faixa 2": 0.079,
+        "Faixa 3": 0.0815,
+        "Faixa 4": 0.085,
+        "Faixa 5": 0.086
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.0248,
+        "Faixa 1": 0.0902,
+        "Faixa 2": 0.0908,
+        "Faixa 3": 0.0937,
+        "Faixa 4": 0.0977,
+        "Faixa 5": 0.0989
+      }
+    ]
+  },
+  "NAO_CONSIGNADO": {
+    "celulas_taxa": [
+      {
+        "tx_max": 0.0337,
+        "tx_min": 0.0292,
+        "Faixa 1": 0.0196,
+        "Faixa 2": 0.0197,
+        "Faixa 3": 0.0203,
+        "Faixa 4": 0.0212,
+        "Faixa 5": 0.0215
+      },
+      {
+        "tx_max": 0.0383,
+        "tx_min": 0.0338,
+        "Faixa 1": 0.0274,
+        "Faixa 2": 0.0276,
+        "Faixa 3": 0.0285,
+        "Faixa 4": 0.0297,
+        "Faixa 5": 0.0301
+      },
+      {
+        "tx_max": 0.0429,
+        "tx_min": 0.0384,
+        "Faixa 1": 0.0353,
+        "Faixa 2": 0.0355,
+        "Faixa 3": 0.0366,
+        "Faixa 4": 0.0382,
+        "Faixa 5": 0.0387
+      },
+      {
+        "tx_max": 0.0475,
+        "tx_min": 0.043,
+        "Faixa 1": 0.0431,
+        "Faixa 2": 0.0434,
+        "Faixa 3": 0.0448,
+        "Faixa 4": 0.0467,
+        "Faixa 5": 0.0473
+      },
+      {
+        "tx_max": 0.0538,
+        "tx_min": 0.0476,
+        "Faixa 1": 0.0549,
+        "Faixa 2": 0.0553,
+        "Faixa 3": 0.057,
+        "Faixa 4": 0.0595,
+        "Faixa 5": 0.0602
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.0539,
+        "Faixa 1": 0.0824,
+        "Faixa 2": 0.0829,
+        "Faixa 3": 0.0855,
+        "Faixa 4": 0.0892,
+        "Faixa 5": 0.0903
+      }
+    ]
+  },
+  "PORTAB_PRIVADO": {
+    "celulas_taxa": [
+      {
+        "tx_max": 0.0299,
+        "tx_min": 0.0254,
+        "pct_geral": 0.0045
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.03,
+        "pct_geral": 0.018
+      }
+    ]
+  },
+  "PORTAB_PUBLICO": {
+    "celulas_taxa": [
+      {
+        "tx_max": 0.0189,
+        "tx_min": 0.0173,
+        "pct_geral": 0.0072
+      },
+      {
+        "tx_max": 999,
+        "tx_min": 0.019,
+        "pct_geral": 0.0225
+      }
+    ]
+  },
+  "ADIANTAMENTO_13": {
+    "celulas_taxa_prazo": [
+      {
+        "tx_max": 999,
+        "tx_min": 0.0325,
+        "Faixa 1": 0.0235,
+        "Faixa 2": 0.0237,
+        "Faixa 3": 0.0244,
+        "Faixa 4": 0.0255,
+        "Faixa 5": 0.0258,
+        "prazo_max": 999,
+        "prazo_min": 5
+      }
+    ]
+  }
+}
+$rulejson$::jsonb
+)
+on conflict (competencia, version_no) do update set
+  regime          = excluded.regime,
+  valid_from      = excluded.valid_from,
+  valid_until     = excluded.valid_until,
+  is_active       = excluded.is_active,
+  trp_doc_ref     = excluded.trp_doc_ref,
+  source_filename = excluded.source_filename,
+  source_sha256   = excluded.source_sha256,
+  parser_version  = excluded.parser_version,
   notes           = excluded.notes,
   regra_json      = excluded.regra_json;
 
@@ -1265,16 +1754,18 @@ commit;
 -- ============================================================================
 -- Verificação pós-seed (rodar no Studio APÓS o commit)
 -- ============================================================================
--- (a) 3 linhas ativas, uma por competência, version_no=1:
+-- (a) 4 linhas ativas, uma por competência, version_no=1:
 --   select competencia, regime, valid_from, valid_until, version_no, is_active,
 --          trp_doc_ref, source_filename
 --     from trp_rule_versions
---    where competencia in (date '2026-04-01', date '2026-05-01', date '2026-06-01')
+--    where competencia in (date '2026-04-01', date '2026-05-01', date '2026-06-01',
+--                          date '2026-07-01')
 --    order by competencia;
---   esperado: 3 linhas; regime VOLUME_5_FAIXAS; vigências
+--   esperado: 4 linhas; regime VOLUME_5_FAIXAS; vigências
 --     2026-04: 2026-03-31 .. 2026-04-29
 --     2026-05: 2026-04-30 .. 2026-05-28
 --     2026-06: 2026-05-29 .. 2026-06-29
+--     2026-07: 2026-06-30 .. 2026-07-30
 --
 -- (b) só UMA versão ativa por competência (índice parcial):
 --   select competencia, count(*) filter (where is_active) as ativas

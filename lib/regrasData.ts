@@ -245,7 +245,9 @@ export const MAPA_MES_REGRA: Record<
 
   // === 2026-06 — VOLUME 5 faixas (TRP37 = TRP Nº 2026/201) ===
   // Frente 2 (TRP por PDF) Etapa 3: extraido do PDF oficial, validado celula a
-  // celula (Etapas 1-2) e batido contra o seed de trp_credit_rules (195 linhas).
+  // celula (Etapas 1-2) e batido, na epoca, contra o seed da matriz achatada em
+  // trp_credit_rules (195 linhas) — tabela hoje MORTA (ninguem le dela; a fonte
+  // viva da matriz e trp_rule_versions). Registro historico da validacao.
   // Vigencia no _meta: 2026-05-29 -> 2026-06-29 (regra RR holiday-aware).
   "2026-06": { regra: TRP37_2026_06 as RegraMes, jsonRegra: "TRP37_2026-06.json", regraInferida: false },
 };
