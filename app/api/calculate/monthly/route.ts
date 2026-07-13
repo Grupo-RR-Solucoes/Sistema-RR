@@ -4,7 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { resolveCompanyScope } from "@/lib/companyScope";
-import { consolidateMonthlyFromCms, detectClosedMonth } from "@/lib/cmsMonthly";
+import { detectMonthRegime } from "@/lib/cmsMonthly";
+import { reconsolidarCompetenciaFechada } from "@/lib/reconsolidarCompetencia";
 import { findImportedProductionRule } from "@/lib/promoterRemuneration";
 import { calcularOperacao, getProductionBandByValue } from "@/lib/motor";
 import type { TrpRegraProvider } from "@/lib/motor";
@@ -635,16 +636,24 @@ export async function POST(req: Request) {
       return query;
     });
 
-    // FASE B (SPEC §4) — se o mes esta FECHADO (cms COMPLETED nas 4 empresas),
-    // o PMR REPRODUZ o cms e retorna aqui, sem tocar no pipeline diario abaixo.
-    // Mes aberto cai no caminho diario (FIX-6), 100% intacto.
-    const monthIsClosed = await detectClosedMonth(supabase, year, month);
-    if (monthIsClosed) {
-      const cms = await consolidateMonthlyFromCms(supabase, {
+    // MES FECHADO — o PMR fechado NAO e mais escrito aqui a partir do cms.
+    //
+    // Antes: este ramo chamava consolidateMonthlyFromCms. Isso era um morto-vivo:
+    // cms_promoter_entries so tem jan/fev/mar/mai de 2026. Em abril e junho+ (que
+    // JA sao regime 'fechamento') ele lia 0 entries, fazia 0 upserts e ainda assim
+    // respondia success:true com "PMR reproduzido a partir do cms" — mentia em
+    // silencio, e o PMR fechado so existia se alguem rodasse script na mao.
+    //
+    // Agora: regime 'fechamento' -> reconsolidarCompetenciaFechada (a MESMA funcao
+    // que o import de fechamento chama, orquestrador RR+ADS + reconciliacao).
+    //         regime 'cms' -> nada a fazer: o PMR de jan-mai e o SEED do financeiro,
+    // ja gravado (399 linhas), e nao se recalcula. O historico fica intacto.
+    const regime = await detectMonthRegime(supabase, year, month);
+    if (regime !== "open") {
+      const res = await reconsolidarCompetenciaFechada(supabase, {
         year,
         month,
-        companyId,
-        promoterId,
+        dryRun: false,
       });
 
       clearMemoryCache("closing:");
@@ -656,10 +665,12 @@ export async function POST(req: Request) {
         success: true,
         year,
         month,
-        source: "cms",
-        promoters_calculated: cms.promoters_calculated,
-        message:
-          "Mês fechado: PMR reproduzido a partir do cms (ground truth do financeiro).",
+        source: regime,
+        promoters_calculated: res.gravadas ?? 0,
+        reconciliacao: res.reconciliacao ?? null,
+        message: res.ran
+          ? `Mês fechado (regime '${regime}'): PMR consolidado do fechamento (RR+ADS) e fatia reconciliada.`
+          : `Mês fechado (regime '${regime}'): ${res.motivo}`,
       });
     }
 

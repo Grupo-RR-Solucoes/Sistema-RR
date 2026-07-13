@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { extractBbtsClosingFromPdfs } from "@/lib/bbtsPdfExtract";
 import { importBbtsClosing } from "@/lib/bbtsClosingImport";
 import { clearMemoryCache } from "@/lib/memoryCache";
+import { reconsolidarCompetenciaFechada } from "@/lib/reconsolidarCompetencia";
 
 // ============================================================================
 // /api/import/closing/ads — FECHAMENTO da ADS/BBTS por 2 PDFs (crédito + seguro).
@@ -49,7 +50,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `Âncora do fechamento não fechou: ${e?.message || e}` }, { status: 422 });
     }
 
+    // MOVIMENTO 1 — LEDGER: o fechamento da ADS tambem muda a linha ADS do PMR
+    // (e, via penetracao/meta CONSOLIDADAS RR+ADS, a linha RR junto). Se a
+    // competencia ja estiver FECHADA, reconsolida na hora — senao a ADS
+    // dependeria de rodar rodarBbtsOrchestrator na mao. Em mes ABERTO a funcao
+    // e no-op por guarda de regime. NAO best-effort: falha aqui vira erro.
+    let pmrFechado = null;
     if (!dryRun) {
+      pmrFechado = await reconsolidarCompetenciaFechada(supabase, {
+        year: input.year,
+        month: input.month,
+        dryRun: false,
+      });
       clearMemoryCache("closing:");
       clearMemoryCache("promoters:");
       clearMemoryCache("dashboard:");
@@ -60,6 +72,7 @@ export async function POST(req: Request) {
       dry_run: res.dry_run,
       year: input.year,
       month: input.month,
+      pmr_fechado: pmrFechado,
       ancora_ok: res.ancora_ok,
       ancora_detalhe: res.ancora_detalhe,
       propostas: res.propostas,
