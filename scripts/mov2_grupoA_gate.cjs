@@ -20,7 +20,7 @@
  * ========================================================================== */
 require("./_ts_register.cjs");
 const { createClient } = require("@supabase/supabase-js");
-const { detectClosedMonth, detectMonthRegime } = require("../lib/cmsMonthly.ts");
+const { detectMonthRegime } = require("../lib/cmsMonthly.ts");
 const { resolveCompetenciaAberta } = require("../lib/debitsData.ts");
 const { buildProjecaoMetas } = require("../lib/projecaoMetas.ts");
 
@@ -35,17 +35,18 @@ const brl = (n) => Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigit
 
   // ---- 1. O predicado: booleano antigo == (regime !== 'open') ? ----
   console.log("=".repeat(84));
-  console.log("1) O PREDICADO — booleano antigo  vs  enum novo (regime !== 'open')");
+  console.log("1) O PREDICADO — regime !== 'open' por competencia");
   console.log("=".repeat(84));
-  console.log("  " + pad("COMP", 10) + pad("regime", 13) + pad("detectClosedMonth", 20) + pad("regime!=='open'", 17) + "igual?");
+  // NOTA (MOV 3, faxina): a coluna "detectClosedMonth" saiu daqui porque a FUNCAO foi
+  // REMOVIDA. A equivalencia booleano-antigo == (regime !== 'open') foi provada no PR
+  // do Grupo A, nas 7 competencias de 2026, e esta registrada la. O que continua vivo —
+  // e e o valor durav­el deste gate — e a ARMADILHA logo abaixo.
+  console.log("  " + pad("COMP", 10) + pad("regime", 13) + pad("regime!=='open'", 17) + "fechado?");
   for (const m of [1, 2, 3, 4, 5, 6, 7]) {
     const regime = await detectMonthRegime(sb, 2026, m);
-    const velho = await detectClosedMonth(sb, 2026, m);
-    const novo = regime !== "open";
-    const ok = velho === novo;
-    if (!ok) falhas++;
+    const fechado = regime !== "open";
     console.log("  " + pad(`2026-${String(m).padStart(2, "0")}`, 10) + pad(regime, 13) +
-      pad(String(velho), 20) + pad(String(novo), 17) + (ok ? "OK" : "!! DIVERGIU"));
+      pad(String(fechado), 17) + (fechado ? "fechado" : "aberto"));
   }
   console.log("\n  ARMADILHA (o erro que quebraria o Mov 2): se alguem usar `regime === 'fechamento'`");
   console.log("  em vez de `!== 'open'`, jan/fev/mar/mai (cms) viram ABERTOS:");

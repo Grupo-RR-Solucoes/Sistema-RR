@@ -126,16 +126,19 @@ export function analyticsRegimeArgs(regime: MonthRegime | undefined): {
   };
 }
 
-// MES FECHADO = regime != 'open' (cms OU fechamento cobrem as ativas). Assinatura
-// preservada para os chamadores existentes (route /promotores usa detectMonthRegime
-// diretamente para escolher a fonte; dre/projecao seguem so com o boolean).
-export async function detectClosedMonth(
-  supabase: SupabaseClient,
-  year: number,
-  month: number
-): Promise<boolean> {
-  return (await detectMonthRegime(supabase, year, month)) !== "open";
-}
+// REMOVIDO no MOV 3 (faxina): detectClosedMonth.
+//
+// Era o booleano que COLAPSAVA 'cms' e 'fechamento' num "fechado" so. Quem so tinha
+// o booleano assumia "fechado = cms" e lia cms_promoter_entries — que nao tem jun+.
+// Foi a causa raiz do Movimento 2 (dashboard com comissao R$ 0,00, editor de propostas
+// vazio, relatorio truncando RR+ADS, DRE sem junho).
+//
+// Depois do Mov 2 ele ficou SEM NENHUM call-site em lib/ e app/ (zero imports). Foi
+// removido para nao ser reintroduzido: quem precisa da pergunta binaria escreve
+// `(await detectMonthRegime(...)) !== "open"` — explicito, e sem a tentacao de
+// confundir com `=== "fechamento"` (que trataria jan-mai como mes aberto).
+//
+// Quem escolhe FONTE usa o enum + analyticsRegimeArgs.
 
 // Consolida o PMR do mes fechado REPRODUZINDO o cms:
 //   production_commission_value = Σ promoter_credit    (por promoter_id)
