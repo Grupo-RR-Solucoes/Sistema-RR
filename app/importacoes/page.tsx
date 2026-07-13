@@ -10,6 +10,7 @@ import FeedbackBanner from "../../components/FeedbackBanner";
 import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
 import BbtsUploadReview from "@/components/bbts/BbtsUploadReview";
 import TrpUploadReview from "@/components/trp/TrpUploadReview";
+import PmrReconsolidarCard from "@/components/pmr/PmrReconsolidarCard";
 
 // ============================================================
 // /importacoes — identidade .rrimp.
@@ -847,6 +848,13 @@ export default function ImportacoesPage() {
             {isFuncionario ? (
               <div className="lockbar"><IcoLock /><span><b>Disponível apenas para sócio.</b> Você acompanha o status na auditoria.</span></div>
             ) : null}
+
+            {/* Reconsolidar o PMR de uma competência JÁ FECHADA (Movimento 1 do ledger).
+                O import de fechamento abaixo já reconsolida sozinho; este card é para
+                BACKFILL (competência que fechou antes da frente) e RE-FECHAMENTO (corrigiu
+                órfão/chave master e quer refazer sem reimportar o arquivo). "Simular" é
+                dry-run e nunca grava; só sócio confirma a gravação. */}
+            <PmrReconsolidarCard canConfirm={!isFuncionario} />
             <div className={`two-up${isFuncionario ? " locked" : ""}`}>
               <section className="ucard">
                 <div className="ucard-head">
