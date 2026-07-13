@@ -427,7 +427,17 @@ export default function BbtsUploadReview({ canConfirm }: { canConfirm: boolean }
             <p className="bb-diff">Sem régua BBTS anterior no banco — nada a comparar (primeira competência).</p>
           )}
 
-          {actionMsg ? <Banner variant="ok"><b>{actionMsg}</b></Banner> : null}
+          {actionMsg ? (
+            <Banner variant="ok">
+              <b>{actionMsg}</b>
+              {actionMsg.includes("gravada") ? (
+                <div className="det">
+                  Abra a <a href="/auditoria#conferencia-bbts">Conferência BBTS</a> para ver, contrato a contrato, o que a
+                  BBTS pagou contra o que a tabela manda (Faixa 4 do acordo).
+                </div>
+              ) : null}
+            </Banner>
+          ) : null}
           {actionErr ? (
             <Banner variant="warn">
               <b>{actionErr.msg}</b>
@@ -478,6 +488,7 @@ export default function BbtsUploadReview({ canConfirm }: { canConfirm: boolean }
         .fld--file input { padding: 6px; }
         .hint { font-size: 12px; color: #5b6472; }
         .det { font-size: 12px; opacity: .85; margin-top: 4px; }
+        .det a { color: #101a33; font-weight: 700; }
         .bb-rev { margin-top: 18px; border-top: 1px solid var(--bd-soft, #eef0f4); padding-top: 16px; }
         .bb-rev__meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: #5b6472; margin-bottom: 14px; }
         .bb-rev__h { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: #101a33; margin: 18px 0 10px; }
