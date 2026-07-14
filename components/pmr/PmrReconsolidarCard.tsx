@@ -48,6 +48,19 @@ type Resultado = {
   payload?: Array<{ production_value?: number | null }>;
 };
 
+// Detector de regua obsoleta — CAMADA 1 (TRP). READ-ONLY: /api/detector/trp
+// compara a versao da TRP que produziu cada linha do PMR com a vigente hoje.
+// STALE (regua mudou) e DESCONHECIDO (calculado antes do rastreamento) sao
+// estados DISTINTOS — nunca colapsar um no outro.
+type DetectorTrp = {
+  competencia?: string;
+  current_version_id?: string | null;
+  current_is_fallback?: boolean | null;
+  counts?: { ok: number; stale: number; desconhecido: number; nao_aplicavel: number };
+  has_stale?: boolean;
+  has_desconhecido?: boolean;
+};
+
 const MESES = [
   "Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
@@ -77,6 +90,9 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
   const [busy, setBusy] = useState<null | "simular" | "gravar">(null);
   const [erro, setErro] = useState<string | null>(null);
   const [res, setRes] = useState<Resultado | null>(null);
+  const [detBusy, setDetBusy] = useState(false);
+  const [detErro, setDetErro] = useState<string | null>(null);
+  const [det, setDet] = useState<DetectorTrp | null>(null);
 
   const anos = useMemo(() => {
     const atual = new Date().getFullYear();
@@ -105,6 +121,25 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
       setErro(e?.message || "Falha de rede. Nada foi gravado.");
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function verificarTrp() {
+    setDetErro(null);
+    setDet(null);
+    setDetBusy(true);
+    try {
+      const r = await fetch(`/api/detector/trp?year=${year}&month=${month}`);
+      const json = await r.json().catch(() => null);
+      if (!r.ok) {
+        setDetErro(json?.error || `A rota respondeu ${r.status}.`);
+        return;
+      }
+      setDet((json || {}) as DetectorTrp);
+    } catch (e: any) {
+      setDetErro(e?.message || "Falha de rede.");
+    } finally {
+      setDetBusy(false);
     }
   }
 
@@ -151,7 +186,7 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
               className="fld__i"
               value={year}
               disabled={busy !== null}
-              onChange={(e) => setYear(Number(e.target.value))}
+              onChange={(e) => { setYear(Number(e.target.value)); setDet(null); setDetErro(null); }}
             >
               {anos.map((a) => (
                 <option key={a} value={a}>{a}</option>
@@ -165,7 +200,7 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
               className="fld__i"
               value={month}
               disabled={busy !== null}
-              onChange={(e) => setMonth(Number(e.target.value))}
+              onChange={(e) => { setMonth(Number(e.target.value)); setDet(null); setDetErro(null); }}
             >
               {MESES.map((nome, i) => (
                 <option key={nome} value={i + 1}>
@@ -176,6 +211,14 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
           </label>
 
           <div className="pmrrec__acts">
+            <Button
+              variant="secundario"
+              onClick={() => void verificarTrp()}
+              disabled={busy !== null || detBusy}
+              title="Compara a versao da TRP que gerou o PMR com a vigente hoje. Nao grava nada."
+            >
+              {detBusy ? "Verificando…" : "Verificar TRP"}
+            </Button>
             <Button
               variant="secundario"
               onClick={() => void chamar(true)}
@@ -196,8 +239,73 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
 
         <p className="pmrrec__hint">
           <b>Simular</b> nao grava nada — mostra exatamente o que a gravacao faria. Rode a simulacao
-          antes de reconsolidar.
+          antes de reconsolidar. <b>Verificar TRP</b> so compara versoes (nao grava): mostra se o PMR
+          foi calculado com uma regua de credito ja superada.
         </p>
+
+        {detErro ? (
+          <Banner variant="warn">
+            <b>Nao foi possivel verificar a TRP.</b>
+            <div className="det">{detErro}</div>
+          </Banner>
+        ) : null}
+
+        {det ? (
+          <>
+            {det.has_stale ? (
+              <Banner variant="warn">
+                <b>
+                  Regua TRP mudou desde o calculo — reconsolidar {compLabel}.
+                </b>
+                <div className="det">
+                  {det.counts?.stale ?? 0} linha(s) de comissao (ADS/mes aberto) foram calculadas com
+                  uma versao da TRP diferente da vigente hoje. O numero gravado pode divergir da regua
+                  atual ate reconsolidar.
+                </div>
+              </Banner>
+            ) : det.has_desconhecido ? (
+              <Banner variant="info">
+                <b>Versao da TRP desconhecida em {compLabel}.</b>
+                <div className="det">
+                  {det.counts?.desconhecido ?? 0} linha(s) foram calculadas <b>antes</b> do rastreamento
+                  de versao — nao da para afirmar que batem com a TRP vigente. A proxima reconsolidacao
+                  grava o baseline e o estado passa a ser confiavel.
+                </div>
+              </Banner>
+            ) : (det.counts?.ok ?? 0) > 0 ? (
+              <Banner variant="ok">
+                <b>PMR alinhado com a TRP vigente em {compLabel}.</b>
+                <div className="det">
+                  As linhas que usam TRP (ADS/mes aberto) foram calculadas com a versao atual da regua.
+                </div>
+              </Banner>
+            ) : (
+              <Banner variant="info">
+                <b>Nenhuma linha usa TRP em {compLabel}.</b>
+                <div className="det">
+                  A competencia so tem comissao de fechamento/cms (vem pronta do arquivo, sem TRP no
+                  calculo do PMR). Nao ha o que ficar obsoleto pela Camada 1.
+                </div>
+              </Banner>
+            )}
+
+            <div className="pmrrec__chips">
+              <Chip variant={(det.counts?.stale ?? 0) > 0 ? "warn" : "neutral"}>
+                STALE: {det.counts?.stale ?? 0}
+              </Chip>
+              <Chip variant={(det.counts?.desconhecido ?? 0) > 0 ? "risk" : "neutral"}>
+                Desconhecido: {det.counts?.desconhecido ?? 0}
+              </Chip>
+              <Chip variant={(det.counts?.ok ?? 0) > 0 ? "ok" : "neutral"}>
+                OK: {det.counts?.ok ?? 0}
+              </Chip>
+              <Chip variant="neutral">Nao aplicavel: {det.counts?.nao_aplicavel ?? 0}</Chip>
+              {det.current_is_fallback ? (
+                <Chip variant="neutral">TRP vigente por fallback (sem regua propria)</Chip>
+              ) : null}
+            </div>
+          </>
+        ) : null}
 
         {erro ? (
           <Banner variant="warn">
@@ -334,6 +442,12 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
           font-size: 12px;
           line-height: 1.5;
           color: var(--ink-soft, #6b7280);
+        }
+        .pmrrec__chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-top: 10px;
         }
         .pmrrec__stats {
           display: grid;

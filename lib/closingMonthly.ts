@@ -475,6 +475,12 @@ export async function consolidateMonthlyFromClosing(
         resolveTargetStatus(a.net, targetValue, target1Value, target2Value),
       source: "fechamento",
       calculated_at: nowIso,
+      // Detector Camada 1: NULL de PROPOSITO — o fechamento NAO usa a TRP. A
+      // comissao de credito ja vem PRONTA do arquivo (monthly_closing_entries via
+      // closingPromoterBase); a TRP aqui e regua de AUDITORIA, nao insumo do PMR.
+      // NAO "consertar" para gravar versao: nao ha versao usada neste calculo.
+      trp_version_id: null,
+      trp_fallback: null,
     });
 
     table.push({

@@ -245,6 +245,13 @@ export async function consolidateMonthlyFromBbts(
   const table: BbtsMonthlyRow[] = [];
   const upserts: any[] = [];
 
+  // Detector Camada 1 (TRP): a versao da TRP efetivamente usada (com fallback)
+  // nesta competencia — a MESMA que o motor consumiu acima via trpProvider.
+  // Existe so quando TRP_SOURCE=db (provider definido e competencia versionada);
+  // no modo json, ou competencia sem versao no DB, fica NULL = desconhecido (o
+  // numero veio do JSON embutido, sem versao a rastrear). NAO muda nenhum valor.
+  const trpStamp = trpProvider ? trpProvider.getResolved(compKey) : null;
+
   for (const [pid, a] of agg) {
     const acordo = acordoDe(pid);
     // Penetração individual (base LÍQUIDA; na ADS net==gross=Valor Financiado);
@@ -295,6 +302,9 @@ export async function consolidateMonthlyFromBbts(
       target_status: params.statusMetaByPromoter?.get(pid) ?? "BELOW_META",
       source: "bbts",
       calculated_at: nowIso,
+      // Detector Camada 1: versao da TRP usada (NULL = desconhecido/sem versao).
+      trp_version_id: trpStamp?.versionId ?? null,
+      trp_fallback: trpStamp ? trpStamp.isFallback : null,
     });
   }
 

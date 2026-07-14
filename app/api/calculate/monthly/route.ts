@@ -889,9 +889,19 @@ export async function POST(req: Request) {
     // async 1x das competências dos registros (derivadas do contract_date, a MESMA
     // chave do motor); o cálculo por linha continua síncrono. Sem db-source,
     // provider=undefined -> motor lê o JSON (no-op).
-    const trpProvider = await buildTrpCreditProvider(
-      dailyRecords.map((record: any) => record.contract_date)
-    );
+    // A data mid-month da competencia-alvo entra no preload para GARANTIR que o
+    // carimbo do detector (getResolved abaixo) ache a versao do mes do PMR, mesmo
+    // que nenhum contract_date individual caia exatamente nela.
+    const trpStampComp = `${year}-${String(month).padStart(2, "0")}`;
+    const trpProvider = await buildTrpCreditProvider([
+      `${trpStampComp}-15`,
+      ...dailyRecords.map((record: any) => record.contract_date),
+    ]);
+    // Detector Camada 1 (TRP): versao efetivamente usada (com fallback) na
+    // competencia — a MESMA que o motor consumiu. Uma so por rodada (todas as
+    // linhas daily compartilham year/month). NULL quando TRP_SOURCE=json ou
+    // competencia sem versao no DB (numero veio do JSON embutido). No-op no valor.
+    const trpStamp = trpProvider ? trpProvider.getResolved(trpStampComp) : null;
 
     for (const company of companies) {
       const records = companyGroups.get(company.id) || [];
@@ -1385,6 +1395,9 @@ export async function POST(req: Request) {
         target_status: targetStatus,
         source: "daily",
         calculated_at: new Date().toISOString(),
+        // Detector Camada 1: versao da TRP usada (NULL = desconhecido/sem versao).
+        trp_version_id: trpStamp?.versionId ?? null,
+        trp_fallback: trpStamp ? trpStamp.isFallback : null,
       });
     }
 
