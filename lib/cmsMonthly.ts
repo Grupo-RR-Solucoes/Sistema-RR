@@ -283,6 +283,11 @@ export async function consolidateMonthlyFromCms(
       target_status: resolveTargetStatus(a.net, targetValue, target1Value, target2Value),
       source: "cms",
       calculated_at: new Date().toISOString(),
+      // Detector Camada 1: NULL de PROPOSITO — o cms e ground-truth e NAO usa a
+      // TRP. A comissao ja vem PRONTA da fonte (cms_promoter_entries). NAO
+      // "consertar" para gravar versao: nao ha versao de TRP usada neste calculo.
+      trp_version_id: null,
+      trp_fallback: null,
     });
 
     table.push({
