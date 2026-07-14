@@ -4,6 +4,11 @@ import { fetchAllRows } from "@/lib/queryHelpers";
 import { detectMonthRegime, analyticsRegimeArgs, type MonthRegime } from "@/lib/cmsMonthly";
 import { loadPromoterAnalyticsBase } from "@/lib/promoterAnalytics";
 import { receitaFechamentoDoMes, type FechamentoRow } from "@/lib/rbt12";
+// Receita da ADS: ela fatura pela BBTS, não pela Promotiva — não tem linha em
+// fechamento_mensal_empresa. A competência da produção ADS sai do MESMO predicado que
+// o consolidador usa (movement -> contract -> proposal).
+import { BBTS_COMPANY_ID } from "@/lib/bbtsMonthly";
+import { getProductionPeriodFromValue, getProductionPeriodKey } from "@/lib/productionPeriod";
 
 // ============================================================
 // DRE GERENCIAL (Demonstrativo de Resultado) — EIXO DE PRODUÇÃO, por competência.
@@ -278,6 +283,59 @@ export async function buildDre(
     );
   }
 
+  // ---- RECEITA DA ADS: mesmo fluxo do RR, fonte diferente ----
+  //
+  // A ADS não fatura pela Promotiva — fatura pela BBTS, e por isso NÃO tem linha em
+  // fechamento_mensal_empresa. A receita dela é o que a BBTS PAGOU à empresa: o mesmo
+  // "realizado" que a auditoria BBTS já captura contra a régua.
+  //   AVT    -> daily_production_records.bbts_pag_avista   (à vista, análogo ao valor_avista do RR)
+  //   PRT    -> bbts_prt_parcelas.valor_parcela            (parcelas do diferido)
+  //   SEGURO -> daily_production_records.bbts_seguro_pago
+  // Junho: 7.707,03 + 7,01 + 97,54 = R$ 7.811,58.
+  //
+  // Sem isto, incluir a comissão da ADS (regra do Diego) fabricaria um prejuízo — que
+  // foi exatamente o motivo de o Mov 2 ter deixado a ADS FORA. Com a receita, o
+  // resultado da ADS em junho e POSITIVO (+2.616,89): incluir MELHORA o DRE.
+  {
+    const compKey = periodKey(selected.year, selected.month);
+    const adsDaily = await fetchAllRows<{
+      bbts_pag_avista: number | null;
+      bbts_seguro_pago: number | null;
+      movement_date: string | null;
+      contract_date: string | null;
+      proposal_date: string | null;
+    }>(() =>
+      supabase
+        .from("daily_production_records")
+        .select("bbts_pag_avista, bbts_seguro_pago, movement_date, contract_date, proposal_date")
+        .eq("company_id", BBTS_COMPANY_ID)
+    );
+    let receitaAds = 0;
+    for (const r of adsDaily) {
+      const p =
+        getProductionPeriodFromValue(r.movement_date) ||
+        getProductionPeriodFromValue(r.contract_date) ||
+        getProductionPeriodFromValue(r.proposal_date);
+      if (!p || getProductionPeriodKey(p.year, p.month) !== compKey) continue;
+      receitaAds += toNum(r.bbts_pag_avista) + toNum(r.bbts_seguro_pago);
+    }
+    const prtRows = await fetchAllRows<{ valor_parcela: number | null }>(() =>
+      supabase
+        .from("bbts_prt_parcelas")
+        .select("valor_parcela")
+        .eq("company_id", BBTS_COMPANY_ID)
+        .eq("competencia", `${compKey}-01`)
+    );
+    for (const r of prtRows) receitaAds += toNum(r.valor_parcela);
+
+    if (receitaAds > 0) {
+      receitaFechamentoByCompany.set(
+        BBTS_COMPANY_ID,
+        toNum(receitaFechamentoByCompany.get(BBTS_COMPANY_ID)) + receitaAds
+      );
+    }
+  }
+
   // Guarda de receita: mês cms-fechado mas SEM fechamento => não há receita
   // realizada. Não monta resultado (evita receita 0 + comissões cheias = número
   // falso). Mostra "aguardando fechamento".
@@ -354,13 +412,83 @@ export async function buildDre(
       ],
     };
   }
-  // A guarda dura acima já garantiu que a base é da competência selecionada.
+  // ---- COMISSÕES: direto das linhas do PMR, por CNPJ DA PRÓPRIA LINHA ----
+  //
+  // REGRA (Diego): o DRE não exclui NADA que saiu ou entrou. Comissão paga é custo
+  // real. Duas exclusões caíram aqui:
+  //
+  // (1) PROMOTOR INATIVO. O filtro `if (!row.active) continue` cortava o custo de quem
+  //     saiu — mas a RECEITA da produção dele já está no DRE (vem de
+  //     fechamento_mensal_empresa, que não sabe se o promotor saiu depois). Receita sem
+  //     o custo correspondente = resultado inflado. Junho: R$ 483,85.
+  //
+  // (2) ATRIBUIÇÃO PELO CNPJ DOMINANTE. O bloco lia `base.filteredSummaryRows` — as
+  //     linhas CONSOLIDADAS, que colapsam o promotor num registro só, com o company_id
+  //     da linha de MAIOR produção. Resultado: a comissão ADS de quem produz mais no RR
+  //     caía no CNPJ do RR (junho: R$ 2.191,74 deslocados). O grupo fechava, mas o
+  //     resultado POR CNPJ mentia.
+  //     O PMR já tem UMA LINHA POR (promotor, empresa) — a informação está lá. Basta
+  //     não colapsar: source 'fechamento' -> CNPJ do RR; source 'bbts' -> CNPJ da ADS.
+  //     Cada CNPJ carrega a comissão que ele realmente gerou.
+  //
+  // payable = comissão − DESCONTOS: o desconto é retenção da empresa (dinheiro que NÃO
+  // sai), então o líquido é o custo. Isso continua — é legítimo.
+  //
+  // ATENÇÃO (pegadinha real): a coluna promoter_monthly_results.discount_value está
+  // ZERADA em produção. O desconto de verdade mora em `promoter_discounts`, e é de lá
+  // que promoterAnalytics:688 o lê — com o filtro `apply_to_company !== true` (desconto
+  // que se aplica à EMPRESA não reduz o repasse do promotor). Usar a coluna do PMR
+  // subtrairia zero e inflaria o custo em R$ 3.041,55 (junho). A tabela já traz
+  // company_id, então o desconto é alocado ao CNPJ que o gerou — mesma lógica da
+  // comissão.
+  const regimeSources = regimeSel === "cms" ? ["cms"] : ["fechamento", "bbts"];
+  const pmrRows = await fetchAllRows<{
+    company_id: string | null;
+    source: string | null;
+    final_commission_value: number | null;
+  }>(() =>
+    supabase
+      .from("promoter_monthly_results")
+      .select("company_id, source, final_commission_value")
+      .eq("year", selected.year)
+      .eq("month", selected.month)
+      .in("source", regimeSources)
+  );
   const comissaoByCompany = new Map<string, number>();
-  for (const row of base.filteredSummaryRows) {
-    if (!row.active) continue; // regra do DRE (pré-existente): só promotor ATIVO
+  for (const row of pmrRows) {
     const cid = row.company_id || "";
-    if (!cid) continue;
-    comissaoByCompany.set(cid, toNum(comissaoByCompany.get(cid)) + toNum(row.payable_commission_value));
+    if (!cid) continue; // linha sem empresa: não há CNPJ onde alocar (0 linhas hoje)
+    comissaoByCompany.set(cid, toNum(comissaoByCompany.get(cid)) + toNum(row.final_commission_value));
+  }
+
+  const descontoRows = await fetchAllRows<{
+    company_id: string | null;
+    amount: number | null;
+    apply_to_company: boolean | null;
+  }>(() =>
+    supabase
+      .from("promoter_discounts")
+      .select("company_id, amount, apply_to_company")
+      .eq("year", selected.year)
+      .eq("month", selected.month)
+  );
+  let descontoSemEmpresa = 0;
+  for (const row of descontoRows) {
+    if (row.apply_to_company === true) continue; // não reduz o repasse do promotor
+    const cid = row.company_id || "";
+    const amount = toNum(row.amount);
+    if (!cid) {
+      descontoSemEmpresa += amount; // sem CNPJ: não dá para alocar — vira alerta
+      continue;
+    }
+    comissaoByCompany.set(cid, toNum(comissaoByCompany.get(cid)) - amount);
+  }
+  if (descontoSemEmpresa > 0) {
+    alerts.push(
+      `Há ${descontoSemEmpresa.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} em descontos ` +
+        "de promotor SEM CNPJ (company_id nulo) — não foi possível alocá-los a uma empresa, então NÃO reduzem " +
+        "a comissão de nenhum CNPJ. O custo do grupo está superestimado nesse valor."
+    );
   }
 
   // ---- DESPESAS: financial_expenses do mês, por CNPJ (+ escopo grupo) ----
@@ -390,36 +518,41 @@ export async function buildDre(
     );
   }
 
-  // ---- empresas SEM receita realizada na competência ----
-  // O princípio já está no topo deste arquivo, mas só era aplicado ao MÊS: "receita 0
-  // + comissões cheias = resultado falso". Vale igual por CNPJ.
+  // ---- empresa COM comissão e SEM receita: inclui + ALERTA DURO ----
   //
-  // Caso real (achado ao ligar o regime 'fechamento'): a ADS Consultoria Negocial tem
-  // CNPJ real (não-TEMP), está active=false e NÃO tem linha em fechamento_mensal_empresa
-  // — a receita dela não entra por esse caminho. Mas o PMR tem comissão de promotor na
-  // ADS (source 'bbts'), e a linha consolidada do promotor carrega o company_id da linha
-  // de MAIOR produção: quem só produziu na ADS cai na ADS. Sem esta guarda, o DRE
-  // fabricaria um prejuízo (receita 0 − comissão) num CNPJ que não fatura por aqui.
+  // Esta guarda nasceu no MOV 2 EXCLUINDO a empresa (era a ADS, que não tinha receita
+  // no DRE porque a receita dela não estava sendo lida). Agora que a receita da ADS
+  // entra (AVT+PRT+seguro), a exclusão perdeu o motivo — e ela VIOLAVA a regra: o DRE
+  // não descarta custo que saiu.
   //
-  // A comissão excluída NÃO some em silêncio: vira alerta com o valor.
-  const semReceita = companies.filter(
-    (c) => toNum(receitaFechamentoByCompany.get(c.id)) === 0 && toNum(receitaComplementarByCompany.get(c.id)) === 0
+  // O que sobra é o caso do DADO INCOMPLETO: a empresa tem comissão mas o fechamento
+  // dela não foi importado ainda (ex.: ADS em julho — a diária entrou, o PDF do
+  // fechamento não). Aí a receita é 0 por FALTA DE IMPORT, não por não existir.
+  //
+  // MESMO PRINCÍPIO ANTI-SILÊNCIO DO FORECAST (vintage incompleto AVISA, não descarta):
+  // a empresa ENTRA no DRE com o custo real, e um alerta DURO diz que o resultado está
+  // incompleto até o PDF ser importado. Descartar em silêncio seria mentir por omissão;
+  // incluir sem avisar seria mentir por otimismo. O alerta é o que mantém o número honesto.
+  const semReceitaComComissao = companies.filter(
+    (c) =>
+      toNum(receitaFechamentoByCompany.get(c.id)) === 0 &&
+      toNum(receitaComplementarByCompany.get(c.id)) === 0 &&
+      round(toNum(comissaoByCompany.get(c.id))) > 0
   );
-  const companiesComReceita = companies.filter((c) => !semReceita.some((s) => s.id === c.id));
-  for (const c of semReceita) {
-    const comissaoFora = round(toNum(comissaoByCompany.get(c.id)));
-    if (comissaoFora > 0) {
-      alerts.push(
-        `${c.name} (${c.cnpj}) tem ${comissaoFora.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} ` +
-          "em comissões no mês, mas NENHUMA receita realizada em fechamento_mensal_empresa — a receita dessa " +
-          "empresa não entra por esse caminho. Ficou FORA do DRE (incluí-la geraria um prejuízo falso: receita 0 " +
-          "menos comissão). Esse valor não está no resultado do grupo."
-      );
-    }
+  for (const c of semReceitaComComissao) {
+    const comissao = round(toNum(comissaoByCompany.get(c.id)));
+    alerts.push(
+      `RESULTADO INCOMPLETO — ${c.name} (${c.cnpj}) tem ` +
+        `${comissao.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })} em comissões nesta ` +
+        "competência, mas NENHUMA receita lançada: o fechamento dessa empresa ainda NÃO foi importado. " +
+        "A comissão ENTRA no resultado (é custo real que saiu), então o resultado do grupo está " +
+        "SUBESTIMADO até o fechamento ser importado. Importe o fechamento dessa competência."
+    );
   }
 
   // ---- monta linhas por CNPJ ----
-  const companyLines: DreLine[] = companiesComReceita.map((c) => {
+  // TODAS as empresas reais entram — nenhuma é descartada por não ter receita.
+  const companyLines: DreLine[] = companies.map((c) => {
     const receitaFechamento = round(toNum(receitaFechamentoByCompany.get(c.id)));
     const receitaComplementar = round(toNum(receitaComplementarByCompany.get(c.id)));
     const receita = round(receitaFechamento + receitaComplementar);
