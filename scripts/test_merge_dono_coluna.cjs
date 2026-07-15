@@ -4,6 +4,11 @@
  * Só colunas existentes (insurance_value/gross_value/assigned_promoter_id) — o
  * caminho de prod_segurada/insurance_number é o MESMO mecanismo (coluna do dono
  * INSURANCE), e roda igual assim que a migration estiver aplicada.
+ *
+ * BLINDAGEM 2026-07: este teste ESCREVE em daily_production_records de PRODUCAO
+ * (linhas sandbox ZZTEST-MERGE-*, criadas e apagadas por ele — o DELETE e escopado
+ * ao prefixo, NUNCA toca dado real). Como nao ha staging, a escrita e opt-in: sem
+ * --apply o teste NAO roda e explica o que faria. Rode com --apply para executar.
  */
 require("./_ts_register.cjs");
 const fs = require("fs");
@@ -69,7 +74,16 @@ async function cleanup() {
 }
 
 async function main() {
-  console.log("\n=== TESTE MERGE POR DONO DE COLUNA ===\n");
+  if (!process.argv.includes("--apply")) {
+    console.log("\n=== TESTE MERGE POR DONO DE COLUNA (blindado) ===\n");
+    console.log("  Este teste ESCREVE linhas sandbox (ZZTEST-MERGE-*) em daily_production_records");
+    console.log("  de PRODUCAO e as apaga no fim (DELETE escopado ao prefixo — nao toca dado real).");
+    console.log("  Nao ha staging. Para executar de fato, rode com --apply:");
+    console.log("    node scripts/test_merge_dono_coluna.cjs --apply");
+    console.log("\n  DRY-RUN: nada foi escrito.");
+    process.exit(0);
+  }
+  console.log("\n=== TESTE MERGE POR DONO DE COLUNA (--apply) ===\n");
   await cleanup();
   const { data: prom } = await sb.from("promoters").select("id, name").limit(1).single();
   const PID = prom.id;

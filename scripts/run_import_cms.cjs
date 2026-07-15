@@ -32,7 +32,12 @@ const DEFAULT_FILES = [
   "PRODUÇÃO GERAL RR AL3 MARÇO 2026.xlsx",
   "PRODUÇÃO GERAL RR PE MARÇO 2026.xlsx",
 ];
-const FILES = process.argv.slice(2).length ? process.argv.slice(2) : DEFAULT_FILES;
+// BLINDAGEM 2026-07: default DRY-RUN. Antes importava (grava cms_imports +
+// cms_promoter_entries) ao rodar, sem guarda. Agora importa SO com --apply.
+const rawArgs = process.argv.slice(2);
+const APPLY = rawArgs.includes("--apply");
+const fileArgs = rawArgs.filter((a) => a !== "--apply");
+const FILES = fileArgs.length ? fileArgs : DEFAULT_FILES;
 
 const sb = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -45,12 +50,19 @@ const MES = { 1: "JAN", 2: "FEV", 3: "MAR", 4: "ABR", 5: "MAI", 6: "JUN", 7: "JU
 (async () => {
   const unmappedByFile = [];
   const importedMonths = new Set();
-  console.log("===================== PASSO 2 — IMPORT cms =====================\n");
+  console.log(`===================== PASSO 2 — ${APPLY ? "IMPORT" : "DRY-RUN"} cms =====================\n`);
+  if (!APPLY) {
+    console.log(">>> DRY-RUN: nada sera importado/gravado. Rode com --apply para importar.\n");
+  }
 
   for (const name of FILES) {
     const full = path.join(DOWNLOADS, name);
     if (!fs.existsSync(full)) {
       console.log(`!! AUSENTE: ${name}`);
+      continue;
+    }
+    if (!APPLY) {
+      console.log(`DRY-RUN  importaria: ${name} (existe no disco). NADA gravado.`);
       continue;
     }
     const fileBase64 = fs.readFileSync(full).toString("base64");

@@ -26,7 +26,10 @@ const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_
 });
 
 const argv = process.argv.slice(2);
-const VALIDATE_ONLY = argv.includes("--validate");
+// BLINDAGEM 2026-07: default DRY-RUN (nao grava). Antes gravava a menos que
+// passasse --validate (default invertido/perigoso). Agora escreve SO com --apply,
+// alinhado ao padrao do repo (run_metas_import_maio, seed_v9/seed_validator).
+const apply = argv.includes("--apply");
 
 /**
  * 7 contratos do Padrão D — origem: CHECKPOINT B (Fase 4.3) re-run.
@@ -80,8 +83,8 @@ const PADRAO_D_CONTRATOS = [
 ];
 
 (async () => {
-  if (!VALIDATE_ONLY) {
-    console.log("=== seed audit_v9_padrao_d_exclusoes ===");
+  if (apply) {
+    console.log("=== seed audit_v9_padrao_d_exclusoes (--apply) ===");
     // upsert idempotente: onConflict=primary key (contract_number,mes), ignoreDuplicates=true.
     const { error } = await sb
       .from("audit_v9_padrao_d_exclusoes")
@@ -94,6 +97,10 @@ const PADRAO_D_CONTRATOS = [
       process.exit(1);
     }
     console.log(`  upsert ${PADRAO_D_CONTRATOS.length} contratos OK`);
+  } else {
+    console.log("=== DRY-RUN: seed audit_v9_padrao_d_exclusoes ===");
+    console.log(`  gravaria ${PADRAO_D_CONTRATOS.length} contratos (upsert idempotente). NADA gravado.`);
+    console.log("  Rode com --apply para aplicar.");
   }
 
   // Validação pós-seed
@@ -118,10 +125,14 @@ const PADRAO_D_CONTRATOS = [
   for (const r of data) counts.set(r.motivo_exclusao, (counts.get(r.motivo_exclusao) || 0) + 1);
   for (const [m, c] of counts) console.log(`    ${m}: ${c}`);
 
-  if (count !== 7) {
-    console.error(`FAIL: count=${count} ≠ 7`);
-    process.exit(1);
+  if (apply) {
+    if (count !== 7) {
+      console.error(`FAIL: count=${count} ≠ 7`);
+      process.exit(1);
+    }
+    console.log("\nPASS — tabela populada com 7 contratos.");
+  } else {
+    console.log(`\nDRY-RUN concluido. Estado atual da tabela: ${count} contrato(s). Nada gravado.`);
   }
-  console.log("\nPASS — tabela populada com 7 contratos.");
   process.exit(0);
 })();
