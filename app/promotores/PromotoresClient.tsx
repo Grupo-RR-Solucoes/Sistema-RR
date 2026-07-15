@@ -212,6 +212,12 @@ function PromotoresFullPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Guarda #7: aviso de competencia FECHADA apos uma acao latente (reatribuir /
+  // meta / acordo). A acao FOI salva; o repasse so muda apos reconsolidar. Guarda
+  // o alvo (year/month que o server devolve em `reconsolidar`) p/ o link do card.
+  const [reconsolidarAviso, setReconsolidarAviso] = useState<
+    { year: number; month: number; aviso?: string } | null
+  >(null);
   const [recalculating, setRecalculating] = useState(false);
   const [agreementForm, setAgreementForm] = useState({
     promoterId: "",
@@ -550,6 +556,9 @@ function PromotoresFullPage() {
 
       setReloadKey((value) => value + 1);
       setNotice("Acordo comercial salvo com sucesso.");
+      if (payload.competencia_fechada && payload.reconsolidar) {
+        setReconsolidarAviso({ ...payload.reconsolidar, aviso: payload.aviso });
+      }
     } catch (err: any) {
       setError(err.message || "Erro ao salvar acordo comercial.");
     } finally {
@@ -817,6 +826,11 @@ function PromotoresFullPage() {
 
       setReloadKey((value) => value + 1);
       setNotice(`Proposta ${row.proposal_number} migrada com sucesso.`);
+      // Guarda #7: reatribuicao em mes fechado FUNCIONA (fluxo do Diego); avisa
+      // que o repasse so migra apos reconsolidar.
+      if (payload.competencia_fechada && payload.reconsolidar) {
+        setReconsolidarAviso({ ...payload.reconsolidar, aviso: payload.aviso });
+      }
     } catch (err: any) {
       setError(err.message || "Erro ao migrar proposta.");
     } finally {
@@ -943,6 +957,9 @@ function PromotoresFullPage() {
       setNotice(
         `${payload.prefixadas} metas prefixadas de ${anterior}; ${payload.mantidas} mantidas (já existiam).`
       );
+      if (payload.competencia_fechada && payload.reconsolidar) {
+        setReconsolidarAviso({ ...payload.reconsolidar, aviso: payload.aviso });
+      }
       await loadMetas();
     } catch (err: any) {
       setError(err.message || "Erro ao prefixar metas.");
@@ -1100,6 +1117,27 @@ function PromotoresFullPage() {
 
         {error ? <div className="banner err">{error}</div> : null}
         {notice ? <div className="banner ok">{notice}</div> : null}
+        {reconsolidarAviso ? (
+          <div className="banner warn">
+            {reconsolidarAviso.aviso ||
+              "Competencia fechada — a alteracao foi salva, mas o repasse so muda apos reconsolidar."}{" "}
+            <a
+              href={`/importacoes?reconsolidar=${reconsolidarAviso.year}-${String(
+                reconsolidarAviso.month
+              ).padStart(2, "0")}`}
+            >
+              Reconsolidar competencia
+            </a>
+            {" · "}
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => setReconsolidarAviso(null)}
+            >
+              dispensar
+            </button>
+          </div>
+        ) : null}
 
         {/* FILTER BAR */}
         <div className="filters">
@@ -2395,6 +2433,9 @@ const CSS = `
 .rrprom .banner{border-radius:var(--r-md);padding:12px 16px;font-size:13px;}
 .rrprom .banner.err{background:var(--red-bg);border:1px solid #E9B7B2;color:#8E2F28;}
 .rrprom .banner.ok{background:var(--green-bg);border:1px solid #B6DEC8;color:#1F6B45;}
+.rrprom .banner.warn{background:#FBF3DA;border:1px solid #E6D08A;color:#7A5B10;}
+.rrprom .banner.warn a{color:#7A5B10;font-weight:700;text-decoration:underline;}
+.rrprom .banner.warn .link-btn{background:none;border:none;padding:0;color:#7A5B10;text-decoration:underline;cursor:pointer;font-size:13px;}
 
 .rrprom .filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);padding:13px 16px;box-shadow:var(--shadow);}
 .rrprom .fsel{position:relative;}
