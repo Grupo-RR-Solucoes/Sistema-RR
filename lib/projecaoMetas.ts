@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { detectMonthRegime } from "@/lib/cmsMonthly";
+import { detectMonthRegime, analyticsRegimeArgs, type MonthRegime } from "@/lib/cmsMonthly";
 import { todayInFortaleza } from "@/lib/dateFortaleza";
 import {
   fetchInsuranceSlipTiers,
@@ -179,14 +179,25 @@ export async function buildProjecaoMetas(
     ? new Date(Date.UTC(input.referenceDate.getUTCFullYear(), input.referenceDate.getUTCMonth(), input.referenceDate.getUTCDate()))
     : todayInFortaleza();
 
-  const [base, closed, allPmr, shareTiers, gestores] = await Promise.all([
-    loadPromoterAnalyticsBase(supabase, { year, month, companyId: input.companyId }),
-    // MOV 2: enum canonico. A pergunta daqui e binaria — "o mes ja acabou?" — e
-    // tanto 'cms' quanto 'fechamento' respondem SIM. Por isso `!== 'open'`, nunca
-    // `=== 'fechamento'` (isso trataria jan-mai como mes em curso).
-    detectMonthRegime(supabase, year, month)
-      .then((regime) => regime !== "open")
-      .catch(() => false),
+  // Regime ANTES do analytics: decide closedSource (consolida RR+ADS no mes
+  // fechado, via consolidatedSummaryRows) e o booleano `closed` da serie hibrida.
+  // Sem closedSource, loadPromoterAnalyticsBase cai no .find() legado — 1 linha do
+  // PMR por promotor sem filtrar source — e TRUNCA quem tem linha RR + linha ADS
+  // (mesmo bug do Mov 2 no DRE/relatorio). analyticsRegimeArgs e o helper canonico
+  // ja usado por dre.ts (reuso, zero caminho novo). A pergunta binaria `closed`
+  // segue `!== 'open'` (tanto 'cms' quanto 'fechamento' ja acabaram).
+  const regime = await detectMonthRegime(supabase, year, month).catch(
+    () => "open" as MonthRegime,
+  );
+  const closed = regime !== "open";
+
+  const [base, allPmr, shareTiers, gestores] = await Promise.all([
+    loadPromoterAnalyticsBase(supabase, {
+      year,
+      month,
+      companyId: input.companyId,
+      ...analyticsRegimeArgs(regime),
+    }),
     // PMR: production_value (fonte dos meses FECHADOS na série híbrida) +
     // insurance_penetration_percent (penetração dos meses só-PMR).
     fetchAllRows<{ promoter_id: string; year: number; month: number; production_value: number; insurance_penetration_percent?: number | null }>(
