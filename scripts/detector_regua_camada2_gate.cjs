@@ -14,6 +14,12 @@
  *       competencia NAO muda o hash (escopo por promotor-no-PMR funcionando).
  *   NO-OP: gravar o fingerprint nao altera o PMR (so escreve pmr_rules_fingerprint).
  *
+ * FIX 000002 (cast de enum): o schema efemero agora usa o ENUM REAL
+ * share_profile_type em promoter_share_profile.profile_type (igual prod). Prova:
+ *   G0  a 000001 SOZINHA reproduz o bug de prod (42883: pmr_fp_txt(enum) nao existe)
+ *       ao CHAMAR a RPC — criar a funcao "deu Success", so quebra na execucao.
+ *   Depois aplica a 000002 (profile_type::text) e todos os gates passam.
+ *
  * Dependencia SO de desenvolvimento (nao vai para producao):
  *   npm i -D embedded-postgres pg
  * Sem ela o gate imprime como instalar e sai com codigo 0 (nao quebra CI que nao a tenha).
@@ -39,6 +45,10 @@ const MIG = fs.readFileSync(
   path.join(__dirname, "..", "supabase", "migrations", "20260715_000001_pmr_rules_fingerprint_camada2.sql"),
   "utf8"
 );
+const MIG2 = fs.readFileSync(
+  path.join(__dirname, "..", "supabase", "migrations", "20260715_000002_fix_rpc_enum_cast.sql"),
+  "utf8"
+);
 
 const BBTS = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
 const RR = "33333333-3333-3333-3333-333333333333";
@@ -54,8 +64,12 @@ function ok(name, cond, extra = "") {
 
 const SCHEMA = `
 create role service_role;
+-- ENUM REAL de producao (20260518230000_dia45_share_profiles.sql). Sem ele o gate
+-- mente: com profile_type TEXT o bug 42883 nao aparece. profile_type e o unico
+-- enum entre TODAS as colunas lidas pela RPC (key_type/entry_type/sheet_name = text).
+create type share_profile_type as enum ('DEFAULT','CLT_FIXO','ACORDO_FIXO','ENTRANTE_PADRAO','ENTRANTE_CUSTOM','ACORDO_VARIAVEL');
 create table promoter_monthly_results(promoter_id uuid, year int, month int, source text, company_id uuid);
-create table promoter_share_profile(promoter_id uuid, profile_type text, fixed_percent numeric, scale_id uuid, notes text, created_at timestamptz default now(), updated_at timestamptz default now());
+create table promoter_share_profile(promoter_id uuid, profile_type share_profile_type, fixed_percent numeric, scale_id uuid, notes text, created_at timestamptz default now(), updated_at timestamptz default now());
 create table promoter_goal_repasse(id uuid default gen_random_uuid(), promoter_id uuid, competencia date, pct_base numeric, pct_meta1 numeric, pct_meta2 numeric, created_at timestamptz default now(), updated_at timestamptz default now());
 create table monthly_targets(id uuid default gen_random_uuid(), company_id uuid, promoter_id uuid, year int, month int, meta numeric, meta_1 numeric, meta_2 numeric, created_at timestamptz default now());
 create table j_keys(id uuid default gen_random_uuid(), company_id uuid, promoter_id uuid, j_key text, key_type text, active boolean, display_name text, created_at timestamptz default now(), updated_at timestamptz default now());
@@ -119,8 +133,22 @@ async function detect(client) {
   await client.connect();
   try {
     await client.query(SCHEMA);
-    await client.query(MIG); // a MIGRATION REAL, verbatim
+    await client.query(MIG); // a MIGRATION 000001 REAL, verbatim (cria a funcao com o bug)
     await client.query(SEED);
+
+    console.log("\n--- G0 REPRODUZ O BUG DE PROD (42883) com a 000001 sozinha ---");
+    let repro = null;
+    try {
+      await client.query("select compute_rules_fingerprint(2026,6,'fechado')");
+    } catch (e) {
+      repro = e; // esperado: 42883 function pmr_fp_txt(share_profile_type) does not exist
+    }
+    ok("000001 sozinha: chamar a RPC quebra com 42883 (enum sem cast)",
+      repro && repro.code === "42883" && /pmr_fp_txt\(share_profile_type\)/.test(repro.message),
+      repro ? `${repro.code}: ${repro.message.split("\n")[0]}` : "NAO quebrou (schema mentiu de novo?)");
+    // Aplica o FIX. A partir daqui a RPC executa. Reproduz o caminho de prod:
+    // rodar 000001, ver quebrar na execucao, rodar 000002.
+    await client.query(MIG2); // 000002: profile_type::text
 
     console.log("\n--- G1 SERIALIZACAO CANONICA (3.20==3.2 ; \\N vs '' vs 0) ---");
     const g1 = (await client.query(`select (3.20::numeric(20,6))::text a,(3.2::numeric(20,6))::text b,
