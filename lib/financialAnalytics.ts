@@ -457,6 +457,13 @@ export async function buildFinancialAnalytics(
         supabase
           .from("promoter_monthly_results")
           .select("year, month, company_id, final_commission_value, discount_value, insurance_commission_value")
+          // DEFESA EM PROFUNDIDADE (#13): exclui source='daily'. O Caixa e o DRE
+          // devem ver o MESMO conjunto (o DRE ja filtra source IN ('fechamento',
+          // 'bbts')). 'daily' so existe no mes ABERTO e nunca e caixa pago; se um
+          // dia sobrevivesse numa competencia fechada (o Mov 1 impede hoje), esta
+          // soma o DOBRARIA em silencio. Excluir por FILTRO torna isso impossivel,
+          // nao so improvavel. No-op hoje: nenhuma competencia fechada tem daily.
+          .neq("source", "daily")
       ),
       // RECEITA MANUAL (consórcio/ajustes) — entra no "Recebido" (caixa) pelo
       // mês de data_credito (Etapa 3). Aditiva ao fechamento, sem defasagem.
