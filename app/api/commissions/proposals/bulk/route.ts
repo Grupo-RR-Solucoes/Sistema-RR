@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
   apiGuardErrorResponse,
   withSocioOrFuncionarioAnon,
 } from "@/lib/auth/guards";
 import { canManageCommissionRule } from "@/lib/auth/permissions";
+import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { recalculateSingleProposal } from "@/lib/proposalDetailing";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -39,6 +41,50 @@ const TARGET_FIELDS = {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Guarda #6: resolve quais daily_production_records estao em competencia FECHADA
+ * (regime !== 'open'). A rota UNITARIA barra mes fechado com 403; o bulk e
+ * MULTI-competencia, entao em vez de 403 no lote inteiro os records fechados sao
+ * REJEITADOS PARCIALMENTE (denied_closed). Assim um bulk legitimo de mes aberto
+ * nao e bloqueado se a selecao pegar 1 record fechado por acidente. Motivo da
+ * trava: um override plantado em mes fechado altera a comissao na PROXIMA
+ * reconsolidacao (bomba latente). Escala 1 query + cache de regime por competencia.
+ * Fail-open: erro de infra NAO inventa rejeicao (retorna conjunto vazio).
+ */
+async function fetchClosedDprIds(
+  supabase: SupabaseClient,
+  dprIds: string[]
+): Promise<Set<string>> {
+  const closed = new Set<string>();
+  const unique = [...new Set(dprIds.filter(Boolean))];
+  if (unique.length === 0) return closed;
+
+  const { data, error } = await supabase
+    .from("daily_production_records")
+    .select("id, movement_date")
+    .in("id", unique);
+  if (error || !data) return closed;
+
+  const regimeCache = new Map<string, MonthRegime>();
+  for (const r of data) {
+    if (!r.movement_date) continue;
+    const d = new Date(String(r.movement_date));
+    if (Number.isNaN(d.getTime())) continue;
+    const year = d.getUTCFullYear();
+    const month = d.getUTCMonth() + 1;
+    const key = `${year}-${month}`;
+    let regime = regimeCache.get(key);
+    if (regime === undefined) {
+      regime = await detectMonthRegime(supabase, year, month).catch(
+        () => "open" as MonthRegime
+      );
+      regimeCache.set(key, regime);
+    }
+    if (regime !== "open") closed.add(String(r.id));
+  }
+  return closed;
 }
 
 // audit_logs RLS bloqueia INSERT via PostgREST. Mesmo padrao usado em
@@ -183,10 +229,16 @@ export async function POST(req: Request) {
 
     // ---------------- UPDATE loop (proposalIds existentes) ----------------
     let deniedIds: string[] = [];
+    // Guarda #6: records de competencia FECHADA sao rejeitados PARCIALMENTE aqui
+    // (nunca 403 no lote). Coletados em denied_closed e devolvidos na resposta.
+    const deniedClosedIds: string[] = [];
 
     // Production record IDs afetados nesta operacao (para recalc no fim).
     const affectedProductionRecordIds = new Set<string>();
 
+    // Busca as propostas ANTES do loop para conhecer os daily_production_record_id
+    // (necessarios p/ resolver a competencia — e o regime — de cada uma).
+    let fetched: Array<Record<string, unknown>> = [];
     if (proposalIds.length > 0) {
       const { data: targets, error: fetchErr } = await supabase
         .from("promoter_proposal_commissions")
@@ -202,11 +254,28 @@ export async function POST(req: Request) {
         );
       }
 
-      const fetched = (targets ?? []) as Array<Record<string, unknown>>;
+      fetched = (targets ?? []) as Array<Record<string, unknown>>;
       const fetchedIds = new Set(fetched.map((r) => String(r.id)));
       deniedIds = proposalIds.filter((id) => !fetchedIds.has(id));
+    }
 
+    // Conjunto de daily_production_records em competencia FECHADA (guarda #6):
+    // cobre os records do INSERT (productionRecordIds) e os das propostas do UPDATE.
+    const closedDprIds = await fetchClosedDprIds(supabase, [
+      ...productionRecordIds,
+      ...fetched
+        .map((r) => String(r.daily_production_record_id ?? ""))
+        .filter(Boolean),
+    ]);
+
+    if (fetched.length > 0) {
       for (const row of fetched) {
+        // Guarda #6: proposta de competencia FECHADA -> denied_closed, nao edita.
+        const dprIdGuard = String(row.daily_production_record_id ?? "");
+        if (dprIdGuard && closedDprIds.has(dprIdGuard)) {
+          deniedClosedIds.push(String(row.id));
+          continue;
+        }
         const oldRaw = Number(row[targetConfig.column] ?? 0);
         // Display sempre em escala 0..100 para audit; converte com base
         // no dbScaleFactor (share_percent_override armazena 0..1).
@@ -285,6 +354,11 @@ export async function POST(req: Request) {
       );
 
       for (const recordId of productionRecordIds) {
+        // Guarda #6: record de competencia FECHADA -> denied_closed, nao cria override.
+        if (closedDprIds.has(recordId)) {
+          deniedClosedIds.push(recordId);
+          continue;
+        }
         const promoterId = recordById.get(recordId);
         if (!promoterId) {
           failures.push({
@@ -371,6 +445,9 @@ export async function POST(req: Request) {
       created_count: createdCount,
       denied_count: deniedIds.length,
       denied_ids: deniedIds.length > 0 ? deniedIds : undefined,
+      // Guarda #6: records de competencia FECHADA rejeitados (nao 403 no lote).
+      denied_closed_count: deniedClosedIds.length,
+      denied_closed_ids: deniedClosedIds.length > 0 ? deniedClosedIds : undefined,
       failure_count: failures.length,
       failures: failures.length > 0 ? failures : undefined,
       recalc_failures: recalcFailures,

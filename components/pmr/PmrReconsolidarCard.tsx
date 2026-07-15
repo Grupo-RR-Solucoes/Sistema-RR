@@ -77,6 +77,19 @@ const brl = (n: number) =>
 
 /** Competencia mais recente PLAUSIVELMENTE fechada = mes anterior ao corrente. */
 function competenciaPadrao(): { year: number; month: number } {
+  // Guarda #7: o aviso do /promotores linka `/importacoes?reconsolidar=YYYY-MM`
+  // p/ chegar aqui com a competencia da acao latente JA preenchida (o fluxo
+  // Simular->Reconsolidar existente, sem bypass novo). Sem o param, cai no
+  // default (mes anterior ao corrente).
+  if (typeof window !== "undefined") {
+    const q = new URLSearchParams(window.location.search).get("reconsolidar");
+    const m = q && /^(\d{4})-(\d{2})$/.exec(q);
+    if (m) {
+      const year = Number(m[1]);
+      const month = Number(m[2]);
+      if (year > 2000 && month >= 1 && month <= 12) return { year, month };
+    }
+  }
   const hoje = new Date();
   const y = hoje.getFullYear();
   const m = hoje.getMonth(); // 0-based => ja e o mes ANTERIOR em base 1

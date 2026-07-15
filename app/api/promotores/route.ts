@@ -107,6 +107,36 @@ function clearPromoterReadCaches() {
   clearMemoryCache("dashboard:");
 }
 
+/**
+ * Guarda #7 (AVISAR, NAO barrar): as acoes que mexem em INPUT do consolidador
+ * (reassign_proposal, target_upsert, agreement_upsert, prefixar_metas) sao
+ * LEGITIMAS em mes fechado — o Diego reatribui balde/master depois do fechamento
+ * (medido: 38 em abril, 74 em junho). Barrar quebraria o fluxo dele. Mas a
+ * mudanca fica LATENTE: o PMR ja gravado so reflete apos reconsolidar. Entao a
+ * resposta carrega competencia_fechada + o alvo, e a UI oferece "Reconsolidar
+ * competencia" (o fluxo Simular->Reconsolidar que ja existe, sem bypass novo).
+ *
+ * Mes ABERTO -> objeto vazio (nenhum flag, nenhum aviso). NAO muda numero nenhum.
+ * detectMonthRegime falha -> trata como 'open' (nao inventa aviso por erro de infra).
+ */
+async function flagCompetenciaFechada(
+  supabase: SupabaseClient,
+  year: number,
+  month: number
+): Promise<Record<string, unknown>> {
+  const regime: MonthRegime = await detectMonthRegime(supabase, year, month).catch(
+    () => "open" as MonthRegime
+  );
+  if (regime === "open") return {};
+  return {
+    competencia_fechada: true,
+    regime,
+    reconsolidar: { year, month },
+    aviso:
+      "Competencia fechada — a alteracao foi salva, mas o repasse so muda apos reconsolidar a competencia (Fechamento -> Reconsolidar competencia).",
+  };
+}
+
 export async function GET(req: Request) {
   try {
     const { user, supabase } = await withAuthenticatedAnon();
@@ -273,7 +303,10 @@ export async function POST(req: Request) {
         auditActor
       );
 
-      return NextResponse.json({ success: true });
+      // AVISAR (nao barrar): meta e input do consolidador (faixa/repasse) — em
+      // mes fechado a mudanca so vale apos reconsolidar.
+      const aviso = await flagCompetenciaFechada(supabase, year, month);
+      return NextResponse.json({ success: true, ...aviso });
     }
 
     if (action === "reassign_proposal") {
@@ -290,7 +323,7 @@ export async function POST(req: Request) {
 
       const { data: currentRecord, error: currentError } = await supabase
         .from("daily_production_records")
-        .select("id, assigned_promoter_id")
+        .select("id, assigned_promoter_id, movement_date")
         .eq("id", dailyProductionRecordId)
         .single();
 
@@ -330,7 +363,16 @@ export async function POST(req: Request) {
         auditActor
       );
 
-      return NextResponse.json({ success: true });
+      // AVISAR (nao barrar): a reatribuicao SEMPRE funciona, inclusive em mes
+      // fechado (fluxo real do Diego: migracao de balde/master pos-fechamento).
+      // Em mes fechado a comissao so migra de promotor apos reconsolidar.
+      const mv = currentRecord.movement_date
+        ? new Date(String(currentRecord.movement_date))
+        : null;
+      const aviso = mv
+        ? await flagCompetenciaFechada(supabase, mv.getUTCFullYear(), mv.getUTCMonth() + 1)
+        : {};
+      return NextResponse.json({ success: true, ...aviso });
     }
 
     if (action === "agreement_upsert") {
@@ -416,7 +458,10 @@ export async function POST(req: Request) {
         auditActor
       );
 
-      return NextResponse.json({ success: true });
+      // AVISAR (nao barrar): acordo e input do share do consolidador — em mes
+      // fechado so vale apos reconsolidar.
+      const aviso = await flagCompetenciaFechada(supabase, year, month);
+      return NextResponse.json({ success: true, ...aviso });
     }
 
     if (action === "discount_upsert") {
@@ -616,6 +661,10 @@ export async function POST(req: Request) {
         auditActor
       );
 
+      // AVISAR (nao barrar): metas prefixadas sao input do consolidador — em mes
+      // fechado so valem apos reconsolidar (prefixar mira quase sempre mes futuro,
+      // entao o flag raramente aparece; existe para o caso de prefixar retroativo).
+      const aviso = await flagCompetenciaFechada(supabase, year, month);
       return NextResponse.json({
         success: true,
         origem: mesAnterior,
@@ -623,6 +672,7 @@ export async function POST(req: Request) {
         prefixadas,
         mantidas,
         total_origem: rows.length,
+        ...aviso,
       });
     }
 
