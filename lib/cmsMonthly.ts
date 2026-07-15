@@ -152,7 +152,7 @@ export async function consolidateMonthlyFromCms(
   const { year, month, companyId, promoterId } = params;
 
   const promoters = await fetchAllPaged<any>(() => {
-    let query = supabase.from("promoters").select("id, company_id, name, active");
+    let query = supabase.from("promoters").select("id, company_id, name, active, is_master");
     if (companyId) query = query.eq("company_id", companyId);
     if (promoterId) query = query.eq("id", promoterId);
     return query;
@@ -247,12 +247,30 @@ export async function consolidateMonthlyFromCms(
         companyId: meta?.company_id ?? null,
       };
 
-    const productionCommission = a.credit;
+    // MASTER NAO RECEBE COMISSAO NO LEDGER DERIVADO.
+    // O cms e ground-truth e a tabela-espelho (cms_promoter_entries) fica
+    // INTACTA — os valores da fonte (credito do promotor + comissao-empresa)
+    // continuam la para a reconciliacao. Aqui, ao DERIVAR o PMR, aplicamos a
+    // taxonomia do proprio SISTEMA: "master = balde/CNPJ" (j_keys
+    // key_type=MASTER, refletido em promoters.is_master), que NAO e promotor e
+    // nao recebe comissao. E a MESMA regra que telas, daily, closing, /equipe e
+    // projecao ja aplicam — so que aqui, na origem da derivacao, para nenhum
+    // consumidor downstream precisar lembrar do filtro.
+    //
+    // Nao editamos a fonte, nao apagamos a linha (production_value etc. seguem):
+    // so zeramos credito/seguro do master. NAO "consertar" isto achando que e
+    // bug. Caso concreto: o 13o de fev/2026 (contrato 201830802, chave
+    // JG626476) foi keyado na master pela FONTE, sem individuo cadastrado; se o
+    // negocio quiser que essa comissao va para uma pessoa, e correcao de
+    // DADO/ATRIBUICAO na fonte (cadastrar promotor + re-key), nao aqui.
+    const isMasterPromoter = meta?.is_master === true;
+
+    const productionCommission = isMasterPromoter ? 0 : a.credit;
     // cms é ground-truth: promoter_insurance já vem calculado pela fonte — NÃO
     // aplica share por penetração aqui, então o bug de cortes (share_scale_tier)
     // NÃO afeta a comissão do cms. A penetração abaixo é só MÉTRICA (base net,
     // "segurado" = insurance_premium>0, critério do próprio cms).
-    const insuranceCommission = a.insurance;
+    const insuranceCommission = isMasterPromoter ? 0 : a.insurance;
     const finalCommission = productionCommission + insuranceCommission;
 
     const target = targets.find((t: any) => t.promoter_id === id);
