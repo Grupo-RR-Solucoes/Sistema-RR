@@ -4,6 +4,7 @@ import {
   apiGuardErrorResponse,
   withSocioOrFuncionarioAdmin,
 } from "@/lib/auth/guards";
+import { detectMonthRegime } from "@/lib/cmsMonthly";
 
 // ============================================================
 // FRENTE C — API da tela /metas.
@@ -53,6 +54,14 @@ export async function GET(req: Request) {
     }
     const competencia = competenciaOf(year, month);
 
+    // REGIME da competencia: decide QUAIS sources do PMR entram na producao, para
+    // nao misturar linhas de origens diferentes (o mesmo criterio do dre.ts). open
+    // -> 'daily' (mes vivo); cms -> 'cms' (jan-mai seed); fechamento -> RR+ADS
+    // consolidados ('fechamento','bbts'). Sem isto a query puxaria qualquer source.
+    const regime = await detectMonthRegime(supabase, year, month).catch(() => "open" as const);
+    const regimeSources =
+      regime === "cms" ? ["cms"] : regime === "open" ? ["daily"] : ["fechamento", "bbts"];
+
     const [
       { data: companies },
       { data: promotersData },
@@ -80,7 +89,8 @@ export async function GET(req: Request) {
           .from("promoter_monthly_results")
           .select("promoter_id, production_value")
           .eq("year", year)
-          .eq("month", month);
+          .eq("month", month)
+          .in("source", regimeSources);
         if (companyId) q = q.eq("company_id", companyId);
         return q;
       })(),
@@ -92,15 +102,29 @@ export async function GET(req: Request) {
     const promoterMap = new Map(
       (promotersData || []).map((p: any) => [p.id, p])
     );
-    const targetMap = new Map(
-      (targets || []).map((t: any) => [t.promoter_id, t])
-    );
+    // A META e DO PROMOTOR (decisao de negocio): promotor com linha RR + linha ADS
+    // tem meta e producao SOMADAS, e a faixa/repasse (Frente C) saem do consolidado.
+    // Por isso agregamos SOMANDO por promoter_id, em vez do Map-overwrite antigo
+    // (new Map(rows.map(r => [promoter_id, r])), onde a ultima linha vencia e
+    // truncava a outra empresa). No modo "1 empresa" (companyId passado) cada
+    // promotor tem 1 linha, entao a soma == a propria linha: no-op.
+    const targetMap = new Map<string, { meta: number; meta_1: number; meta_2: number }>();
+    for (const t of (targets || []) as any[]) {
+      const cur = targetMap.get(t.promoter_id) || { meta: 0, meta_1: 0, meta_2: 0 };
+      cur.meta += toNumber(t.meta);
+      cur.meta_1 += toNumber(t.meta_1);
+      cur.meta_2 += toNumber(t.meta_2);
+      targetMap.set(t.promoter_id, cur);
+    }
     const repasseMap = new Map(
       (repasses || []).map((r: any) => [r.promoter_id, r])
     );
-    const resultMap = new Map(
-      (results || []).map((r: any) => [r.promoter_id, r])
-    );
+    const resultMap = new Map<string, { production_value: number }>();
+    for (const r of (results || []) as any[]) {
+      const cur = resultMap.get(r.promoter_id) || { production_value: 0 };
+      cur.production_value += toNumber(r.production_value);
+      resultMap.set(r.promoter_id, cur);
+    }
 
     // Universo de linhas: promotores com meta, escala ou producao na competencia.
     const ids = new Set<string>([
