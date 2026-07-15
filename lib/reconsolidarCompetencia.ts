@@ -49,6 +49,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { consolidateMonthlyGroup } from "./bbtsOrchestrator.ts";
 import { detectMonthRegime, type MonthRegime } from "./cmsMonthly.ts";
+import { persistRulesFingerprint } from "./rulesFingerprint.ts";
 
 type SupabaseLike = SupabaseClient;
 
@@ -193,6 +194,31 @@ export async function reconsolidarCompetenciaFechada(
         .delete()
         .in("id", apagarIds.slice(i, i + 100));
       if (error) throw error;
+    }
+  }
+
+  // ---- CAMADA 2 (detector de regua obsoleta por HASH DE CONTEUDO) ----
+  // Grava o baseline do fingerprint das reguas que produziram este PMR fechado.
+  // A partir daqui a competencia deixa de ser DESCONHECIDO e vira OK; se alguem
+  // editar uma regua depois SEM reconsolidar, o detector a marca STALE.
+  //
+  // BEST-EFFORT de proposito: se a gravacao do fingerprint falhar, a competencia
+  // apenas FICA DESCONHECIDO (estado honesto) — NAO derruba a reconsolidacao, que
+  // ja escreveu o PMR (o ledger nao pode depender do detector auxiliar).
+  //
+  // MICRO-RACE registrada: consolidateMonthlyGroup leu as reguas em T e este
+  // fingerprint le de novo em T+e; se uma regua mudar no intervalo, o baseline
+  // gravado nao corresponde ao PMR calculado. Aceitavel (reconsolidacao e manual
+  // e rara). Ver lib/rulesFingerprint.ts e a migration da Camada 2.
+  if (!dryRun) {
+    try {
+      await persistRulesFingerprint(supabase, year, month, "fechado");
+    } catch (e) {
+      console.warn(
+        `[reconsolidar] ${competencia}: falha ao gravar rules_fingerprint (Camada 2) — ` +
+          `competencia fica DESCONHECIDO ate a proxima reconsolidacao. Detalhe:`,
+        e,
+      );
     }
   }
 
