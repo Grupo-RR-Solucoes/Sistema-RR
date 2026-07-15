@@ -1,8 +1,12 @@
 /*
- * ITEM 3 e2e — detecção de origem + import real da diária de seguro (Prestamista).
+ * ITEM 3 e2e — detecção de origem + classificação da diária de seguro (Prestamista).
+ * READ-ONLY: NÃO grava em produção (um teste não precisa gravar pra provar que
+ * funciona). O import roda em dryRun:true — só PROJETA. Antes gravava dado REAL de
+ * julho com dryRun:false (blindado 2026-07: era um "test" que escrevia em prod).
  * A) detectDailySource classifica os arquivos reais.
- * B) importa Prestamista (1).xlsx (7 propostas julho) e confirma que prod_segurada
- *    fica true SÓ nas que têm o campo "Seguro" preenchido.
+ * B) dry-run de Prestamista (1).xlsx (7 propostas julho): confirma que o parser
+ *    marca prod_segurada true SÓ nas que têm "Seguro" preenchido (contadores do
+ *    dry-run) e confere contra o dado já importado pela via oficial (read-back).
  */
 require("./_ts_register.cjs");
 const fs = require("fs");
@@ -42,7 +46,11 @@ async function main() {
   ok("headers Promotiva (MCI+Proposta) -> promotiva", detectDailySource({ sheetNames: ["Plan1"], headers: ["Data Movimento", "MCI", "Chave J", "Proposta", "Valor Financiado"] }) === "promotiva");
   ok("Crédito ADS-BBTS.xlsx (fechamento PDF-export) -> null (não é diária)", detectDailySource(headerOf(DL + "/Crédito ADS-BBTS.xlsx")) === null);
 
-  console.log("\n=== ITEM 3 — B) IMPORT REAL Prestamista (1).xlsx (prod_segurada) ===\n");
+  // READ-ONLY: um TESTE nao grava em producao. O import roda em dryRun:true (so
+  // PROJETA); a classificacao prod_segurada e provada pelos contadores do dry-run
+  // (res.seguradas/res.nao_seguradas, computados no parser antes de qualquer
+  // escrita), e o read-back confere contra o dado JA importado pela via oficial.
+  console.log("\n=== ITEM 3 — B) DRY-RUN Prestamista (1).xlsx (prod_segurada, NADA gravado) ===\n");
   const wb = XLSX.read(fs.readFileSync(DL + "/Prestamista (1).xlsx"), { type: "buffer" });
   const rows = XLSX.utils.sheet_to_json(wb.Sheets["Prestamista"]);
   const esperado = new Map(); // contrato -> segurada?
@@ -50,13 +58,18 @@ async function main() {
     const contrato = String(r["Contrato"]).trim();
     esperado.set(contrato, Boolean(r["Seguro"] && String(r["Seguro"]).trim()));
   }
-  console.log("propostas no arquivo:", rows.length, "| seguradas esperadas:", [...esperado.values()].filter(Boolean).length);
+  const seguradasEsperadas = [...esperado.values()].filter(Boolean).length;
+  console.log("propostas no arquivo:", rows.length, "| seguradas esperadas:", seguradasEsperadas);
 
-  const res = await importAdsSeguroDaily(sb, { rows, fileName: "Prestamista (1).xlsx", dryRun: false });
-  console.log(`import: processadas=${res.processadas} seguradas=${res.seguradas} nao_seguradas=${res.nao_seguradas} inseridas=${res.inseridas} atualizadas=${res.atualizadas} puladas=${res.puladas}`);
+  const res = await importAdsSeguroDaily(sb, { rows, fileName: "Prestamista (1).xlsx", dryRun: true });
+  console.log(`DRY-RUN: processadas=${res.processadas} seguradas=${res.seguradas} nao_seguradas=${res.nao_seguradas} inseriria=${res.inseridas} atualizaria=${res.atualizadas} pularia=${res.puladas} (NADA gravado)`);
   if (res.vfin_divergente.length) console.log("avisos vfin divergente:", JSON.stringify(res.vfin_divergente));
 
-  // read-back das que foram gravadas (seguradas OU já existiam)
+  // Prova da classificacao SEM gravar: os contadores do parser (dry-run) batem
+  // com o esperado do arquivo.
+  ok("parser classifica seguradas certo (dry-run)", res.seguradas === seguradasEsperadas, `res.seguradas=${res.seguradas} esperado=${seguradasEsperadas}`);
+
+  // read-back: confere contra o dado JA importado pela via oficial (read-only)
   const contratos = [...esperado.keys()];
   const { data: got } = await sb.from("daily_production_records")
     .select("proposal_number, prod_segurada, insurance_type, insurance_value, has_insurance, insurance_number")
