@@ -20,9 +20,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //     zera sozinho quem não remunera por prazo (ex: 36 parcelas -> %TRP 0).
 //   - Exclui cancelamento (raw_payload.__bbts_meta.cancelado / status CANCELADO)
 //     e SRCC restrita (is_srcc_restricted).
-// SEGURO: régua BBTS = ESTOQUE D0 0,10% / SLIP 0,35% × insurance_value (Valor
-//   Total do Crédito). Só linhas 'calculo' (as de 'debito' já ficaram fora na
-//   carga BBTS-2b).
+// SEGURO: régua BBTS lida da FONTE VERSIONADA (bbts_rule_versions.regra_json.
+//   seguro) via resolveBbtsRegraDb — ESTOQUE = estoque.pct; SLIP = faixa POR
+//   PRAZO (term_months). NÃO há mais constante em código: quando a BBTS muda as
+//   faixas, muda a régua e o cálculo acompanha. Base = insurance_value. Só
+//   linhas 'calculo' (as de 'debito' já ficaram fora na carga BBTS-2b). Fonte
+//   INDEPENDENTE da do RR (insurance_slip_rules, números diferentes) — não unir.
 // COMISSÃO DO PROMOTOR = comissão-empresa × acordo (resolvePromoterShareSync).
 //   NÃO decide meta nem faixa de penetração aqui — o orquestrador BBTS-2d injeta
 //   via statusMetaByPromoter / seguroShareByPromoter. Ausentes => comportamento
@@ -39,9 +42,10 @@ import { calcularOperacao } from "./motor.ts";
 import { buildTrpCreditProvider } from "./trp/creditTrpProvider.ts";
 import { fetchPromoterShareData, resolvePromoterShareSync } from "./proposalDetailing.ts";
 import { individualPenetration, insuranceShareForPenetration } from "./insurancePenetration.ts";
+import { resolveBbtsRegraDb } from "./bbts/resolveBbtsRegra.ts";
+import { seguroRateFromRegra } from "./bbts/seguroBbts.ts";
 
 export const BBTS_COMPANY_ID = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
-const SEGURO_RATE = { ESTOQUE: 0.001, SLIP: 0.0035 }; // 0,10% ESTOQUE D0 / 0,35% SLIP
 const TETO_AVISTA = 0.058; // teto 5,80% à vista; excedente vira diferido (100% empresa)
 // FAIXA 3 herdada do GRUPO (dado oficial da aba Validador da Promotiva, jun/2026).
 // production_value >= 3.000.000 => FAIXA_3 (getProductionBandByValue). É a faixa
@@ -56,10 +60,6 @@ function toNumber(v: unknown): number {
 }
 function normText(v: unknown): string {
   return String(v ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
-}
-
-function seguroRate(tipo: unknown): number {
-  return normText(tipo).includes("SLIP") ? SEGURO_RATE.SLIP : SEGURO_RATE.ESTOQUE;
 }
 
 async function fetchAllPaged<T = any>(build: () => any): Promise<T[]> {
@@ -144,6 +144,24 @@ export async function consolidateMonthlyFromBbts(
   // é único (a competência consolidada), então o preload é 1 competência. Sem
   // db-source, provider=undefined -> motor lê o JSON (comportamento histórico).
   const trpProvider = await buildTrpCreditProvider([compDate]);
+
+  // SEGURO — régua BBTS versionada da competência (mesmo padrão do trpProvider do
+  // crédito). O resolver já faz o fallback: junho, sem régua própria, herda a de
+  // julho (direcao='posterior', isFallback=true) — coerente com o crédito. É lido
+  // com o MESMO client (service_role; bbts_rule_versions é RLS default-deny).
+  const bbtsRegra = await resolveBbtsRegraDb({ competencia: compKey }, supabase as any);
+  const regraSeguro = bbtsRegra?.regra ?? null;
+  if (!bbtsRegra) {
+    avisos.push(`SEGURO: nenhuma régua BBTS encontrada (bbts_rule_versions) para ${compKey} nem em fallback — seguro NÃO calculado (sem chute).`);
+  } else if (!regraSeguro?.seguro) {
+    avisos.push(`SEGURO: régua BBTS de ${bbtsRegra.competenciaFornecedora} sem seção 'seguro' — seguro NÃO calculado (sem chute).`);
+  } else if (bbtsRegra.isFallback) {
+    avisos.push(`SEGURO: régua de ${compKey} por FALLBACK (${bbtsRegra.direcao}) — usando a tabela de ${bbtsRegra.competenciaFornecedora}.`);
+  }
+  // Propostas SLIP cujo seguro NÃO foi calculado (prazo ausente ou faixa inexistente):
+  // avisadas nominalmente, jamais estimadas com taxa fixa.
+  const seguroNaoCalculado: Array<{ contrato: string; motivo: string }> = [];
+
   let ignoradasBalde = 0, ignoradasCancel = 0, ignoradasSrcc = 0;
   // Detalhe por proposta (conferência).
   const propostas: Array<{ contrato: string; vfin: number; juros: number; parc: number; conv: string; trp: number; avista: number; diferido: number; comEmpresa: number; promoter_id: string }> = [];
@@ -190,10 +208,21 @@ export async function consolidateMonthlyFromBbts(
     const comEmpAvista = gross * avistaPercent;
     const diferido = gross * Math.max(creditPercent - avistaPercent, 0);
 
-    // SEGURO — régua BBTS por tipo (ESTOQUE/SLIP) × base (insurance_value).
+    // SEGURO — taxa lida da RÉGUA versionada (ESTOQUE = estoque.pct; SLIP = faixa
+    // por term_months). Prazo ausente / faixa inexistente / régua sem seguro =>
+    // NÃO calcula e AVISA (nunca volta ao 0,35 fixo). Só há base quando
+    // insurance_value > 0.
     const seguroBase = toNumber(r.insurance_value);
     const tipo = meta.seguro_tipo ?? r.insurance_type;
-    const comEmpSeguro = seguroBase * seguroRate(tipo);
+    let comEmpSeguro = 0;
+    if (seguroBase > 0) {
+      const taxa = seguroRateFromRegra(regraSeguro, tipo, r.term_months);
+      if (taxa.rate === null) {
+        seguroNaoCalculado.push({ contrato: String(r.proposal_number), motivo: taxa.motivo });
+      } else {
+        comEmpSeguro = seguroBase * taxa.rate;
+      }
+    }
 
     const a = agg.get(pid) || { prod: 0, insuredProd: 0, comEmpAvista: 0, diferido: 0, seguroBase: 0, comEmpSeguro: 0, count: 0 };
     a.prod += gross;
@@ -213,6 +242,9 @@ export async function consolidateMonthlyFromBbts(
   }
   avisos.push("LIMITAÇÃO (a): sem 'Tipo de Liberação' no fechamento PDF — TODAS as linhas de seguro contam na penetração.");
   avisos.push(`Competência ${compKey}: crédito pela TRP Promotiva (matriz por competência), teto 5,80% x acordo. taxa_relatorio NÃO entra na comissão (só sobra de caixa).`);
+  if (seguroNaoCalculado.length > 0) {
+    avisos.push(`SEGURO NÃO calculado em ${seguroNaoCalculado.length} linha(s) (sem chute): ${seguroNaoCalculado.map((s) => `${s.contrato} (${s.motivo})`).join("; ")}`);
+  }
 
   // 3. Acordo (cascata) + escala de seguro. ESCOPO = só a ADS (a produção/volume
   //    da escala do promotor não pode misturar RR — o BBTS-2d é quem injeta a
@@ -328,6 +360,18 @@ export async function consolidateMonthlyFromBbts(
     payload: upserts,
     avisos,
     propostas, // detalhe por proposta (conferência)
+    // Proveniência da régua de seguro (conferência): versão usada + fallback.
+    seguro_regua: bbtsRegra
+      ? {
+          competencia_fornecedora: bbtsRegra.competenciaFornecedora,
+          is_fallback: bbtsRegra.isFallback,
+          direcao: bbtsRegra.direcao,
+          version_id: bbtsRegra.versionId,
+          version_no: bbtsRegra.versionNo,
+          tem_seguro: !!regraSeguro?.seguro,
+        }
+      : null,
+    seguro_nao_calculado: seguroNaoCalculado, // SLIP sem prazo/faixa: avisado, nunca chutado
     table,
   };
 }
