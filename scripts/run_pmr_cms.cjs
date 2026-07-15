@@ -22,8 +22,14 @@ const sb = createClient(
   { auth: { persistSession: false } }
 );
 const YEAR = 2026;
-// meses via argv (ex.: "node run_pmr_cms.cjs 2"); default = jan + mar.
-const MONTHS = process.argv.slice(2).length ? process.argv.slice(2).map(Number) : [1, 3];
+// BLINDAGEM 2026-07: default DRY-RUN. Antes gravava o PMR ao rodar, sem guarda.
+// Agora consolida SO com --apply (padrao do repo). O --apply e filtrado da lista
+// de meses (que tambem vem via argv).
+const rawArgs = process.argv.slice(2);
+const APPLY = rawArgs.includes("--apply");
+const monthArgs = rawArgs.filter((a) => a !== "--apply").map(Number).filter((n) => n >= 1 && n <= 12);
+// meses via argv (ex.: "node run_pmr_cms.cjs 2 --apply"); default = jan + mar.
+const MONTHS = monthArgs.length ? monthArgs : [1, 3];
 const MES = { 1: "JAN", 2: "FEV", 3: "MAR", 4: "ABR", 5: "MAI", 6: "JUN", 7: "JUL", 8: "AGO", 9: "SET", 10: "OUT", 11: "NOV", 12: "DEZ" };
 // valores de aceite conhecidos (informados pelo Diego) p/ Thaynara final.
 const THAYNARA_ESPERADO = { 2: "12.283,69", 3: "16.051,57" };
@@ -45,16 +51,22 @@ async function fetchAll(table, sel, filt) {
 }
 
 (async () => {
-  // ---------- BACKUP ----------
-  const backup = [];
-  for (const m of MONTHS) backup.push(...await fetchAll("promoter_monthly_results", "*", { year: YEAR, month: m }));
-  const backupName = `pmr_backup_${MONTHS.join("-")}_2026.json`;
-  const backupPath = path.join(__dirname, "..", "scratch", backupName);
-  fs.writeFileSync(backupPath, JSON.stringify(backup, null, 2));
-  console.log(`BACKUP: ${backup.length} linhas de PMR (meses ${MONTHS.join(",")}) salvas em scratch/${backupName}\n`);
+  if (!APPLY) {
+    console.log(">>> DRY-RUN: nada sera gravado. Rode com --apply para consolidar o PMR (source=cms).\n");
+  }
+
+  // ---------- BACKUP (so antes de gravar de verdade) ----------
+  if (APPLY) {
+    const backup = [];
+    for (const m of MONTHS) backup.push(...await fetchAll("promoter_monthly_results", "*", { year: YEAR, month: m }));
+    const backupName = `pmr_backup_${MONTHS.join("-")}_2026.json`;
+    const backupPath = path.join(__dirname, "..", "scratch", backupName);
+    fs.writeFileSync(backupPath, JSON.stringify(backup, null, 2));
+    console.log(`BACKUP: ${backup.length} linhas de PMR (meses ${MONTHS.join(",")}) salvas em scratch/${backupName}\n`);
+  }
 
   // ---------- GRAVA PMR (cms) ----------
-  console.log("===================== PASSO 3 — GRAVAR PMR (source=cms) =====================");
+  console.log(`===================== PASSO 3 — ${APPLY ? "GRAVAR" : "SIMULAR"} PMR (source=cms) =====================`);
   for (const m of MONTHS) {
     // MOV 3: detectClosedMonth foi REMOVIDO (booleano colapsado). A pergunta aqui e
     // binaria — "da pra gravar?" — entao e `regime !== open` (cms E fechamento fecham).
@@ -63,8 +75,12 @@ async function fetchAll(table, sel, filt) {
       console.log(`!! ${MES[m]}/${YEAR} NAO esta fechado (cms incompleto) — PULADO. NAO deveria ocorrer.`);
       continue;
     }
-    const res = await consolidateMonthlyFromCms(sb, { year: YEAR, month: m, companyId: null, promoterId: null });
-    console.log(`OK  ${MES[m]}/${YEAR}: PMR gravado (source=cms) p/ ${res.promoters_calculated} promotores.`);
+    if (APPLY) {
+      const res = await consolidateMonthlyFromCms(sb, { year: YEAR, month: m, companyId: null, promoterId: null });
+      console.log(`OK  ${MES[m]}/${YEAR}: PMR gravado (source=cms) p/ ${res.promoters_calculated} promotores.`);
+    } else {
+      console.log(`DRY-RUN  ${MES[m]}/${YEAR}: consolidaria o PMR (source=cms). NADA gravado. A auditoria abaixo compara o PMR ATUAL x cms.`);
+    }
   }
 
   // ---------- AUDITORIA 2 (sistema x cms) ----------
