@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
-import { hasSupabaseEnv } from "@/lib/supabaseAdmin";
+import { getSupabaseAdmin, hasSupabaseEnv } from "@/lib/supabaseAdmin";
+import { buildLedgerHealth, type LedgerHealth } from "@/lib/diagnostico/ledgerHealth";
 
 const criticalTables = [
   "companies",
@@ -77,6 +78,9 @@ export async function GET() {
           healthyTables: 0,
         },
         tables: [] satisfies TableStatus[],
+        // Sem env nao ha service_role para ler o PMR: a secao ledger fica nula
+        // (nao ha como afirmar integridade, nem faz sentido acender erro).
+        ledger: null,
         message:
           "As variaveis principais do Supabase ainda nao foram configuradas. O sistema pode compilar, mas nao consegue consultar o banco.",
       });
@@ -87,8 +91,38 @@ export async function GET() {
     );
     const healthyTables = tableChecks.filter((table) => table.ok).length;
 
+    // Secao 'ledger' — o vigia do cofre (promoter_monthly_results). ADITIVA:
+    // env/database/tables ficam INALTERADOS. Roda com service_role (as RPCs do
+    // detector sao grant-to-service_role e as tabelas RLS default-deny); por
+    // isso NAO reusa o client anon acima. Se falhar, reporta como erro do
+    // ledger em vez de derrubar o diagnostico inteiro (a base ja respondeu).
+    let ledger: LedgerHealth | { status: "erro"; checks: []; message: string } | null = null;
+    try {
+      ledger = await buildLedgerHealth(getSupabaseAdmin());
+    } catch (error: any) {
+      ledger = {
+        status: "erro",
+        checks: [],
+        message: `Falha ao avaliar o ledger (PMR): ${error?.message || "erro desconhecido"}`,
+      };
+    }
+
+    // Status do envelope: parte da saude das tabelas (ok|warning) e ESCALA com
+    // o ledger — 'error' se o ledger tem erro; 'warning' se so alerta. Info do
+    // ledger nunca muda o status.
+    const tablesStatus: "ok" | "warning" =
+      healthyTables === criticalTables.length ? "ok" : "warning";
+    let status: "ok" | "warning" | "error" = tablesStatus;
+    if (ledger && ledger.status === "erro") status = "error";
+    else if (ledger && ledger.status === "alerta" && status === "ok") status = "warning";
+
+    const tablesMessage =
+      healthyTables === criticalTables.length
+        ? "Ambiente e banco responderam normalmente."
+        : "O ambiente respondeu, mas ainda existe tabela critica sem leitura valida.";
+
     return NextResponse.json({
-      status: healthyTables === criticalTables.length ? "ok" : "warning",
+      status,
       timestamp: new Date().toISOString(),
       env,
       database: {
@@ -97,10 +131,15 @@ export async function GET() {
         healthyTables,
       },
       tables: tableChecks,
+      ledger,
       message:
-        healthyTables === criticalTables.length
-          ? "Ambiente e banco responderam normalmente."
-          : "O ambiente respondeu, mas ainda existe tabela critica sem leitura valida.",
+        status === "error"
+          ? "O ambiente respondeu, mas o cofre (PMR) tem invariante violada."
+          : status === "warning"
+            ? tablesStatus === "warning"
+              ? tablesMessage
+              : "Base integra; ha alerta brando no ledger (PMR)."
+            : tablesMessage,
     });
   } catch (error) {
     return apiGuardErrorResponse(error);
