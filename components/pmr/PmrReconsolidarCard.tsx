@@ -61,6 +61,19 @@ type DetectorTrp = {
   has_desconhecido?: boolean;
 };
 
+// Detector de regua obsoleta — CAMADA 2 (hash de conteudo). READ-ONLY:
+// /api/detector/regras recomputa o fingerprint das reguas MUTAVEIS SEM VERSAO
+// (share profile, goal_repasse, metas, j_keys, empresas RR, fonte) de cada
+// competencia fechada e confronta com o baseline gravado. Diferente da Camada 1,
+// e CROSS-competencia: um CONTADOR com os dois buckets SEPARADOS (alteradas =
+// STALE ; desconhecidas), nunca somados. A lista e clicavel (preenche o seletor
+// via o mesmo deep-link ?reconsolidar=YYYY-MM que ja existe).
+type DetectorRegras = {
+  counts?: { ok: number; stale: number; desconhecido: number };
+  alteradas?: Array<{ year: number; month: number }>;
+  desconhecidas?: Array<{ year: number; month: number }>;
+};
+
 const MESES = [
   "Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
@@ -106,6 +119,9 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
   const [detBusy, setDetBusy] = useState(false);
   const [detErro, setDetErro] = useState<string | null>(null);
   const [det, setDet] = useState<DetectorTrp | null>(null);
+  const [cam2Busy, setCam2Busy] = useState(false);
+  const [cam2Erro, setCam2Erro] = useState<string | null>(null);
+  const [cam2, setCam2] = useState<DetectorRegras | null>(null);
 
   const anos = useMemo(() => {
     const atual = new Date().getFullYear();
@@ -153,6 +169,42 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
       setDetErro(e?.message || "Falha de rede.");
     } finally {
       setDetBusy(false);
+    }
+  }
+
+  async function verificarRegras() {
+    setCam2Erro(null);
+    setCam2(null);
+    setCam2Busy(true);
+    try {
+      const r = await fetch(`/api/detector/regras`);
+      const json = await r.json().catch(() => null);
+      if (!r.ok) {
+        setCam2Erro(json?.error || `A rota respondeu ${r.status}.`);
+        return;
+      }
+      setCam2((json || {}) as DetectorRegras);
+    } catch (e: any) {
+      setCam2Erro(e?.message || "Falha de rede.");
+    } finally {
+      setCam2Busy(false);
+    }
+  }
+
+  // Clique numa competencia da lista do contador: preenche o seletor (Ano/Mes) e
+  // sincroniza o deep-link ?reconsolidar=YYYY-MM (o mesmo mecanismo do aviso do
+  // /promotores), sem recarregar a pagina. Dai o operador Simula -> Reconsolida.
+  function irPara(y: number, m: number) {
+    setYear(y);
+    setMonth(m);
+    setDet(null);
+    setDetErro(null);
+    setRes(null);
+    setErro(null);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("reconsolidar", `${y}-${String(m).padStart(2, "0")}`);
+      window.history.replaceState(null, "", url.toString());
     }
   }
 
@@ -231,6 +283,14 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
               title="Compara a versao da TRP que gerou o PMR com a vigente hoje. Nao grava nada."
             >
               {detBusy ? "Verificando…" : "Verificar TRP"}
+            </Button>
+            <Button
+              variant="secundario"
+              onClick={() => void verificarRegras()}
+              disabled={busy !== null || cam2Busy}
+              title="Camada 2: recomputa o hash das reguas (share, metas, repasse, chaves, fonte) de todas as competencias fechadas e mostra quais mudaram desde o calculo. Nao grava nada."
+            >
+              {cam2Busy ? "Verificando…" : "Verificar regras"}
             </Button>
             <Button
               variant="secundario"
@@ -318,6 +378,88 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
               ) : null}
             </div>
           </>
+        ) : null}
+
+        {cam2Erro ? (
+          <Banner variant="warn">
+            <b>Nao foi possivel verificar as reguas (Camada 2).</b>
+            <div className="det">{cam2Erro}</div>
+          </Banner>
+        ) : null}
+
+        {cam2 ? (
+          <div className="pmrrec__cam2">
+            <div className="pmrrec__chips">
+              <Chip variant={(cam2.counts?.stale ?? 0) > 0 ? "warn" : "neutral"}>
+                {cam2.counts?.stale ?? 0} com regras alteradas
+              </Chip>
+              <Chip variant={(cam2.counts?.desconhecido ?? 0) > 0 ? "risk" : "neutral"}>
+                {cam2.counts?.desconhecido ?? 0} desconhecidas
+              </Chip>
+              <Chip variant={(cam2.counts?.ok ?? 0) > 0 ? "ok" : "neutral"}>
+                {cam2.counts?.ok ?? 0} OK
+              </Chip>
+            </div>
+
+            {(cam2.alteradas?.length ?? 0) > 0 ? (
+              <div className="cam2-grp">
+                <span className="cam2-grp__l">
+                  <b>Regras mudaram desde o calculo</b> — clique para reconsolidar:
+                </span>
+                <div className="cam2-grp__list">
+                  {cam2.alteradas!.map((c) => (
+                    <button
+                      key={`s-${c.year}-${c.month}`}
+                      type="button"
+                      className="cam2-comp cam2-comp--stale"
+                      onClick={() => irPara(c.year, c.month)}
+                    >
+                      {String(c.month).padStart(2, "0")}/{c.year}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {(cam2.desconhecidas?.length ?? 0) > 0 ? (
+              <div className="cam2-grp">
+                <span className="cam2-grp__l">
+                  <b>Desconhecidas</b> (fechadas antes do rastreamento — sem baseline; a proxima
+                  reconsolidacao grava o baseline e o estado passa a ser confiavel):
+                </span>
+                <div className="cam2-grp__list">
+                  {cam2.desconhecidas!.map((c) => (
+                    <button
+                      key={`d-${c.year}-${c.month}`}
+                      type="button"
+                      className="cam2-comp cam2-comp--desc"
+                      onClick={() => irPara(c.year, c.month)}
+                    >
+                      {String(c.month).padStart(2, "0")}/{c.year}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {(cam2.alteradas?.length ?? 0) === 0 && (cam2.desconhecidas?.length ?? 0) === 0 ? (
+              <Banner variant="ok">
+                <b>Nenhuma competencia com regras alteradas.</b>
+                <div className="det">
+                  Todas as competencias fechadas rastreadas batem com as reguas vigentes. STALE e
+                  DESCONHECIDO sao estados distintos — aqui os dois estao zerados.
+                </div>
+              </Banner>
+            ) : null}
+
+            <p className="pmrrec__hint">
+              <b>Verificar regras</b> cobre as reguas MUTAVEIS SEM VERSAO (share, metas, repasse,
+              chaves, empresas RR e a fonte). <b>Limitacao conhecida:</b> a fonte usa agregado leve —
+              edicao manual no Studio dentro do jsonb (% a-vista / SRCC) ou de taxa/prazo pode
+              escapar; reatribuir promotor ja e avisado pela tela de Promotores. Mudanca na escada
+              entrante (share_scale) nao e detectada ate a escala entrar em uso.
+            </p>
+          </div>
         ) : null}
 
         {erro ? (
@@ -461,6 +603,48 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
           flex-wrap: wrap;
           gap: 8px;
           margin-top: 10px;
+        }
+        .pmrrec__cam2 {
+          margin-top: 12px;
+          padding-top: 12px;
+          border-top: 1px dashed rgba(20, 33, 61, 0.14);
+        }
+        .cam2-grp {
+          margin-top: 10px;
+        }
+        .cam2-grp__l {
+          display: block;
+          font-size: 12px;
+          line-height: 1.5;
+          color: var(--ink-soft, #4a5568);
+          margin-bottom: 6px;
+        }
+        .cam2-grp__list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .cam2-comp {
+          font-family: var(--font-mono, ui-monospace, monospace);
+          font-size: 12px;
+          font-weight: 700;
+          font-variant-numeric: tabular-nums;
+          padding: 5px 10px;
+          border-radius: 8px;
+          cursor: pointer;
+          border: 1px solid transparent;
+          background: rgba(20, 33, 61, 0.04);
+          color: var(--ink, #14213d);
+        }
+        .cam2-comp:hover {
+          text-decoration: underline;
+        }
+        .cam2-comp--stale {
+          border-color: rgba(193, 120, 8, 0.4);
+          background: rgba(193, 120, 8, 0.08);
+        }
+        .cam2-comp--desc {
+          border-color: rgba(20, 33, 61, 0.18);
         }
         .pmrrec__stats {
           display: grid;
