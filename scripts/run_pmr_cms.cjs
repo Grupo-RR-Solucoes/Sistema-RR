@@ -92,6 +92,17 @@ async function fetchAll(table, sel, filt) {
   const perMonth = {}; // month -> { total, thaynara }
   const thaynaraId = (await sb.from("j_keys").select("promoter_id").eq("j_key", "JJ177329").single()).data?.promoter_id;
 
+  // MASTER NAO RECEBE COMISSAO NO LEDGER DERIVADO (ver lib/cmsMonthly.ts). O
+  // consolidador zera credito/seguro do master no PMR de PROPOSITO — logo o PMR
+  // do master diverge do cms de proposito (o cms mantem o valor, ground-truth).
+  // Excluir master da AUDITORIA 2 para nao gerar falso "divergencia sistema x
+  // cms": a invariante correta e "PMR reproduz o cms EXCETO master".
+  const masterIds = new Set(
+    (await fetchAll("promoters", "id, is_master", {}))
+      .filter((p) => p.is_master === true)
+      .map((p) => p.id)
+  );
+
   for (const m of MONTHS) {
     // PMR gravado (source=cms)
     const pmr = await fetchAll("promoter_monthly_results", "promoter_id, production_commission_value, insurance_commission_value, final_commission_value, source", { year: YEAR, month: m, source: "cms" });
@@ -112,6 +123,7 @@ async function fetchAll(table, sel, filt) {
     let totalPmr = 0, totalCms = 0, diverg = 0;
     const promoterIds = new Set([...cmsBy.keys(), ...pmr.filter((p) => Number(p.final_commission_value) !== 0).map((p) => p.promoter_id)]);
     for (const pid of promoterIds) {
+      if (masterIds.has(pid)) continue; // master zerado no PMR de proposito — fora da comparacao e dos totais
       const cms = cmsBy.get(pid) || { credit: 0, insurance: 0 };
       const expProd = r2(cms.credit), expIns = r2(cms.insurance), expFinal = r2(cms.credit + cms.insurance);
       const row = pmrBy.get(pid);
