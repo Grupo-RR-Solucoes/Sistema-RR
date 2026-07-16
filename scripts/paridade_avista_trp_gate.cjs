@@ -13,11 +13,10 @@
  *   e leem a MESMA fonte (trp_rule_versions via provider db).
  *
  * POR QUE COEXISTEM (e NAO se convergiu o codigo): o merge teria custo real
- *   (injetar production_value/band no previsto, que hoje fixa Faixa 3), MUDA numero
- *   (dropa/paga os min-ticket abaixo) e forcaria revalidar o forecast inteiro. O
- *   pct JA CONVERGE 100% no dado (medido: jun 660/660, jul 334/334), entao o risco
- *   ("2 implementacoes divergem") nao se realizou. A resposta certa e BLINDAR contra
- *   drift futuro (este gate), nao refatorar.
+ *   (injetar production_value/band no previsto, que hoje fixa Faixa 3) e forcaria
+ *   revalidar o forecast inteiro. A resolucao de CATEGORIA, porem, FOI convergida
+ *   (candidate-list, vide abaixo) — o risco "2 implementacoes divergem" SE REALIZOU
+ *   exatamente na parte nao medida, e o conserto foi convergir.
  *
  * O QUE ESTE GATE GARANTE (invariante dura): pctTabela (previsto) ==
  *   credito.percentual (motor) para TODO contrato RR, nas condicoes reais do RR
@@ -25,19 +24,35 @@
  *   isso ao motor) + Faixa 3 + provider db. QUALQUER divergencia de pct => FALHA
  *   (exit 2): sinal de que uma implementacao ganhou um fix e a outra nao.
  *
- * DIVERGENCIA DE REGRA CONHECIDA (NAO falha o gate): o motor tem um gate
- *   MIN-TICKET (getMinimumTicket) que zera contratos de ticket pequeno; o previsto
- *   (= a AUDITORIA) NAO tem e paga o pct da tabela. Medido: 7 contratos em julho.
- *   A auditoria/ground-truth NAO zera ticket pequeno -> o min-ticket parece RESIDUO
- *   LEGADO do CREDIT_RULES, nao regra da TRP. E PERGUNTA DE REGRA, decisao pendente
- *   (auditar os 7 vs realizado). Por isso o gate LISTA/CONTA esses casos separado e
- *   NAO reprova por eles (senao nasceria vermelho e ninguem olharia). MAS se o COUNT
- *   subir acima do baseline, AVISA (exit 1) — a classe cresceu, alguem tem que ver.
+ * FONTE SIMETRICA (correcao desta frente): o lado previsto le o DB DIRETO
+ *   (preloader, sem flag); o lado motor honrava TRP_SOURCE do ambiente. Rodado
+ *   sem TRP_SOURCE=db, o gate comparava previsto(db) x motor(json) — FONTES
+ *   DIFERENTES, violando o proprio invariante ("leem a MESMA fonte"). Era isso
+ *   que fabricava os "7 de julho": em json o motor caia no CREDIT_RULES (main
+ *   nao tem o JSON da TRP38) e zerava o que o db paga. Este gate agora FORCA
+ *   TRP_SOURCE=db nos dois lados (a fonte viva de prod).
+ *
+ * BUCKET "MOTOR ZERA, PREVISTO PAGA" (baseline 0 — a causa foi CORRIGIDA): o
+ *   rotulo anterior ("min-ticket / pergunta de regra pendente") estava ERRADO.
+ *   A causa real era RESOLUCAO DE CATEGORIA: o previsto itera a lista ordenada
+ *   de categoriasCandidatasFor (ex.: CONSIG_PUBLICO -> CONSIG_PRIVADO ->
+ *   CONSIG_GERAL) e tenta a irma quando uma rejeita; o motor commitava em UMA
+ *   categoria (inferCreditTable) e desistia -> zerava contratos que a Promotiva
+ *   PAGA (realizado abril/2026: "% TABELA OPP = 0,0081" = celula CONSIG_PRIVADO
+ *   prazo 18-35, nos 5 contratos que o motor zerava por prazo_min 36 do
+ *   CONSIG_PUBLICO). O motor agora usa o MESMO categoriasCandidatasFor
+ *   (lib/motor.ts lookupCreditPercentTrp) — convergencia deliberada. Baseline
+ *   do bucket = 0 em TODA competencia: qualquer caso novo e um sub-caso novo
+ *   (nao a classe antiga) e AVISA (exit 1) para alguem olhar.
  *
  * Uso: node scripts/paridade_avista_trp_gate.cjs
- * Exit: 0 = paridade ok + min-ticket no baseline. 1 = min-ticket mudou (avisa).
- *       2 = DIVERGENCIA DE PCT (regressao real). 3 = erro de infra.
+ * Exit: 0 = paridade ok + bucket motor-zera vazio. 1 = bucket motor-zera nao
+ *       vazio (avisa). 2 = DIVERGENCIA DE PCT (regressao real). 3 = erro de infra.
  */
+// FONTE SIMETRICA: forca o db ANTES de qualquer require de lib (o previsto ja e
+// db-direto; sem isto o motor honraria o TRP_SOURCE do shell e o gate compararia
+// fontes diferentes — o artefato que fabricou os "7 de julho").
+process.env.TRP_SOURCE = "db";
 require("./_ts_register.cjs");
 const { createClient } = require("@supabase/supabase-js");
 
@@ -51,10 +66,13 @@ const BBTS_COMPANY_ID = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
 const PROD_FAIXA3 = 5_000_000; // forca FAIXA_3 no motor (>= 3M), igual ao Faixa 3 fixo do previsto.
 const EPS = 1e-6;
 
-// BASELINE de divergencias min-ticket conhecidas por competencia. Atualizar
-// quando a decisao de regra (min-ticket vale sob TRP?) for tomada. Competencia
-// sem entrada aqui: reportada, mas nao gera aviso (baseline desconhecido).
-const MIN_TICKET_BASELINE = { "2026-04": 5, "2026-07": 7 };
+// BASELINE do bucket "motor zera, previsto paga": 0 em TODA competencia. A
+// causa da classe antiga ({2026-04:5, 2026-07:7}) foi corrigida: abril era
+// resolucao de categoria (motor nao tentava a irma — fix candidate-list em
+// lib/motor.ts); julho era artefato de fonte assimetrica (gate rodado sem
+// TRP_SOURCE=db — corrigido acima, o gate agora forca db). Qualquer caso novo
+// aqui e um sub-caso NOVO e merece aviso.
+const MOTOR_ZERA_BASELINE = 0;
 
 const sb = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -105,7 +123,7 @@ async function main() {
 
   const porComp = {};
   const pctDivergencias = [];
-  const minTicketPorComp = {};
+  const motorZeraPorComp = {};
 
   for (const r of rr) {
     const comp = compDoContrato(r);
@@ -159,8 +177,9 @@ async function main() {
         });
       }
     } else if (prev && motorPct === 0) {
-      // Divergencia de REGRA conhecida (min-ticket / gate): o previsto paga, o motor zera.
-      (minTicketPorComp[comp] = minTicketPorComp[comp] || []).push({
+      // Bucket "motor zera, previsto paga" — baseline 0 (a classe antiga era
+      // categoria/fonte, corrigida). Caso novo aqui = sub-caso novo, avisa.
+      (motorZeraPorComp[comp] = motorZeraPorComp[comp] || []).push({
         id: r.id.slice(0, 8),
         produto: String(r.product_description || "").slice(0, 30),
         net: Number(r.net_value),
@@ -182,19 +201,16 @@ async function main() {
     );
   }
 
-  console.log("\n----- DIVERGENCIA DE REGRA CONHECIDA (min-ticket: previsto paga, motor zera) -----");
-  let minTicketAviso = false;
+  console.log("\n----- BUCKET MOTOR ZERA, PREVISTO PAGA (baseline 0 — causa antiga corrigida) -----");
+  let motorZeraAviso = false;
   for (const comp of comps) {
-    const casos = minTicketPorComp[comp] || [];
-    const baseline = MIN_TICKET_BASELINE[comp];
+    const casos = motorZeraPorComp[comp] || [];
     const nota =
-      baseline === undefined
-        ? "(sem baseline — competencia nova, so reporta)"
-        : casos.length === baseline
-          ? "== baseline"
-          : `!= baseline (era ${baseline}) <<< AVISO: a classe min-ticket mudou`;
-    if (baseline !== undefined && casos.length !== baseline) minTicketAviso = true;
-    console.log(`  ${comp}: ${casos.length} contrato(s) min-ticket ${nota}`);
+      casos.length === MOTOR_ZERA_BASELINE
+        ? "== baseline (vazio)"
+        : "<<< AVISO: sub-caso NOVO (nao e a classe categoria/fonte, ja corrigida)";
+    if (casos.length !== MOTOR_ZERA_BASELINE) motorZeraAviso = true;
+    console.log(`  ${comp}: ${casos.length} contrato(s) motor-zera ${nota}`);
     for (const k of casos.slice(0, 10)) {
       console.log(`      ${k.id} net=${k.net} prevPct=${k.prevPct} (${k.produto})`);
     }
@@ -214,11 +230,11 @@ async function main() {
   }
   const totalAmbos = comps.reduce((a, c) => a + porComp[c].ambos, 0);
   console.log(`  ✅ PARIDADE DE PCT: ${totalAmbos}/${totalAmbos} contratos iguais (0 divergencia).`);
-  if (minTicketAviso) {
-    console.log("  ⚠️  min-ticket mudou vs baseline — revisar (exit 1). NAO e regressao de pct.");
+  if (motorZeraAviso) {
+    console.log("  ⚠️  bucket motor-zera NAO vazio — sub-caso novo, revisar (exit 1). NAO e regressao de pct.");
     process.exit(1);
   }
-  console.log("  ✅ min-ticket no baseline conhecido. Nada a fazer.");
+  console.log("  ✅ bucket motor-zera vazio (baseline 0). Nada a fazer.");
   process.exit(0);
 }
 
