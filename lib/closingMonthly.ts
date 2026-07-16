@@ -49,6 +49,7 @@ import {
   individualPenetration,
   insuranceShareForPenetration,
 } from "./insurancePenetration.ts";
+import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
 
 // Chave master BBTS/ADS — excluída DESTA consolidação (a da RR, via fechamento).
 // A produção da ADS/BBTS tem consolidador próprio: lib/bbtsMonthly.ts (PMR da ADS
@@ -508,9 +509,24 @@ export async function consolidateMonthlyFromClosing(
     (x, y) => y.final_commission_value - x.final_commission_value
   );
 
+  // GUARDA ANTI-SILENCIO: ajuste comercial (acordo SPECIAL) em mes FECHADO. O
+  // fechamento RR reproduz o que a Promotiva pagou — o ajuste avulso NAO e
+  // aplicado aqui (agreement_adjustment_value fica 0). Se houver SPECIAL ativo na
+  // competencia, avisa em vez de gravar 0 mudo. NO-OP hoje (0 SPECIAL em prod).
+  // Ver lib/agreements/specialFechadoAviso.ts para a decisao AVISAR-vs-HONRAR.
+  const avisos: string[] = [];
+  const specialFechado = await detectSpecialAgreementsMesFechado(supabase, {
+    year,
+    month,
+    companyId,
+    promoterId,
+  });
+  if (specialFechado.aviso) avisos.push(specialFechado.aviso);
+
   return {
     dry_run: dryRun,
     promoters_calculated: upserts.length,
+    avisos,
     gravadas: dryRun ? 0 : upserts.length,
     // Payload EXATO que foi (ou seria, em dryRun) gravado no PMR. A reconciliacao
     // da competencia usa as chaves disto para saber o que e o PMR fechado NOVO —

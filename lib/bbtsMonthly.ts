@@ -44,6 +44,7 @@ import { fetchPromoterShareData, resolvePromoterShareSync } from "./proposalDeta
 import { individualPenetration, insuranceShareForPenetration } from "./insurancePenetration.ts";
 import { resolveBbtsRegraDb } from "./bbts/resolveBbtsRegra.ts";
 import { seguroRateFromRegra } from "./bbts/seguroBbts.ts";
+import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
 
 export const BBTS_COMPANY_ID = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
 const TETO_AVISTA = 0.058; // teto 5,80% à vista; excedente vira diferido (100% empresa)
@@ -245,6 +246,13 @@ export async function consolidateMonthlyFromBbts(
   if (seguroNaoCalculado.length > 0) {
     avisos.push(`SEGURO NÃO calculado em ${seguroNaoCalculado.length} linha(s) (sem chute): ${seguroNaoCalculado.map((s) => `${s.contrato} (${s.motivo})`).join("; ")}`);
   }
+
+  // GUARDA ANTI-SILENCIO: ajuste comercial (acordo SPECIAL) em mes FECHADO. A ADS
+  // reproduz a fonte (o ajuste avulso não é aplicado aqui — ver
+  // lib/agreements/specialFechadoAviso.ts). Se houver SPECIAL na competência,
+  // avisa em vez de gravar 0 mudo. NO-OP hoje (0 SPECIAL em prod).
+  const specialFechado = await detectSpecialAgreementsMesFechado(supabase, { year, month });
+  if (specialFechado.aviso) avisos.push(specialFechado.aviso);
 
   // 3. Acordo (cascata) + escala de seguro. ESCOPO = só a ADS (a produção/volume
   //    da escala do promotor não pode misturar RR — o BBTS-2d é quem injeta a
