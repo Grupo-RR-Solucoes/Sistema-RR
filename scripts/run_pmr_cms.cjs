@@ -92,11 +92,12 @@ async function fetchAll(table, sel, filt) {
   const perMonth = {}; // month -> { total, thaynara }
   const thaynaraId = (await sb.from("j_keys").select("promoter_id").eq("j_key", "JJ177329").single()).data?.promoter_id;
 
-  // MASTER NAO RECEBE COMISSAO NO LEDGER DERIVADO (ver lib/cmsMonthly.ts). O
-  // consolidador zera credito/seguro do master no PMR de PROPOSITO — logo o PMR
-  // do master diverge do cms de proposito (o cms mantem o valor, ground-truth).
-  // Excluir master da AUDITORIA 2 para nao gerar falso "divergencia sistema x
-  // cms": a invariante correta e "PMR reproduz o cms EXCETO master".
+  // MASTER NAO RECEBE COMISSAO NO LEDGER DERIVADO (ver lib/cmsMonthly.ts): o
+  // consolidador zera credito/seguro do master no PMR de PROPOSITO. A regra da
+  // comparacao (master fora + tolerancia meia-casa + FINAL por promotor) mora em
+  // lib/cms/auditCmsVsPmr.ts — a MESMA que o vigia (/api/diagnostico) consome,
+  // para nao haver drift entre a auditoria do script e a do health-check.
+  const { auditCmsVsPmr } = require("../lib/cms/auditCmsVsPmr.ts");
   const masterIds = new Set(
     (await fetchAll("promoters", "id, is_master", {}))
       .filter((p) => p.is_master === true)
@@ -104,47 +105,21 @@ async function fetchAll(table, sel, filt) {
   );
 
   for (const m of MONTHS) {
-    // PMR gravado (source=cms)
-    const pmr = await fetchAll("promoter_monthly_results", "promoter_id, production_commission_value, insurance_commission_value, final_commission_value, source", { year: YEAR, month: m, source: "cms" });
-    const pmrBy = new Map(pmr.map((p) => [p.promoter_id, p]));
-
-    // cms agregado por promotor (so mapeados)
-    const entries = await fetchAll("cms_promoter_entries", "promoter_id, promoter_credit, promoter_insurance", { prod_year: YEAR, prod_month: m });
-    const cmsBy = new Map();
-    for (const e of entries) {
-      if (!e.promoter_id) continue;
-      const a = cmsBy.get(e.promoter_id) || { credit: 0, insurance: 0 };
-      a.credit += Number(e.promoter_credit);
-      a.insurance += Number(e.promoter_insurance);
-      cmsBy.set(e.promoter_id, a);
-    }
-
-    // compara por promotor (cent precision)
-    let totalPmr = 0, totalCms = 0, diverg = 0;
-    const promoterIds = new Set([...cmsBy.keys(), ...pmr.filter((p) => Number(p.final_commission_value) !== 0).map((p) => p.promoter_id)]);
-    for (const pid of promoterIds) {
-      if (masterIds.has(pid)) continue; // master zerado no PMR de proposito — fora da comparacao e dos totais
-      const cms = cmsBy.get(pid) || { credit: 0, insurance: 0 };
-      const expProd = r2(cms.credit), expIns = r2(cms.insurance), expFinal = r2(cms.credit + cms.insurance);
-      const row = pmrBy.get(pid);
-      const gotProd = row ? r2(row.production_commission_value) : 0;
-      const gotIns = row ? r2(row.insurance_commission_value) : 0;
-      const gotFinal = row ? r2(row.final_commission_value) : 0;
-      totalPmr += gotFinal;
-      totalCms += expFinal;
-      // Criterio (regra original): compara o FINAL por promotor (= o que e pago).
-      // A quebra credito/seguro pode arredondar em meia-casa (ex.: seguro cms
-      // 85,635) sem afetar o final nem o total — artefato float, NAO divergencia.
-      // Nao se aplica arredondamento artificial ao split (divergiria do cms).
-      if (Math.abs(gotFinal - expFinal) > 0.005) {
-        diverg++;
-        allDivergences.push({ month: m, promoter_id: pid, expProd, gotProd, expIns, gotIns, expFinal, gotFinal });
+    const audit = await auditCmsVsPmr(sb, YEAR, m, { masterIds });
+    for (const row of audit.rows) {
+      if (row.diverge) {
+        allDivergences.push({
+          month: m,
+          promoter_id: row.promoter_id,
+          expProd: row.cms_credit, gotProd: row.pmr_prod,
+          expIns: row.cms_ins, gotIns: row.pmr_ins,
+          expFinal: row.cms_esperado, gotFinal: row.pmr_final,
+        });
       }
-      if (pid === thaynaraId) perMonth[m] = { ...(perMonth[m] || {}), thaynara: gotFinal };
+      if (row.promoter_id === thaynaraId) perMonth[m] = { ...(perMonth[m] || {}), thaynara: row.pmr_final };
     }
-    totalPmr = r2(totalPmr); totalCms = r2(totalCms);
-    perMonth[m] = { ...(perMonth[m] || {}), total: totalPmr };
-    console.log(`${MES[m]} | ${String(promoterIds.size).padStart(10)} | ${fmt(totalPmr).padStart(12)} | ${fmt(totalCms).padStart(12)} | ${String(diverg).padStart(6)}`);
+    perMonth[m] = { ...(perMonth[m] || {}), total: audit.total_pmr };
+    console.log(`${MES[m]} | ${String(audit.rows.length).padStart(10)} | ${fmt(audit.total_pmr).padStart(12)} | ${fmt(audit.total_cms).padStart(12)} | ${String(audit.divergences).padStart(6)}`);
   }
 
   // ---------- DIVERGENCIAS ----------

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { detectRulesStale } from "@/lib/rulesFingerprint";
+import { auditCmsVsPmr } from "@/lib/cms/auditCmsVsPmr";
 
 // ============================================================================
 // lib/diagnostico/ledgerHealth.ts — o VIGIA DO COFRE.
@@ -264,6 +265,55 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
   }
   const multi = [...perPromComp.entries()].filter(([, n]) => n > 1);
 
+  // =========================================================================
+  // cms_vs_pmr_stale (ERRO) — o PMR source='cms' AINDA reproduz o
+  //     cms_promoter_entries (ground-truth)? Fecha o unico ponto cego real das
+  //     brechas "congelam": a Camada 2 (detect_rules_stale) EXCLUI os meses cms
+  //     de proposito (escopo fechamento/bbts) e as checagens acima so olham
+  //     EXISTENCIA. Se alguem reimportar o cms sem rodar o CLI
+  //     (run_pmr_cms --apply), o PMR cms fica STALE e nada avisava.
+  //
+  //     Reusa auditCmsVsPmr (lib/cms/auditCmsVsPmr.ts) — a MESMA regra da
+  //     AUDITORIA 2 do runner: FINAL por promotor, MASTER FORA (o PMR zera o
+  //     master de proposito; comparar cru daria falso — fev/2026 R$18,91), e
+  //     tolerancia meia-casa (artefato 6-casas do cms vs 2-casas do PMR).
+  //
+  //     SO regime cms: abril/junho sao 'fechamento' e julho e 'open' — nao
+  //     entram (iteramos so competencias com PMR source='cms' e regime 'cms').
+  // =========================================================================
+  const cmsComps = [
+    ...new Set(
+      pmr.filter((r) => String(r.source) === "cms").map((r) => fmtComp(r.year, r.month))
+    ),
+  ];
+  let cmsStaleCount = 0;
+  const cmsStaleDetalhe: Array<{
+    competencia: string;
+    divergencias: number;
+    amostra: Array<{ promoter_id: string; pmr_final: number; cms_esperado: number; delta: number }>;
+  }> = [];
+  for (const key of cmsComps) {
+    const [y, m] = key.split("-").map(Number);
+    if ((await regimeOf(y, m)) !== "cms") continue; // guarda: so regime cms.
+    const audit = await auditCmsVsPmr(admin, y, m, { masterIds: masterSet });
+    if (audit.divergences > 0) {
+      cmsStaleCount += audit.divergences;
+      cmsStaleDetalhe.push({
+        competencia: key,
+        divergencias: audit.divergences,
+        amostra: audit.rows
+          .filter((r) => r.diverge)
+          .slice(0, 10)
+          .map((r) => ({
+            promoter_id: r.promoter_id,
+            pmr_final: r.pmr_final,
+            cms_esperado: r.cms_esperado,
+            delta: r.delta,
+          })),
+      });
+    }
+  }
+
   const checks: LedgerCheck[] = [
     {
       id: "regime_fechado_sem_pmr",
@@ -304,6 +354,14 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
       descricao:
         "Camada 2: PMR fechado sem baseline de fingerprint (fechado antes do detector). Resolve na proxima reconsolidacao.",
       detalhe: desconhecidoDetalhe,
+    },
+    {
+      id: "cms_vs_pmr_stale",
+      severity: "erro",
+      count: cmsStaleCount,
+      descricao:
+        "Mes cms: o PMR (source='cms') deixou de reproduzir o cms_promoter_entries (ground-truth). Reimportaram o cms sem rodar o CLI (run_pmr_cms --apply)? Master fora e tolerancia meia-casa aplicados.",
+      detalhe: cmsStaleDetalhe,
     },
     {
       id: "promotor_multi_linha",
