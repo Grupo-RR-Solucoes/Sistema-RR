@@ -1,6 +1,11 @@
 import { resolvePromotivaCashPolicy } from "./promotivaCashPolicy.ts";
 import type { RegraMes } from "./regrasData.ts";
-import { getRegime, getRegra, lookupPctInRegra } from "./regrasLoader.ts";
+import {
+  categoriasCandidatasFor,
+  getRegime,
+  getRegra,
+  lookupPctInRegra,
+} from "./regrasLoader.ts";
 import {
   getProductionPeriodFromValue,
   getProductionPeriodKey,
@@ -471,12 +476,14 @@ function lookupCreditPercentTrp(
   tableKey: string,
   rate: number,
   term: number,
+  op: Operation,
   trpProvider?: TrpRegraProvider
 ): { percent: number | null; motivo?: string } {
   const categoria = MAP_TABLEKEY_TO_CATEGORIA[tableKey] || tableKey;
+  const faixaLabel = `Faixa ${BAND_INDEX[band] + 1}`;
   const tabLabel = CATEGORIAS_PCT_GERAL.has(categoria)
     ? "pct_geral"
-    : `Faixa ${BAND_INDEX[band] + 1}`;
+    : faixaLabel;
   const taxaDec = rate > 1 ? rate / 100 : rate;
 
   // FONTE da RegraMes: DB (trp_rule_versions) quando o chamador injeta o provider
@@ -503,7 +510,42 @@ function lookupCreditPercentTrp(
   const out = lookupPctInRegra(
     r.regra, categoria, taxaDec, term, tabLabel, r.jsonRegra, r.regraInferida
   );
-  return { percent: out.pct, motivo: out.celula ?? undefined };
+  if (out.pct !== null) {
+    return { percent: out.pct, motivo: out.celula ?? undefined };
+  }
+
+  // CANDIDATE-LIST DE CATEGORIA (convergencia deliberada com o previsto).
+  // O previsto (getMatrizTRPParaContrato) ja fazia isso: itera a lista ORDENADA
+  // de categoriasCandidatasFor e tenta a proxima quando uma rejeita. O motor
+  // commitava numa UNICA categoria (inferCreditTable) e desistia -> zerava
+  // contratos que a Promotiva PAGA. Caso real (fechamento abril/2026): produto
+  // "CONSIGNADO" prazo 20-27 cai em CONSIG_PUBLICO, que rejeita (prazo_min 36);
+  // a celula REAL esta na irma CONSIG_PRIVADO (tx_min 0.0254, prazo 18-35,
+  // Faixa 3 = 0,0081) — o realizado confirma: "% TABELA OPP = 0,0081" no
+  // metadata do fechamento e exatamente essa celula. lookupPctInRegra esta
+  // CERTO (rejeitar a categoria errada e o comportamento correto); o bug era
+  // nao tentar a irma. REUSA categoriasCandidatasFor (regrasLoader) — a MESMA
+  // funcao do previsto, nao uma 3a implementacao da lista. Convergencia: as 2
+  // implementacoes agora resolvem categoria do MESMO jeito. So roda quando a
+  // primaria deu null (quem ja resolvia nao muda de valor).
+  const produto = op.product_description ?? null;
+  // tipo derivado da descricao, mesmo criterio do previsto (extrairContratoAvista).
+  const tipo = produto && /RENOV/i.test(produto) ? "RENOVACAO" : "NOVO";
+  const candidatos = categoriasCandidatasFor(
+    mes, produto, tipo, op.convenio_code ?? null
+  );
+  for (const cand of candidatos) {
+    if (cand === categoria) continue; // primaria ja tentada acima
+    const tabCand = CATEGORIAS_PCT_GERAL.has(cand) ? "pct_geral" : faixaLabel;
+    const alt = lookupPctInRegra(
+      r.regra, cand, taxaDec, term, tabCand, r.jsonRegra, r.regraInferida
+    );
+    if (alt.pct !== null) {
+      return { percent: alt.pct, motivo: alt.celula ?? undefined };
+    }
+  }
+
+  return { percent: null, motivo: out.celula ?? undefined };
 }
 
 function getCreditPercent(op: Operation, band: BandKey, trpProvider?: TrpRegraProvider) {
@@ -526,7 +568,7 @@ function getCreditPercent(op: Operation, band: BandKey, trpProvider?: TrpRegraPr
   let entrouTrp = false;
   if (mes && getRegime(mes) === "VOLUME_5_FAIXAS") {
     entrouTrp = true;
-    const trp = lookupCreditPercentTrp(band, mes, tableKey, rate, term, trpProvider);
+    const trp = lookupCreditPercentTrp(band, mes, tableKey, rate, term, op, trpProvider);
     if (trp.percent !== null) {
       return { tableKey, percent: trp.percent };
     }
