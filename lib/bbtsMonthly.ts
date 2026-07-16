@@ -45,6 +45,7 @@ import { individualPenetration, insuranceShareForPenetration } from "./insurance
 import { resolveBbtsRegraDb } from "./bbts/resolveBbtsRegra.ts";
 import { seguroRateFromRegra } from "./bbts/seguroBbts.ts";
 import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
+import { getPrazoTrp } from "./prazoTrp.ts";
 
 export const BBTS_COMPANY_ID = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
 const TETO_AVISTA = 0.058; // teto 5,80% à vista; excedente vira diferido (100% empresa)
@@ -184,6 +185,17 @@ export async function consolidateMonthlyFromBbts(
     // parcelas -> 0%). Só há crédito quando gross > 0 (linha só-seguro tem gross=0).
     let creditPercent = 0;
     if (gross > 0) {
+      // CONSIGNADO indexa a TRP por PARCELAS (raw_payload), NÃO por term_months
+      // (que o importador do RR sobrescreve com Prazo). Hoje o importador ADS
+      // coincide os dois, mas isso é ACIDENTE, não contrato — getPrazoTrp é a
+      // fonte canônica do prazo p/ lookup TRP, igual ao RR (calculate/monthly:506).
+      const prazoTrp =
+        getPrazoTrp({
+          product_code: r.product_code ?? null,
+          term_months: r.term_months ?? null,
+          installments: r.installments ?? null,
+          raw_payload: r.raw_payload ?? null,
+        }) ?? toNumber(r.term_months);
       const op = {
         product_description: r.product_description ?? null,
         product_code: r.product_code ?? null,
@@ -191,7 +203,7 @@ export async function consolidateMonthlyFromBbts(
         valor_liquido: gross,
         valor_bruto: gross,
         taxa_juros: toNumber(r.interest_rate),
-        prazo: toNumber(r.term_months),
+        prazo: prazoTrp,
         contract_date: compDate, // competência decide a vigência da TRP
         movement_date: compDate,
         proposal_date: compDate,
