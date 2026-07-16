@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
+
 // CMS-IMPORT (SPEC §4) — consolidacao do PMR no MES FECHADO a partir do cms.
 // Extraido de app/api/calculate/monthly/route.ts para que o runner de execucao
 // (scripts/run_pmr_cms.cjs) rode EXATAMENTE a mesma logica da rota — a Auditoria
@@ -324,5 +326,20 @@ export async function consolidateMonthlyFromCms(
     if (error) throw error;
   }
 
-  return { promoters_calculated: upserts.length, table };
+  // GUARDA ANTI-SILENCIO: ajuste comercial (acordo SPECIAL) em mes FECHADO. O cms
+  // e ground-truth e REPRODUZ a fonte "e NADA MAIS" (ver doc desta funcao) — o
+  // ajuste avulso NAO e aplicado aqui, agreement_adjustment_value fica 0 (acima).
+  // Se houver SPECIAL ativo na competencia, avisa em vez de gravar 0 mudo, para o
+  // operador conferir. NO-OP hoje (0 SPECIAL em prod). Ver
+  // lib/agreements/specialFechadoAviso.ts para a decisao AVISAR-vs-HONRAR.
+  const avisos: string[] = [];
+  const specialFechado = await detectSpecialAgreementsMesFechado(supabase, {
+    year,
+    month,
+    companyId,
+    promoterId,
+  });
+  if (specialFechado.aviso) avisos.push(specialFechado.aviso);
+
+  return { promoters_calculated: upserts.length, table, avisos };
 }
