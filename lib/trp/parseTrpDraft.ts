@@ -17,6 +17,7 @@ import {
   parseConvenios,
   parseSec5,
   parseEscalares,
+  parsePrazoCategoria,
   type ProdutoExtraido,
   type EscalaresCategoria,
 } from "@/lib/trp/parseTrpPdf";
@@ -404,13 +405,30 @@ function montarEscalaresDraft(
  * abr/jun; NÃO inventa o campo nas 9 categorias que nunca o tiveram.
  */
 function derivarTxJurosMin(cells: Record<string, unknown>[]): number | undefined {
-  const txs = cells
-    .map((c) => c.tx_min)
+  return derivarPisoDeCelulas(cells, "tx_min");
+}
+
+/**
+ * Discriminador FLOOR × PARTIÇÃO genérico (o mesmo do tx_juros_min, agora reusado
+ * pelo prazo_min — NÃO duplicado). Deriva o PISO ÚNICO da categoria a partir de um
+ * campo de célula (`tx_min` ou `prazo_min`): só quando há UM valor distinto E
+ * (célula única OU alguma célula sem o campo). Uma PARTIÇÃO (vários valores
+ * distintos: INSS_NOVO por prazo, CONSIG_PUBLICO por taxa) NÃO é floor → undefined.
+ * Quando todas as células carregam o MESMO valor, o curador modelou no nível da
+ * célula → undefined (as células já enforçam). NÃO inventa (0 células com o campo →
+ * undefined).
+ */
+function derivarPisoDeCelulas(
+  cells: Record<string, unknown>[],
+  campo: "tx_min" | "prazo_min",
+): number | undefined {
+  const vals = cells
+    .map((c) => c[campo])
     .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
-  if (txs.length === 0) return undefined; // nenhuma célula tem tx_min: NÃO inventa 0.
-  const distintos = [...new Set(txs)];
-  const algumaSemTx = cells.some((c) => typeof c.tx_min !== "number");
-  if (distintos.length === 1 && (cells.length === 1 || algumaSemTx)) {
+  if (vals.length === 0) return undefined;
+  const distintos = [...new Set(vals)];
+  const algumaSem = cells.some((c) => typeof c[campo] !== "number");
+  if (distintos.length === 1 && (cells.length === 1 || algumaSem)) {
     return distintos[0];
   }
   return undefined;
@@ -437,6 +455,9 @@ export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOpt
   const produtos = parseMatrix(lines);
   validarProdutos(produtos);
   const escalares = parseEscalares(lines);
+  // prazo_min de categoria que vem numa LINHA ISOLADA (PORTAB/NAO_CONSIGNADO), que o
+  // parseMatrix pula — o derivador não alcança (célula sem prazo). Capturado à parte.
+  const prazoCategoriaCapturado = parsePrazoCategoria(lines);
 
   const vig = vigenciaDaCompetencia(competencia);
   const conferir: ConferirItem[] = [];
@@ -461,10 +482,19 @@ export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOpt
       | Record<string, unknown>[]
       | undefined) ?? [];
     const txJurosMin = derivarTxJurosMin(cellsArr);
-    // escalares primeiro (tiquete_min/custo/tx_juros_min) + a matriz — ordem do curado.
+    // prazo_min de CATEGORIA: DERIVADO das células (piso único) quando o prazo vem
+    // INLINE na matriz (CONSIG_PUBLICO/SIAPE/…); senão CAPTURADO da linha isolada
+    // "A partir de N" (PORTAB/NAO_CONSIGNADO). É PISO DE ELEGIBILIDADE (TRP pág.3:
+    // "é imprescindível que … prazo … estejam previstos"); prazo < piso = FORA_DA_TABELA.
+    const prazoMinDerivado = derivarPisoDeCelulas(cellsArr, "prazo_min");
+    const prazoMin = prazoMinDerivado ?? prazoCategoriaCapturado[k];
+    const prazoMinCapturado = prazoMinDerivado === undefined && prazoMin !== undefined;
+    const algumaCelComPrazo = cellsArr.some((c) => typeof c.prazo_min === "number");
+    // escalares primeiro (tiquete_min/custo/tx_juros_min/prazo_min) + a matriz — ordem do curado.
     regraDraft[k] = {
       ...montarEscalaresDraft(k, escalares[k], conferir),
       ...(txJurosMin !== undefined ? { tx_juros_min: txJurosMin } : {}),
+      ...(prazoMin !== undefined ? { prazo_min: prazoMin } : {}),
       ...produtoDraft,
     };
     if (txJurosMin !== undefined) {
@@ -477,20 +507,30 @@ export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOpt
         severidade: "conferir",
       });
     }
+    if (prazoMin !== undefined) {
+      conferir.push({
+        produto: k,
+        campo: "prazo_min",
+        valorLido: String(prazoMin),
+        motivo: prazoMinCapturado
+          ? "CAPTURADO da linha isolada 'A partir de N' da seção (piso de elegibilidade); confira contra o PDF"
+          : "DERIVADO das células (piso único de prazo); confira contra o PDF",
+        severidade: "conferir",
+      });
+    } else if (!algumaCelComPrazo && cellsArr.length > 0) {
+      // PERIGO: sem piso de categoria E sem prazo em NENHUMA célula -> qualquer prazo
+      // casa -> contratos ABAIXO DO PISO seriam PAGOS. Omitir aqui NÃO é seguro (ao
+      // contrário do tíquete, que tinha o hardcode como rede). Alarme explícito.
+      conferir.push({
+        produto: k,
+        campo: "prazo_min",
+        valorLido: null,
+        motivo:
+          "ALERTA: prazo_min de categoria AUSENTE e NENHUMA célula tem prazo — contratos ABAIXO DO PISO serão PAGOS (deveriam zerar). Reveja o PDF/parser ANTES de gravar.",
+        severidade: "conferir",
+      });
+    }
   }
-
-  // prazo_min de CATEGORIA (resíduo irmão, NÃO derivado aqui): mesma classe do
-  // tx_juros_min, mas fora do escopo desta frente. O lookupPctInRegra também checa
-  // cat.prazo_min; hoje o parser só põe prazo por célula (cell.prazo_min), que
-  // enforça o mesmo. Item próprio.
-  conferir.push({
-    produto: "_escalares",
-    campo: "prazo_min (categoria)",
-    valorLido: null,
-    motivo:
-      "não derivado nesta frente: o parser põe prazo por célula (cell.prazo_min), que enforça o mesmo. tx_juros_min de categoria JÁ é derivado. Frente própria para o prazo_min de categoria, se necessário.",
-    severidade: "conferir",
-  });
 
   // itens estruturais que o parser não prova (conferir na revisão)
   // _meta NÃO CONSUMIDO por cálculo (faixa vem de BAND_THRESHOLDS/FAIXA_GRUPO_RR

@@ -309,6 +309,44 @@ export function parseEscalares(lines: string[]): Record<string, EscalaresCategor
   return out;
 }
 
+/** Linha de prazo PURO: "A partir de 48" (int isolado). Ancorada no ^...$ para NAO
+ *  casar taxa ("A partir de 1,90%": tem % e virgula) nem tiquete ("a partir de R$
+ *  100,00": tem R$) nem prazo INLINE numa linha de dados ("... A partir de 5 2,35%":
+ *  tem mais tokens). So o prazo isolado das secoes geral. */
+const PRAZO_ISOLADO = /^A partir de\s+(\d+)\s*$/i;
+
+/**
+ * Captura o prazo_min de CATEGORIA das secoes onde ele vem numa LINHA ISOLADA
+ * "A partir de N" (sem % nem R$) — que o parseMatrix PULA por nao ter %. Isso ocorre
+ * nas categorias "geral" (PORTAB_PUBLICO 48, PORTAB_PRIVADO 36) e no NAO_CONSIGNADO
+ * (13): o prazo aparece sozinho logo apos o cabecalho "Taxa de Juros | Prazo | Geral",
+ * antes da linha de dados. Nas demais (CONSIG_PUBLICO/SIAPE/ADIANTAMENTO_13/FGTS) o
+ * prazo vem INLINE na linha de % -> vira cell.prazo_min e e DERIVADO, nao capturado.
+ *
+ * Ancorado no CONTEXTO da secao (PROD_ANCHORS + STOP, iguais ao parseMatrix) e exige
+ * ter visto o cabecalho (HDR) da secao antes de capturar — assim ignora o indice/TOC
+ * (que repete "2.2 Convenio Publico" sem cabecalho de matriz). 1 por categoria.
+ */
+export function parsePrazoCategoria(lines: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  let cur: string | null = null;
+  let hdrVisto = false;
+  for (const raw of lines) {
+    const ln = deacc(raw).trim();
+    let matched: string | null = null;
+    for (const [rx, key] of PROD_ANCHORS) {
+      if (rx.test(ln)) { matched = key; break; }
+    }
+    if (matched) { cur = matched; hdrVisto = false; continue; }
+    if (!cur) continue;
+    if (STOP.test(ln)) { cur = null; continue; }
+    if (HDR.test(ln)) { hdrVisto = true; continue; }
+    const m = PRAZO_ISOLADO.exec(ln);
+    if (m && hdrVisto && !(cur in out)) out[cur] = Number(m[1]);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Resultado do parser + _meta mecânico
 // ---------------------------------------------------------------------------
