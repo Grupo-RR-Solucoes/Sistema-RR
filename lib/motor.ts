@@ -534,10 +534,14 @@ function lookupCreditPercentTrp(
     : getRegra(mes);
   if (!r) return { percent: null, motivo: `getRegra(${mes})=null` };
 
-  // GATE B — ADIANTAMENTO_13: o motor exige tx_juros_min (via minRate); o loader
-  // o IGNORA de propósito só p/ ADIANTAMENTO_13 (skipTxJurosMin). Replicamos o
-  // motor lendo tx_juros_min DO DADO (cat.tx_juros_min da regra do mês — não
-  // hardcoded), forçando FORA_DA_TABELA (pct 0) quando taxa < tx_juros_min.
+  // GATE B — ADIANTAMENTO_13: força FORA_DA_TABELA (pct 0) quando taxa < tx_juros_min,
+  // lendo cat.tx_juros_min DO DADO (regra do mês — não hardcoded).
+  // NOTA (Fase 4.4): o antigo skipTxJurosMin foi REMOVIDO — o lookupPctInRegra hoje
+  // aplica tx_juros_min a TODAS as categorias (regrasLoader "Bug #6"). Logo este gate
+  // B virou CINTO redundante sobre o suspensório do loader (mantido de propósito;
+  // ambos usam a MESMA guarda `typeof tx_juros_min === "number"`, então ambos são
+  // no-op quando o campo está ausente). O tx_juros_min de categoria agora é DERIVADO
+  // pelo parser self-service (buildTrpDraft.derivarTxJurosMin), não mais só curado.
   if (categoria === "ADIANTAMENTO_13") {
     const cat = (r.regra as Record<string, { tx_juros_min?: number } | undefined>)[categoria];
     const txMin = cat && typeof cat.tx_juros_min === "number" ? cat.tx_juros_min : null;
