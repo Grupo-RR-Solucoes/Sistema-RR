@@ -16,7 +16,9 @@ import {
   parseMatrix,
   parseConvenios,
   parseSec5,
+  parseEscalares,
   type ProdutoExtraido,
+  type EscalaresCategoria,
 } from "@/lib/trp/parseTrpPdf";
 import { vigenciaDaCompetencia, competenciaKey } from "@/lib/trp/vigencia";
 
@@ -79,6 +81,13 @@ function parsePrazoRange(token: string): { prazo_min: number; prazo_max: number 
 }
 
 const FAIXA_LABELS = ["Faixa 1", "Faixa 2", "Faixa 3", "Faixa 4", "Faixa 5"];
+
+/** Piso de plausibilidade do tiquete: (0, 10.000]. Fora disso = leitura errada
+ *  (ex.: FGTS "1 mil" lido como "1") -> OMITE, o motor cai na rede getMinimumTicket.
+ *  Melhor AUSENTE que ERRADO: ausente cai no fallback correto; um "R$ 1" faria o
+ *  gate sumir e o motor pagar FGTS que devia zerar (erro silencioso). */
+const TIQUETE_MIN_PLAUSIVEL = 0;
+const TIQUETE_MAX_PLAUSIVEL = 10000;
 
 // --- estruturas de saída ------------------------------------------------------
 
@@ -322,6 +331,61 @@ function montarProdutoDraft(key: string, p: ProdutoExtraido, conferir: ConferirI
 }
 
 /**
+ * Monta os escalares de categoria (tiquete_min, custo_processamento) que o
+ * parseEscalares leu do PDF. Regra de ouro: NUNCA "provado" — o tiquete nasce
+ * "conferir" (âmbar) e, se ausente/implausível, é OMITIDO para o motor cair na
+ * rede (getMinimumTicket). custo_processamento é informativo (não entra no cálculo).
+ */
+function montarEscalaresDraft(
+  key: string,
+  esc: EscalaresCategoria | undefined,
+  conferir: ConferirItem[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+
+  const tiq = esc?.tiquete_min;
+  if (
+    typeof tiq === "number" &&
+    Number.isFinite(tiq) &&
+    tiq > TIQUETE_MIN_PLAUSIVEL &&
+    tiq <= TIQUETE_MAX_PLAUSIVEL
+  ) {
+    out.tiquete_min = tiq;
+    conferir.push({
+      produto: key,
+      campo: "tiquete_min",
+      valorLido: `R$ ${tiq}`,
+      motivo: "lido da linha 'Tíquete:' do PDF; confira contra a tabela vigente antes de gravar",
+      severidade: "conferir",
+    });
+  } else {
+    // ausente ou implausível -> OMITE. Melhor ausente que errado: o motor usa a rede.
+    conferir.push({
+      produto: key,
+      campo: "tiquete_min",
+      valorLido: tiq != null ? String(tiq) : null,
+      motivo:
+        "tíquete mínimo não capturado com confiança; OMITIDO — o motor usa a rede (getMinimumTicket) até a revisão preencher",
+      severidade: "conferir",
+    });
+  }
+
+  const custo = esc?.custo_processamento;
+  if (typeof custo === "string" && custo.trim()) {
+    out.custo_processamento = custo.trim();
+    conferir.push({
+      produto: key,
+      campo: "custo_processamento",
+      valorLido: custo.trim(),
+      motivo: "lido cru do PDF; normalize (número ou texto) na revisão — não entra no cálculo",
+      severidade: "informativo",
+    });
+  }
+
+  return out;
+}
+
+/**
  * Monta o draft + valida. Lança TrpParseError / TrpValidationError em falha
  * (a rota converte em resposta de erro visível). NÃO grava, NÃO lê banco.
  */
@@ -341,6 +405,7 @@ export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOpt
 
   const produtos = parseMatrix(lines);
   validarProdutos(produtos);
+  const escalares = parseEscalares(lines);
 
   const vig = vigenciaDaCompetencia(competencia);
   const conferir: ConferirItem[] = [];
@@ -357,10 +422,28 @@ export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOpt
   const provadoProdutos: Record<string, number[][]> = {};
   let totalPct = 0;
   for (const k of EXPECTED_PRODUCTS) {
-    regraDraft[k] = montarProdutoDraft(k, produtos[k], conferir);
+    // escalares primeiro (tiquete_min/custo) + a matriz — mesma ordem do JSON curado.
+    regraDraft[k] = {
+      ...montarEscalaresDraft(k, escalares[k], conferir),
+      ...montarProdutoDraft(k, produtos[k], conferir),
+    };
     provadoProdutos[k] = produtos[k].rows;
     totalPct += produtos[k].rows.flat().length;
   }
+
+  // tx_juros_min / prazo_min de CATEGORIA: MESMA classe, mas NÃO ficam na linha
+  // "Tíquete:" — estão embutidos na matriz (a tx por célula já vira cell.tx_min).
+  // Não forço aqui (evita leitura errada). REPORTO: o motor lê cat.tx_juros_min no
+  // gate B do ADIANTAMENTO_13 (lib/motor.ts) e, enquanto ausente, o gate B não roda.
+  // Fica como item próprio (frente separada), não como captura desta.
+  conferir.push({
+    produto: "_escalares",
+    campo: "tx_juros_min / prazo_min (categoria)",
+    valorLido: null,
+    motivo:
+      "não capturados aqui: não ficam na linha 'Tíquete:', e sim na matriz. O motor lê cat.tx_juros_min no gate B do ADIANTAMENTO_13; enquanto ausente, o gate B não força FORA_DA_TABELA. Frente própria.",
+    severidade: "conferir",
+  });
 
   // itens estruturais que o parser não prova (conferir na revisão)
   // _meta NÃO CONSUMIDO por cálculo (faixa vem de BAND_THRESHOLDS/FAIXA_GRUPO_RR
