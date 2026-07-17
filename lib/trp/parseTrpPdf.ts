@@ -208,6 +208,108 @@ export function parseSec5(lines: string[]): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Escalares de categoria (tiquete_min, custo_processamento) — F6a-escalares.
+//
+// A linha "Condicoes de uso da tabela: / Tabela: X, Y / Tiquete: ... / Custo: ..."
+// que o parseMatrix JA DETECTA como STOP TRAZ o tiquete minimo. Os 47 JSONs
+// historicos foram DIGITADOS A MAO lendo esta mesma linha (build_opp*.py tem os
+// literais) — a informacao esta no PDF; era lacuna de escopo, nao dado externo.
+// Aqui a lemos em vez de so descartar. Reusa PROD_ANCHORS (fonte unica do mapa
+// N.M -> categoria), NAO duplica.
+//
+// FGTS foge do padrao: nao tem bloco "Tabela:" proprio; o tiquete vem na linha da
+// matriz ">= R$ 1 mil". Regex separada + normalizacao "N mil" -> N*1000, e SO
+// aceita match UNICO — o PDF tem iscas "Varejo Abaixo R$ 999 mil" na secao de
+// producao, que NAO casam por nao terem ">=" antes do "R$".
+// ---------------------------------------------------------------------------
+
+export interface EscalaresCategoria {
+  tiquete_min?: number;
+  /** cru do PDF (string); a normalizacao numero/texto e passo de revisao. */
+  custo_processamento?: string;
+}
+
+/** N.M ("1.7") -> [categorias], derivado dos PROD_ANCHORS (nao duplica o mapa).
+ *  A colisao proposital do 2.2 (Publico + Privado) faz "Tabela: 2.2, 2.3" cobrir
+ *  as DUAS portabilidades mesmo sem ancora explicita para o 2.3. */
+function numeroTabelaToCategorias(): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const [rx, key] of PROD_ANCHORS) {
+    const mm = rx.source.match(/\^(\d+)\\\.(\d+)/);
+    if (!mm) continue;
+    const num = `${mm[1]}.${mm[2]}`;
+    if (!m.has(num)) m.set(num, []);
+    m.get(num)!.push(key);
+  }
+  return m;
+}
+
+const TIQ_BLOCO = /a partir de\s*R\$\s*([\d.,]+)/i;
+const TIQ_FGTS = /(?:>=|≥)\s*R\$\s*(\d+)\s*mil/i;
+const CUSTO_RE = /Custo de Processamento:\s*(.+)$/i;
+
+/** "2.000,00"->2000 ; "100,00"->100 ; "1 mil"->1000. null se nao-numerico. */
+function tiqueteToNumber(tok: string): number | null {
+  if (/mil/i.test(tok)) {
+    const n = parseInt(tok, 10);
+    return Number.isFinite(n) ? n * 1000 : null;
+  }
+  const n = parseFloat(tok.replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Extrai os escalares de categoria (tiquete_min, custo_processamento) das linhas
+ * "Tabela: ... / Tiquete: ... / Custo: ..." + o caso especial do FGTS na matriz.
+ * NAO valida plausibilidade nem grava — quem consome (buildTrpDraft) decide: o
+ * tiquete nasce "conferir" e, em duvida, e OMITIDO (o motor cai no getMinimumTicket,
+ * a rede). custo_processamento vem CRU (string do PDF).
+ */
+export function parseEscalares(lines: string[]): Record<string, EscalaresCategoria> {
+  const map = numeroTabelaToCategorias();
+  const out: Record<string, EscalaresCategoria> = {};
+  const set = (cat: string, patch: Partial<EscalaresCategoria>) => {
+    out[cat] = { ...(out[cat] ?? {}), ...patch };
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const ln = deacc(lines[i]).trim();
+    const mTab = /^Tabela:\s*(.+)$/i.exec(ln);
+    if (!mTab) continue;
+    const nums = mTab[1].match(/\d+\.\d+/g) ?? [];
+    const cats = [...new Set(nums.flatMap((n) => map.get(n) ?? []))];
+    if (cats.length === 0) continue;
+    // O bloco vem logo abaixo do "Tabela:"; para nas fronteiras (proximo Tabela/
+    // Condicoes/ancora de produto). Janela curta para nao vazar p/ a matriz seguinte.
+    let tiq: number | null = null;
+    let custo: string | null = null;
+    for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+      const ljd = deacc(lines[j]).trim();
+      if (/^Tabela:|^Condi..es de uso|^\d\.\d\b/i.test(ljd)) break;
+      const mt = TIQ_BLOCO.exec(ljd);
+      if (mt && tiq === null) tiq = tiqueteToNumber(mt[1]);
+      const mc = CUSTO_RE.exec(lines[j]);
+      if (mc && custo === null) custo = mc[1].trim();
+    }
+    for (const c of cats) {
+      if (tiq !== null) set(c, { tiquete_min: tiq });
+      if (custo !== null) set(c, { custo_processamento: custo });
+    }
+  }
+
+  // FGTS: tiquete na propria matriz (">= R$ N mil"). So aceita match UNICO (evita
+  // as iscas "Varejo Abaixo R$ 999 mil"); ambiguo/ausente -> nao grava (fallback).
+  const fgts = lines
+    .map((l) => TIQ_FGTS.exec(deacc(l)))
+    .filter((m): m is RegExpExecArray => m !== null);
+  if (fgts.length === 1) {
+    set("FGTS", { tiquete_min: parseInt(fgts[0][1], 10) * 1000 });
+  }
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Resultado do parser + _meta mecânico
 // ---------------------------------------------------------------------------
 
