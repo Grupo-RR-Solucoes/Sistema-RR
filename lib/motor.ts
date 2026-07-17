@@ -412,6 +412,16 @@ export function inferCreditTable(op: Operation) {
   return privateConvenio ? "PRIVADO" : "PUBLICO_GERAL";
 }
 
+// Tiquete minimo por tableKey. NAO e mais a FONTE do gate — a fonte e a regua
+// versionada (tiqueteMinFromRegra le regra_json.<categoria>.tiquete_min). Este
+// hardcode virou a REDE (fallback) pra competencia SEM o campo: a TRP38/julho
+// nasceu do parser self-service, que extrai so a matriz de pct e descarta os
+// escalares (tiquete_min, prazo_min, tx_juros). O dia que o parser passar a
+// extrair tiquete_min (ou a Promotiva preencher), o motor passa a respeita-lo
+// sozinho — sem tocar aqui. Os valores abaixo reproduzem a regua VIGENTE (2025-07+,
+// TRP24 em diante): 11/11 categorias batem em abr/mai/jun. Historicamente ja
+// divergiram (CONSIG_PRIVADO era 100 de TRP10 a TRP17; PORTAB_INSS=1000 era
+// categoria separada) — por isso a regua, e nao este mapa, e a verdade.
 function getMinimumTicket(tableKey: string) {
   if (tableKey === "FGTS") return 1000;
   if (tableKey === "PORTABILIDADE_PUBLICO" || tableKey === "PORTABILIDADE_PRIVADO") {
@@ -444,6 +454,35 @@ const MAP_TABLEKEY_TO_CATEGORIA: Record<string, string> = {
   AUTOMATICO_SALARIO_BENEFICIO: "NAO_CONSIGNADO",  // TRP 3.2
   INSS_RENOVACAO: "INSS_RENOV",                    // TRP 1.3
 };
+
+/**
+ * Tiquete minimo (piso do valor_liquido) que a REGUA versionada manda aplicar,
+ * por categoria. FONTE = a regua (regra_json.<categoria>.tiquete_min) — o MESMO
+ * objeto que ja alimenta o pct e o tx_juros_min (o motor le regra[categoria] em
+ * varios pontos; ex.: gate B do ADIANTAMENTO_13). Helper PROPRIO — NAO polui o
+ * lookupPctInRegra nem o candidate-list: e leitura de um escalar de metadado, um
+ * gate INDEPENDENTE do lookup de pct.
+ *
+ * REDE (fallback) = getMinimumTicket(tableKey), o hardcode. Ele nao e a fonte, e a
+ * rede pra competencia SEM o campo: a TRP38/julho nasceu do parser self-service e
+ * nao traz escalares. Sem a rede, julho cairia PRIVADO 2000->100, PORTAB 2500->100,
+ * FGTS 1000->100 (deixaria passar contrato que hoje zera).
+ *
+ * Chaveia no tableKey PRIMARIO (inferCreditTable) via MAP_TABLEKEY_TO_CATEGORIA — o
+ * MESMO mapa do lookup, sem duplicar — reproduzindo a semantica atual do gate: o
+ * minimo e o da categoria PRIMARIA, NAO o da categoria que o candidate-list (#118)
+ * eventualmente resolve pro pct. Sao gates independentes; nao misturar.
+ */
+export function tiqueteMinFromRegra(
+  regra: RegraMes | null | undefined,
+  tableKey: string,
+): number {
+  const categoria = MAP_TABLEKEY_TO_CATEGORIA[tableKey] ?? tableKey;
+  const cat = (
+    regra as Record<string, { tiquete_min?: number } | undefined> | null | undefined
+  )?.[categoria];
+  return cat?.tiquete_min ?? getMinimumTicket(tableKey);
+}
 
 /** Categorias do JSON sem variação por faixa (só "pct_geral"). */
 const CATEGORIAS_PCT_GERAL = new Set(["PORTAB_PUBLICO", "PORTAB_PRIVADO", "FGTS"]);
@@ -554,8 +593,23 @@ function getCreditPercent(op: Operation, band: BandKey, trpProvider?: TrpRegraPr
   const rate = toNumber(op.taxa_juros);
   const term = Math.trunc(toNumber(op.prazo));
 
-  // Gates preservados idênticos ao motor original. Zera antes de qualquer lookup.
-  if (ticket < getMinimumTicket(tableKey) || rate <= 0 || term <= 0) {
+  // Competência + regra resolvidas ANTES do gate: o tiquete mínimo agora NASCE da
+  // régua versionada (tiqueteMinFromRegra), não do hardcode. Mesma FONTE do pct —
+  // DB (trpProvider) quando há versão, senão JSON embutido (getRegra) — espelhando
+  // a resolução do lookupCreditPercentTrp (:492-495). Resolver a régua é
+  // side-effect-free (provider = lookup síncrono em cache; getRegra = lookup no
+  // mapa), então movê-la pra cima NÃO altera o resultado das outras guardas.
+  const mes = competenciaDoContrato(op);
+  const regraGate: RegraMes | null =
+    (mes && trpProvider ? trpProvider(mes) : null) ??
+    (mes ? getRegra(mes)?.regra ?? null : null);
+
+  // Gates preservados na MESMA ORDEM (tiquete, depois rate, depois term). Só a
+  // FONTE do tiquete mínimo mudou (régua -> hardcode como rede): um contrato com
+  // rate<=0 ou term<=0 continua zerando exatamente como antes. O gate do tiquete
+  // chaveia no tableKey PRIMÁRIO (inferCreditTable), NÃO na categoria que o
+  // candidate-list (#118) resolve pro pct — são gates independentes.
+  if (ticket < tiqueteMinFromRegra(regraGate, tableKey) || rate <= 0 || term <= 0) {
     return {
       tableKey,
       percent: 0,
@@ -564,7 +618,6 @@ function getCreditPercent(op: Operation, band: BandKey, trpProvider?: TrpRegraPr
 
   // NOVO — fonte da matriz = TRP por competência quando regime == VOLUME_5_FAIXAS.
   // Fora disso (ou TRP sem célula), fallback p/ CREDIT_RULES (preservado).
-  const mes = competenciaDoContrato(op);
   let entrouTrp = false;
   if (mes && getRegime(mes) === "VOLUME_5_FAIXAS") {
     entrouTrp = true;
