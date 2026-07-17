@@ -386,6 +386,37 @@ function montarEscalaresDraft(
 }
 
 /**
+ * Deriva o tx_juros_min de CATEGORIA das células — NÃO captura (o parseTxRange já
+ * lê o piso da matriz "A partir de X%" como tx_min de célula). O tx_juros_min de
+ * CATEGORIA é o piso da categoria INTEIRA, checado ANTES do lookup de célula
+ * (motor gate B + lookupPctInRegra, TODAS as categorias desde a Fase 4.4).
+ *
+ * Coincide com o tx_min de célula quando há 1 célula (ADIANTAMENTO_13) ou quando
+ * todas carregam o mesmo tx_min; DIVERGE quando alguma célula NÃO tem tx_min
+ * (INSS_RENOV: só a 61-84 declara "A partir de 1,00%") — é por esse caso multi-célula
+ * que derivamos: sem o piso de categoria, as células 48-60 e 85-999 ficariam sem piso.
+ *
+ * REGRA (isola FLOOR de PARTIÇÃO): deriva só quando há UM tx_min distinto E
+ * (célula única OU alguma célula sem tx_min). Uma PARTIÇÃO de taxa (CONSIG_PUBLICO,
+ * SIAPE: vários tx bands distintos) NÃO é floor -> omite. Quando todas as células
+ * carregam o MESMO tx (CONSIG_PRIVADO, PORTAB), o curador modelou no nível da célula
+ * -> omite (as células já enforçam idêntico). Reproduz 11/11 os JSONs curados de
+ * abr/jun; NÃO inventa o campo nas 9 categorias que nunca o tiveram.
+ */
+function derivarTxJurosMin(cells: Record<string, unknown>[]): number | undefined {
+  const txs = cells
+    .map((c) => c.tx_min)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  if (txs.length === 0) return undefined; // nenhuma célula tem tx_min: NÃO inventa 0.
+  const distintos = [...new Set(txs)];
+  const algumaSemTx = cells.some((c) => typeof c.tx_min !== "number");
+  if (distintos.length === 1 && (cells.length === 1 || algumaSemTx)) {
+    return distintos[0];
+  }
+  return undefined;
+}
+
+/**
  * Monta o draft + valida. Lança TrpParseError / TrpValidationError em falha
  * (a rota converte em resposta de erro visível). NÃO grava, NÃO lê banco.
  */
@@ -422,26 +453,42 @@ export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOpt
   const provadoProdutos: Record<string, number[][]> = {};
   let totalPct = 0;
   for (const k of EXPECTED_PRODUCTS) {
-    // escalares primeiro (tiquete_min/custo) + a matriz — mesma ordem do JSON curado.
+    const produtoDraft = montarProdutoDraft(k, produtos[k], conferir);
+    // tx_juros_min de CATEGORIA: DERIVADO das células (não capturado). Reproduz o
+    // piso que o curado punha à mão; cobre o gate B do ADIANTAMENTO_13 e o buraco
+    // multi-célula do INSS_RENOV. Só nas categorias-floor; as 9 de partição ficam sem.
+    const cellsArr = (Object.values(produtoDraft).find(Array.isArray) as
+      | Record<string, unknown>[]
+      | undefined) ?? [];
+    const txJurosMin = derivarTxJurosMin(cellsArr);
+    // escalares primeiro (tiquete_min/custo/tx_juros_min) + a matriz — ordem do curado.
     regraDraft[k] = {
       ...montarEscalaresDraft(k, escalares[k], conferir),
-      ...montarProdutoDraft(k, produtos[k], conferir),
+      ...(txJurosMin !== undefined ? { tx_juros_min: txJurosMin } : {}),
+      ...produtoDraft,
     };
-    provadoProdutos[k] = produtos[k].rows;
-    totalPct += produtos[k].rows.flat().length;
+    if (txJurosMin !== undefined) {
+      conferir.push({
+        produto: k,
+        campo: "tx_juros_min",
+        valorLido: String(txJurosMin),
+        motivo:
+          "DERIVADO das células (menor tx_min, piso único da categoria) — o PDF declara 'A partir de X%' na matriz; confira contra o PDF",
+        severidade: "conferir",
+      });
+    }
   }
 
-  // tx_juros_min / prazo_min de CATEGORIA: MESMA classe, mas NÃO ficam na linha
-  // "Tíquete:" — estão embutidos na matriz (a tx por célula já vira cell.tx_min).
-  // Não forço aqui (evita leitura errada). REPORTO: o motor lê cat.tx_juros_min no
-  // gate B do ADIANTAMENTO_13 (lib/motor.ts) e, enquanto ausente, o gate B não roda.
-  // Fica como item próprio (frente separada), não como captura desta.
+  // prazo_min de CATEGORIA (resíduo irmão, NÃO derivado aqui): mesma classe do
+  // tx_juros_min, mas fora do escopo desta frente. O lookupPctInRegra também checa
+  // cat.prazo_min; hoje o parser só põe prazo por célula (cell.prazo_min), que
+  // enforça o mesmo. Item próprio.
   conferir.push({
     produto: "_escalares",
-    campo: "tx_juros_min / prazo_min (categoria)",
+    campo: "prazo_min (categoria)",
     valorLido: null,
     motivo:
-      "não capturados aqui: não ficam na linha 'Tíquete:', e sim na matriz. O motor lê cat.tx_juros_min no gate B do ADIANTAMENTO_13; enquanto ausente, o gate B não força FORA_DA_TABELA. Frente própria.",
+      "não derivado nesta frente: o parser põe prazo por célula (cell.prazo_min), que enforça o mesmo. tx_juros_min de categoria JÁ é derivado. Frente própria para o prazo_min de categoria, se necessário.",
     severidade: "conferir",
   });
 
