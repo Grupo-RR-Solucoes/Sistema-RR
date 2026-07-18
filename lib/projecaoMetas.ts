@@ -329,7 +329,15 @@ export async function buildProjecaoMetas(
     )
   );
 
-  const active = base.filteredSummaryRows.filter((row) => row.active);
+  // Rank NÃO inclui a chave MASTER (balde/CNPJ, não promotor) — mesma regra
+  // (is_master === true) que o relatório, o DRE e o cms já aplicam. A produção do
+  // master vai para naoAtribuido (assigned NULL); NENHUM master tem produção
+  // atribuída (medido), então isto muda a LISTA, não os números de produção/
+  // projeção. A meta eventualmente parkeada na master (ex.: ADS R$300k) sai do
+  // total do grupo junto — é a meta da EMPRESA no lugar errado (dado, não código).
+  const active = base.filteredSummaryRows.filter(
+    (row) => row.active && base.promoterById.get(row.promoter_id)?.is_master !== true,
+  );
   const promotores: ProjecaoPromotor[] = active.map((row) => {
     const acumulada = closed
       ? toNumber(row.production_value)
