@@ -48,7 +48,9 @@ import {
 import {
   individualPenetration,
   insuranceShareForPenetration,
+  primeInsuranceShareTiers,
 } from "./insurancePenetration.ts";
+import { isFaixaTetoAvistaRR } from "./tetoAvistaRR.ts";
 import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
 
 // Chave master BBTS/ADS — excluída DESTA consolidação (a da RR, via fechamento).
@@ -58,7 +60,9 @@ import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAv
 const BBTS_KEY = "JJ552710";
 // Teto à vista 5,80% (decimal); acima disso o contrato está na "faixa 5,80%" e a
 // Frente C aplica a escala de repasse.
-const FAIXA_580 = 0.058 - 0.00001;
+// FAIXA_580 era o teto 5,80% menos um epsilon de float. NÃO é cap: é
+// CLASSIFICADOR (rotula "está na faixa do teto"). Valor e epsilon agora vêm da
+// fonte única versionada — ver isFaixaTetoAvistaRR em lib/tetoAvistaRR.ts.
 
 function toNumber(value: unknown): number {
   if (value === null || value === undefined || value === "") return 0;
@@ -260,6 +264,11 @@ export async function consolidateMonthlyFromClosing(
   const promoterId = params.promoterId ?? null;
   const dryRun = params.dryRun === true;
 
+  // Escala de seguro: fonte canônica é a TABELA (share_scale SEGURO_SLIP).
+  // Prime ANTES de qualquer insuranceShareForPenetration; sem isto o resolvedor
+  // cai na REDE (literal) silenciosamente.
+  await primeInsuranceShareTiers(supabase);
+
   // 1. Base do fechamento (à vista + seguro embutido; SRCC="Sim" em restritas).
   const base = await loadClosingPromoterBase(supabase, { year, month, companyId });
 
@@ -343,7 +352,7 @@ export async function consolidateMonthlyFromClosing(
         isAldaleneInss:
           normText(nameById.get(pid)).includes("ALDALENE") &&
           normText(c.produto).includes("INSS"),
-        isFaixa580: c.percentualEmpresa >= FAIXA_580,
+        isFaixa580: isFaixaTetoAvistaRR(c.percentualEmpresa, { year, month }),
       },
     });
     return Math.min(Math.max(Number(res.sharePercent) || 0, 0), 1);

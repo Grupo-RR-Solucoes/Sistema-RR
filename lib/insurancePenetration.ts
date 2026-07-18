@@ -7,31 +7,99 @@
 //   - PENETRAÇÃO INDIVIDUAL do promotor = líquido_segurado / líquido_total
 //     (base LÍQUIDO, excluindo SRCC; "segurado" pelo FLAG da fonte
 //     "PROD. SEGURADA", não por insurance_value>0).
-//   - CORTES OFICIAIS (Tabela de Remuneração): < 11% → 10% | 11–20,99% → 25% |
-//     21–29,99% → 35% | ≥ 30% → 50%. Ou seja, limiares 0,11 / 0,21 / 0,30.
 //
-// ATENÇÃO — MIGRATION PENDENTE: a tabela share_scale_tier no banco ainda tem os
-// limiares ERRADOS (0,10 / 0,20 / 0,30). Esta lib NÃO lê o banco — usa os cortes
-// corretos em código, então o cálculo já sai certo. Mas qualquer consumidor que
-// ainda leia share_scale_tier diretamente continuará errado até a migration
-// alinhar o banco a 0,11 / 0,21 / 0,30. (Diego roda a migration depois.)
+// FONTE CANÔNICA = a TABELA share_scale/share_scale_tier (SEGURO_SLIP_MAIO_2026),
+// versionada e self-service, lida pelo MESMO lookup do resto do sistema
+// (lookupInsuranceShareFromPenetration): p >= volume_min AND p < volume_max,
+// última faixa aberta. Cortes da régua: 0,10 / 0,20 / 0,30 — logo penetração
+// 20,00% CRAVADA cai em [0,20 ; 0,30) e paga 0,35.
+//
+// O literal abaixo deixou de ser FONTE e virou REDE (fallback de rede/tabela
+// ausente), no mesmo padrão do getMinimumTicket. Ele espelha a régua tier a
+// tier — se divergir da tabela, é BUG.
+//
+// HISTÓRICO (dívida latente 3, fechada aqui): o literal usava cortes
+// 0,11/0,21/0,30 e o banco tinha sido alterado À MÃO para os mesmos
+// 0,11/0,21/0,30, divergindo da migration 20260528000000 (que sempre teve os
+// cortes CERTOS 0,10/0,20/0,30). As duas fontes concordavam entre si e ambas
+// discordavam da régua. Ver scripts/sql/2026-07-18_restaura_cortes_seguro_slip.sql.
 // ============================================================================
 
-// Cortes em ordem DECRESCENTE (primeiro match vence).
-export const INSURANCE_SHARE_CUTS: ReadonlyArray<{ min: number; share: number }> = [
-  { min: 0.30, share: 0.50 }, // ≥ 30%
-  { min: 0.21, share: 0.35 }, // 21–29,99%
-  { min: 0.11, share: 0.25 }, // 11–20,99%
-  { min: 0.0, share: 0.10 }, // < 11%
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import {
+  fetchInsuranceSlipTiers,
+  lookupInsuranceShareFromPenetration,
+  type InsuranceShareTier,
+} from "./insuranceCalculator.ts";
+
+/**
+ * REDE (fallback), não fonte. Espelha a régua da tabela tier a tier, com a
+ * MESMA semântica de borda (inferior inclusiva, superior EXCLUSIVA).
+ */
+export const INSURANCE_SHARE_CUTS_FALLBACK: ReadonlyArray<InsuranceShareTier> = [
+  { volume_min: 0.0, volume_max: 0.1, share_percent: 0.1 },
+  { volume_min: 0.1, volume_max: 0.2, share_percent: 0.25 },
+  { volume_min: 0.2, volume_max: 0.3, share_percent: 0.35 },
+  { volume_min: 0.3, volume_max: null, share_percent: 0.5 },
 ];
 
-/** Share de repasse (0..1) para uma penetração decimal (0..1), cortes oficiais. */
+/**
+ * Cache de processo dos tiers da tabela. `null` = nunca primado (usa a rede).
+ * Global por natureza: a escala de seguro não é por tenant nem por competência.
+ */
+let primedTiers: InsuranceShareTier[] | null = null;
+
+/**
+ * Carrega os tiers da tabela canônica e passa a servi-los ao
+ * insuranceShareForPenetration. Chamar no INÍCIO de cada caminho de pagamento
+ * (consolidadores + rota de cálculo). Se a tabela não responder, mantém a rede
+ * e devolve ok:false — NUNCA lança, para não derrubar a consolidação.
+ */
+export async function primeInsuranceShareTiers(
+  supabase: SupabaseClient
+): Promise<{ ok: boolean; tiers: InsuranceShareTier[]; fonte: "tabela" | "rede" }> {
+  try {
+    const tiers = await fetchInsuranceSlipTiers(supabase);
+    if (tiers.length > 0) {
+      primedTiers = tiers;
+      return { ok: true, tiers, fonte: "tabela" };
+    }
+  } catch {
+    // cai na rede
+  }
+  console.warn(
+    "[insuranceShare] tabela SEGURO_SLIP indisponivel; usando a REDE (literal). " +
+      "Se isto aparecer numa consolidacao, o numero saiu do fallback."
+  );
+  return { ok: false, tiers: [...INSURANCE_SHARE_CUTS_FALLBACK], fonte: "rede" };
+}
+
+/** Descarta o cache (testes / gates que trocam de fonte no mesmo processo). */
+export function resetInsuranceShareTiers(): void {
+  primedTiers = null;
+}
+
+/** Qual fonte o resolvedor está servindo AGORA (para log/gate). */
+export function insuranceShareTiersEmUso(): {
+  fonte: "tabela" | "rede";
+  tiers: ReadonlyArray<InsuranceShareTier>;
+} {
+  return primedTiers
+    ? { fonte: "tabela", tiers: primedTiers }
+    : { fonte: "rede", tiers: INSURANCE_SHARE_CUTS_FALLBACK };
+}
+
+/**
+ * Share de repasse (0..1) para uma penetração decimal (0..1).
+ * Lê a TABELA quando primada; senão a REDE. Mesmo lookup nos dois casos.
+ */
 export function insuranceShareForPenetration(penetracaoDecimal: number): number {
   const p = Number.isFinite(penetracaoDecimal) ? penetracaoDecimal : 0;
-  for (const c of INSURANCE_SHARE_CUTS) {
-    if (p >= c.min) return c.share;
-  }
-  return 0.1;
+  return lookupInsuranceShareFromPenetration(
+    (primedTiers ?? INSURANCE_SHARE_CUTS_FALLBACK) as InsuranceShareTier[],
+    p
+  );
 }
 
 /** Penetração individual (decimal 0..1) = líquido segurado / líquido total. */

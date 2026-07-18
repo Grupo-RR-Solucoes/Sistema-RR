@@ -13,12 +13,12 @@ import { buildTrpCreditProvider } from "@/lib/trp/creditTrpProvider";
 import {
   calculateInsuranceCommissionFromRules,
   fetchInsuranceSlipRules,
-  fetchInsuranceSlipTiers,
-  lookupInsuranceShareFromPenetration,
-  type InsuranceShareTier,
   type InsuranceSlipRule,
 } from "@/lib/insuranceCalculator";
-import { insuranceShareForPenetration } from "@/lib/insurancePenetration";
+import {
+  insuranceShareForPenetration,
+  primeInsuranceShareTiers,
+} from "@/lib/insurancePenetration";
 import { getPrazoTrp } from "@/lib/prazoTrp";
 import { getProductionWindow } from "@/lib/productionPeriod";
 import {
@@ -800,11 +800,13 @@ export async function POST(req: Request) {
       supabase
     );
 
-    // FIX-1.E.6.E — pre-carrega tiers da scale SEGURO_SLIP_MAIO_2026
-    // (7 tiers fixos). Aplicada 1x por promotor no upsert mensal.
-    const insuranceShareTiers: InsuranceShareTier[] = await fetchInsuranceSlipTiers(
-      supabase
-    );
+    // Escala de seguro: fonte canônica é a TABELA (share_scale SEGURO_SLIP).
+    // Prime ANTES de qualquer insuranceShareForPenetration; sem isto o
+    // resolvedor cai na REDE (literal) silenciosamente.
+    // (Antes aqui havia um fetchInsuranceSlipTiers cujo resultado NUNCA era
+    //  lido — esta rota pagava pelo literal. Agora o fetch alimenta de fato
+    //  o resolvedor.)
+    await primeInsuranceShareTiers(supabase);
 
     // FIX-1.E.6.E — Gate de vigencia (Modelo B). Scale SEGURO_SLIP aplica
     // o repasse Modelo B (total Promotiva × share por penetracao); quando
@@ -1345,8 +1347,8 @@ export async function POST(req: Request) {
       // mas grava o valor atual (Promotiva total) — preservacao explicita
       // ate Etapa D rodar o recalculo retroativo.
       const insurancePenetrationDecimal = insurancePenetrationPercent / 100;
-      // Cortes oficiais 0,11/0,21/0,30 via lib única (share_scale_tier do banco
-      // ainda tem 0,10/0,20/0,30 — migration pendente; a lib não lê o banco).
+      // Cortes da régua 0,10/0,20/0,30 lidos da TABELA (primada acima); o
+      // literal da lib é só rede. 20,00% cravado cai em [0,20;0,30) => 0,35.
       const insuranceShareApplied = insuranceShareForPenetration(
         insurancePenetrationDecimal
       );

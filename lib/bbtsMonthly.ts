@@ -41,14 +41,20 @@ import { getProductionPeriodFromValue, getProductionPeriodKey } from "./producti
 import { calcularOperacao } from "./motor.ts";
 import { buildTrpCreditProvider } from "./trp/creditTrpProvider.ts";
 import { fetchPromoterShareData, resolvePromoterShareSync } from "./proposalDetailing.ts";
-import { individualPenetration, insuranceShareForPenetration } from "./insurancePenetration.ts";
+import {
+  individualPenetration,
+  insuranceShareForPenetration,
+  primeInsuranceShareTiers,
+} from "./insurancePenetration.ts";
+import { tetoAvistaRR } from "./tetoAvistaRR.ts";
 import { resolveBbtsRegraDb } from "./bbts/resolveBbtsRegra.ts";
 import { seguroRateFromRegra } from "./bbts/seguroBbts.ts";
 import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
 import { getPrazoTrp } from "./prazoTrp.ts";
 
 export const BBTS_COMPANY_ID = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
-const TETO_AVISTA = 0.058; // teto 5,80% à vista; excedente vira diferido (100% empresa)
+// Teto 5,80% à vista; excedente vira diferido (100% empresa).
+// Fonte única versionada: lib/tetoAvistaRR.ts (NÃO é o teto 6% da empresa).
 // FAIXA 3 herdada do GRUPO (dado oficial da aba Validador da Promotiva, jun/2026).
 // production_value >= 3.000.000 => FAIXA_3 (getProductionBandByValue). É a faixa
 // do enquadramento; a meta CONSOLIDADA RR+ADS é outra coisa (BBTS-2d).
@@ -110,6 +116,11 @@ export async function consolidateMonthlyFromBbts(
   const { year, month } = params;
   const dryRun = params.dryRun !== false; // default dry-run
   const compKey = getProductionPeriodKey(year, month);
+
+  // Escala de seguro: fonte canônica é a TABELA (share_scale SEGURO_SLIP).
+  // Prime ANTES de qualquer insuranceShareForPenetration; sem isto o resolvedor
+  // cai na REDE (literal) silenciosamente.
+  await primeInsuranceShareTiers(supabase);
   const avisos: string[] = [];
 
   // 1. Linhas ADS da competência, com promotor atribuído.
@@ -217,7 +228,9 @@ export async function consolidateMonthlyFromBbts(
 
     // TETO 5,80% à vista; excedente = diferido (100% empresa). Comissão-empresa
     // que remunera o promotor = à-vista PÓS-teto.
-    const avistaPercent = Math.min(creditPercent, TETO_AVISTA);
+    // Math.min puro (sem piso em 0) para reproduzir EXATAMENTE o comportamento
+    // anterior; só o VALOR do teto passou a vir da fonte versionada.
+    const avistaPercent = Math.min(creditPercent, tetoAvistaRR({ year, month }));
     const comEmpAvista = gross * avistaPercent;
     const diferido = gross * Math.max(creditPercent - avistaPercent, 0);
 
