@@ -22,7 +22,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadClosingPromoterBase } from "./closingPromoterBase.ts";
 import { consolidateMonthlyFromClosing } from "./closingMonthly.ts";
 import { consolidateMonthlyFromBbts, BBTS_COMPANY_ID } from "./bbtsMonthly.ts";
-import { insuranceShareForPenetration } from "./insurancePenetration.ts";
+import {
+  insuranceShareForPenetration,
+  primeInsuranceShareTiers,
+} from "./insurancePenetration.ts";
 import { fetchPromoterShareData } from "./proposalDetailing.ts";
 import { getProductionPeriodFromValue, getProductionPeriodKey } from "./productionPeriod.ts";
 
@@ -71,6 +74,11 @@ export async function consolidateMonthlyGroup(
 ) {
   const { year, month } = params;
   const dryRun = params.dryRun !== false; // default dry-run
+
+  // Escala de seguro: fonte canônica é a TABELA (share_scale SEGURO_SLIP).
+  // Prime ANTES de qualquer insuranceShareForPenetration; sem isto o resolvedor
+  // cai na REDE (literal) silenciosamente.
+  await primeInsuranceShareTiers(supabase as unknown as SupabaseClient);
 
   // ---- A. Soma RR (fechamento CASH, excl SRCC/BBTS, com herança master) ----
   const base = await loadClosingPromoterBase(supabase, { year, month });

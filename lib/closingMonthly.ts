@@ -48,6 +48,7 @@ import {
 import {
   individualPenetration,
   insuranceShareForPenetration,
+  primeInsuranceShareTiers,
 } from "./insurancePenetration.ts";
 import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
 
@@ -259,6 +260,11 @@ export async function consolidateMonthlyFromClosing(
   const companyId = params.companyId ?? null;
   const promoterId = params.promoterId ?? null;
   const dryRun = params.dryRun === true;
+
+  // Escala de seguro: fonte canônica é a TABELA (share_scale SEGURO_SLIP).
+  // Prime ANTES de qualquer insuranceShareForPenetration; sem isto o resolvedor
+  // cai na REDE (literal) silenciosamente.
+  await primeInsuranceShareTiers(supabase);
 
   // 1. Base do fechamento (à vista + seguro embutido; SRCC="Sim" em restritas).
   const base = await loadClosingPromoterBase(supabase, { year, month, companyId });

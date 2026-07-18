@@ -41,7 +41,11 @@ import { getProductionPeriodFromValue, getProductionPeriodKey } from "./producti
 import { calcularOperacao } from "./motor.ts";
 import { buildTrpCreditProvider } from "./trp/creditTrpProvider.ts";
 import { fetchPromoterShareData, resolvePromoterShareSync } from "./proposalDetailing.ts";
-import { individualPenetration, insuranceShareForPenetration } from "./insurancePenetration.ts";
+import {
+  individualPenetration,
+  insuranceShareForPenetration,
+  primeInsuranceShareTiers,
+} from "./insurancePenetration.ts";
 import { resolveBbtsRegraDb } from "./bbts/resolveBbtsRegra.ts";
 import { seguroRateFromRegra } from "./bbts/seguroBbts.ts";
 import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
@@ -110,6 +114,11 @@ export async function consolidateMonthlyFromBbts(
   const { year, month } = params;
   const dryRun = params.dryRun !== false; // default dry-run
   const compKey = getProductionPeriodKey(year, month);
+
+  // Escala de seguro: fonte canônica é a TABELA (share_scale SEGURO_SLIP).
+  // Prime ANTES de qualquer insuranceShareForPenetration; sem isto o resolvedor
+  // cai na REDE (literal) silenciosamente.
+  await primeInsuranceShareTiers(supabase);
   const avisos: string[] = [];
 
   // 1. Linhas ADS da competência, com promotor atribuído.
