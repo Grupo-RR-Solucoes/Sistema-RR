@@ -8,6 +8,7 @@ import { calcularOperacao } from "@/lib/motor";
 import type { TrpRegraProvider } from "@/lib/motor";
 import { buildTrpCreditProvider } from "@/lib/trp/creditTrpProvider";
 import { getPrazoTrp } from "@/lib/prazoTrp";
+import { capAvistaRR } from "@/lib/tetoAvistaRR";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import {
   getAgencyCode as getAgencyCodeShared,
@@ -255,8 +256,12 @@ function toPercentRate(value: unknown) {
   return Math.abs(parsed) > 1 ? parsed / 100 : parsed;
 }
 
+// Teto RR 5,80% da VISÃO do promotor. Valor da fonte única versionada.
+// "CORRENTE": este caminho não carrega competência (deriva de um record
+// avulso). Com um único snapshot é sempre correto — ver a nota em
+// lib/tetoAvistaRR.ts antes de acrescentar um segundo.
 function capPromoterViewRate(value: number) {
-  return Math.min(Math.max(value, 0), 0.058);
+  return capAvistaRR(value, "CORRENTE");
 }
 
 function isMeaningfulAgreement(row: AgreementRow) {

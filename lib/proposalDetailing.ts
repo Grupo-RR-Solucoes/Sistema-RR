@@ -12,6 +12,12 @@
  * pode usar `ProposalRecord` ou um tipo proprio compativel.
  */
 
+import {
+  capAvistaRRPercent,
+  isFaixaTetoAvistaRRPercent,
+  type CompetenciaTeto,
+} from "./tetoAvistaRR.ts";
+
 export type ProposalRecord = {
   raw_payload?: Record<string, unknown> | null;
   is_srcc_restricted?: boolean | null;
@@ -788,7 +794,8 @@ export async function fetchPromoterShareData(
 export function computeComissaoPromotor(
   netValue: number | null | undefined,
   aVistaPercent: number | null | undefined,
-  sharePercent: number | null | undefined
+  sharePercent: number | null | undefined,
+  comp: CompetenciaTeto = "CORRENTE"
 ): number {
   const nv = Number(netValue ?? 0);
   const av = Number(aVistaPercent ?? 0);
@@ -796,7 +803,7 @@ export function computeComissaoPromotor(
   if (!Number.isFinite(nv) || !Number.isFinite(av) || !Number.isFinite(sp)) {
     return 0;
   }
-  const aVistaClamped = Math.min(Math.max(av, 0), 5.8);
+  const aVistaClamped = capAvistaRRPercent(av, comp);
   const comissaoPF = (nv * aVistaClamped) / 100;
   return comissaoPF * sp;
 }
@@ -880,7 +887,7 @@ export async function recalculateSingleProposal(
     const aVista = getAVistaPercent(
       record as { raw_payload: Record<string, unknown> | null }
     );
-    const aVistaClamped = Math.min(Math.max(Number(aVista ?? 0), 0), 5.8);
+    const aVistaClamped = capAvistaRRPercent(Number(aVista ?? 0), { year, month });
 
     // FRENTE C — mesma fonte única do motor e da tela de edição.
     const tgt = targetsMap.get(promoterId);
@@ -900,7 +907,7 @@ export async function recalculateSingleProposal(
         isAldaleneInss:
           normalizeText((promRow as { name?: string } | null)?.name).includes("ALDALENE") &&
           isInssRecord(record as { convenio_code?: string | null; product_description?: string | null }),
-        isFaixa580: aVistaClamped >= 5.8 - 0.001,
+        isFaixa580: isFaixaTetoAvistaRRPercent(aVistaClamped, { year, month }),
       },
     });
     const netValue = Number(
@@ -909,7 +916,8 @@ export async function recalculateSingleProposal(
     const comissaoPromotor = computeComissaoPromotor(
       netValue,
       aVista,
-      resolution.sharePercent
+      resolution.sharePercent,
+      { year, month }
     );
     const effectiveFinalPercent = aVistaClamped * resolution.sharePercent;
 

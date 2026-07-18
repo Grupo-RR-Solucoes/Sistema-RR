@@ -524,7 +524,8 @@ export async function GET(req: Request) {
         promoter_share_amount: computeComissaoPromotor(
           record.net_value,
           aVistaPercent,
-          shareResolution.sharePercent
+          shareResolution.sharePercent,
+          { year, month }
         ),
         // COMISSAO SEGURO PROMOTOR: formula legada mantida (Etapa C
         // refatora). insurance_commission_amount × % seguro / 100.
