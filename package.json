@@ -6,7 +6,9 @@
     "dev": "next dev",
     "dev:clean": "rm -rf .next && next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "gates": "node scripts/run_all_gates.cjs",
+    "gates:full": "node scripts/run_all_gates.cjs --full"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",

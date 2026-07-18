@@ -1,0 +1,59 @@
+# ============================================================================
+# Gates de regressao - MODO AVISO.
+#
+# Roda em todo pull_request para a main. O resultado aparece como check no PR
+# (verde/vermelho), mas NAO bloqueia o merge: nao ha required status check nem
+# branch protection configurados. Bloquear e decisao futura, quando os 3 gates
+# estiverem fixturizados - hoje so 1 dos 3 roda aqui, e travar o merge daria
+# falsa cobertura (parece 3, roda 1).
+#
+# SEM SECRETS, POR DESENHO: este workflow so executa `npm run gates`, que roda
+# exclusivamente os gates SELF-CONTAINED (ver scripts/run_all_gates.cjs). Os
+# gates que leem o banco sao PULADOS pelo proprio runner. Se algum dia um gate
+# de banco entrar aqui, ele vai falhar com exit 3 em vez de silenciosamente
+# passar - e o sinal de que a classificacao no runner esta errada, nao um
+# convite para adicionar a service role de producao como secret.
+#
+# NAO CONFLITA COM O VERCEL: o Vercel dispara no push/deploy e faz o build;
+# este workflow dispara no pull_request e nao builda nem publica nada. Sao dois
+# checks independentes no mesmo PR.
+# ============================================================================
+
+name: gates
+
+on:
+  pull_request:
+    branches: [main]
+
+# Cancela execucoes antigas do mesmo PR quando chega commit novo.
+concurrency:
+  group: gates-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: Gates de regressao (self-contained)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Gates
+        run: npm run gates
