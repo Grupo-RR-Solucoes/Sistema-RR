@@ -21,7 +21,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createClient } from "@supabase/supabase-js";
-import { buildPromoterAnalytics } from "@/lib/promoterAnalytics.ts";
+import { buildPromoterAnalytics, loadPromoterAnalyticsBase } from "@/lib/promoterAnalytics.ts";
 import { BBTS_COMPANY_ID } from "@/lib/bbtsCompanyId.ts";
 
 (function preferEnvLocal() {
@@ -68,6 +68,13 @@ const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0
   const escopo: any = await buildPromoterAnalytics(sb as any, {
     year: YEAR, month: MONTH, companyId: BBTS_COMPANY_ID, closed: false,
   } as any);
+  // A faixa canonica so para CONFERIR o que o render devolveu. Os valores sob
+  // teste (comissao-empresa e repasse) continuam vindo do payload de render.
+  const baseCanon: any = await loadPromoterAnalyticsBase(sb as any, {
+    year: YEAR, month: MONTH, companyId: BBTS_COMPANY_ID, closed: false,
+  } as any);
+  const share: Map<string, { penetracao: number; share: number }> =
+    baseCanon.seguroShareByPromoter ?? new Map();
   const linhas: any[] = [];
   for (const s of escopo.summaryRows ?? []) {
     const p: any = await buildPromoterAnalytics(sb as any, {
@@ -78,33 +85,43 @@ const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0
   }
   if (linhas.length === 0) problemas.push("nenhuma proposalRow com seguro — a via de render nao devolveu nada");
 
-  const h = pad("CONTRATO", 13) + padL("insurance_value", 16) + padL("taxa_bbts", 11) +
-    padL("ANTES(banco)", 13) + padL("AGORA(tela)", 12) + "  rule_source ANTES";
+  const h = pad("CONTRATO", 13) + pad("PROMOTOR", 22) + padL("com_EMPRESA", 12) +
+    padL("pen_consol", 11) + padL("faixa", 7) + padL("REPASSE", 10) + padL("banco(RR)", 11) + "  rule_source ANTES";
   console.log(h); console.log("-".repeat(h.length));
-  let totAntes = 0, totAgora = 0;
+  let totAntes = 0, totEmpresa = 0, totRepasse = 0;
   for (const r of linhas.sort((a: any, b: any) => num(b.insurance_value) - num(a.insurance_value))) {
     const antes = antesPorContrato.get(String(r.proposal_number));
+    const empresa = num(r.company_insurance_commission_amount);
+    const repasse = num(r.insurance_commission_amount);
+    const cons = share.get(String(r.assigned_promoter_id));
     totAntes += antes?.v ?? 0;
-    totAgora += num(r.insurance_commission_amount);
+    totEmpresa += empresa;
+    totRepasse += repasse;
     console.log(
-      pad(String(r.proposal_number), 13) + padL(brl(r.insurance_value), 16) +
-      padL(num(r.insurance_commission_percent).toFixed(3) + "%", 11) +
-      padL(brl(antes?.v ?? 0), 13) + padL(brl(r.insurance_commission_amount), 12) +
-      "  " + (antes?.src ?? "-")
+      pad(String(r.proposal_number), 13) + pad(String(r.promoter_name ?? "").slice(0, 21), 22) +
+      padL(brl(empresa), 12) + padL(((cons?.penetracao ?? 0) * 100).toFixed(2) + "%", 11) +
+      padL(((cons?.share ?? 0) * 100).toFixed(0) + "%", 7) + padL(brl(repasse), 10) +
+      padL(brl(antes?.v ?? 0), 11) + "  " + (antes?.src ?? "-")
     );
-    // As duas colunas adjacentes da tela tem de bater entre si.
-    if (Math.abs(num(r.insurance_commission_amount) - num(r.company_insurance_commission_amount)) > 0.005) {
-      problemas.push(`contrato ${r.proposal_number}: as duas colunas de seguro divergem na tela`);
+    // O repasse tem de ser exatamente empresa x faixa.
+    const esperado = empresa * (cons?.share ?? 0);
+    if (Math.abs(repasse - esperado) > 0.005) {
+      problemas.push(`contrato ${r.proposal_number}: repasse ${brl(repasse)} != empresa x faixa ${brl(esperado)}`);
+    }
+    // E tem de ser MENOR que a comissao-empresa (faixa maxima = 50%).
+    if (empresa > 0 && repasse >= empresa) {
+      problemas.push(`contrato ${r.proposal_number}: repasse >= comissao-empresa (faixa nao aplicada?)`);
     }
   }
   console.log("-".repeat(h.length));
-  console.log(`TOTAL — ANTES (regua RR, valor persistido) ${brl(totAntes)} | AGORA (regua BBTS, via render) ${brl(totAgora)}`);
+  console.log(`TOTAL — comissao EMPRESA (regua BBTS) ${brl(totEmpresa)} | REPASSE ao promotor ${brl(totRepasse)}`);
+  console.log(`        (antes, lixo persistido pela regua do RR: ${brl(totAntes)})`);
 
-  if (Math.abs(totAgora - ESPERADO) > 0.005) {
-    problemas.push(`total pela via de render ${brl(totAgora)} != esperado ${brl(ESPERADO)}`);
+  if (Math.abs(totEmpresa - ESPERADO) > 0.005) {
+    problemas.push(`comissao-empresa pela via de render ${brl(totEmpresa)} != esperado ${brl(ESPERADO)}`);
   }
-  if (Math.abs(totAntes - totAgora) < 0.005) {
-    problemas.push("ANTES == AGORA: o gate nao esta provando troca de regua nenhuma");
+  if (Math.abs(totRepasse - totEmpresa) < 0.005) {
+    problemas.push("REPASSE == EMPRESA: a faixa nao esta sendo aplicada");
   }
 
   // Penetracao: e um valor UNICO do promotor selecionado, repetido por linha.
@@ -119,6 +136,8 @@ const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0
     for (const p of problemas) console.log("  - " + p);
     process.exit(1);
   }
-  console.log("PASSOU: a via de RENDER da /promotores devolve o seguro da ADS pela regua BBTS,");
-  console.log("        e as duas colunas de seguro da tela batem entre si.");
+  console.log("PASSOU: a via de RENDER da /promotores devolve, para a ADS:");
+  console.log("        - 'Comissao seguro'          = regua BBTS (receita da EMPRESA);");
+  console.log("        - 'Comissao seguro promotor' = empresa x faixa SEGURO_SLIP da penetracao");
+  console.log("          CONSOLIDADA do promotor (RR+ADS). As duas NAO batem — correto por design.");
 })().catch((e) => { console.error("ERRO:", e && e.stack ? e.stack : e); process.exit(1); });

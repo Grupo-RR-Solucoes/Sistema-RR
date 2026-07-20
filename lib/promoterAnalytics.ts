@@ -16,6 +16,10 @@ import {
 } from "@/lib/proposalDetailing";
 import { fetchAllRows } from "@/lib/queryHelpers";
 import { BBTS_COMPANY_ID } from "@/lib/bbtsCompanyId";
+import {
+  consolidatedInsuranceShare,
+  primeInsuranceShareTiers,
+} from "@/lib/insurancePenetration";
 import { resolveBbtsRegraDb } from "@/lib/bbts/resolveBbtsRegra";
 import { seguroRateFromRegra } from "@/lib/bbts/seguroBbts";
 // Resolução de escopo (individual/grupo) extraída p/ módulo compartilhado — o
@@ -901,6 +905,52 @@ export async function loadPromoterAnalyticsBase(
     )
   ).sort((a, b) => b.payable_commission_value - a.payable_commission_value);
 
+  // FAIXA DE REPASSE do seguro, por promotor, pela penetração CONSOLIDADA
+  // (RR + ADS somadas) — a MESMA regra do BBTS-2d, via a função única
+  // consolidatedInsuranceShare. Escopo CONSOLIDADO de propósito: a faixa do
+  // promotor não pode mudar só porque a tela está filtrada numa empresa.
+  //
+  // Por isso a query abaixo NÃO leva scope.companyIds: precisa das duas pontas.
+  // É o mesmo critério de "segurado" que o summary usa no ramo LIVE
+  // (insurance_value > 0 || has_insurance) sobre base BRUTA.
+  await primeInsuranceShareTiers(supabase);
+  const seguroShareByPromoter = new Map<string, { penetracao: number; share: number }>();
+  {
+    const todasEmpresas = await fetchAllRows<any>(() =>
+      supabase
+        .from("daily_production_records")
+        .select(
+          "company_id, assigned_promoter_id, gross_value, insurance_value, has_insurance, status, is_srcc_restricted, movement_date, contract_date, proposal_date"
+        )
+    );
+    type Tot = { seguradoRR: number; totalRR: number; seguradoADS: number; totalADS: number };
+    const porPromotor = new Map<string, Tot>();
+    for (const r of todasEmpresas) {
+      const pid = r.assigned_promoter_id as string | null;
+      if (!pid) continue;
+      const per =
+        getProductionPeriodFromValue(r.movement_date) ||
+        getProductionPeriodFromValue(r.contract_date) ||
+        getProductionPeriodFromValue(r.proposal_date);
+      if (!per || per.year !== latestPeriod.year || per.month !== latestPeriod.month) continue;
+      if (!isEligibleProductionRecord(r)) continue;
+      const t = porPromotor.get(pid) ?? { seguradoRR: 0, totalRR: 0, seguradoADS: 0, totalADS: 0 };
+      const bruto = toNumber(r.gross_value);
+      const temSeguro = toNumber(r.insurance_value) > 0 || Boolean(r.has_insurance);
+      if (r.company_id === BBTS_COMPANY_ID) {
+        t.totalADS += bruto;
+        if (temSeguro) t.seguradoADS += bruto;
+      } else {
+        t.totalRR += bruto;
+        if (temSeguro) t.seguradoRR += bruto;
+      }
+      porPromotor.set(pid, t);
+    }
+    for (const [pid, t] of porPromotor) {
+      seguroShareByPromoter.set(pid, consolidatedInsuranceShare(t));
+    }
+  }
+
   // SEGURO DA ADS — regua PROPRIA (bbts_rule_versions), NUNCA a do RR
   // (insurance_slip_rules). Sao reguas INDEPENDENTES, com numeros diferentes e
   // gestora diferente: a do RR da ESTOQUE_D0 = gross x 0,15%, a da ADS da 0,10%.
@@ -945,6 +995,7 @@ export async function loadPromoterAnalyticsBase(
     discounts,
     insuranceSlipRules,
     bbtsRegraSeguro,
+    seguroShareByPromoter,
   };
 }
 
@@ -976,6 +1027,7 @@ export function selectPromoterView(
     discounts,
     insuranceSlipRules,
     bbtsRegraSeguro,
+    seguroShareByPromoter,
   } = base;
 
   // Taxa da regua BBTS para UM registro da ADS (0 quando nao resolve — NAO
@@ -1145,18 +1197,23 @@ export function selectPromoterView(
             // reescreve a coluna, e o BBTS-2d so grava em
             // promoter_monthly_results, nunca em daily_production_records.
             //
-            // Por isso a ADS resolve pela regua BBTS na hora do render, em vez
-            // de ler a coluna. Mesma fonte de company_insurance_commission_amount
-            // (seguroEmpresaDoRegistro) — as duas colunas adjacentes da tela
-            // seguem coerentes. Demais empresas continuam lendo o valor
-            // persistido, sem recalculo: NADA muda fora da ADS.
+            // Esta coluna e o REPASSE AO PROMOTOR ("Comissao seguro promotor"):
+            //   comissao-empresa (regua BBTS) x faixa da escala SEGURO_SLIP,
+            // com a faixa vindo da penetracao CONSOLIDADA do promotor (RR+ADS)
+            // — a mesma regra do BBTS-2d, via seguroShareByPromoter.
+            // Ela NAO bate com a coluna vizinha "Comissao seguro"
+            // (company_insurance_commission_amount), e nao deve mesmo: aquela e
+            // receita da EMPRESA, esta e repasse ao PROMOTOR.
+            // Demais empresas continuam lendo o valor persistido, sem
+            // recalculo: NADA muda fora da ADS.
             insurance_commission_percent:
               record.company_id === BBTS_COMPANY_ID
                 ? seguroTaxaDoRegistro(record) * 100
                 : toNumber(record.insurance_commission_percent),
             insurance_commission_amount:
               record.company_id === BBTS_COMPANY_ID
-                ? seguroEmpresaDoRegistro(record)
+                ? seguroEmpresaDoRegistro(record) *
+                  (seguroShareByPromoter.get(record.assigned_promoter_id || "")?.share ?? 0)
                 : toNumber(record.insurance_commission_amount),
             commission_rule_source:
               record.company_id === BBTS_COMPANY_ID
