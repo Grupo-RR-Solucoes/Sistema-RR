@@ -108,6 +108,31 @@ export function individualPenetration(liquidoSegurado: number, liquidoTotal: num
   return liquidoSegurado / liquidoTotal;
 }
 
+/**
+ * FAIXA DE REPASSE pela penetração CONSOLIDADA do promotor (RR + ADS somadas).
+ *
+ * A penetração que decide o REPASSE é a do promotor no GRUPO INTEIRO, não a de
+ * uma empresa isolada: o promotor que vende seguro no RR não pode cair na faixa
+ * de baixo só porque a tela está filtrada na ADS. Quem já fazia essa conta era o
+ * BBTS-2d (lib/bbtsOrchestrator) inline; virou função aqui para que o render da
+ * /promotores use EXATAMENTE a mesma regra — uma fonte, não duas.
+ *
+ * Recebe os totais JÁ SOMADOS das duas pontas (o chamador é quem sabe de onde
+ * vêm: fechamento CASH no mês fechado, diário no mês aberto).
+ */
+export function consolidatedInsuranceShare(totais: {
+  seguradoRR: number;
+  totalRR: number;
+  seguradoADS: number;
+  totalADS: number;
+}): { penetracao: number; share: number } {
+  const penetracao = individualPenetration(
+    totais.seguradoRR + totais.seguradoADS,
+    totais.totalRR + totais.totalADS
+  );
+  return { penetracao, share: insuranceShareForPenetration(penetracao) };
+}
+
 /** "Segurado" pelo FLAG da fonte ("Sim"). Normaliza acento/espaço/caixa. */
 export function isSeguradaFlag(value: unknown): boolean {
   return (
