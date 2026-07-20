@@ -15,6 +15,7 @@ import {
   getSrccRestrictionLabel as getSrccRestrictionLabelShared,
 } from "@/lib/proposalDetailing";
 import { fetchAllRows } from "@/lib/queryHelpers";
+import { getSupabaseAdmin, hasSupabaseEnv } from "@/lib/supabaseAdmin";
 import { BBTS_COMPANY_ID } from "@/lib/bbtsCompanyId";
 import {
   consolidatedInsuranceShare,
@@ -913,7 +914,12 @@ export async function loadPromoterAnalyticsBase(
   // Por isso a query abaixo NÃO leva scope.companyIds: precisa das duas pontas.
   // É o mesmo critério de "segurado" que o summary usa no ramo LIVE
   // (insurance_value > 0 || has_insurance) sobre base BRUTA.
-  await primeInsuranceShareTiers(supabase);
+  // Mesma razao do bbtsRegraSeguro abaixo: share_scale/share_scale_tier tambem
+  // sao tabelas de REGUA sob RLS. Com o client do usuario, primeInsuranceShareTiers
+  // cai na REDE (literal) sem falhar — a faixa sairia do fallback em vez da
+  // tabela versionada. service_role le a fonte canonica.
+  const leitorDeRegua = hasSupabaseEnv() ? getSupabaseAdmin() : supabase;
+  await primeInsuranceShareTiers(leitorDeRegua as any);
   const seguroShareByPromoter = new Map<string, { penetracao: number; share: number }>();
   {
     const todasEmpresas = await fetchAllRows<any>(() =>
@@ -960,10 +966,34 @@ export async function loadPromoterAnalyticsBase(
   // modalidade nao casa com o 'SLIP' da tabela do RR.
   // Carregada 1x por competencia, fora do Promise.all porque depende de
   // latestPeriod. null (regua ausente) => o consumidor NAO chuta: mostra 0.
-  const bbtsRegraSeguro = await resolveBbtsRegraDb(
-    { competencia: `${latestPeriod.year}-${String(latestPeriod.month).padStart(2, "0")}` },
-    supabase as any
-  ).then((r) => r?.regra ?? null).catch(() => null);
+  // LEITURA COM SERVICE_ROLE, DE PROPOSITO. bbts_rule_versions tem RLS
+  // default-deny e ZERO policies (migration 20260712_000001: "authenticated/anon
+  // nao leem nem escrevem; service_role ignora RLS"). O GET de /api/promotores
+  // roda com withAuthenticatedAnon (JWT do usuario), entao a regua vinha NEGADA
+  // (42501) e o seguro da ADS caia a ZERO na tela inteira — inclusive a
+  // comissao-empresa. E uma tabela de TAXAS, nao dado de promotor: le-la com
+  // service_role nao afrouxa a RLS que protege producao/comissao, que segue
+  // valendo para todo o resto desta funcao.
+  //
+  // Fallback para o client recebido quando nao ha env de service_role (scripts /
+  // testes que ja passam o proprio client).
+  const bbtsRegraSeguro = await (async () => {
+    try {
+      const r = await resolveBbtsRegraDb(
+        { competencia: `${latestPeriod.year}-${String(latestPeriod.month).padStart(2, "0")}` },
+        leitorDeRegua as any
+      );
+      return r?.regra ?? null;
+    } catch (e) {
+      // NUNCA silencioso: sem regua, TODO seguro da ADS vira 0 na tela. Antes
+      // este catch engolia o erro e o zero passava por "nao tem seguro".
+      console.error(
+        "[promoterAnalytics] regua BBTS (bbts_rule_versions) NAO carregada — o seguro da ADS vai aparecer ZERADO. Causa:",
+        e instanceof Error ? e.message : e
+      );
+      return null;
+    }
+  })();
 
   const recordsById = new Map(recordsForPeriod.map((record) => [record.id, record]));
 
