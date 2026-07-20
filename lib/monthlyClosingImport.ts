@@ -478,6 +478,268 @@ function productSignature(
   return parts.length > 0 ? parts.join("+") : tipo;
 }
 
+// ============================================================
+// FRENTE DE PRODUTO — Movimento 1: DESDOBRAMENTO das abas BBCAP / Conta Corrente /
+// BB Consorcio em linhas individuais na master (monthly_closing_entries),
+// preservando a comissao-EMPRESA que ja vem pronta (coluna COMISSAO da aba).
+//
+// NAO substitui a soma existente (detectProductValues/readExtraResumoComissao ->
+// fechamento_mensal_empresa.valor_*): roda AO LADO dela. As linhas sao ADITIVAS e
+// usam entry_type proprios, ignorados pelos consolidadores de PMR (CASH/PRT/...).
+// A soma das linhas desdobradas reproduz o total de empresa ja gravado.
+//
+// Chave da linha (para o Movimento 2 linkar o promotor):
+//   BBCAP / Consorcio -> operation_number = PROPOSTA
+//   Conta Corrente    -> operation_number = NUMERO DA CONTA  + j_key = CHAVE J
+//   Consorcio         -> contract_number  = discriminador da parcela (proposta repete)
+// ============================================================
+
+const PRODUCT_ENTRY_TYPES = ["BBCAP", "CONTA_CORRENTE", "CONSORCIO"] as const;
+
+type ProductLine = {
+  entryType: string;
+  productName: string;
+  operationNumber: string;
+  contractNumber: string;
+  jKey: string | null;
+  commissionValue: number;
+  grossValue: number;
+  operationDate: string | null;
+  metadata: Record<string, unknown>;
+};
+
+// abre uma aba (por nome normalizado) como matriz de linhas.
+function abaRows(workbook: XLSX.WorkBook, sheetNameNorm: string): unknown[][] | null {
+  const name = workbook.SheetNames.find((n) => normHeader(n) === sheetNameNorm);
+  if (!name) return null;
+  return sheetToRows<unknown[]>(workbook.Sheets[name], { header: 1, defval: "" });
+}
+
+function cellAt(row: unknown[], col: number | null | undefined): unknown {
+  return col === null || col === undefined || col < 0 ? "" : row[col];
+}
+function trimStr(v: unknown): string {
+  return String(v ?? "").trim();
+}
+
+// Le as 3 abas de produto e devolve UMA linha por proposta/conta/parcela, com a
+// comissao-EMPRESA pronta. Le a mesma matriz que a soma legada usa; nao a altera.
+// Exportada para o dry-run/regressao (scripts/dryrun_produtos_desdobra.cjs).
+export function buildProductLines(
+  workbook: XLSX.WorkBook,
+  codigoArquivo: string
+): ProductLine[] {
+  const lines: ProductLine[] = [];
+
+  // ---- BBCAP (chave: PROPOSTA) ----
+  {
+    const rows = abaRows(workbook, "BBCAP");
+    const kProp = rows ? locateProductCol(rows, "PROPOSTA") : null;
+    const kCom = rows ? locateProductCol(rows, "COMISSAO") : null;
+    if (rows && kProp && kCom) {
+      const cProd = locateProductCol(rows, "CODIGO DO PRODUTO");
+      const cVal = locateProductCol(rows, "VALOR DO PRODUTO");
+      const cData = locateProductCol(rows, "DATA DA VENDA");
+      const cCpf = locateProductCol(rows, "CPF DO CLIENTE");
+      const cLogin = locateProductCol(rows, "LOGIN DO AGENTE DE CREDITO");
+      const cMci = locateProductCol(rows, "MCI");
+      for (let r = kProp.headerRow + 1; r < rows.length; r++) {
+        const row = rows[r] || [];
+        const proposta = trimStr(cellAt(row, kProp.col));
+        if (proposta === "") continue;
+        lines.push({
+          entryType: "BBCAP",
+          productName: "BBCAP",
+          operationNumber: proposta,
+          contractNumber: "",
+          jKey: null,
+          commissionValue: parseNumber(cellAt(row, kCom.col)),
+          grossValue: parseNumber(cellAt(row, cVal?.col)),
+          operationDate: parseDate(cellAt(row, cData?.col)),
+          metadata: {
+            codigo_produto: trimStr(cellAt(row, cProd?.col)) || null,
+            valor_produto: parseNumber(cellAt(row, cVal?.col)),
+            cpf_cliente: trimStr(cellAt(row, cCpf?.col)) || null,
+            login_agente: trimStr(cellAt(row, cLogin?.col)) || null,
+            mci: trimStr(cellAt(row, cMci?.col)) || null,
+            codigo_arquivo: codigoArquivo,
+          },
+        });
+      }
+    }
+  }
+
+  // ---- BB CONSORCIO (+ MASTER) (chave: PROPOSTA + parcela) ----
+  for (const abaName of ["BB CONSORCIO", "BB CONSORCIO MASTER"]) {
+    const rows = abaRows(workbook, abaName);
+    const kProp = rows ? locateProductCol(rows, "PROPOSTA") : null;
+    const kCom = rows ? locateProductCol(rows, "COMISSAO") : null;
+    if (!rows || !kProp || !kCom) continue;
+    const cParc = locateProductCol(rows, "PARCELA LIBERACAO");
+    const cSeg = locateProductCol(rows, "SEGMENTO");
+    const cBem = locateProductCol(rows, "VALOR BEM");
+    const cPct = locateProductCol(rows, "% COMISSAO");
+    const cData = locateProductCol(rows, "DATA");
+    const cMci = locateProductCol(rows, "MCI");
+    const isMaster = abaName.includes("MASTER");
+    for (let r = kProp.headerRow + 1; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const proposta = trimStr(cellAt(row, kProp.col));
+      if (proposta === "") continue;
+      const parcela = trimStr(cellAt(row, cParc?.col));
+      lines.push({
+        entryType: "CONSORCIO",
+        productName: "CONSORCIO",
+        operationNumber: proposta,
+        // discrimina regular/master + parcela para a chave de conteudo nao colidir
+        // (a mesma proposta tem PARC1/PARC2...). Parcela crua fica no metadata.
+        contractNumber: `${isMaster ? "M" : "R"}|${parcela || "0"}`,
+        jKey: null,
+        commissionValue: parseNumber(cellAt(row, kCom.col)),
+        grossValue: parseNumber(cellAt(row, cBem?.col)),
+        operationDate: parseDate(cellAt(row, cData?.col)),
+        metadata: {
+          segmento: trimStr(cellAt(row, cSeg?.col)) || null,
+          valor_bem: parseNumber(cellAt(row, cBem?.col)),
+          parcela_liberacao: parcela || null,
+          pct_comissao: parseNumber(cellAt(row, cPct?.col)),
+          master: isMaster,
+          mci: trimStr(cellAt(row, cMci?.col)) || null,
+          codigo_arquivo: codigoArquivo,
+        },
+      });
+    }
+  }
+
+  // ---- CONTA CORRENTE (chave: NUMERO DA CONTA; balde se vazio; j_key = CHAVE J) ----
+  {
+    const rows = abaRows(workbook, "CONTA CORRENTE");
+    const kConta = rows ? locateProductCol(rows, "CONTA CORRENTE") : null;
+    const kCom = rows ? locateProductCol(rows, "COMISSAO") : null;
+    if (rows && kConta && kCom) {
+      const kJ = locateProductCol(rows, "CHAVE J");
+      const cModal = locateProductCol(rows, "MODALIDADE");
+      const cData = locateProductCol(rows, "DATA");
+      const cAg = locateProductCol(rows, "AGENCIA");
+      const cLoja = locateProductCol(rows, "LOJA");
+      const cMci = locateProductCol(rows, "MCI");
+      // ha DUAS colunas "PRODUTO" (codigo numerico + texto "Ativacao ... PF/PJ").
+      const hdr = rows[kConta.headerRow] || [];
+      const prodCols: number[] = [];
+      for (let c = 0; c < hdr.length; c++) {
+        if (normHeader(hdr[c]) === "PRODUTO") prodCols.push(c);
+      }
+      const prodCodCol = prodCols[0] ?? -1;
+      const prodTxtCol = prodCols.length > 1 ? prodCols[prodCols.length - 1] : -1;
+      let seq = 0;
+      for (let r = kConta.headerRow + 1; r < rows.length; r++) {
+        const row = rows[r] || [];
+        const conta = trimStr(cellAt(row, kConta.col));
+        const chaveJ = trimStr(cellAt(row, kJ?.col));
+        const comissao = parseNumber(cellAt(row, kCom.col));
+        if (conta === "" && chaveJ === "" && comissao === 0) continue; // linha vazia
+        seq += 1;
+        // balde = linha sem numero de conta (ex.: "S/ IDENTIFICACAO"): vira linha
+        // na master SEM promotor (nao e erro). Chave sintetica estavel por arquivo.
+        const balde = conta === "" || normHeader(conta).includes("IDENTIFICAC");
+        lines.push({
+          entryType: "CONTA_CORRENTE",
+          productName: "CONTA CORRENTE",
+          operationNumber: balde ? `SEMID|${codigoArquivo}|${seq}` : conta,
+          contractNumber: "",
+          jKey: chaveJ || null,
+          commissionValue: comissao,
+          grossValue: 0,
+          operationDate: parseDate(cellAt(row, cData?.col)),
+          metadata: {
+            numero_conta: balde ? null : conta,
+            balde,
+            modalidade: trimStr(cellAt(row, cModal?.col)) || null,
+            produto_cod: trimStr(cellAt(row, prodCodCol)) || null,
+            produto_texto: trimStr(cellAt(row, prodTxtCol)) || null,
+            agencia: trimStr(cellAt(row, cAg?.col)) || null,
+            loja: trimStr(cellAt(row, cLoja?.col)) || null,
+            mci: trimStr(cellAt(row, cMci?.col)) || null,
+            codigo_arquivo: codigoArquivo,
+          },
+        });
+      }
+    }
+  }
+
+  return lines;
+}
+
+// Grava as linhas desdobradas na master de forma IDEMPOTENTE: remove versoes
+// anteriores DESTAS linhas (mesma proposta/conta) — cobre reimport do mesmo arquivo
+// e re-envio por outro codigo C — e insere as atuais. Preserva as linhas de OUTROS
+// produtos/propostas da competencia (aditivo). O indice unico parcial da migracao
+// e a rede de seguranca contra corrida/bug.
+async function syncProductLines(
+  supabaseAdmin: ReturnType<typeof getSupabaseAdmin>,
+  ctx: { company: CompanyRow; year: number; month: number; importId: string },
+  lines: ProductLine[]
+): Promise<number> {
+  if (lines.length === 0) return 0;
+  const { company, year, month, importId } = ctx;
+
+  const opsByType = new Map<string, Set<string>>();
+  for (const l of lines) {
+    if (!opsByType.has(l.entryType)) opsByType.set(l.entryType, new Set());
+    opsByType.get(l.entryType)!.add(l.operationNumber);
+  }
+  for (const [entryType, ops] of opsByType) {
+    const opList = [...ops];
+    for (let i = 0; i < opList.length; i += 200) {
+      const slice = opList.slice(i, i + 200);
+      const { error } = await supabaseRetry(async () =>
+        supabaseAdmin
+          .from("monthly_closing_entries")
+          .delete()
+          .eq("company_id", company.id)
+          .eq("year", year)
+          .eq("month", month)
+          .eq("entry_type", entryType)
+          .in("operation_number", slice)
+      );
+      if (error) throw new Error(`produto delete (${entryType}): ${error.message}`);
+    }
+  }
+
+  const rows = lines.map((l) => ({
+    monthly_closing_import_id: importId,
+    company_id: company.id,
+    company_cnpj: company.cnpj,
+    year,
+    month,
+    sheet_name: l.productName,
+    operation_number: l.operationNumber,
+    contract_number: l.contractNumber,
+    j_key: l.jKey,
+    product_name: l.productName,
+    entry_type: l.entryType,
+    status: null,
+    gross_value: l.grossValue,
+    net_value: 0,
+    insurance_value: 0,
+    commission_value: l.commissionValue,
+    operation_date: l.operationDate,
+    cancellation_date: null,
+    metadata: l.metadata,
+  }));
+
+  let inserted = 0;
+  for (let i = 0; i < rows.length; i += ENTRIES_INSERT_CHUNK_SIZE) {
+    const slice = rows.slice(i, i + ENTRIES_INSERT_CHUNK_SIZE);
+    const { error } = await supabaseRetry(async () =>
+      supabaseAdmin.from("monthly_closing_entries").insert(slice)
+    );
+    if (error) throw new Error(`produto insert: ${error.message}`);
+    inserted += slice.length;
+  }
+  return inserted;
+}
+
 // Cautela 2 — AVISO (não bloqueia) de RE-SOMA: já existe, para a mesma
 // (empresa, ano, mes), um import COMPLETED com a MESMA assinatura de produto e
 // código C DIFERENTE. Reemissão é legítima, mas a soma acumularia — então
@@ -1149,7 +1411,8 @@ async function runImportPipeline(ctx: ImportContext) {
   });
 
   if (fileType !== "TODOS") {
-    // Não toca valor_avista/diferido/seguro/liquido/nota_fiscal nem entries.
+    // Não toca valor_avista/diferido/seguro/liquido/nota_fiscal nem as entries
+    // legadas. Mantém a soma incremental dos campos por produto…
     await applyProductIncrement({
       supabaseAdmin,
       company,
@@ -1157,6 +1420,13 @@ async function runImportPipeline(ctx: ImportContext) {
       month: targetMonth,
       increment,
     });
+    // …e DESDOBRA as abas de produto em linhas na master (é por aqui que entra o
+    // consórcio avulso). Aditivo e idempotente; não conflita com o incremento.
+    const produtoLinhas = await syncProductLines(
+      supabaseAdmin,
+      { company, year: targetYear, month: targetMonth, importId },
+      buildProductLines(workbook, codigoArquivo)
+    );
     await markImportCompleted(supabaseAdmin, importId);
     return {
       success: true,
@@ -1166,6 +1436,7 @@ async function runImportPipeline(ctx: ImportContext) {
       productValues,
       increment,
       processedEntries: 0,
+      produtoLinhas,
       warning: resomaWarning,
     };
   }
@@ -1273,6 +1544,11 @@ async function runImportPipeline(ctx: ImportContext) {
     Object.assign(closingTotals, resumoTotals);
   }
 
+  // Apaga as entries LEGADAS (crédito/cash/prt/seguro/débito e legado sem tipo)
+  // desta competência antes de reinserir. NÃO apaga as linhas de PRODUTO
+  // (BBCAP/CONTA_CORRENTE/CONSORCIO): elas podem vir de OUTRO arquivo Todos da
+  // mesma empresa (ex.: CC num arquivo, BBCAP em outro) e são geridas por
+  // syncProductLines pela própria chave — o blanket delete as perderia.
   const { error: deleteEntriesError } = await supabaseRetry(async () =>
     supabaseAdmin
       .from("monthly_closing_entries")
@@ -1280,6 +1556,7 @@ async function runImportPipeline(ctx: ImportContext) {
       .eq("company_id", company.id)
       .eq("year", targetYear)
       .eq("month", targetMonth)
+      .or("entry_type.is.null,entry_type.not.in.(BBCAP,CONTA_CORRENTE,CONSORCIO)")
   );
 
   if (deleteEntriesError) {
@@ -1387,6 +1664,17 @@ async function runImportPipeline(ctx: ImportContext) {
     increment,
   });
 
+  // FRENTE DE PRODUTO (Movimento 1) — além da soma acima, desdobra as abas
+  // BBCAP/Conta Corrente/BB Consórcio deste arquivo Todos em linhas individuais na
+  // master (sem promotor; comissão-EMPRESA pronta). Aditivo: não entra em
+  // rowsToInsert/operacoes nem no valor_nota_fiscal — só grava as linhas.
+  const produtoLinhas = await syncProductLines(
+    supabaseAdmin,
+    { company, year: targetYear, month: targetMonth, importId },
+    buildProductLines(workbook, codigoArquivo)
+  );
+  console.log(`[import ${importId}] produtos desdobrados: ${produtoLinhas} linhas`);
+
   // FRENTE DÉBITOS (tipo A) — o fechamento acabou de gravar as entries, entre elas a
   // aba Seguro. Agora o resolvedor lê os estornos CANCELADOS, resolve OPERAÇÃO → PRT
   // → chave J → promotor, aplica a regra VERSIONADA da competência e grava as parcelas;
@@ -1446,6 +1734,7 @@ async function runImportPipeline(ctx: ImportContext) {
     },
     processedSheets: workbook.SheetNames.length,
     processedEntries: rowsToInsert.length,
+    produtoLinhas,
     totals: {
       ...closingTotals,
       valor_liquido: valorLiquido,
