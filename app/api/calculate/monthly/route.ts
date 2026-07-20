@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { resolveCompanyScope } from "@/lib/companyScope";
+import { BBTS_COMPANY_ID } from "@/lib/bbtsCompanyId";
 import { detectMonthRegime } from "@/lib/cmsMonthly";
 import { reconsolidarCompetenciaFechada } from "@/lib/reconsolidarCompetencia";
 import { findImportedProductionRule } from "@/lib/promoterRemuneration";
@@ -626,15 +627,55 @@ export async function POST(req: Request) {
     const scope = resolveCompanyScope(companyId || "", allCompaniesForScope);
     const scopeIds = scope.companyIds;
 
-    const companies = await fetchAllPaged<any>(() => {
-      let query = supabase
-        .from("companies")
-        .select("id, name, cnpj")
-        .eq("active", true);
+    // ===== TRAVA DE ESCOPO: a ADS NAO se consolida por aqui =====
+    // Esta rota e o consolidador DIARIO DO RR. A ADS tem consolidador PROPRIO
+    // (o BBTS-2d: lib/bbtsOrchestrator.ts -> consolidateMonthlyFromBbts), com
+    // regua de seguro propria (bbts_rule_versions: ESTOQUE 0,10% / SLIP por
+    // prazo) e penetracao CONSOLIDADA RR+ADS.
+    //
+    // Sem esta trava a rota era CEGA a empresas: com companyId ausente (o caso
+    // do auto-recalculo pos-import, app/importacoes/page.tsx) o escopo virava
+    // global, a ADS entrava no loop de promotores e o upsert em
+    // promoter_monthly_results (onConflict promoter_id,year,month,company_id --
+    // a MESMA chave do BBTS-2d) sobrescrevia a linha source='bbts' por uma
+    // source='daily'. O estrago era mudo e triplo:
+    //   1. seguro recalculado pela regua do RR (insurance_slip_rules: ESTOQUE_D0
+    //      gross x 0,15%) em vez da regua BBTS;
+    //   2. penetracao gravada 0, porque o filtro isEligibleForInsurancePenetration
+    //      exige "Tipo de Liberacao"==1 e a base ADS nao tem esse campo -> share
+    //      despencava para a menor faixa (10%);
+    //   3. promotor da ADS sem registro diario entrava zerado assim mesmo.
+    // Em mes FECHADO isso nao aparecia: o regime desvia antes (linha ~651) e
+    // preserva o source='bbts' -- por isso junho estava certo e julho, aberto,
+    // quebrado.
+    //
+    // Mes fechado ja consolida ADS pelo caminho certo (reconsolidarCompetencia-
+    // Fechada, que chama o orquestrador RR+ADS). Aqui, mes ABERTO, a ADS fica
+    // de fora e so o BBTS-2d escreve a linha dela.
+    const semAds = <T extends { in: any; neq: any }>(query: T, col: string): T =>
+      scopeIds
+        ? query.in(col, scopeIds.filter((id: string) => id !== BBTS_COMPANY_ID))
+        : query.neq(col, BBTS_COMPANY_ID);
 
-      if (scopeIds) query = query.in("id", scopeIds);
-      return query;
-    });
+    // Escopo pedido = SO a ADS -> nao ha nada a fazer aqui. Responde explicito
+    // em vez de rodar em falso e devolver success com 0 (anti-silencio).
+    if (scopeIds && scopeIds.every((id: string) => id === BBTS_COMPANY_ID)) {
+      return NextResponse.json({
+        success: false,
+        year,
+        month,
+        error:
+          "A ADS nao se consolida por esta rota (consolidador diario do RR). " +
+          "Use o BBTS-2d (lib/bbtsOrchestrator.ts / scripts/rodarBbtsOrchestrator.ts).",
+      }, { status: 400 });
+    }
+
+    const companies = await fetchAllPaged<any>(() =>
+      semAds(
+        supabase.from("companies").select("id, name, cnpj").eq("active", true),
+        "id"
+      )
+    );
 
     // MES FECHADO — o PMR fechado NAO e mais escrito aqui a partir do cms.
     //
@@ -709,7 +750,7 @@ export async function POST(req: Request) {
         .gte("movement_date", start)
         .lt("movement_date", end);
 
-      if (scopeIds) query = query.in("company_id", scopeIds);
+      query = semAds(query, "company_id");
       if (promoterId) query = query.eq("assigned_promoter_id", promoterId);
       return query;
     });
@@ -720,7 +761,7 @@ export async function POST(req: Request) {
         .select("id, company_id, name, active")
         .eq("active", true);
 
-      if (scopeIds) query = query.in("company_id", scopeIds);
+      query = semAds(query, "company_id");
       if (promoterId) query = query.eq("id", promoterId);
       return query;
     });
@@ -732,7 +773,7 @@ export async function POST(req: Request) {
         .eq("year", year)
         .eq("month", month);
 
-      if (scopeIds) query = query.in("company_id", scopeIds);
+      query = semAds(query, "company_id");
       if (promoterId) query = query.eq("promoter_id", promoterId);
       return query;
     });
@@ -745,7 +786,7 @@ export async function POST(req: Request) {
         .eq("month", month)
         .eq("active", true);
 
-      if (scopeIds) query = query.in("company_id", scopeIds);
+      query = semAds(query, "company_id");
       if (promoterId) query = query.eq("promoter_id", promoterId);
       return query;
     });
@@ -758,7 +799,7 @@ export async function POST(req: Request) {
         .eq("month", month)
         .eq("active", true);
 
-      if (scopeIds) query = query.in("company_id", scopeIds);
+      query = semAds(query, "company_id");
       return query;
     });
 
@@ -782,7 +823,7 @@ export async function POST(req: Request) {
         .eq("month", month)
         .eq("active", true);
 
-      if (scopeIds) query = query.in("company_id", scopeIds);
+      query = semAds(query, "company_id");
       if (promoterId) query = query.eq("promoter_id", promoterId);
       return query;
     });

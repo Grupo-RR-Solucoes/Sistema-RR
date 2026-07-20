@@ -52,7 +52,8 @@ import { seguroRateFromRegra } from "./bbts/seguroBbts.ts";
 import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
 import { getPrazoTrp } from "./prazoTrp.ts";
 
-export const BBTS_COMPANY_ID = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
+export { BBTS_COMPANY_ID } from "./bbtsCompanyId.ts";
+import { BBTS_COMPANY_ID } from "./bbtsCompanyId.ts";
 // Teto 5,80% à vista; excedente vira diferido (100% empresa).
 // Fonte única versionada: lib/tetoAvistaRR.ts (NÃO é o teto 6% da empresa).
 // FAIXA 3 herdada do GRUPO (dado oficial da aba Validador da Promotiva, jun/2026).
