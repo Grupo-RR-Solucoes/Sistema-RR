@@ -873,10 +873,31 @@ export async function loadPromoterAnalyticsBase(
         });
       })();
 
+  // Promotores que PRODUZIRAM no escopo, independentemente da empresa de
+  // CADASTRO. recordsForPeriod ja vem restrito por companyId (a query acima),
+  // entao ter registro aqui == ter produzido na empresa filtrada.
+  const promotoresComProducaoNoEscopo = new Set(
+    recordsForPeriod
+      .map((record) => record.assigned_promoter_id)
+      .filter((id): id is string => Boolean(id))
+  );
+
+  // O filtro por empresa segue a empresa de CADASTRO do promotor (row.company_id)
+  // MAIS quem produziu no escopo. Sem a segunda metade, um promotor cadastrado em
+  // outra empresa que produziu na filtrada sumia INTEIRO da tela: a producao dele
+  // nao entrava no rank (fora de summaryRows) nem no balde (o registro TEM
+  // assigned_promoter_id, entao nao conta como nao atribuido) -- evaporava.
+  // Medido na ADS jul/2026: MARIA LETICIA, cadastrada em RR ALAGOAS 1, produziu
+  // R$ 7.150,00 na ADS e a /projecao mostrava 258.499,01 em vez de 265.649,01.
+  // A linha do promotor ja era calculada com registros do escopo (promoterRecords
+  // sai de recordsForPeriod), entao ela so estava sendo DESCARTADA no fim.
   const filteredSummaryRows = (
     consolidatedSummaryRows ??
     summaryRows.filter((row) =>
-      scope.companyIds ? scope.companyIds.includes(row.company_id || "") : true
+      scope.companyIds
+        ? scope.companyIds.includes(row.company_id || "") ||
+          promotoresComProducaoNoEscopo.has(row.promoter_id)
+        : true
     )
   ).sort((a, b) => b.payable_commission_value - a.payable_commission_value);
 
