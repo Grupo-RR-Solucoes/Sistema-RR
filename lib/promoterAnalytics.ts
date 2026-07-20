@@ -978,21 +978,24 @@ export function selectPromoterView(
     bbtsRegraSeguro,
   } = base;
 
+  // Taxa da regua BBTS para UM registro da ADS (0 quando nao resolve — NAO
+  // chuta, mesmo contrato do consolidador em lib/bbtsMonthly.ts).
+  const seguroTaxaDoRegistro = (record: any): number => {
+    if (toNumber(record.insurance_value) <= 0) return 0;
+    const meta = (record.raw_payload && record.raw_payload.__bbts_meta) || {};
+    const taxa = seguroRateFromRegra(
+      bbtsRegraSeguro,
+      meta.seguro_tipo ?? record.insurance_type,
+      record.term_months
+    );
+    return taxa.rate === null ? 0 : taxa.rate;
+  };
+
   // Comissao-EMPRESA de seguro de UM registro, pela regua da empresa dona dele:
   // ADS -> bbts_rule_versions; qualquer outra -> insurance_slip_rules (RR).
   const seguroEmpresaDoRegistro = (record: any): number => {
     if (record.company_id === BBTS_COMPANY_ID) {
-      const base = toNumber(record.insurance_value);
-      if (base <= 0) return 0;
-      const meta = (record.raw_payload && record.raw_payload.__bbts_meta) || {};
-      const taxa = seguroRateFromRegra(
-        bbtsRegraSeguro,
-        meta.seguro_tipo ?? record.insurance_type,
-        record.term_months
-      );
-      // rate null = regua sem faixa/prazo p/ este registro: NAO chuta, mostra 0
-      // (mesmo contrato do consolidador em lib/bbtsMonthly.ts).
-      return taxa.rate === null ? 0 : base * taxa.rate;
+      return toNumber(record.insurance_value) * seguroTaxaDoRegistro(record);
     }
     return (
       calculateInsuranceCommissionFromRules({
@@ -1132,9 +1135,33 @@ export function selectPromoterView(
               toNumber(selectedPromoterSummary?.insurance_penetration_percent) / 100,
             promoter_commission_percent: toNumber(record.promoter_commission_percent),
             promoter_commission_amount: toNumber(record.promoter_commission_amount),
-            insurance_commission_percent: toNumber(record.insurance_commission_percent),
-            insurance_commission_amount: toNumber(record.insurance_commission_amount),
-            commission_rule_source: record.commission_rule_source || "",
+            // Estas duas saem CRUAS de daily_production_records — valor que o
+            // motor mensal do RR persistiu. Para a ADS esse valor persistido e
+            // LIXO da regua errada: foi gravado por app/api/calculate/monthly
+            // antes da trava semAds, com insurance_slip_rules (ESTOQUE_D0 =
+            // gross x 0,15% -> contrato 219882642 = R$ 13,20) e SEM_REGRA_TRP
+            // (=> 0) nos "SLIP NOVO", cuja modalidade nao existe na tabela do
+            // RR. E lixo CONGELADO: hoje o motor exclui a ADS, entao ninguem
+            // reescreve a coluna, e o BBTS-2d so grava em
+            // promoter_monthly_results, nunca em daily_production_records.
+            //
+            // Por isso a ADS resolve pela regua BBTS na hora do render, em vez
+            // de ler a coluna. Mesma fonte de company_insurance_commission_amount
+            // (seguroEmpresaDoRegistro) — as duas colunas adjacentes da tela
+            // seguem coerentes. Demais empresas continuam lendo o valor
+            // persistido, sem recalculo: NADA muda fora da ADS.
+            insurance_commission_percent:
+              record.company_id === BBTS_COMPANY_ID
+                ? seguroTaxaDoRegistro(record) * 100
+                : toNumber(record.insurance_commission_percent),
+            insurance_commission_amount:
+              record.company_id === BBTS_COMPANY_ID
+                ? seguroEmpresaDoRegistro(record)
+                : toNumber(record.insurance_commission_amount),
+            commission_rule_source:
+              record.company_id === BBTS_COMPANY_ID
+                ? "BBTS_RULE_VERSIONS"
+                : record.commission_rule_source || "",
             assigned_promoter_id: record.assigned_promoter_id,
             assigned_promoter_name:
               promoterById.get(record.assigned_promoter_id || "")?.name || "",
