@@ -23,7 +23,7 @@ import { loadClosingPromoterBase } from "./closingPromoterBase.ts";
 import { consolidateMonthlyFromClosing } from "./closingMonthly.ts";
 import { consolidateMonthlyFromBbts, BBTS_COMPANY_ID } from "./bbtsMonthly.ts";
 import {
-  insuranceShareForPenetration,
+  consolidatedInsuranceShare,
   primeInsuranceShareTiers,
 } from "./insurancePenetration.ts";
 import { fetchPromoterShareData } from "./proposalDetailing.ts";
@@ -181,10 +181,15 @@ export async function consolidateMonthlyGroup(
     // Penetração (base do FECHAMENTO/seguro): líq segurado / líq total, RR + ADS.
     const r = rr.get(pid) || { net: 0, liqSeg: 0 };
     const a = ads.get(pid) || { prod: 0, liqSeg: 0 };
-    const penDen = r.net + a.prod;
-    const penNum = r.liqSeg + a.liqSeg;
-    const pen = penDen > 0 ? penNum / penDen : 0;
-    const share = insuranceShareForPenetration(pen);
+    // Faixa pela penetração CONSOLIDADA (RR + ADS). A conta vive em
+    // lib/insurancePenetration (consolidatedInsuranceShare) — a MESMA função que
+    // o render da /promotores usa, para não haver duas regras de faixa.
+    const { penetracao: pen, share } = consolidatedInsuranceShare({
+      seguradoRR: r.liqSeg,
+      totalRR: r.net,
+      seguradoADS: a.liqSeg,
+      totalADS: a.prod,
+    });
     const t = targetById.get(pid);
     const status = resolveTargetStatus(prodTotal, Number(t?.meta || 0), Number(t?.meta_1 || 0), Number(t?.meta_2 || 0));
     statusMetaByPromoter.set(pid, status);
