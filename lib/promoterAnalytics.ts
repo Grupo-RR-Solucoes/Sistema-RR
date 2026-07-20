@@ -15,6 +15,9 @@ import {
   getSrccRestrictionLabel as getSrccRestrictionLabelShared,
 } from "@/lib/proposalDetailing";
 import { fetchAllRows } from "@/lib/queryHelpers";
+import { BBTS_COMPANY_ID } from "@/lib/bbtsCompanyId";
+import { resolveBbtsRegraDb } from "@/lib/bbts/resolveBbtsRegra";
+import { seguroRateFromRegra } from "@/lib/bbts/seguroBbts";
 // Resolução de escopo (individual/grupo) extraída p/ módulo compartilhado — o
 // recálculo (/api/calculate/monthly) reusa o MESMO resolvedor. Re-exporta os
 // sentinelas p/ não quebrar quem importa daqui.
@@ -877,6 +880,20 @@ export async function loadPromoterAnalyticsBase(
     )
   ).sort((a, b) => b.payable_commission_value - a.payable_commission_value);
 
+  // SEGURO DA ADS — regua PROPRIA (bbts_rule_versions), NUNCA a do RR
+  // (insurance_slip_rules). Sao reguas INDEPENDENTES, com numeros diferentes e
+  // gestora diferente: a do RR da ESTOQUE_D0 = gross x 0,15%, a da ADS da 0,10%.
+  // Sem isto a coluna por contrato da /promotores mostrava o seguro da ADS pela
+  // regua do RR (medido: contrato 219882642, 8.800 x 0,15% = R$ 13,20, quando a
+  // regua da ADS manda 8.800 x 0,10% = R$ 8,80) e zerava os "SLIP NOVO", cuja
+  // modalidade nao casa com o 'SLIP' da tabela do RR.
+  // Carregada 1x por competencia, fora do Promise.all porque depende de
+  // latestPeriod. null (regua ausente) => o consumidor NAO chuta: mostra 0.
+  const bbtsRegraSeguro = await resolveBbtsRegraDb(
+    { competencia: `${latestPeriod.year}-${String(latestPeriod.month).padStart(2, "0")}` },
+    supabase as any
+  ).then((r) => r?.regra ?? null).catch(() => null);
+
   const recordsById = new Map(recordsForPeriod.map((record) => [record.id, record]));
 
   return {
@@ -906,6 +923,7 @@ export async function loadPromoterAnalyticsBase(
     agreements,
     discounts,
     insuranceSlipRules,
+    bbtsRegraSeguro,
   };
 }
 
@@ -936,7 +954,37 @@ export function selectPromoterView(
     agreements,
     discounts,
     insuranceSlipRules,
+    bbtsRegraSeguro,
   } = base;
+
+  // Comissao-EMPRESA de seguro de UM registro, pela regua da empresa dona dele:
+  // ADS -> bbts_rule_versions; qualquer outra -> insurance_slip_rules (RR).
+  const seguroEmpresaDoRegistro = (record: any): number => {
+    if (record.company_id === BBTS_COMPANY_ID) {
+      const base = toNumber(record.insurance_value);
+      if (base <= 0) return 0;
+      const meta = (record.raw_payload && record.raw_payload.__bbts_meta) || {};
+      const taxa = seguroRateFromRegra(
+        bbtsRegraSeguro,
+        meta.seguro_tipo ?? record.insurance_type,
+        record.term_months
+      );
+      // rate null = regua sem faixa/prazo p/ este registro: NAO chuta, mostra 0
+      // (mesmo contrato do consolidador em lib/bbtsMonthly.ts).
+      return taxa.rate === null ? 0 : base * taxa.rate;
+    }
+    return (
+      calculateInsuranceCommissionFromRules({
+        rules: insuranceSlipRules,
+        grossValue: toNumber(record.gross_value),
+        premioValue: toNumber(record.insurance_value),
+        insuranceType: record.insurance_type,
+        termPromotiva:
+          getPrazoTrp(record) ?? toNumber(record.term_months || record.installments),
+        contractDate: record.contract_date || record.movement_date,
+      })?.amount ?? 0
+    );
+  };
 
   const requestedPromoterId = promoterId || "";
   const selectedPromoterId =
@@ -1057,17 +1105,8 @@ export function selectPromoterView(
             // Mesma chamada produz o mesmo amount que o motor principal
             // grava em daily_production_records.insurance_commission_amount,
             // garantindo coerência nas duas colunas adjacentes em /promotores.
-            company_insurance_commission_amount:
-              calculateInsuranceCommissionFromRules({
-                rules: insuranceSlipRules,
-                grossValue: toNumber(record.gross_value),
-                premioValue: toNumber(record.insurance_value),
-                insuranceType: record.insurance_type,
-                termPromotiva:
-                  getPrazoTrp(record) ??
-                  toNumber(record.term_months || record.installments),
-                contractDate: record.contract_date || record.movement_date,
-              })?.amount ?? 0,
+            // A ADS desvia para a régua BBTS (ver seguroEmpresaDoRegistro).
+            company_insurance_commission_amount: seguroEmpresaDoRegistro(record),
             insurance_penetration_percent:
               toNumber(selectedPromoterSummary?.insurance_penetration_percent) / 100,
             promoter_commission_percent: toNumber(record.promoter_commission_percent),
