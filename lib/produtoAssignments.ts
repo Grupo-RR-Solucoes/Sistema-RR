@@ -8,6 +8,10 @@
 // - Upsert respeita decisao humana (status ASSIGNED nunca vira PENDING de volta).
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { repassePromotor } from "./produtoRepasse.ts";
+import {
+  computeConsorcioCommissionByPromoter,
+  syncPendingConsorcioAnchors,
+} from "./consorcio/fila.ts";
 
 type SupabaseLike = SupabaseClient;
 
@@ -142,7 +146,14 @@ export async function assignProductLine(
 
 export type ProductCommissionByPromoter = Map<
   string, // `${promoter_id}|${company_id}`
-  { promoter_id: string; company_id: string | null; bbcap: number; conta_corrente: number }
+  {
+    promoter_id: string;
+    company_id: string | null;
+    bbcap: number;
+    conta_corrente: number;
+    consorcio: number; // M2b: repasse do consorcio (comissao-empresa x 0,40)
+    lob: number; // M2b: adiado (sem fonte) — sempre 0
+  }
 >;
 
 // Repasse consolidado por (promotor, empresa): junta as linhas de produto
@@ -172,22 +183,42 @@ export async function computeProductCommissionByPromoter(
   }
 
   const acc: ProductCommissionByPromoter = new Map();
+  const novoBucket = (pid: string, company_id: string | null) => ({
+    promoter_id: pid,
+    company_id,
+    bbcap: 0,
+    conta_corrente: 0,
+    consorcio: 0,
+    lob: 0,
+  });
   for (const e of entries) {
     const key = `${e.company_id}|${e.entry_type}|${e.operation_number}|${e.contract_number ?? ""}`;
     const pid = promoterByKey.get(key);
     if (!pid) continue; // PENDING/balde: sem repasse ate ser atribuido
     const repasse = repassePromotor(Number(e.commission_value || 0));
     const ak = `${pid}|${e.company_id}`;
-    const cur =
-      acc.get(ak) || { promoter_id: pid, company_id: e.company_id, bbcap: 0, conta_corrente: 0 };
+    const cur = acc.get(ak) || novoBucket(pid, e.company_id);
     if (e.entry_type === "BBCAP") cur.bbcap += repasse;
     else if (e.entry_type === "CONTA_CORRENTE") cur.conta_corrente += repasse;
     acc.set(ak, cur);
   }
+
+  // M2b — CONSORCIO (diferido): resolve o promotor pela ANCORA da proposta (heranca)
+  // e soma a comissao-empresa das parcelas RECEBIDAS no mes x 0,40. LOB fica adiado.
+  const cons = await computeConsorcioCommissionByPromoter(supabase, { year, month });
+  for (const c of cons.values()) {
+    const ak = `${c.promoter_id}|${c.company_id}`;
+    const cur = acc.get(ak) || novoBucket(c.promoter_id, c.company_id);
+    cur.consorcio += c.consorcio;
+    acc.set(ak, cur);
+  }
+
   // arredonda o agregado para 2 casas (numeric(18,2) do PMR).
   for (const v of acc.values()) {
     v.bbcap = Math.round(v.bbcap * 100) / 100;
     v.conta_corrente = Math.round(v.conta_corrente * 100) / 100;
+    v.consorcio = Math.round(v.consorcio * 100) / 100;
+    v.lob = Math.round(v.lob * 100) / 100;
   }
   return acc;
 }
@@ -211,6 +242,7 @@ export async function applyProdutoRepasseAoPmr(
   const dryRun = params.dryRun === true;
 
   await syncPendingProductAssignments(supabase, { year, month, dryRun });
+  await syncPendingConsorcioAnchors(supabase, { dryRun }); // M2b: ancoras por proposta
   const porPromotor = await computeProductCommissionByPromoter(supabase, { year, month });
 
   const chaves = new Set<string>();
@@ -246,7 +278,8 @@ export async function applyProdutoRepasseAoPmr(
     const base = existentes.get(k);
     const prod = base?.prod ?? 0;
     const ins = base?.ins ?? 0;
-    const final = Math.round((prod + ins + v.bbcap + v.conta_corrente) * 100) / 100;
+    const final =
+      Math.round((prod + ins + v.bbcap + v.conta_corrente + v.consorcio + v.lob) * 100) / 100;
     if (base) {
       updates.push({
         promoter_id: v.promoter_id,
@@ -255,6 +288,8 @@ export async function applyProdutoRepasseAoPmr(
         month,
         bbcap_commission_value: v.bbcap,
         conta_corrente_commission_value: v.conta_corrente,
+        consorcio_commission_value: v.consorcio,
+        lob_commission_value: v.lob,
         final_commission_value: final,
       });
     } else {
@@ -268,6 +303,8 @@ export async function applyProdutoRepasseAoPmr(
         insurance_commission_value: 0,
         bbcap_commission_value: v.bbcap,
         conta_corrente_commission_value: v.conta_corrente,
+        consorcio_commission_value: v.consorcio,
+        lob_commission_value: v.lob,
         final_commission_value: final,
       });
     }

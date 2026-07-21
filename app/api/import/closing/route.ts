@@ -7,6 +7,8 @@ import {
   importMonthlyClosingWorkbook,
 } from "@/lib/monthlyClosingImport";
 import { congelarPrevisao } from "@/lib/recebiveis/congelarPrevisao";
+import { materializarCarteiraConsorcio } from "@/lib/consorcio/carteira";
+import { persistConsorcioInadimplenciaSnapshot } from "@/lib/consorcio/inadimplencia";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function POST(req: Request) {
@@ -160,11 +162,41 @@ export async function POST(req: Request) {
       );
     }
 
+    // (4) FRENTE DE PRODUTO M2b — carteira do consorcio (rebuild) + monitor de
+    // inadimplencia forte. Independente do PRT. Le monthly_closing_entries
+    // entry_type='CONSORCIO' (de qualquer tipo de arquivo — consorcio chega em
+    // avulso e em TODOS). Best-effort: falha aqui e logada mas NAO derruba o import.
+    let consorcioCarteira: { ran: boolean; linhas?: number; naoVeio?: number; error?: string } = {
+      ran: false,
+    };
+    try {
+      const admin = getSupabaseAdmin();
+      const mat = await materializarCarteiraConsorcio(admin, {});
+      const snap = await persistConsorcioInadimplenciaSnapshot(admin, {
+        competencia: { year, month },
+      });
+      consorcioCarteira = { ran: true, linhas: mat.linhas, naoVeio: snap.total };
+      console.log(
+        `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
+          `consorcio: carteira ${mat.linhas} linhas / ${mat.propostas} propostas, ` +
+          `monitor ${snap.total} parcelas nao vieram (${snap.novos} novas).`
+      );
+    } catch (consError) {
+      const message =
+        consError instanceof Error ? consError.message : "Erro desconhecido no consorcio.";
+      consorcioCarteira = { ran: false, error: message };
+      console.error(
+        `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
+          `carteira/monitor do consorcio falhou (import preservado): ${message}`
+      );
+    }
+
     return NextResponse.json({
       ...payload,
       materializacaoCarteira,
       congelamentoPrevisao,
       inadimplenciaMonitor,
+      consorcioCarteira,
     });
   } catch (error) {
     if (error instanceof DuplicateImportInFlightError) {
