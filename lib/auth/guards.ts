@@ -137,6 +137,20 @@ export async function requireGestor(): Promise<{
   return { session, role };
 }
 
+// Gestor de consorcio (M3): role UNICO 'gestor_consorcio'. Ve producao geral do
+// consorcio + o proprio payout de 10%; NUNCA a comissao dos promotores. Espelho do
+// requireGestor, variante de role unico.
+export async function requireGestorConsorcio(): Promise<{
+  session: AuthSession;
+  role: "gestor_consorcio";
+}> {
+  const { session, role } = await requireAuthenticated();
+  if (role !== "gestor_consorcio") {
+    throw new ApiGuardError(403, "Acesso restrito ao gestor de consorcio");
+  }
+  return { session, role: "gestor_consorcio" };
+}
+
 // ============================================================
 // Composicoes guard + client (Dia 4.2)
 // ============================================================
