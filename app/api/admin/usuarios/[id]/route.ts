@@ -153,10 +153,11 @@ export async function PATCH(
 
     // CPF — segue o role FINAL (mesma regra do POST). funcionario/promotor:
     // valida e normaliza quando vier no body; obrigatorio quando o usuario
-    // PASSA A SER funcionario/promotor. socio: zera (NULL) ao virar socio.
+    // PASSA A SER funcionario/promotor. socio e gestor_consorcio logam por e-mail:
+    // zera (NULL) ao virar um deles.
     const finalRole = (body.role ?? target.role) as UserRole;
-    if (finalRole === "socio") {
-      if (body.role === "socio") update.cpf = null;
+    if (finalRole === "socio" || finalRole === "gestor_consorcio") {
+      if (body.role === "socio" || body.role === "gestor_consorcio") update.cpf = null;
     } else if (body.cpf !== undefined) {
       const cpfDigits = onlyDigits(typeof body.cpf === "string" ? body.cpf : "");
       if (!isValidCPF(cpfDigits)) {
