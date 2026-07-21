@@ -51,6 +51,7 @@ import { consolidateMonthlyGroup } from "./bbtsOrchestrator.ts";
 import { detectMonthRegime, type MonthRegime } from "./cmsMonthly.ts";
 import { persistRulesFingerprint } from "./rulesFingerprint.ts";
 import { applyProdutoRepasseAoPmr } from "./produtoAssignments.ts";
+import { computeConsorcioGestorPayout } from "./consorcio/gestorPayout.ts";
 
 type SupabaseLike = SupabaseClient;
 
@@ -78,6 +79,12 @@ export type ReconsolidacaoResultado = {
     detalhe_orfaos: Array<{ promoter_id: string; company_id: string | null; source: string }>;
   };
   produtos?: { promotores: number; atualizadas: number; inseridas: number };
+  gestor_consorcio?: {
+    competencia: string;
+    gestor_user_id: string | null;
+    total_10: number;
+    empresas: number;
+  };
   grupo?: any;
 };
 
@@ -144,6 +151,12 @@ export async function reconsolidarCompetenciaFechada(
   // reconciliador NAO as apagar. Roda mesmo em dryRun (nesse caso nao grava).
   const produtos = await applyProdutoRepasseAoPmr(supabase, { year, month, dryRun });
   for (const k of produtos.chaves) novoSet.add(k);
+
+  // ---- GESTOR de consorcio (M2b) — payout dos 10% SEPARADO da PMR ----
+  // 10% de TODA a comissao-empresa do consorcio, de TODAS as empresas. NAO entra no
+  // PMR (nao mexe em promotor). Gravado em consorcio_gestor_payout. Roda em dryRun (nao
+  // grava). Best-effort no espirito: mas o payout e barato e determinístico.
+  const gestorPayout = await computeConsorcioGestorPayout(supabase, { year, month, dryRun });
 
   // ---- Reconciliacao: o PMR fechado passa a ser SO o conjunto novo ----
   const { data: existentes, error: readError } = await supabase
@@ -251,6 +264,12 @@ export async function reconsolidarCompetenciaFechada(
       promotores: produtos.promotores,
       atualizadas: produtos.atualizadas,
       inseridas: produtos.inseridas,
+    },
+    gestor_consorcio: {
+      competencia: gestorPayout.competencia,
+      gestor_user_id: gestorPayout.gestor_user_id,
+      total_10: gestorPayout.total_10,
+      empresas: gestorPayout.linhas.length,
     },
     grupo,
   };
