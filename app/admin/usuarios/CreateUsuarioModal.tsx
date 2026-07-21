@@ -89,7 +89,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
     // CPF obrigatório/validado para funcionário e promotor (login por CPF).
     // Sócio loga por e-mail → não valida nem envia CPF.
     const cpfDigits = onlyDigits(cpf);
-    if (role !== "socio") {
+    if (role !== "socio" && role !== "gestor_consorcio") {
       if (!isValidCPF(cpfDigits)) {
         setError("CPF inválido");
         return;
@@ -101,7 +101,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
       full_name: fullName.trim() || null,
       role,
     };
-    if (role !== "socio") {
+    if (role !== "socio" && role !== "gestor_consorcio") {
       body.cpf = cpfDigits;
     }
     if (role === "promotor") {
@@ -181,17 +181,18 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
                 </div>
                 <div className={`field${roleLocked ? " locked" : ""}`}>
                   <label>Perfil de acesso <span className="req">*</span></label>
-                  <select value={role} onChange={(e) => { const r = e.target.value as Role; setRole(r); if (r === "socio") setCpf(""); }} disabled={submitting || roleLocked}>
+                  <select value={role} onChange={(e) => { const r = e.target.value as Role; setRole(r); if (r === "socio" || r === "gestor_consorcio") setCpf(""); }} disabled={submitting || roleLocked}>
                     {targetRoles.includes("socio") ? <option value="socio">Sócio (acesso completo)</option> : null}
                     {targetRoles.includes("funcionario") ? <option value="funcionario">Auxiliar Financeiro (operacional)</option> : null}
                     {targetRoles.includes("promotor") ? <option value="promotor">Promotor (acesso aos próprios dados)</option> : null}
                     {targetRoles.includes("supervisor") ? <option value="supervisor">Supervisor (produção/desempenho da equipe)</option> : null}
                     {targetRoles.includes("gerente_regional") ? <option value="gerente_regional">Gerente Regional (produção/desempenho da regional)</option> : null}
+                    {targetRoles.includes("gestor_consorcio") ? <option value="gestor_consorcio">Gestor de Consórcio (produção geral + 10% próprio)</option> : null}
                   </select>
                   {roleLocked ? <span className="hint">Como auxiliar financeiro, você só cadastra promotores.</span> : null}
                 </div>
 
-                {role !== "socio" ? (
+                {role !== "socio" && role !== "gestor_consorcio" ? (
                   <div className="field">
                     <label>CPF <span className="req">*</span></label>
                     <input

@@ -44,6 +44,32 @@ type PromoterSummaryRow = {
   insurance_penetration_percent: number;
   final_commission_value: number;
   payable_commission_value: number;
+  // Produtos (M2a/M2b) — repasse ja incluso no final_commission_value.
+  bbcap_commission_value?: number;
+  conta_corrente_commission_value?: number;
+  consorcio_commission_value?: number;
+};
+
+type ConsorcioParcela = {
+  proposta: string;
+  posicao: number;
+  segmento_grupo: string | null;
+  teto_parcelas: number;
+  valor_bem: number;
+  status: string;
+  competencia_recebida: string | null;
+  repasse: number;
+  recebida: boolean;
+};
+type ConsorcioCarteira = {
+  rows: ConsorcioParcela[];
+  resumo: {
+    parcelas_recebidas: number;
+    parcelas_a_vir: number;
+    propostas: number;
+    repasse_recebido: number;
+    repasse_a_vir: number;
+  };
 };
 
 type PromotorPayload = {
@@ -100,6 +126,7 @@ export default function PromotorView() {
   const [selectedKey, setSelectedKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [carteira, setCarteira] = useState<ConsorcioCarteira | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,6 +172,21 @@ export default function PromotorView() {
       cancelled = true;
     };
   }, [selectedKey]);
+
+  // Carteira de consorcio (a vida inteira da carteira, nao so a competencia): o
+  // servidor resolve o promotor pela sessao. Falha silenciosa (produto opcional).
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/promotores/consorcio-carteira")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: ConsorcioCarteira | null) => {
+        if (!cancelled && j) setCarteira(j);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const summary = data?.summaryRows[0] ?? null;
   const proposals = data?.proposalRows ?? [];
@@ -395,6 +437,96 @@ export default function PromotorView() {
               </span>
             </div>
           </div>
+        ) : null}
+
+        {/* PRODUTOS — repasse dos produtos (BBCAP / Conta Corrente / Consórcio) */}
+        {summary &&
+        ((summary.bbcap_commission_value ?? 0) > 0 ||
+          (summary.conta_corrente_commission_value ?? 0) > 0 ||
+          (summary.consorcio_commission_value ?? 0) > 0) ? (
+          <section className="card">
+            <div className="card-head">
+              <h2>Meus produtos{periodShort ? ` · ${periodShort}` : ""}</h2>
+              <p className="csub">Repasse de produtos (já somado no total do mês)</p>
+            </div>
+            <div className="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th className="l sticky">Produto</th>
+                    <th>Repasse</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className="l sticky" data-l="Produto">BBCAP (capitalização)</td>
+                    <td className={`num${(summary.bbcap_commission_value ?? 0) > 0 ? "" : " dash"}`} data-l="Repasse">
+                      {(summary.bbcap_commission_value ?? 0) > 0 ? formatCurrency(summary.bbcap_commission_value) : "—"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="l sticky" data-l="Produto">Conta Corrente</td>
+                    <td className={`num${(summary.conta_corrente_commission_value ?? 0) > 0 ? "" : " dash"}`} data-l="Repasse">
+                      {(summary.conta_corrente_commission_value ?? 0) > 0 ? formatCurrency(summary.conta_corrente_commission_value) : "—"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="l sticky" data-l="Produto">Consórcio</td>
+                    <td className={`num${(summary.consorcio_commission_value ?? 0) > 0 ? "" : " dash"}`} data-l="Repasse">
+                      {(summary.consorcio_commission_value ?? 0) > 0 ? formatCurrency(summary.consorcio_commission_value) : "—"}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ) : null}
+
+        {/* CARTEIRA DE CONSÓRCIO — parcelas recebidas × a vir (diferido) */}
+        {carteira && carteira.rows.length > 0 ? (
+          <section className="card">
+            <div className="card-head">
+              <h2>Carteira de consórcio</h2>
+              <p className="csub">
+                {carteira.resumo.propostas} proposta(s) · {carteira.resumo.parcelas_recebidas} parcela(s)
+                recebida(s) · {carteira.resumo.parcelas_a_vir} a vir · repasse recebido{" "}
+                {formatCurrency(carteira.resumo.repasse_recebido)} · projetado a vir{" "}
+                {formatCurrency(carteira.resumo.repasse_a_vir)}
+              </p>
+            </div>
+            <div className="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th className="l sticky">Proposta</th>
+                    <th className="l">Segmento</th>
+                    <th>Parcela</th>
+                    <th>Situação</th>
+                    <th>Meu repasse</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {carteira.rows.map((p) => (
+                    <tr key={`${p.proposta}|${p.posicao}`}>
+                      <td className="l sticky ctr" data-l="Proposta">{p.proposta}</td>
+                      <td className="l" data-l="Segmento">{p.segmento_grupo === "IMOVEL" ? "Imóvel" : "Geral"}</td>
+                      <td className="num" data-l="Parcela">{p.posicao}ª / {p.teto_parcelas}</td>
+                      <td className="l" data-l="Situação">
+                        {p.status === "RECEBIDA" || p.status === "ENCERRADA"
+                          ? `recebida${p.competencia_recebida ? ` (${p.competencia_recebida})` : ""}`
+                          : p.status === "NAO_VEIO"
+                            ? "não veio"
+                            : "a vir"}
+                      </td>
+                      <td className={`num${p.repasse > 0 ? "" : " dash"}`} data-l="Meu repasse">
+                        {p.repasse > 0 ? formatCurrency(p.repasse) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
         ) : null}
       </main>
     </div>

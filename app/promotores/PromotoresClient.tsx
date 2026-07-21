@@ -39,6 +39,9 @@ type PromoterSummaryRow = {
   production_commission_value: number;
   insurance_commission_value: number;
   agreement_adjustment_value: number;
+  bbcap_commission_value?: number;
+  conta_corrente_commission_value?: number;
+  consorcio_commission_value?: number;
   discount_value: number;
   final_commission_value: number;
   payable_commission_value: number;
@@ -1790,6 +1793,24 @@ function PromotoresFullPage() {
                 <p className="k">Comissão seguro (promotor)</p>
                 <div className="v num">{formatCurrency(proposalTotals.promoterInsurance)}</div>
               </div>
+              {(selectedPromoterSummary?.bbcap_commission_value ?? 0) > 0 ? (
+                <div className="dkc">
+                  <p className="k">BBCAP (produto)</p>
+                  <div className="v num">{formatCurrency(selectedPromoterSummary?.bbcap_commission_value)}</div>
+                </div>
+              ) : null}
+              {(selectedPromoterSummary?.conta_corrente_commission_value ?? 0) > 0 ? (
+                <div className="dkc">
+                  <p className="k">Conta Corrente (produto)</p>
+                  <div className="v num">{formatCurrency(selectedPromoterSummary?.conta_corrente_commission_value)}</div>
+                </div>
+              ) : null}
+              {(selectedPromoterSummary?.consorcio_commission_value ?? 0) > 0 ? (
+                <div className="dkc">
+                  <p className="k">Consórcio (produto)</p>
+                  <div className="v num">{formatCurrency(selectedPromoterSummary?.consorcio_commission_value)}</div>
+                </div>
+              ) : null}
               <div className="dkc">
                 <p className="k">Descontos</p>
                 <div className={`v num${promoterDiscountTotal > 0 ? " neg" : ""}`}>

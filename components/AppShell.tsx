@@ -155,6 +155,8 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/admin/usuarios", label: "Usuários", icon: "usercog", visibleTo: ["socio", "funcionario"] },
       { href: "/admin/equipes", label: "Equipes", icon: "network", visibleTo: ["socio", "funcionario"] },
+      { href: "/produtos/atribuicao", label: "Atribuição de produtos", icon: "clipboard", visibleTo: ["socio", "funcionario"] },
+      { href: "/admin/gestor-consorcio", label: "Gestor de Consórcio", icon: "usercog", visibleTo: ["socio"] },
     ],
   },
   {
@@ -165,6 +167,9 @@ const navGroups: NavGroup[] = [
     label: "Gestão",
     items: [
       { href: "/equipe", label: "Minha Equipe", icon: "users", visibleTo: ["supervisor", "gerente_regional"] },
+      // Gestor de consorcio (M3): ve producao geral + o proprio 10%, nunca a
+      // comissao dos promotores.
+      { href: "/gestor-consorcio", label: "Consórcio (10%)", icon: "percent", visibleTo: ["gestor_consorcio"] },
     ],
   },
 ];
@@ -177,6 +182,7 @@ const ROLE_LABEL: Record<string, string> = {
   promotor: "Promotor",
   supervisor: "Supervisor",
   gerente_regional: "Gerente Regional",
+  gestor_consorcio: "Gestor de Consórcio",
 };
 
 export default function AppShell({ children }: { children: ReactNode }) {

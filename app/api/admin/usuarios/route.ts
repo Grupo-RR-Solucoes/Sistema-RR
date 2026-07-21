@@ -86,14 +86,19 @@ export async function POST(req: Request) {
     }
     if (
       !role ||
-      !["socio", "funcionario", "promotor", "supervisor", "gerente_regional"].includes(
-        role
-      )
+      ![
+        "socio",
+        "funcionario",
+        "promotor",
+        "supervisor",
+        "gerente_regional",
+        "gestor_consorcio",
+      ].includes(role)
     ) {
       return NextResponse.json(
         {
           error:
-            "Role invalido (socio|funcionario|promotor|supervisor|gerente_regional)",
+            "Role invalido (socio|funcionario|promotor|supervisor|gerente_regional|gestor_consorcio)",
         },
         { status: 400 }
       );
@@ -118,9 +123,10 @@ export async function POST(req: Request) {
     }
 
     // CPF: login por CPF é exclusivo de funcionario/promotor — obrigatório e
-    // validado. Socio loga por e-mail → cpf sempre NULL (ignorado se enviado).
+    // validado. Socio e gestor_consorcio logam por e-mail → cpf sempre NULL
+    // (ignorado se enviado).
     let cpf: string | null = null;
-    if (role !== "socio") {
+    if (role !== "socio" && role !== "gestor_consorcio") {
       const digits = onlyDigits(body.cpf ?? "");
       if (!isValidCPF(digits)) {
         return NextResponse.json(

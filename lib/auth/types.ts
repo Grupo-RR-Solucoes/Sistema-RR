@@ -3,7 +3,8 @@ export type UserRole =
   | "funcionario"
   | "promotor"
   | "supervisor"
-  | "gerente_regional";
+  | "gerente_regional"
+  | "gestor_consorcio";
 
 export interface AppUserWithRole {
   id: string;

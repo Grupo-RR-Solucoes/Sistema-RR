@@ -35,7 +35,14 @@ export function canChangeUserRole(actor: AppRole): boolean {
  */
 export function allowedTargetRoles(actor: AppRole): ManageableRole[] {
   if (actor === "socio")
-    return ["socio", "funcionario", "promotor", "supervisor", "gerente_regional"];
+    return [
+      "socio",
+      "funcionario",
+      "promotor",
+      "supervisor",
+      "gerente_regional",
+      "gestor_consorcio",
+    ];
   if (actor === "funcionario") return ["promotor"];
   return [];
 }

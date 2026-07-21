@@ -97,14 +97,19 @@ export async function PATCH(
       // gestão supervisor/gerente_regional. Sem isto o PATCH rejeitaria a troca
       // de perfil pela tela de edição com 400.
       if (
-        !["socio", "funcionario", "promotor", "supervisor", "gerente_regional"].includes(
-          body.role
-        )
+        ![
+          "socio",
+          "funcionario",
+          "promotor",
+          "supervisor",
+          "gerente_regional",
+          "gestor_consorcio",
+        ].includes(body.role)
       ) {
         return NextResponse.json(
           {
             error:
-              "Role invalido (socio|funcionario|promotor|supervisor|gerente_regional)",
+              "Role invalido (socio|funcionario|promotor|supervisor|gerente_regional|gestor_consorcio)",
           },
           { status: 400 }
         );
