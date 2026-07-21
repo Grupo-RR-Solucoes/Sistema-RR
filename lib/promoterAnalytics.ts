@@ -84,6 +84,10 @@ type MonthlyResultRow = {
   discount_value?: number | null;
   target_status?: string | null;
   source?: string | null;
+  // Produtos (M2a/M2b): repasse ja somado no final_commission_value.
+  bbcap_commission_value?: number | null;
+  conta_corrente_commission_value?: number | null;
+  consorcio_commission_value?: number | null;
 };
 
 type DiscountRow = {
@@ -186,6 +190,9 @@ export type PromoterAnalyticsPayload = {
     production_commission_value: number;
     insurance_commission_value: number;
     agreement_adjustment_value: number;
+    bbcap_commission_value: number;
+    conta_corrente_commission_value: number;
+    consorcio_commission_value: number;
     discount_value: number;
     final_commission_value: number;
     payable_commission_value: number;
@@ -529,7 +536,7 @@ export async function loadPromoterAnalyticsBase(
         supabase
           .from("promoter_monthly_results")
           .select(
-            "promoter_id, company_id, year, month, production_value, proposal_count, insured_proposal_count, insured_production_value, insurance_penetration_percent, production_commission_value, insurance_commission_value, agreement_adjustment_value, final_commission_value, discount_value, target_status, source"
+            "promoter_id, company_id, year, month, production_value, proposal_count, insured_proposal_count, insured_production_value, insurance_penetration_percent, production_commission_value, insurance_commission_value, agreement_adjustment_value, final_commission_value, discount_value, target_status, source, bbcap_commission_value, conta_corrente_commission_value, consorcio_commission_value"
           )
       ),
       fetchAllRows<DiscountRow>(() =>
@@ -760,6 +767,11 @@ export async function loadPromoterAnalyticsBase(
       production_commission_value: productionCommissionValue,
       insurance_commission_value: insuranceCommissionValue,
       agreement_adjustment_value: agreementAdjustmentValue,
+      // Produtos: so existem no PMR (nao ha fallback per-contrato no daily) -> 0 quando
+      // nao ha linha de PMR (mes vivo antes do fechamento).
+      bbcap_commission_value: result ? toNumber(result.bbcap_commission_value) : 0,
+      conta_corrente_commission_value: result ? toNumber(result.conta_corrente_commission_value) : 0,
+      consorcio_commission_value: result ? toNumber(result.consorcio_commission_value) : 0,
       discount_value: discountValue || toNumber(result?.discount_value),
       final_commission_value: finalCommissionValue,
       payable_commission_value:
@@ -785,6 +797,9 @@ export async function loadPromoterAnalyticsBase(
           production_commission_value: number;
           insurance_commission_value: number;
           agreement_adjustment_value: number;
+          bbcap_commission_value: number;
+          conta_corrente_commission_value: number;
+          consorcio_commission_value: number;
           final_commission_value: number;
           discount_value: number;
           target_status: string | null;
@@ -805,6 +820,9 @@ export async function loadPromoterAnalyticsBase(
               production_commission_value: 0,
               insurance_commission_value: 0,
               agreement_adjustment_value: 0,
+              bbcap_commission_value: 0,
+              conta_corrente_commission_value: 0,
+              consorcio_commission_value: 0,
               final_commission_value: 0,
               discount_value: 0,
               target_status: null,
@@ -820,6 +838,9 @@ export async function loadPromoterAnalyticsBase(
           a.production_commission_value += toNumber(row.production_commission_value);
           a.insurance_commission_value += toNumber(row.insurance_commission_value);
           a.agreement_adjustment_value += toNumber(row.agreement_adjustment_value);
+          a.bbcap_commission_value += toNumber(row.bbcap_commission_value);
+          a.conta_corrente_commission_value += toNumber(row.conta_corrente_commission_value);
+          a.consorcio_commission_value += toNumber(row.consorcio_commission_value);
           a.final_commission_value += toNumber(row.final_commission_value);
           a.discount_value += toNumber(row.discount_value);
           // company_id/status representativos = os da linha de MAIOR produção
@@ -870,6 +891,9 @@ export async function loadPromoterAnalyticsBase(
             production_commission_value: a.production_commission_value,
             insurance_commission_value: a.insurance_commission_value,
             agreement_adjustment_value: a.agreement_adjustment_value,
+            bbcap_commission_value: a.bbcap_commission_value,
+            conta_corrente_commission_value: a.conta_corrente_commission_value,
+            consorcio_commission_value: a.consorcio_commission_value,
             discount_value: discountValue,
             final_commission_value: a.final_commission_value,
             payable_commission_value: a.final_commission_value - discountValue,
