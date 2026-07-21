@@ -10,8 +10,16 @@ import { Banner, Button, Card, Chip, EmptyState, HeaderNavy, Table, UiStyles } f
 // se vincula a competencia. O grupo tem 1 gestor por competencia.
 
 type Gestor = { id: string; nome: string; email: string; active: boolean };
-type Vigencia = { competencia: string; app_user_id: string; nome: string; ativo: boolean };
-type Payload = { gestores: Gestor[]; vigencias: Vigencia[] };
+type Promoter = { id: string; name: string };
+type Vigencia = {
+  competencia: string;
+  app_user_id: string;
+  nome: string;
+  promoter_id: string | null;
+  promoter_nome: string | null;
+  ativo: boolean;
+};
+type Payload = { gestores: Gestor[]; promoters: Promoter[]; vigencias: Vigencia[] };
 
 const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 function compLabel(iso: string) {
@@ -39,6 +47,7 @@ export default function GestorCadastroClient() {
   const [saving, setSaving] = useState(false);
   const [competencia, setCompetencia] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [appUserId, setAppUserId] = useState("");
+  const [promoterId, setPromoterId] = useState(""); // opcional: gestor tambem promotor
 
   const load = useCallback((opts?: { silent?: boolean }) => {
     let cancel = false;
@@ -70,7 +79,7 @@ export default function GestorCadastroClient() {
       const res = await fetch("/api/admin/gestor-consorcio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ competencia, app_user_id: appUserId }),
+        body: JSON.stringify({ competencia, app_user_id: appUserId, promoter_id: promoterId || null }),
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
@@ -144,6 +153,17 @@ export default function GestorCadastroClient() {
                   ))}
                 </select>
               </div>
+              <div className="fld">
+                <label>Também é promotor? (opcional)</label>
+                <select value={promoterId} onChange={(e) => setPromoterId(e.target.value)}>
+                  <option value="">Não / gestor puro</option>
+                  {(data?.promoters ?? []).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <Button variant="primario" onClick={salvar} disabled={saving || !appUserId}>
                 {saving ? "Salvando…" : "Definir gestor"}
               </Button>
@@ -162,6 +182,7 @@ export default function GestorCadastroClient() {
                 <tr>
                   <th>Competência</th>
                   <th>Gestor</th>
+                  <th>Também promotor</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -170,6 +191,7 @@ export default function GestorCadastroClient() {
                   <tr key={v.competencia}>
                     <td>{compLabel(v.competencia)}</td>
                     <td>{v.nome}</td>
+                    <td>{v.promoter_nome ?? "—"}</td>
                     <td>{v.ativo ? <Chip variant="ok">ativo</Chip> : <Chip variant="neutral">inativo</Chip>}</td>
                   </tr>
                 ))}
