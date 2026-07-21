@@ -19,10 +19,25 @@ type ProdPromotor = {
   parcelas_recebidas: number;
   base_recebida: number;
 };
+type MinhasVendas = {
+  vinculado: boolean;
+  promoter_id: string;
+  promoter_nome: string;
+  competencia: string;
+  production_value: number;
+  production_commission_value: number;
+  insurance_commission_value: number;
+  bbcap_commission_value: number;
+  conta_corrente_commission_value: number;
+  consorcio_commission_value: number;
+  final_commission_value: number;
+  payable_commission_value: number;
+};
 type Payload = {
   competencias: CompLinha[];
   total: number;
   producao: { total_propostas: number; total_base_recebida: number; por_promotor: ProdPromotor[] };
+  minhasVendas: MinhasVendas | null;
 };
 
 const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
@@ -35,13 +50,17 @@ function brl2(v?: number) {
 }
 
 export default function GestorConsorcioClient() {
+  const now = new Date();
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  // competencia do bloco "Minhas vendas" (nao afeta payout/producao geral).
+  const [competencia, setCompetencia] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
 
   useEffect(() => {
     let cancel = false;
-    fetch("/api/gestor-consorcio")
+    setLoading(true);
+    fetch(`/api/gestor-consorcio?competencia=${encodeURIComponent(competencia)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Erro ao carregar o painel do consórcio."))))
       .then((j: Payload) => {
         if (!cancel) setData(j);
@@ -55,11 +74,13 @@ export default function GestorConsorcioClient() {
     return () => {
       cancel = true;
     };
-  }, []);
+  }, [competencia]);
 
   const comps = data?.competencias ?? [];
   const prod = data?.producao;
   const promotores = prod?.por_promotor ?? [];
+  const mv = data?.minhasVendas ?? null;
+  const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
   return (
     <div>
@@ -88,6 +109,74 @@ export default function GestorConsorcioClient() {
         </Banner>
 
         {error ? <Banner variant="warn">{error}</Banner> : null}
+
+        {/* MINHAS VENDAS — so aparece quando o gestor tambem e promotor (vinculado) */}
+        {mv && mv.vinculado ? (
+          <Card title={`Minhas vendas (${mv.promoter_nome})`}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "0 0 12px" }}>
+              <span style={{ fontSize: 13, color: "var(--ink-3)" }}>Competência:</span>
+              <select
+                aria-label="Competência das minhas vendas"
+                value={competencia}
+                onChange={(e) => setCompetencia(e.target.value)}
+                style={{ background: "var(--paper)", border: "1px solid var(--bd)", borderRadius: 8, padding: "6px 10px", font: "inherit" }}
+              >
+                {[2025, 2026, 2027].flatMap((y) =>
+                  MES.map((m, i) => (
+                    <option key={`${y}-${i + 1}`} value={`${y}-${String(i + 1).padStart(2, "0")}`}>
+                      {m}/{y}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+            <Table minWidth={520}>
+              <thead>
+                <tr>
+                  <th className="rr-sticky-col">Componente</th>
+                  <th style={{ textAlign: "right" }}>Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="rr-sticky-col">Produção (crédito)</td>
+                  <Num>{brl2(mv.production_value)}</Num>
+                </tr>
+                <tr>
+                  <td className="rr-sticky-col">Comissão crédito</td>
+                  <Num>{brl2(mv.production_commission_value)}</Num>
+                </tr>
+                <tr>
+                  <td className="rr-sticky-col">Comissão seguro</td>
+                  <Num>{brl2(mv.insurance_commission_value)}</Num>
+                </tr>
+                <tr>
+                  <td className="rr-sticky-col">BBCAP</td>
+                  <Num>{brl2(mv.bbcap_commission_value)}</Num>
+                </tr>
+                <tr>
+                  <td className="rr-sticky-col">Conta Corrente</td>
+                  <Num>{brl2(mv.conta_corrente_commission_value)}</Num>
+                </tr>
+                <tr>
+                  <td className="rr-sticky-col">Consórcio (meu 40%)</td>
+                  <Num>{brl2(mv.consorcio_commission_value)}</Num>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td className="rr-sticky-col">Total a receber (promotor)</td>
+                  <Num>{brl2(mv.payable_commission_value)}</Num>
+                </tr>
+              </tfoot>
+            </Table>
+            <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "10px 0 0" }}>
+              Estas são as suas vendas <b>como promotor</b> (repasse de 40% no consórcio, mais crédito,
+              seguro e demais produtos). É <b>independente</b> dos seus 10% de gestão abaixo — as duas
+              facetas não se somam nem se anulam.
+            </p>
+          </Card>
+        ) : null}
 
         <Card title="Produção por promotor">
           {loading ? (
