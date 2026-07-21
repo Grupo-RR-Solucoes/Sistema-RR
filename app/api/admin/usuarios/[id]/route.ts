@@ -141,6 +141,10 @@ export async function PATCH(
         }
         update.cnpj_id = cnpj;
         update.promoter_id = promoter;
+      } else if (body.role === "gestor_consorcio") {
+        // gestor_consorcio pode TAMBEM vender: promoter_id OPCIONAL, cnpj_id null.
+        update.cnpj_id = null;
+        update.promoter_id = body.promoter_id ?? null;
       } else {
         update.cnpj_id = null;
         update.promoter_id = null;

@@ -51,13 +51,19 @@ export default function EditUsuarioModal({
   const [role, setRole] = useState<Role>(target.role);
   const [cpf, setCpf] = useState(onlyDigits(target.cpf ?? "")); // só dígitos
   const [cnpjId, setCnpjId] = useState("");
-  const [promoterId, setPromoterId] = useState("");
+  // prefill do vinculo de promotor do gestor (standing em app_users.promoter_id).
+  const [promoterId, setPromoterId] = useState(
+    target.role === "gestor_consorcio" ? target.promoter_id ?? "" : ""
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Só precisamos de empresa/promotor quando MUDAMOS o papel PARA promotor
   // (virar promotor exige cnpj_id + promoter_id no backend).
   const becomingPromotor = role === "promotor" && role !== target.role;
+  // gestor_consorcio: vinculo de "tambem promotor" OPCIONAL (standing). Mostra o
+  // picker sempre que o papel for gestor.
+  const gestorMode = role === "gestor_consorcio";
 
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [promoters, setPromoters] = useState<PromoterOption[]>([]);
@@ -65,7 +71,7 @@ export default function EditUsuarioModal({
   const [optionsError, setOptionsError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!becomingPromotor) return;
+    if (!becomingPromotor && !gestorMode) return;
     if (companies.length > 0) return;
     let cancelled = false;
     setOptionsLoading(true);
@@ -88,7 +94,7 @@ export default function EditUsuarioModal({
     return () => {
       cancelled = true;
     };
-  }, [becomingPromotor, companies.length]);
+  }, [becomingPromotor, gestorMode, companies.length]);
 
   const filteredPromoters = cnpjId ? promoters.filter((p) => p.company_id === cnpjId) : [];
 
@@ -125,6 +131,11 @@ export default function EditUsuarioModal({
         body.cnpj_id = cnpjId;
         body.promoter_id = promoterId;
       }
+    }
+    // gestor_consorcio: o vinculo "tambem promotor" (opcional) vai SEMPRE, mude ou nao
+    // o role — mesmo campo promoter_id do papel promotor. "" = gestor puro (null).
+    if (role === "gestor_consorcio") {
+      body.promoter_id = promoterId || null;
     }
 
     // CPF — todo perfil que loga por CPF (funcionário, promotor, supervisor,
@@ -248,6 +259,23 @@ export default function EditUsuarioModal({
                         <option key={p.id} value={p.id}>{p.name}</option>
                       ))}
                     </select>
+                  </div>
+                </div>
+              ) : null}
+
+              {gestorMode ? (
+                <div className="condbox">
+                  <span className="ctag"><IcoUser />Também é promotor? (opcional)</span>
+                  {optionsError ? <div className="errbox">{optionsError}</div> : null}
+                  <div className="field">
+                    <label>Registro de promotor</label>
+                    <select value={promoterId} onChange={(e) => setPromoterId(e.target.value)} disabled={submitting || optionsLoading}>
+                      <option value="">Não / gestor puro</option>
+                      {promoters.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                    <span className="hint">Se o gestor também vende, ligue o registro de promotor dele — as vendas aparecem na tela dele automaticamente.</span>
                   </div>
                 </div>
               ) : null}

@@ -115,7 +115,15 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    if (role !== "promotor" && (cnpj_id || promoter_id)) {
+    // gestor_consorcio pode TAMBEM ser promotor: promoter_id OPCIONAL, cnpj_id sempre
+    // null (a empresa vem do proprio registro de promotor). Mesmo campo do papel promotor.
+    if (role === "gestor_consorcio" && cnpj_id) {
+      return NextResponse.json(
+        { error: "Gestor de consorcio nao tem empresa (cnpj_id)" },
+        { status: 400 }
+      );
+    }
+    if (role !== "promotor" && role !== "gestor_consorcio" && (cnpj_id || promoter_id)) {
       return NextResponse.json(
         { error: "Socio/funcionario nao deve ter cnpj_id nem promoter_id" },
         { status: 400 }
