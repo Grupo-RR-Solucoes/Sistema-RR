@@ -8,7 +8,7 @@ import { isValidCPF, maskCPF, onlyDigits } from "@/lib/validators/cpf";
 
 import type { UsuarioRow } from "./UsuariosList";
 import { IcoPencil, IcoX, IcoSave, IcoUser } from "./icons";
-import { roleLabel } from "./usuariosStyles";
+import { ROLE_OPTION_LABEL, roleLabel } from "./usuariosStyles";
 
 interface Props {
   target: UsuarioRow;
@@ -128,9 +128,9 @@ export default function EditUsuarioModal({
     }
 
     // CPF — todo perfil que loga por CPF (funcionário, promotor, supervisor,
-    // gerente_regional) valida e envia. Sócio loga por e-mail → não envia (a
-    // rota zera o cpf ao virar sócio). MESMA regra do CreateUsuarioModal.
-    if (role !== "socio") {
+    // gerente_regional) valida e envia. Sócio e gestor_consorcio logam por e-mail →
+    // não envia (a rota zera o cpf ao virar um deles). MESMA regra do CreateUsuarioModal.
+    if (role !== "socio" && role !== "gestor_consorcio") {
       const cpfDigits = onlyDigits(cpf);
       if (!isValidCPF(cpfDigits)) {
         setError("CPF inválido");
@@ -198,12 +198,11 @@ export default function EditUsuarioModal({
 
               <div className="field">
                 <label>Perfil de acesso</label>
-                <select value={role} onChange={(e) => { const r = e.target.value as Role; setRole(r); setCnpjId(""); setPromoterId(""); if (r === "socio") setCpf(""); }} disabled={submitting || !canChangeRole}>
-                  {targetRoles.includes("socio") ? <option value="socio">Sócio (acesso completo)</option> : null}
-                  {targetRoles.includes("funcionario") ? <option value="funcionario">Auxiliar Financeiro (operacional)</option> : null}
-                  {targetRoles.includes("promotor") ? <option value="promotor">Promotor (acesso aos próprios dados)</option> : null}
-                  {targetRoles.includes("supervisor") ? <option value="supervisor">Supervisor (produção/desempenho da equipe)</option> : null}
-                  {targetRoles.includes("gerente_regional") ? <option value="gerente_regional">Gerente Regional (produção/desempenho da regional)</option> : null}
+                <select value={role} onChange={(e) => { const r = e.target.value as Role; setRole(r); setCnpjId(""); setPromoterId(""); if (r === "socio" || r === "gestor_consorcio") setCpf(""); }} disabled={submitting || !canChangeRole}>
+                  {/* FONTE UNICA (allowedTargetRoles + ROLE_OPTION_LABEL) — igual ao criar. */}
+                  {targetRoles.map((r) => (
+                    <option key={r} value={r}>{ROLE_OPTION_LABEL[r]}</option>
+                  ))}
                 </select>
                 {!canChangeRole ? (
                   <span className="hint">Apenas sócios podem alterar o perfil. Você pode editar o nome.</span>
@@ -212,7 +211,7 @@ export default function EditUsuarioModal({
                 ) : null}
               </div>
 
-              {role !== "socio" ? (
+              {role !== "socio" && role !== "gestor_consorcio" ? (
                 <div className="field">
                   <label>CPF <span className="req">*</span></label>
                   <input

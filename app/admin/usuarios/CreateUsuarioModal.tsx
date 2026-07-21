@@ -7,6 +7,7 @@ import type { UserRole } from "@/lib/auth/types";
 import { isValidCPF, maskCPF, onlyDigits } from "@/lib/validators/cpf";
 
 import { IcoUserCog, IcoX, IcoCheck, IcoInfo, IcoUser } from "./icons";
+import { ROLE_OPTION_LABEL } from "./usuariosStyles";
 
 interface Props {
   onClose: () => void;
@@ -182,12 +183,10 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
                 <div className={`field${roleLocked ? " locked" : ""}`}>
                   <label>Perfil de acesso <span className="req">*</span></label>
                   <select value={role} onChange={(e) => { const r = e.target.value as Role; setRole(r); if (r === "socio" || r === "gestor_consorcio") setCpf(""); }} disabled={submitting || roleLocked}>
-                    {targetRoles.includes("socio") ? <option value="socio">Sócio (acesso completo)</option> : null}
-                    {targetRoles.includes("funcionario") ? <option value="funcionario">Auxiliar Financeiro (operacional)</option> : null}
-                    {targetRoles.includes("promotor") ? <option value="promotor">Promotor (acesso aos próprios dados)</option> : null}
-                    {targetRoles.includes("supervisor") ? <option value="supervisor">Supervisor (produção/desempenho da equipe)</option> : null}
-                    {targetRoles.includes("gerente_regional") ? <option value="gerente_regional">Gerente Regional (produção/desempenho da regional)</option> : null}
-                    {targetRoles.includes("gestor_consorcio") ? <option value="gestor_consorcio">Gestor de Consórcio (produção geral + 10% próprio)</option> : null}
+                    {/* FONTE UNICA (allowedTargetRoles + ROLE_OPTION_LABEL) — igual ao editar. */}
+                    {targetRoles.map((r) => (
+                      <option key={r} value={r}>{ROLE_OPTION_LABEL[r]}</option>
+                    ))}
                   </select>
                   {roleLocked ? <span className="hint">Como auxiliar financeiro, você só cadastra promotores.</span> : null}
                 </div>

@@ -208,8 +208,22 @@ export function roleLabel(role: UserRole): string {
   if (role === "funcionario") return "Auxiliar Financeiro";
   if (role === "supervisor") return "Supervisor";
   if (role === "gerente_regional") return "Gerente Regional";
+  if (role === "gestor_consorcio") return "Gestor de Consórcio";
   return "Promotor";
 }
+
+// Rótulo completo (descritivo) de cada perfil no dropdown "Perfil de acesso".
+// FONTE UNICA usada pelos DOIS modais (criar e editar), iterando allowedTargetRoles
+// — evita listas hardcoded que divergem (bug do M3: o perfil novo so entrava no
+// modal de criar). Todo role de UserRole precisa ter um label aqui.
+export const ROLE_OPTION_LABEL: Record<UserRole, string> = {
+  socio: "Sócio (acesso completo)",
+  funcionario: "Auxiliar Financeiro (operacional)",
+  promotor: "Promotor (acesso aos próprios dados)",
+  supervisor: "Supervisor (produção/desempenho da equipe)",
+  gerente_regional: "Gerente Regional (produção/desempenho da regional)",
+  gestor_consorcio: "Gestor de Consórcio (produção geral + 10% próprio)",
+};
 
 export function roleClass(role: UserRole): string {
   if (role === "socio") return "socio";
