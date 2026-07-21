@@ -32,19 +32,21 @@ export function computeGestorBaseByCompany(entries: ConsorcioEntry[]): GestorPay
   }));
 }
 
-// Resolve o gestor vigente da competencia (consorcio_gestor). null quando nao cadastrado.
-async function gestorVigente(
-  supabase: SupabaseLike,
-  competencia: string
-): Promise<string | null> {
+// Resolve o gestor ATIVO pelo ROLE (standing, igual supervisor/gerente). O grupo tem
+// um; se houver mais de um ativo (transitorio), pega o mais antigo (determinismo).
+// null quando ninguem tem o role ainda -> payout nasce orfao (a RLS por role o resolve
+// quando o gestor for cadastrado).
+async function gestorAtivoPorRole(supabase: SupabaseLike): Promise<string | null> {
   const { data, error } = await supabase
-    .from("consorcio_gestor")
-    .select("app_user_id")
-    .eq("competencia", competencia)
-    .eq("ativo", true)
+    .from("app_users")
+    .select("id")
+    .eq("role", "gestor_consorcio")
+    .eq("active", true)
+    .order("created_at", { ascending: true })
+    .limit(1)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return data?.app_user_id ?? null;
+  return data?.id ?? null;
 }
 
 export async function computeConsorcioGestorPayout(
@@ -58,7 +60,10 @@ export async function computeConsorcioGestorPayout(
   const entries = await fetchConsorcioEntries(supabase, { year, month });
   const linhas = computeGestorBaseByCompany(entries);
   const total_10 = round2(linhas.reduce((s, l) => s + l.gestor_10, 0));
-  const gestor_user_id = await gestorVigente(supabase, competencia);
+  // CARIMBO LEVE: quem e o gestor NO MOMENTO da reconsolidacao (resolvido pelo role
+  // ativo, nao por tela). Cada competencia guarda quem estava responsavel quando foi
+  // paga (historico do pagamento). null = ainda sem gestor cadastrado.
+  const gestor_user_id = await gestorAtivoPorRole(supabase);
 
   if (!dryRun && linhas.length > 0) {
     const payload = linhas.map((l) => ({

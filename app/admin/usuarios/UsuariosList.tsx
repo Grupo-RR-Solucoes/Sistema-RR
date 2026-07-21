@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { canManageUserRole } from "@/lib/auth/permissions";
+import type { UserRole } from "@/lib/auth/types";
 import { UiStyles, HeaderNavy, KpiBand, Table } from "@/components/ui";
 
 import CreateUsuarioModal from "./CreateUsuarioModal";
@@ -24,7 +25,7 @@ export interface UsuarioRow {
   auth_user_id: string | null;
   email: string;
   full_name: string | null;
-  role: "socio" | "funcionario" | "promotor";
+  role: UserRole;
   cnpj_id: string | null;
   promoter_id: string | null;
   cpf: string | null;

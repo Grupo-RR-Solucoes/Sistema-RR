@@ -53,7 +53,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
   const [optionsError, setOptionsError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (role !== "promotor") return;
+    if (role !== "promotor" && role !== "gestor_consorcio") return;
     if (companies.length > 0) return; // ja carregado
     let cancelled = false;
     setOptionsLoading(true);
@@ -107,6 +107,10 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
     }
     if (role === "promotor") {
       body.cnpj_id = cnpjId.trim();
+      body.promoter_id = promoterId.trim();
+    }
+    // gestor_consorcio que TAMBEM vende: envia so o promoter_id (opcional), sem cnpj_id.
+    if (role === "gestor_consorcio" && promoterId.trim()) {
       body.promoter_id = promoterId.trim();
     }
     try {
@@ -231,6 +235,23 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
                       {cnpjId && filteredPromoters.length === 0 && !optionsLoading ? (
                         <span className="hint">Nenhum promotor ativo cadastrado para esta empresa.</span>
                       ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                {role === "gestor_consorcio" ? (
+                  <div className="condbox">
+                    <span className="ctag"><IcoUser />Também é promotor? (opcional)</span>
+                    {optionsError ? <div className="errbox">{optionsError}</div> : null}
+                    <div className="field">
+                      <label>Registro de promotor</label>
+                      <select value={promoterId} onChange={(e) => setPromoterId(e.target.value)} disabled={submitting || optionsLoading}>
+                        <option value="">Não / gestor puro</option>
+                        {promoters.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      <span className="hint">Se o gestor também vende, ligue o registro de promotor dele — as vendas aparecem na tela dele automaticamente. Deixe vazio para gestor puro.</span>
                     </div>
                   </div>
                 ) : null}
