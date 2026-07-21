@@ -10,20 +10,22 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // ============================================================
-// TELA DO GESTOR DE CONSORCIO (M3 PARTE C). O gestor ve:
-//   1) o proprio payout de 10% (consorcio_gestor_payout, filtrado ao seu user_id);
+// TELA DO GESTOR DE CONSORCIO (M3 PARTE C). O gestor e definido pelo ROLE
+// (gestor_consorcio, standing — igual supervisor/gerente). Ele ve:
+//   1) o payout de 10% (consorcio_gestor_payout) — TODO o payout, pois e o unico
+//      gestor. Sem filtro por id -> ele ve inclusive as linhas orfas (gestor_user_id
+//      null gravado antes de existir gestor). Trocar o gestor = trocar o role.
 //   2) a PRODUCAO GERAL do consorcio (carteira_consorcio, todos os promotores) —
 //      valor/segmento/base, "quem vendeu quanto".
 // CRITICO: NUNCA le promoter_monthly_results.consorcio_commission_value (o repasse de
 // 40% dos promotores). Mesma disciplina INVERTIDA do /equipe: mostra producao, esconde
-// a comissao alheia. Escola A: requireGestorConsorcio (gate por role) + service_role
-// com FILTRO/allow-list explicito (o payout e filtrado pelo id do gestor da sessao).
+// a comissao alheia. Escola A: requireGestorConsorcio (gate por role) + service_role.
 //
-//   3) (AJUSTE 21/07) "MINHAS VENDAS": quando o gestor TAMBEM e promotor
-//      (consorcio_gestor.promoter_id preenchido, caso do Alan), mostra a producao
-//      COMPLETA dele como promotor (credito+seguro+bbcap+cc+consorcio) reusando o
-//      MESMO buildPromoterAnalytics da /promotores, filtrado pelo promoter_id vinculado.
-//      So o proprio id dele -> nao vaza a comissao de OUTROS promotores.
+//   3) "MINHAS VENDAS": quando o gestor TAMBEM e promotor (app_users.promoter_id
+//      setado, standing — mesmo campo do papel promotor, ja na sessao), mostra a
+//      producao COMPLETA dele como promotor (credito+seguro+bbcap+cc+consorcio) reusando
+//      o MESMO buildPromoterAnalytics da /promotores, filtrado por session.appUser
+//      .promoterId. So o proprio id -> nao vaza a comissao de OUTROS promotores.
 // READ-ONLY.
 // ============================================================
 
@@ -54,15 +56,16 @@ export async function GET(req: Request) {
     // Gate por role. O gestor logado -> so o proprio payout.
     const { session } = await requireGestorConsorcio();
     const admin = getSupabaseAdmin();
-    const meuId = session.appUser.id;
     const { searchParams } = new URL(req.url);
 
-    // 1) PAYOUT do gestor (10%). service_role bypassa RLS -> FILTRA pelo id dele.
+    // 1) PAYOUT dos 10%. O gestor e UNICO (definido pelo role) -> ele ve TODO o payout
+    // do consorcio, inclusive as linhas ainda ORFAS (gestor_user_id null, gravadas
+    // antes de existir gestor). Sem filtro por id: e assim que o Alan passa a ver os
+    // R$1.190,31 de junho no instante em que ganha o role, sem re-carimbar.
     const payoutRows = await fetchAllRows<PayoutRow>(() =>
       admin
         .from("consorcio_gestor_payout")
         .select("competencia, company_id, base_comissao_empresa, gestor_10, status")
-        .eq("gestor_user_id", meuId)
     );
     const porComp = new Map<string, { competencia: string; base: number; gestor_10: number; empresas: number }>();
     for (const r of payoutRows) {
@@ -139,22 +142,13 @@ export async function GET(req: Request) {
       por_promotor: porPromotor,
     };
 
-    // 3) MINHAS VENDAS — o gestor tambem e promotor? Le o promoter_id vinculado na
-    // vigencia mais recente deste gestor. Se houver, reusa buildPromoterAnalytics
-    // (mesma logica da /promotores) filtrado por esse id, para a competencia pedida
-    // (?year&month) ou a corrente. NUNCA outros promotores.
-    const { data: vinc, error: vincErr } = await admin
-      .from("consorcio_gestor")
-      .select("promoter_id, competencia")
-      .eq("app_user_id", meuId)
-      .not("promoter_id", "is", null)
-      .order("competencia", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (vincErr) throw new Error(vincErr.message);
-
+    // 3) MINHAS VENDAS — o gestor tambem e promotor? O vinculo e STANDING em
+    // app_users.promoter_id (mesmo campo do papel promotor), ja carregado na sessao.
+    // Se houver, reusa buildPromoterAnalytics (mesma logica da /promotores) filtrado
+    // por esse id, para a competencia pedida (?competencia) ou a corrente. NUNCA outros
+    // promotores. null = gestor puro -> bloco nao aparece.
     let minhasVendas: any = null;
-    const meuPromoterId: string | null = vinc?.promoter_id ?? null;
+    const meuPromoterId: string | null = session.appUser.promoterId ?? null;
     if (meuPromoterId) {
       const compParam = searchParams.get("competencia") || "";
       let year: number;
@@ -164,8 +158,8 @@ export async function GET(req: Request) {
         year = y;
         month = m;
       } else {
-        // sem parametro: usa a competencia mais recente do payout, senao a do vinculo.
-        const base = competencias[0]?.competencia || vinc?.competencia || "";
+        // sem parametro: usa a competencia mais recente do payout.
+        const base = competencias[0]?.competencia || "";
         const [y, m] = (COMP_RE.test(base) ? base : "2026-06").split("-").map(Number);
         year = y;
         month = m;

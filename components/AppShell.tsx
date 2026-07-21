@@ -156,7 +156,6 @@ const navGroups: NavGroup[] = [
       { href: "/admin/usuarios", label: "Usuários", icon: "usercog", visibleTo: ["socio", "funcionario"] },
       { href: "/admin/equipes", label: "Equipes", icon: "network", visibleTo: ["socio", "funcionario"] },
       { href: "/produtos/atribuicao", label: "Atribuição de produtos", icon: "clipboard", visibleTo: ["socio", "funcionario"] },
-      { href: "/admin/gestor-consorcio", label: "Gestor de Consórcio", icon: "usercog", visibleTo: ["socio"] },
     ],
   },
   {
