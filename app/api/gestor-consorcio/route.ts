@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { apiGuardErrorResponse, requireGestorConsorcio } from "@/lib/auth/guards";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { fetchAllRows } from "@/lib/queryHelpers";
+import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
+import { detectMonthRegime } from "@/lib/cmsMonthly";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,8 +18,16 @@ export const dynamic = "force-dynamic";
 // 40% dos promotores). Mesma disciplina INVERTIDA do /equipe: mostra producao, esconde
 // a comissao alheia. Escola A: requireGestorConsorcio (gate por role) + service_role
 // com FILTRO/allow-list explicito (o payout e filtrado pelo id do gestor da sessao).
+//
+//   3) (AJUSTE 21/07) "MINHAS VENDAS": quando o gestor TAMBEM e promotor
+//      (consorcio_gestor.promoter_id preenchido, caso do Alan), mostra a producao
+//      COMPLETA dele como promotor (credito+seguro+bbcap+cc+consorcio) reusando o
+//      MESMO buildPromoterAnalytics da /promotores, filtrado pelo promoter_id vinculado.
+//      So o proprio id dele -> nao vaza a comissao de OUTROS promotores.
 // READ-ONLY.
 // ============================================================
+
+const COMP_RE = /^\d{4}-\d{2}$/;
 
 type PayoutRow = {
   competencia: string;
@@ -39,12 +49,13 @@ type CarteiraRow = {
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     // Gate por role. O gestor logado -> so o proprio payout.
     const { session } = await requireGestorConsorcio();
     const admin = getSupabaseAdmin();
     const meuId = session.appUser.id;
+    const { searchParams } = new URL(req.url);
 
     // 1) PAYOUT do gestor (10%). service_role bypassa RLS -> FILTRA pelo id dele.
     const payoutRows = await fetchAllRows<PayoutRow>(() =>
@@ -128,7 +139,75 @@ export async function GET() {
       por_promotor: porPromotor,
     };
 
-    return NextResponse.json({ competencias, total, producao });
+    // 3) MINHAS VENDAS — o gestor tambem e promotor? Le o promoter_id vinculado na
+    // vigencia mais recente deste gestor. Se houver, reusa buildPromoterAnalytics
+    // (mesma logica da /promotores) filtrado por esse id, para a competencia pedida
+    // (?year&month) ou a corrente. NUNCA outros promotores.
+    const { data: vinc, error: vincErr } = await admin
+      .from("consorcio_gestor")
+      .select("promoter_id, competencia")
+      .eq("app_user_id", meuId)
+      .not("promoter_id", "is", null)
+      .order("competencia", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (vincErr) throw new Error(vincErr.message);
+
+    let minhasVendas: any = null;
+    const meuPromoterId: string | null = vinc?.promoter_id ?? null;
+    if (meuPromoterId) {
+      const compParam = searchParams.get("competencia") || "";
+      let year: number;
+      let month: number;
+      if (COMP_RE.test(compParam)) {
+        const [y, m] = compParam.split("-").map(Number);
+        year = y;
+        month = m;
+      } else {
+        // sem parametro: usa a competencia mais recente do payout, senao a do vinculo.
+        const base = competencias[0]?.competencia || vinc?.competencia || "";
+        const [y, m] = (COMP_RE.test(base) ? base : "2026-06").split("-").map(Number);
+        year = y;
+        month = m;
+      }
+
+      let closed = false;
+      let closedSource: "cms" | "fechamento" | undefined;
+      try {
+        const regime = await detectMonthRegime(admin, year, month);
+        closed = regime !== "open";
+        closedSource = regime === "open" ? undefined : regime;
+      } catch {
+        closed = false;
+      }
+
+      const analytics = await buildPromoterAnalytics(admin, {
+        year,
+        month,
+        promoterId: meuPromoterId,
+        closed,
+        closedSource,
+      });
+      const s = (analytics.summaryRows || []).find((r: any) => r.promoter_id === meuPromoterId);
+      const nome = s?.promoter_name || nameOf.get(meuPromoterId) || "(minhas vendas)";
+      const num = (v: any) => Number(v || 0);
+      minhasVendas = {
+        vinculado: true,
+        promoter_id: meuPromoterId,
+        promoter_nome: nome,
+        competencia: `${year}-${String(month).padStart(2, "0")}`,
+        production_value: num(s?.production_value),
+        production_commission_value: num(s?.production_commission_value),
+        insurance_commission_value: num(s?.insurance_commission_value),
+        bbcap_commission_value: num(s?.bbcap_commission_value),
+        conta_corrente_commission_value: num(s?.conta_corrente_commission_value),
+        consorcio_commission_value: num(s?.consorcio_commission_value),
+        final_commission_value: num(s?.final_commission_value),
+        payable_commission_value: num(s?.payable_commission_value),
+      };
+    }
+
+    return NextResponse.json({ competencias, total, producao, minhasVendas });
   } catch (error) {
     return apiGuardErrorResponse(error);
   }
