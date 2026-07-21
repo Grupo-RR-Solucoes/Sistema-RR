@@ -50,6 +50,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { consolidateMonthlyGroup } from "./bbtsOrchestrator.ts";
 import { detectMonthRegime, type MonthRegime } from "./cmsMonthly.ts";
 import { persistRulesFingerprint } from "./rulesFingerprint.ts";
+import { applyProdutoRepasseAoPmr } from "./produtoAssignments.ts";
 
 type SupabaseLike = SupabaseClient;
 
@@ -76,6 +77,7 @@ export type ReconsolidacaoResultado = {
     preservadas_cms: number;
     detalhe_orfaos: Array<{ promoter_id: string; company_id: string | null; source: string }>;
   };
+  produtos?: { promotores: number; atualizadas: number; inseridas: number };
   grupo?: any;
 };
 
@@ -134,6 +136,14 @@ export async function reconsolidarCompetenciaFechada(
   // foram gravadas — sao o plano.
   const novas: any[] = grupo.payload ?? [];
   const novoSet = new Set(novas.map((k) => chaveDe(k.promoter_id, k.company_id)));
+
+  // ---- FRENTE DE PRODUTO (M2a) — repasse de BBCAP + Conta Corrente ----
+  // Depois da consolidacao base (credito+seguro), grava as colunas de produto e
+  // recompoe o final dos promotores COM produto atribuido. Aditivo: quem nao tem
+  // produto fica byte-identico. As chaves so-produto entram no novoSet para o
+  // reconciliador NAO as apagar. Roda mesmo em dryRun (nesse caso nao grava).
+  const produtos = await applyProdutoRepasseAoPmr(supabase, { year, month, dryRun });
+  for (const k of produtos.chaves) novoSet.add(k);
 
   // ---- Reconciliacao: o PMR fechado passa a ser SO o conjunto novo ----
   const { data: existentes, error: readError } = await supabase
@@ -236,6 +246,11 @@ export async function reconsolidarCompetenciaFechada(
       sobrescritas_daily: sobrescritasDaily,
       preservadas_cms: preservadasCms,
       detalhe_orfaos: detalheOrfaos,
+    },
+    produtos: {
+      promotores: produtos.promotores,
+      atualizadas: produtos.atualizadas,
+      inseridas: produtos.inseridas,
     },
     grupo,
   };
