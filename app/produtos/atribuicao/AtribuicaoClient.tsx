@@ -5,9 +5,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Banner, Button, Card, Chip, EmptyState, HeaderNavy, KpiBand, Table, UiStyles } from "@/components/ui";
 
-// FRENTE DE PRODUTO — M3 PARTE A1: fila de atribuicao de produtos.
-// Lista PENDING/ASSIGNED por produto e permite o socio/funcionario atribuir o
-// promotor. Consorcio e por PROPOSTA (uma ancora resolve todas as parcelas).
+// FRENTE DE PRODUTO — M3 PARTE A1 + VENDA PROPRIA DE GESTAO: fila de atribuicao.
+// Lista PENDING/ASSIGNED por produto e permite dar dono a cada linha. O dono pode ser
+// um PROMOTOR ou um PAPEL DE GESTAO com venda propria (que NAO e promotor). Consorcio
+// e por PROPOSTA (uma ancora resolve todas as parcelas).
+//
+// ESCOPO: o gestor de consorcio ve SO o card de Consorcio (a API nem devolve os
+// outros). socio/funcionario veem os tres.
 
 type Item = {
   id: string;
@@ -15,18 +19,27 @@ type Item = {
   entry_type: string;
   operation_number: string;
   contract_number: string;
-  promoter_id: string | null;
-  promoter_name: string | null;
+  beneficiario_value: string;
+  beneficiario_kind: "promotor" | "gestao" | null;
+  beneficiario_nome: string | null;
   status: "PENDING" | "ASSIGNED";
   balde: boolean;
 };
-type Promoter = { id: string; name: string; company_id: string | null };
+type Beneficiario = {
+  value: string;
+  kind: "promotor" | "gestao";
+  id: string;
+  nome: string;
+  sub: string;
+};
 type Payload = {
   year: number;
   month: number;
+  escopo: "TODOS" | "CONSORCIO";
+  role: string;
   grupos: { bbcap: Item[]; conta_corrente: Item[]; consorcio: Item[] };
-  promoters: Promoter[];
-  resumo: { pendentes: number; atribuidas: number };
+  beneficiarios: Beneficiario[];
+  resumo: { pendentes: number; atribuidas: number; gestao: number };
 };
 
 const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
@@ -42,6 +55,7 @@ const CSS = `
 .rratr .idn{font-family:var(--font-mono);font-size:13px}
 .rratr .rowsel{min-width:210px;max-width:280px;background:var(--paper);border:1px solid var(--bd);border-radius:8px;padding:6px 8px;font:inherit;color:var(--ink)}
 .rratr .rowsel:disabled{background:var(--neu);color:var(--ink-3)}
+.rratr tr.gestaorow td{background:rgba(198,157,74,.10)}
 .rratr .hintline{font-size:12.5px;color:var(--ink-3);margin:2px 0 12px}
 `;
 
@@ -81,10 +95,13 @@ export default function AtribuicaoClient() {
 
   useEffect(() => load(year, month), [year, month, load]);
 
-  const promoters = useMemo(() => data?.promoters ?? [], [data]);
+  const beneficiarios = useMemo(() => data?.beneficiarios ?? [], [data]);
+  const promotores = useMemo(() => beneficiarios.filter((b) => b.kind === "promotor"), [beneficiarios]);
+  const gestao = useMemo(() => beneficiarios.filter((b) => b.kind === "gestao"), [beneficiarios]);
+  const soConsorcio = data?.escopo === "CONSORCIO";
 
   const atribuir = useCallback(
-    async (item: Item, promoterId: string) => {
+    async (item: Item, beneficiarioValue: string) => {
       setBusy(item.id);
       setError("");
       try {
@@ -97,7 +114,7 @@ export default function AtribuicaoClient() {
             operation_number: item.operation_number,
             contract_number: item.contract_number,
             company_id: item.company_id,
-            promoter_id: promoterId || null,
+            beneficiario: beneficiarioValue || null,
             year,
             month,
           }),
@@ -157,12 +174,12 @@ export default function AtribuicaoClient() {
             <tr>
               <th className="rr-sticky-col">{idLabel}</th>
               <th>Status</th>
-              <th>Promotor</th>
+              <th>Quem vendeu</th>
             </tr>
           </thead>
           <tbody>
             {itens.map((it) => (
-              <tr key={it.id}>
+              <tr key={it.id} className={it.beneficiario_kind === "gestao" ? "gestaorow" : undefined}>
                 <td className="rr-sticky-col idn">
                   {it.operation_number}
                   {it.balde ? (
@@ -178,21 +195,41 @@ export default function AtribuicaoClient() {
                   ) : (
                     <Chip variant="warn">pendente</Chip>
                   )}
+                  {it.beneficiario_kind === "gestao" ? (
+                    <>
+                      {" "}
+                      <Chip variant="warn">VENDA DE GESTÃO</Chip>
+                    </>
+                  ) : null}
                 </td>
                 <td>
                   <select
                     className="rowsel"
-                    value={it.promoter_id ?? ""}
+                    value={it.beneficiario_value}
                     disabled={busy === it.id}
                     onChange={(e) => atribuir(it, e.target.value)}
-                    aria-label={`Promotor de ${it.operation_number}`}
+                    aria-label={`Quem vendeu ${it.operation_number}`}
                   >
                     <option value="">— não atribuído (balde) —</option>
-                    {promoters.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
+                    {promotores.length > 0 ? (
+                      <optgroup label="Promotores">
+                        {promotores.map((b) => (
+                          <option key={b.value} value={b.value}>
+                            {b.nome}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
+                    {gestao.length > 0 ? (
+                      <optgroup label="Gestão (venda própria)">
+                        {gestao.map((b) => (
+                          <option key={b.value} value={b.value}>
+                            {b.nome}
+                            {b.sub ? ` — ${b.sub}` : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
                   </select>
                 </td>
               </tr>
@@ -218,8 +255,12 @@ export default function AtribuicaoClient() {
 
         <HeaderNavy
           brand="GRUPO RR CRED"
-          title="Atribuição de produtos"
-          subtitle="Dê um dono a cada linha de BBCAP, Conta Corrente e Consórcio. Sem promotor = sem repasse (fica no balde)."
+          title={soConsorcio ? "Atribuição de consórcio" : "Atribuição de produtos"}
+          subtitle={
+            soConsorcio
+              ? "Dê um dono a cada proposta de Consórcio. Sem dono = sem repasse (fica no balde)."
+              : "Dê um dono a cada linha de BBCAP, Conta Corrente e Consórcio. Sem dono = sem repasse (fica no balde)."
+          }
           actions={
             <div className="comp">
               <select aria-label="Mês" value={month} onChange={(e) => setMonth(Number(e.target.value))}>
@@ -243,19 +284,29 @@ export default function AtribuicaoClient() {
           }
         >
           <KpiBand
+            columns={3}
             valueSize={26}
             items={[
-              { label: "Pendentes", value: data ? brl0(data.resumo.pendentes) : "—", sub: "sem promotor (balde)", accent: true },
+              { label: "Pendentes", value: data ? brl0(data.resumo.pendentes) : "—", sub: "sem dono (balde)", accent: true },
               { label: "Atribuídas", value: data ? brl0(data.resumo.atribuidas) : "—", sub: "com dono", subTone: "ok" },
+              { label: "Venda de gestão", value: data ? brl0(data.resumo.gestao) : "—", sub: "para conferência", subTone: "gold" },
             ]}
           />
         </HeaderNavy>
 
         <Banner variant="info">
           Consórcio é <b>diferido</b>: atribuir a proposta uma vez faz todas as parcelas (e as futuras)
-          herdarem o promotor. BBCAP e Conta Corrente são <b>evento único</b>. Reatribuir é possível a
+          herdarem o dono. BBCAP e Conta Corrente são <b>evento único</b>. Reatribuir é possível a
           qualquer momento — o repasse recompõe no próximo fechamento.
         </Banner>
+
+        {gestao.length > 0 ? (
+          <Banner variant="warn">
+            As linhas em destaque foram atribuídas a um <b>papel de gestão</b> (venda própria) — a
+            comissão vai para a pessoa da gestão, não para um promotor. Elas ficam marcadas aqui para
+            conferência.
+          </Banner>
+        ) : null}
 
         {error ? <Banner variant="warn">{error}</Banner> : null}
 
@@ -265,8 +316,8 @@ export default function AtribuicaoClient() {
           </Card>
         ) : (
           <div className="prodgrid">
-            {renderGrupo("BBCAP", g?.bbcap ?? [], false, "Proposta")}
-            {renderGrupo("Conta Corrente", g?.conta_corrente ?? [], false, "Conta")}
+            {soConsorcio ? null : renderGrupo("BBCAP", g?.bbcap ?? [], false, "Proposta")}
+            {soConsorcio ? null : renderGrupo("Conta Corrente", g?.conta_corrente ?? [], false, "Conta")}
             {renderGrupo("Consórcio", g?.consorcio ?? [], true, "Proposta")}
           </div>
         )}

@@ -169,6 +169,10 @@ const navGroups: NavGroup[] = [
       // Gestor de consorcio (M3): ve producao geral + o proprio 10%, nunca a
       // comissao dos promotores.
       { href: "/gestor-consorcio", label: "Consórcio (10%)", icon: "percent", visibleTo: ["gestor_consorcio"] },
+      // Mesma tela de /produtos/atribuicao, com escopo RESTRITO a CONSORCIO (o guard
+      // da rota decide). Fica aqui, no grupo Gestao, porque o item de Admin nao e
+      // visivel para ele.
+      { href: "/produtos/atribuicao", label: "Atribuir consórcio", icon: "clipboard", visibleTo: ["gestor_consorcio"] },
     ],
   },
 ];
