@@ -52,6 +52,7 @@ import { detectMonthRegime, type MonthRegime } from "./cmsMonthly.ts";
 import { persistRulesFingerprint } from "./rulesFingerprint.ts";
 import { applyProdutoRepasseAoPmr } from "./produtoAssignments.ts";
 import { computeConsorcioGestorPayout } from "./consorcio/gestorPayout.ts";
+import { applyVendaPropriaGestao } from "./gestaoVendaPropria.ts";
 
 type SupabaseLike = SupabaseClient;
 
@@ -79,6 +80,13 @@ export type ReconsolidacaoResultado = {
     detalhe_orfaos: Array<{ promoter_id: string; company_id: string | null; source: string }>;
   };
   produtos?: { promotores: number; atualizadas: number; inseridas: number };
+  /** venda propria dos papeis de GESTAO (fora do PMR — ver lib/gestaoVendaPropria) */
+  venda_propria_gestao?: {
+    competencia: string;
+    beneficiarios: number;
+    total: number;
+    ignoradas_sem_flag: number;
+  };
   gestor_consorcio?: {
     competencia: string;
     gestor_user_id: string | null;
@@ -151,6 +159,18 @@ export async function reconsolidarCompetenciaFechada(
   // reconciliador NAO as apagar. Roda mesmo em dryRun (nesse caso nao grava).
   const produtos = await applyProdutoRepasseAoPmr(supabase, { year, month, dryRun });
   for (const k of produtos.chaves) novoSet.add(k);
+
+  // ---- VENDA PROPRIA DE GESTAO — o mesmo repasse, para quem NAO e promotor ----
+  // As linhas de produto atribuidas a um papel de gestao (gestor_consorcio/supervisor/
+  // gerente_regional com venda_propria) saem do calculo acima em `produtos.gestao` e
+  // sao gravadas em gestao_venda_propria — NUNCA no PMR (promoter_id NOT NULL FK
+  // promoters). Com ninguem habilitado, o array vem vazio e isto e no-op.
+  const vendaPropria = await applyVendaPropriaGestao(supabase, {
+    year,
+    month,
+    buckets: produtos.gestao,
+    dryRun,
+  });
 
   // ---- GESTOR de consorcio (M2b) — payout dos 10% SEPARADO da PMR ----
   // 10% de TODA a comissao-empresa do consorcio, de TODAS as empresas. NAO entra no
@@ -264,6 +284,12 @@ export async function reconsolidarCompetenciaFechada(
       promotores: produtos.promotores,
       atualizadas: produtos.atualizadas,
       inseridas: produtos.inseridas,
+    },
+    venda_propria_gestao: {
+      competencia: vendaPropria.competencia,
+      beneficiarios: vendaPropria.linhas.length,
+      total: vendaPropria.total,
+      ignoradas_sem_flag: vendaPropria.ignoradas_sem_flag,
     },
     gestor_consorcio: {
       competencia: gestorPayout.competencia,

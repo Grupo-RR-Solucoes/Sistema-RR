@@ -9,9 +9,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { repassePromotor } from "./produtoRepasse.ts";
 import {
-  computeConsorcioCommissionByPromoter,
+  computeConsorcioCommissionByBeneficiario,
   syncPendingConsorcioAnchors,
 } from "./consorcio/fila.ts";
+import {
+  beneficiarioDaLinha,
+  beneficiarioValue,
+  colunasDeDono,
+  type Beneficiario,
+} from "./produtoBeneficiario.ts";
 
 type SupabaseLike = SupabaseClient;
 
@@ -107,8 +113,9 @@ export async function syncPendingProductAssignments(
   return { criadas: novas.length, existentes: seen.size };
 }
 
-// Atribui (ou reatribui) uma linha ao promotor. Chamado pela tela do socio (M3) e
-// idempotente por chave natural. status vira ASSIGNED; reprocesso nao sobrescreve.
+// Atribui (ou reatribui) uma linha ao BENEFICIARIO (promotor OU papel de gestao com
+// venda propria). Chamado pela tela de atribuicao e idempotente por chave natural.
+// status vira ASSIGNED; reprocesso nao sobrescreve.
 export async function assignProductLine(
   supabase: SupabaseLike,
   params: {
@@ -118,7 +125,7 @@ export async function assignProductLine(
     entry_type: string;
     operation_number: string;
     contract_number?: string;
-    promoter_id: string | null; // null volta para PENDING (desatribuir)
+    beneficiario: Beneficiario | null; // null volta para PENDING (desatribuir)
     assigned_by?: string | null;
   }
 ): Promise<void> {
@@ -129,11 +136,12 @@ export async function assignProductLine(
     entry_type: params.entry_type,
     operation_number: params.operation_number,
     contract_number: params.contract_number ?? "",
-    promoter_id: params.promoter_id,
-    status: params.promoter_id ? "ASSIGNED" : "PENDING",
+    // as DUAS colunas de dono, sempre (uma null) — ver colunasDeDono.
+    ...colunasDeDono(params.beneficiario),
+    status: params.beneficiario ? "ASSIGNED" : "PENDING",
     source: "MANUAL",
     assigned_by: params.assigned_by ?? null,
-    assigned_at: params.promoter_id ? new Date().toISOString() : null,
+    assigned_at: params.beneficiario ? new Date().toISOString() : null,
     updated_at: new Date().toISOString(),
   };
   const { error } = await supabase
@@ -144,47 +152,57 @@ export async function assignProductLine(
   if (error) throw new Error(error.message);
 }
 
-export type ProductCommissionByPromoter = Map<
-  string, // `${promoter_id}|${company_id}`
-  {
-    promoter_id: string;
-    company_id: string | null;
-    bbcap: number;
-    conta_corrente: number;
-    consorcio: number; // M2b: repasse do consorcio (comissao-empresa x 0,40)
-    lob: number; // M2b: adiado (sem fonte) — sempre 0
-  }
+export type ProductCommissionBucket = {
+  beneficiario: Beneficiario;
+  company_id: string | null;
+  bbcap: number;
+  conta_corrente: number;
+  consorcio: number; // M2b: repasse do consorcio (comissao-empresa x 0,40)
+  lob: number; // M2b: adiado (sem fonte) — sempre 0
+};
+
+export type ProductCommissionByBeneficiario = Map<
+  string, // `${kind}:${id}|${company_id}`
+  ProductCommissionBucket
 >;
 
-// Repasse consolidado por (promotor, empresa): junta as linhas de produto
-// (comissao-EMPRESA no fechamento) com a fila (ASSIGNED -> promoter_id) e aplica o
-// fator de repasse. Linhas PENDING/balde NAO entram (sem promotor = sem repasse).
-export async function computeProductCommissionByPromoter(
+// Repasse consolidado por (beneficiario, empresa): junta as linhas de produto
+// (comissao-EMPRESA no fechamento) com a fila (ASSIGNED -> promotor OU app_user de
+// gestao) e aplica o fator de repasse. Linhas PENDING/balde NAO entram (sem dono =
+// sem repasse).
+//
+// A REGUA E A MESMA para os dois tipos de dono — x 0,5833 nos eventos unicos, x 0,40
+// no consorcio. O que separa promotor de gestao e so o DESTINO, decidido adiante:
+// applyProdutoRepasseAoPmr (promotor) x applyVendaPropriaGestao (gestao).
+export async function computeProductCommissionByBeneficiario(
   supabase: SupabaseLike,
   params: { year: number; month: number }
-): Promise<ProductCommissionByPromoter> {
+): Promise<ProductCommissionByBeneficiario> {
   const { year, month } = params;
   const entries = await fetchProductEntries(supabase, year, month);
 
   const { data: assigns, error } = await supabase
     .from("product_line_assignments")
-    .select("company_id, entry_type, operation_number, contract_number, promoter_id, status")
+    .select(
+      "company_id, entry_type, operation_number, contract_number, promoter_id, assigned_app_user_id, status"
+    )
     .eq("year", year)
     .eq("month", month)
     .eq("status", "ASSIGNED");
   if (error) throw new Error(error.message);
-  const promoterByKey = new Map<string, string>();
+  const donoByKey = new Map<string, Beneficiario>();
   for (const a of assigns || []) {
-    if (!a.promoter_id) continue;
-    promoterByKey.set(
+    const b = beneficiarioDaLinha(a);
+    if (!b) continue;
+    donoByKey.set(
       `${a.company_id}|${a.entry_type}|${a.operation_number}|${a.contract_number ?? ""}`,
-      a.promoter_id
+      b
     );
   }
 
-  const acc: ProductCommissionByPromoter = new Map();
-  const novoBucket = (pid: string, company_id: string | null) => ({
-    promoter_id: pid,
+  const acc: ProductCommissionByBeneficiario = new Map();
+  const novoBucket = (b: Beneficiario, company_id: string | null): ProductCommissionBucket => ({
+    beneficiario: b,
     company_id,
     bbcap: 0,
     conta_corrente: 0,
@@ -193,27 +211,27 @@ export async function computeProductCommissionByPromoter(
   });
   for (const e of entries) {
     const key = `${e.company_id}|${e.entry_type}|${e.operation_number}|${e.contract_number ?? ""}`;
-    const pid = promoterByKey.get(key);
-    if (!pid) continue; // PENDING/balde: sem repasse ate ser atribuido
+    const dono = donoByKey.get(key);
+    if (!dono) continue; // PENDING/balde: sem repasse ate ser atribuido
     const repasse = repassePromotor(Number(e.commission_value || 0));
-    const ak = `${pid}|${e.company_id}`;
-    const cur = acc.get(ak) || novoBucket(pid, e.company_id);
+    const ak = `${beneficiarioValue(dono)}|${e.company_id}`;
+    const cur = acc.get(ak) || novoBucket(dono, e.company_id);
     if (e.entry_type === "BBCAP") cur.bbcap += repasse;
     else if (e.entry_type === "CONTA_CORRENTE") cur.conta_corrente += repasse;
     acc.set(ak, cur);
   }
 
-  // M2b — CONSORCIO (diferido): resolve o promotor pela ANCORA da proposta (heranca)
+  // M2b — CONSORCIO (diferido): resolve o dono pela ANCORA da proposta (heranca)
   // e soma a comissao-empresa das parcelas RECEBIDAS no mes x 0,40. LOB fica adiado.
-  const cons = await computeConsorcioCommissionByPromoter(supabase, { year, month });
+  const cons = await computeConsorcioCommissionByBeneficiario(supabase, { year, month });
   for (const c of cons.values()) {
-    const ak = `${c.promoter_id}|${c.company_id}`;
-    const cur = acc.get(ak) || novoBucket(c.promoter_id, c.company_id);
+    const ak = `${beneficiarioValue(c.beneficiario)}|${c.company_id}`;
+    const cur = acc.get(ak) || novoBucket(c.beneficiario, c.company_id);
     cur.consorcio += c.consorcio;
     acc.set(ak, cur);
   }
 
-  // arredonda o agregado para 2 casas (numeric(18,2) do PMR).
+  // arredonda o agregado para 2 casas (numeric(18,2) do PMR / gestao_venda_propria).
   for (const v of acc.values()) {
     v.bbcap = Math.round(v.bbcap * 100) / 100;
     v.conta_corrente = Math.round(v.conta_corrente * 100) / 100;
@@ -232,28 +250,47 @@ const chavePmr = (promoterId: string, companyId: string | null) =>
 // -> quem nao tem produto fica byte-identico (gate). Roda dentro do
 // reconsolidarCompetenciaFechada, depois do consolidateMonthlyGroup.
 //
+// SO PROMOTORES entram aqui. Linhas cujo dono e um papel de GESTAO (venda propria)
+// sao devolvidas em `gestao` e gravadas por applyVendaPropriaGestao em outra tabela —
+// o PMR e keyed por promoter_id NOT NULL FK promoters e nao aceita nao-promotor.
+//
 // Devolve as chaves (promoter|company) tocadas, para o reconciliador NAO apagar os
 // promotores que so tem produto (sem credito/seguro).
 export async function applyProdutoRepasseAoPmr(
   supabase: SupabaseLike,
   params: { year: number; month: number; dryRun?: boolean }
-): Promise<{ chaves: Set<string>; atualizadas: number; inseridas: number; promotores: number }> {
+): Promise<{
+  chaves: Set<string>;
+  atualizadas: number;
+  inseridas: number;
+  promotores: number;
+  gestao: ProductCommissionBucket[];
+}> {
   const { year, month } = params;
   const dryRun = params.dryRun === true;
 
   await syncPendingProductAssignments(supabase, { year, month, dryRun });
   await syncPendingConsorcioAnchors(supabase, { dryRun }); // M2b: ancoras por proposta
-  const porPromotor = await computeProductCommissionByPromoter(supabase, { year, month });
+  const todos = await computeProductCommissionByBeneficiario(supabase, { year, month });
+
+  // Separa os dois destinos. Enquanto ninguem tiver venda propria habilitada e
+  // atribuida, `gestao` vem vazio e este caminho e byte-identico ao anterior.
+  const porPromotor: Array<ProductCommissionBucket & { promoter_id: string }> = [];
+  const gestao: ProductCommissionBucket[] = [];
+  for (const v of todos.values()) {
+    if (v.beneficiario.kind === "gestao") gestao.push(v);
+    else porPromotor.push({ ...v, promoter_id: v.beneficiario.id });
+  }
 
   const chaves = new Set<string>();
-  for (const v of porPromotor.values()) chaves.add(chavePmr(v.promoter_id, v.company_id));
-  if (porPromotor.size === 0 || dryRun) {
-    return { chaves, atualizadas: 0, inseridas: 0, promotores: porPromotor.size };
+  for (const v of porPromotor) chaves.add(chavePmr(v.promoter_id, v.company_id));
+  if (porPromotor.length === 0 || dryRun) {
+    return { chaves, atualizadas: 0, inseridas: 0, promotores: porPromotor.length, gestao };
   }
 
   // Le producao/seguro atuais dos promotores com produto (para recompor o final
   // SEM tocar producao/seguro).
-  const pids = [...new Set([...porPromotor.values()].map((v) => v.promoter_id))];
+  const pids = [...new Set(porPromotor.map((v) => v.promoter_id))];
   const existentes = new Map<string, { prod: number; ins: number }>();
   for (let i = 0; i < pids.length; i += 300) {
     const { data, error } = await supabase
@@ -273,7 +310,7 @@ export async function applyProdutoRepasseAoPmr(
 
   const updates: any[] = []; // linhas ja existentes: nao mexe em producao/seguro
   const inserts: any[] = []; // promotores so-produto: nascem com producao/seguro 0
-  for (const v of porPromotor.values()) {
+  for (const v of porPromotor) {
     const k = chavePmr(v.promoter_id, v.company_id);
     const base = existentes.get(k);
     const prod = base?.prod ?? 0;
@@ -319,5 +356,11 @@ export async function applyProdutoRepasseAoPmr(
       if (error) throw new Error(error.message);
     }
   }
-  return { chaves, atualizadas: updates.length, inseridas: inserts.length, promotores: porPromotor.size };
+  return {
+    chaves,
+    atualizadas: updates.length,
+    inseridas: inserts.length,
+    promotores: porPromotor.length,
+    gestao,
+  };
 }

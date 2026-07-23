@@ -23,9 +23,10 @@ import {
 import {
   fetchConsorcioEntriesAll,
   isRegular,
-  resolveConsorcioPromoterByProposta,
+  resolveConsorcioBeneficiarioByProposta,
   type ConsorcioEntry,
 } from "./fila.ts";
+import { colunasDeDono, type Beneficiario } from "../produtoBeneficiario.ts";
 
 type SupabaseLike = SupabaseClient;
 
@@ -51,7 +52,10 @@ export type CarteiraConsorcioRow = {
   comissao_recebida: number | null;
   competencia_recebida: string | null;
   status: "ESPERADA" | "RECEBIDA" | "NAO_VEIO" | "ENCERRADA";
+  // dono DESNORMALIZADO (a verdade fica na fila). Mutuamente exclusivos: promotor OU
+  // papel de gestao com venda propria.
   promoter_id: string | null;
+  app_user_id: string | null;
   primeira_competencia: string;
 };
 
@@ -61,7 +65,7 @@ type Recebida = { comissao: number; competencia: string; pct: number; valorBem: 
 // mapa de promotor por proposta. PURA (sem IO) — reusada pelo dry-run.
 export function buildCarteiraConsorcioRows(
   entries: ConsorcioEntry[],
-  promoterByProposta: Map<string, string>
+  beneficiarioByProposta: Map<string, Beneficiario>
 ): CarteiraConsorcioRow[] {
   const regulares = entries.filter(isRegular);
   if (regulares.length === 0) return [];
@@ -113,7 +117,9 @@ export function buildCarteiraConsorcioRows(
   for (const g of grupos.values()) {
     const grupo = grupoDoSegmento(g.segmento);
     const teto = tetoDoGrupo(grupo);
-    const promoter_id = promoterByProposta.get(`${g.company_id ?? "NULL"}|${g.proposta}`) ?? null;
+    const dono = colunasDeDono(
+      beneficiarioByProposta.get(`${g.company_id ?? "NULL"}|${g.proposta}`) ?? null
+    );
 
     // back-out: usa o % da MENOR posicao recebida <= 5 (Geral) / qualquer (Imovel),
     // pois a 6a do Geral tem % diferente (degrau).
@@ -160,7 +166,8 @@ export function buildCarteiraConsorcioRows(
         comissao_recebida: rec ? round2(rec.comissao) : null,
         competencia_recebida: rec ? rec.competencia : null,
         status,
-        promoter_id,
+        promoter_id: dono.promoter_id,
+        app_user_id: dono.assigned_app_user_id,
         primeira_competencia: g.primeira,
       });
     }
@@ -176,13 +183,13 @@ export async function materializarCarteiraConsorcio(
 ): Promise<{ linhas: number; propostas: number; rows: CarteiraConsorcioRow[] }> {
   const dryRun = params?.dryRun === true;
   const entries = await fetchConsorcioEntriesAll(supabase);
-  const promoterByProposta = await resolveConsorcioPromoterByProposta(supabase);
-  const rows = buildCarteiraConsorcioRows(entries, promoterByProposta);
+  const beneficiarioByProposta = await resolveConsorcioBeneficiarioByProposta(supabase);
+  const rows = buildCarteiraConsorcioRows(entries, beneficiarioByProposta);
   const propostas = new Set(rows.map((r) => `${r.company_id ?? "NULL"}|${r.proposta}`)).size;
 
   if (dryRun) return { linhas: rows.length, propostas, rows };
 
-  // rebuild total: apaga tudo, insere de novo. Verdade do promotor esta na fila, entao
+  // rebuild total: apaga tudo, insere de novo. Verdade do dono esta na fila, entao
   // o wipe nao perde nada autoritativo (a carteira e derivada).
   const { error: delErr } = await supabase
     .from("carteira_consorcio")
