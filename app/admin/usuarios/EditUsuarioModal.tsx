@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import type { UserRole } from "@/lib/auth/types";
 import { allowedTargetRoles, canManageUserRole } from "@/lib/auth/permissions";
+import { PAPEIS_COM_VENDA_PROPRIA } from "@/lib/produtoBeneficiario";
 import { isValidCPF, maskCPF, onlyDigits } from "@/lib/validators/cpf";
 
 import type { UsuarioRow } from "./UsuariosList";
@@ -51,19 +52,19 @@ export default function EditUsuarioModal({
   const [role, setRole] = useState<Role>(target.role);
   const [cpf, setCpf] = useState(onlyDigits(target.cpf ?? "")); // só dígitos
   const [cnpjId, setCnpjId] = useState("");
-  // prefill do vinculo de promotor do gestor (standing em app_users.promoter_id).
-  const [promoterId, setPromoterId] = useState(
-    target.role === "gestor_consorcio" ? target.promoter_id ?? "" : ""
-  );
+  const [promoterId, setPromoterId] = useState("");
+  // VENDA PROPRIA (papel de gestao que tambem vende) — standing em
+  // app_users.venda_propria. NAO e vinculo a promotor.
+  const [vendaPropria, setVendaPropria] = useState(target.venda_propria === true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Só precisamos de empresa/promotor quando MUDAMOS o papel PARA promotor
   // (virar promotor exige cnpj_id + promoter_id no backend).
   const becomingPromotor = role === "promotor" && role !== target.role;
-  // gestor_consorcio: vinculo de "tambem promotor" OPCIONAL (standing). Mostra o
-  // picker sempre que o papel for gestor.
-  const gestorMode = role === "gestor_consorcio";
+  // So SOCIO liga venda propria, e so para os tres papeis de gestao.
+  const podeVendaPropria =
+    currentUserRole === "socio" && PAPEIS_COM_VENDA_PROPRIA.includes(role as never);
 
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [promoters, setPromoters] = useState<PromoterOption[]>([]);
@@ -71,7 +72,7 @@ export default function EditUsuarioModal({
   const [optionsError, setOptionsError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!becomingPromotor && !gestorMode) return;
+    if (!becomingPromotor) return;
     if (companies.length > 0) return;
     let cancelled = false;
     setOptionsLoading(true);
@@ -94,7 +95,7 @@ export default function EditUsuarioModal({
     return () => {
       cancelled = true;
     };
-  }, [becomingPromotor, gestorMode, companies.length]);
+  }, [becomingPromotor, companies.length]);
 
   const filteredPromoters = cnpjId ? promoters.filter((p) => p.company_id === cnpjId) : [];
 
@@ -132,10 +133,10 @@ export default function EditUsuarioModal({
         body.promoter_id = promoterId;
       }
     }
-    // gestor_consorcio: o vinculo "tambem promotor" (opcional) vai SEMPRE, mude ou nao
-    // o role — mesmo campo promoter_id do papel promotor. "" = gestor puro (null).
-    if (role === "gestor_consorcio") {
-      body.promoter_id = promoterId || null;
+    // VENDA PROPRIA — vai SEMPRE que o papel final for de gestao e o ator for socio,
+    // mude ou nao o role. E atributo do PAPEL, nao vinculo a promotor.
+    if (podeVendaPropria) {
+      body.venda_propria = vendaPropria;
     }
 
     // CPF — todo perfil que loga por CPF (funcionário, promotor, supervisor,
@@ -263,19 +264,24 @@ export default function EditUsuarioModal({
                 </div>
               ) : null}
 
-              {gestorMode ? (
+              {podeVendaPropria ? (
                 <div className="condbox">
-                  <span className="ctag"><IcoUser />Também é promotor? (opcional)</span>
-                  {optionsError ? <div className="errbox">{optionsError}</div> : null}
+                  <span className="ctag"><IcoUser />Venda própria</span>
                   <div className="field">
-                    <label>Registro de promotor</label>
-                    <select value={promoterId} onChange={(e) => setPromoterId(e.target.value)} disabled={submitting || optionsLoading}>
-                      <option value="">Não / gestor puro</option>
-                      {promoters.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                    <span className="hint">Se o gestor também vende, ligue o registro de promotor dele — as vendas aparecem na tela dele automaticamente.</span>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={vendaPropria}
+                        onChange={(e) => setVendaPropria(e.target.checked)}
+                        disabled={submitting}
+                      />{" "}
+                      Este gestor também vende
+                    </label>
+                    <span className="hint">
+                      Habilita a pessoa como destino na fila de atribuição de produtos. Ela recebe o
+                      mesmo percentual de um promotor pelas próprias vendas (BBCAP, Conta Corrente e
+                      Consórcio) — <b>sem</b> virar promotor. Só sócio liga esta opção.
+                    </span>
                   </div>
                 </div>
               ) : null}
