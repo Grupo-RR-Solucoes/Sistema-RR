@@ -48,6 +48,13 @@ const GATES = [
       "le regras_promotiva/json (49 JSONs versionados) + lib/motor.ts; sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/venda_propria_gestao_gate.cjs",
+    nome: "venda propria de gestao (no-op + isolamento do PMR)",
+    modo: "self-contained",
+    motivo:
+      "monta um Supabase falso em memoria e roda as funcoes reais do repo; sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/paridade_avista_trp_gate.cjs",
     nome: "paridade a-vista TRP (previsto x motor)",
     modo: "needs-db",
