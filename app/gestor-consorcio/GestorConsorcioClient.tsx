@@ -5,9 +5,14 @@ import { useEffect, useState } from "react";
 import { Banner, Card, EmptyState, HeaderNavy, KpiBand, Num, Table, UiStyles } from "@/components/ui";
 
 // ============================================================
-// TELA DO GESTOR DE CONSORCIO (M3 PARTE C). Duas visoes:
-//   1) PRODUCAO GERAL do consorcio (todos os promotores) — quem vendeu quanto;
-//   2) MEU REPASSE de 10%, por competencia.
+// TELA DO GESTOR DE CONSORCIO (M3 PARTE C). Tres visoes:
+//   1) MINHA VENDA PROPRIA — o que ele recebe pelas vendas que ELE fez (mesmo
+//      percentual de um promotor). So aparece quando ha venda propria habilitada e
+//      atribuida. Ele NAO e promotor: isto NAO vem do PMR.
+//   2) PRODUCAO GERAL do consorcio (todos os vendedores) — quem vendeu quanto;
+//   3) MEU REPASSE de 10%, por competencia.
+// Na venda dele as duas facetas SOMAM: 40% (venda propria) + 10% (gestao), porque a
+// base dos 10% ja inclui a parcela que ele vendeu.
 // O gestor NUNCA ve a comissao (40%) dos promotores — a API nem a busca.
 // ============================================================
 
@@ -15,29 +20,28 @@ type CompLinha = { competencia: string; base: number; gestor_10: number; empresa
 type ProdPromotor = {
   promoter_id: string | null;
   promoter_name: string;
+  is_gestao: boolean;
   propostas: number;
   parcelas_recebidas: number;
   base_recebida: number;
 };
-type MinhasVendas = {
-  vinculado: boolean;
-  promoter_id: string;
-  promoter_nome: string;
+type VendaPropriaComp = {
   competencia: string;
-  production_value: number;
-  production_commission_value: number;
-  insurance_commission_value: number;
-  bbcap_commission_value: number;
-  conta_corrente_commission_value: number;
-  consorcio_commission_value: number;
-  final_commission_value: number;
-  payable_commission_value: number;
+  bbcap: number;
+  conta_corrente: number;
+  consorcio: number;
+  final: number;
+};
+type VendaPropria = {
+  habilitada: boolean;
+  total: number;
+  competencias: VendaPropriaComp[];
 };
 type Payload = {
   competencias: CompLinha[];
   total: number;
   producao: { total_propostas: number; total_base_recebida: number; por_promotor: ProdPromotor[] };
-  minhasVendas: MinhasVendas | null;
+  vendaPropria: VendaPropria | null;
 };
 
 const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
@@ -50,17 +54,14 @@ function brl2(v?: number) {
 }
 
 export default function GestorConsorcioClient() {
-  const now = new Date();
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  // competencia do bloco "Minhas vendas" (nao afeta payout/producao geral).
-  const [competencia, setCompetencia] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
 
   useEffect(() => {
     let cancel = false;
     setLoading(true);
-    fetch(`/api/gestor-consorcio?competencia=${encodeURIComponent(competencia)}`)
+    fetch("/api/gestor-consorcio")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Erro ao carregar o painel do consórcio."))))
       .then((j: Payload) => {
         if (!cancel) setData(j);
@@ -74,13 +75,12 @@ export default function GestorConsorcioClient() {
     return () => {
       cancel = true;
     };
-  }, [competencia]);
+  }, []);
 
   const comps = data?.competencias ?? [];
   const prod = data?.producao;
   const promotores = prod?.por_promotor ?? [];
-  const mv = data?.minhasVendas ?? null;
-  const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+  const vp = data?.vendaPropria ?? null;
 
   return (
     <div>
@@ -92,11 +92,14 @@ export default function GestorConsorcioClient() {
           subtitle="Produção geral do consórcio + o seu repasse de 10%. Você não vê a comissão dos promotores."
         >
           <KpiBand
-            columns={3}
+            columns={vp ? 4 : 3}
             valueSize={26}
             items={[
               { label: "Meu repasse (10%)", value: brl2(data?.total), sub: "acumulado", accent: true },
-              { label: "Produção (base recebida)", value: brl2(prod?.total_base_recebida), sub: "comissão-empresa", subTone: "gold" },
+              ...(vp
+                ? [{ label: "Minha venda própria", value: brl2(vp.total), sub: "acumulado", subTone: "ok" as const }]
+                : []),
+              { label: "Produção (base recebida)", value: brl2(prod?.total_base_recebida), sub: "comissão-empresa", subTone: "gold" as const },
               { label: "Propostas", value: prod ? String(prod.total_propostas) : "—", sub: "no consórcio" },
             ]}
           />
@@ -110,75 +113,46 @@ export default function GestorConsorcioClient() {
 
         {error ? <Banner variant="warn">{error}</Banner> : null}
 
-        {/* MINHAS VENDAS — so aparece quando o gestor tambem e promotor (vinculado) */}
-        {mv && mv.vinculado ? (
-          <Card title={`Minhas vendas (${mv.promoter_nome})`}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "0 0 12px" }}>
-              <span style={{ fontSize: 13, color: "var(--ink-3)" }}>Competência:</span>
-              <select
-                aria-label="Competência das minhas vendas"
-                value={competencia}
-                onChange={(e) => setCompetencia(e.target.value)}
-                style={{ background: "var(--paper)", border: "1px solid var(--bd)", borderRadius: 8, padding: "6px 10px", font: "inherit" }}
-              >
-                {[2025, 2026, 2027].flatMap((y) =>
-                  MES.map((m, i) => (
-                    <option key={`${y}-${i + 1}`} value={`${y}-${String(i + 1).padStart(2, "0")}`}>
-                      {m}/{y}
-                    </option>
-                  ))
-                )}
-              </select>
-            </div>
-            <Table minWidth={520}>
+        {/* MINHA VENDA PROPRIA — so aparece quando ha venda propria atribuida a ele */}
+        {vp && vp.habilitada ? (
+          <Card title="Minha venda própria">
+            <Table scrollable minWidth={620}>
               <thead>
                 <tr>
-                  <th className="rr-sticky-col">Componente</th>
-                  <th style={{ textAlign: "right" }}>Valor</th>
+                  <th>Competência</th>
+                  <th style={{ textAlign: "right" }}>BBCAP</th>
+                  <th style={{ textAlign: "right" }}>Conta Corrente</th>
+                  <th style={{ textAlign: "right" }}>Consórcio (40%)</th>
+                  <th style={{ textAlign: "right" }}>Total</th>
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td className="rr-sticky-col">Produção (crédito)</td>
-                  <Num>{brl2(mv.production_value)}</Num>
-                </tr>
-                <tr>
-                  <td className="rr-sticky-col">Comissão crédito</td>
-                  <Num>{brl2(mv.production_commission_value)}</Num>
-                </tr>
-                <tr>
-                  <td className="rr-sticky-col">Comissão seguro</td>
-                  <Num>{brl2(mv.insurance_commission_value)}</Num>
-                </tr>
-                <tr>
-                  <td className="rr-sticky-col">BBCAP</td>
-                  <Num>{brl2(mv.bbcap_commission_value)}</Num>
-                </tr>
-                <tr>
-                  <td className="rr-sticky-col">Conta Corrente</td>
-                  <Num>{brl2(mv.conta_corrente_commission_value)}</Num>
-                </tr>
-                <tr>
-                  <td className="rr-sticky-col">Consórcio (meu 40%)</td>
-                  <Num>{brl2(mv.consorcio_commission_value)}</Num>
-                </tr>
+                {vp.competencias.map((c) => (
+                  <tr key={c.competencia}>
+                    <td>{compLabel(c.competencia)}</td>
+                    <Num>{brl2(c.bbcap)}</Num>
+                    <Num>{brl2(c.conta_corrente)}</Num>
+                    <Num>{brl2(c.consorcio)}</Num>
+                    <Num>{brl2(c.final)}</Num>
+                  </tr>
+                ))}
               </tbody>
               <tfoot>
                 <tr>
-                  <td className="rr-sticky-col">Total a receber (promotor)</td>
-                  <Num>{brl2(mv.payable_commission_value)}</Num>
+                  <td colSpan={4}>Total</td>
+                  <Num>{brl2(vp.total)}</Num>
                 </tr>
               </tfoot>
             </Table>
             <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "10px 0 0" }}>
-              Estas são as suas vendas <b>como promotor</b> (repasse de 40% no consórcio, mais crédito,
-              seguro e demais produtos). É <b>independente</b> dos seus 10% de gestão abaixo — as duas
-              facetas não se somam nem se anulam.
+              Estas são as vendas que <b>você</b> fez, com o <b>mesmo percentual de um promotor</b> —
+              você não é promotor, esta comissão é do seu papel de gestão. Ela <b>soma</b> com os seus
+              10% abaixo: na sua própria venda de consórcio você recebe os 40% aqui e os 10% lá.
             </p>
           </Card>
         ) : null}
 
-        <Card title="Produção por promotor">
+        <Card title="Produção por vendedor">
           {loading ? (
             <p style={{ padding: 16, opacity: 0.7 }}>Carregando…</p>
           ) : promotores.length === 0 ? (
@@ -187,7 +161,7 @@ export default function GestorConsorcioClient() {
             <Table scrollable minWidth={640}>
               <thead>
                 <tr>
-                  <th className="rr-sticky-col">Promotor</th>
+                  <th className="rr-sticky-col">Vendedor</th>
                   <th>Propostas</th>
                   <th>Parcelas recebidas</th>
                   <th style={{ textAlign: "right" }}>Base recebida (comissão-empresa)</th>
@@ -195,7 +169,7 @@ export default function GestorConsorcioClient() {
               </thead>
               <tbody>
                 {promotores.map((p) => (
-                  <tr key={p.promoter_id ?? "__na__"}>
+                  <tr key={p.promoter_id ?? (p.is_gestao ? `g-${p.promoter_name}` : "__na__")}>
                     <td className="rr-sticky-col">{p.promoter_name}</td>
                     <Num>{p.propostas}</Num>
                     <Num>{p.parcelas_recebidas}</Num>
