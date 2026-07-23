@@ -11,6 +11,11 @@
 // promotor por parcela IGNORA year/month e casa so por (company, proposta).
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { repasseConsorcioPromotor } from "./trp210.ts";
+import {
+  beneficiarioDaLinha,
+  colunasDeDono,
+  type Beneficiario,
+} from "../produtoBeneficiario.ts";
 
 type SupabaseLike = SupabaseClient;
 
@@ -146,21 +151,23 @@ export async function syncPendingConsorcioAnchors(
   return { criadas: novas.length, existentes: seen.size };
 }
 
-// Atribui (ou reatribui) uma PROPOSTA inteira ao promotor. Chamado pela tela do socio
-// (M3). Propaga para todas as parcelas por heranca (a resolucao casa pela proposta).
-// select+insert/update por causa do indice unico parcial.
+// Atribui (ou reatribui) uma PROPOSTA inteira ao BENEFICIARIO (promotor OU papel de
+// gestao com venda propria). Chamado pela tela de atribuicao (socio/funcionario e,
+// no escopo do consorcio, o proprio gestor). Propaga para todas as parcelas por
+// heranca (a resolucao casa pela proposta). select+insert/update por causa do indice
+// unico parcial.
 export async function assignConsorcioProposta(
   supabase: SupabaseLike,
   params: {
     company_id: string | null;
     proposta: string;
-    promoter_id: string | null; // null volta para PENDING (desatribuir)
+    beneficiario: Beneficiario | null; // null volta para PENDING (desatribuir)
     year?: number;
     month?: number;
     assigned_by?: string | null;
   }
 ): Promise<void> {
-  const { company_id, proposta, promoter_id } = params;
+  const { company_id, proposta, beneficiario } = params;
   let q = supabase
     .from("product_line_assignments")
     .select("id")
@@ -171,11 +178,13 @@ export async function assignConsorcioProposta(
   if (selErr) throw new Error(selErr.message);
 
   const patch = {
-    promoter_id,
-    status: promoter_id ? "ASSIGNED" : "PENDING",
+    // grava SEMPRE as duas colunas de dono (uma null): reatribuir de promotor para
+    // gestao nao pode deixar o dono antigo para tras.
+    ...colunasDeDono(beneficiario),
+    status: beneficiario ? "ASSIGNED" : "PENDING",
     source: "MANUAL",
     assigned_by: params.assigned_by ?? null,
-    assigned_at: promoter_id ? new Date().toISOString() : null,
+    assigned_at: beneficiario ? new Date().toISOString() : null,
     updated_at: new Date().toISOString(),
   };
 
@@ -196,41 +205,52 @@ export async function assignConsorcioProposta(
   if (error) throw new Error(error.message);
 }
 
-// Mapa (company|proposta) -> promoter_id das ancoras ASSIGNED. A verdade do promotor.
-export async function resolveConsorcioPromoterByProposta(
+// Mapa (company|proposta) -> BENEFICIARIO das ancoras ASSIGNED. A verdade do dono:
+// promotor OU papel de gestao com venda propria.
+export async function resolveConsorcioBeneficiarioByProposta(
   supabase: SupabaseLike
-): Promise<Map<string, string>> {
+): Promise<Map<string, Beneficiario>> {
   const { data, error } = await supabase
     .from("product_line_assignments")
-    .select("company_id, operation_number, promoter_id, status")
+    .select("company_id, operation_number, promoter_id, assigned_app_user_id, status")
     .eq("entry_type", CONSORCIO_ENTRY_TYPE)
     .eq("status", "ASSIGNED");
   if (error) throw new Error(error.message);
-  const map = new Map<string, string>();
+  const map = new Map<string, Beneficiario>();
   for (const a of data || []) {
-    if (!a.promoter_id) continue;
-    map.set(chaveProposta(a.company_id, a.operation_number), a.promoter_id);
+    const b = beneficiarioDaLinha(a);
+    if (!b) continue;
+    map.set(chaveProposta(a.company_id, a.operation_number), b);
   }
   return map;
 }
 
-// Repasse do consorcio por (promotor, empresa) numa competencia: soma a comissao-
-// EMPRESA das parcelas RECEBIDAS no mes x 0,40, resolvendo o promotor pela ancora da
+export type ConsorcioRepasseBucket = {
+  beneficiario: Beneficiario;
+  company_id: string | null;
+  consorcio: number;
+};
+
+// Repasse do consorcio por (beneficiario, empresa) numa competencia: soma a comissao-
+// EMPRESA das parcelas RECEBIDAS no mes x 0,40, resolvendo o dono pela ancora da
 // proposta. Parcelas de proposta sem ancora ASSIGNED (balde) NAO entram.
-export async function computeConsorcioCommissionByPromoter(
+//
+// A REGUA E A MESMA para promotor e para gestao (x 0,40) — muda so o destino do valor
+// mais adiante (PMR x gestao_venda_propria).
+export async function computeConsorcioCommissionByBeneficiario(
   supabase: SupabaseLike,
   params: { year: number; month: number }
-): Promise<Map<string, { promoter_id: string; company_id: string | null; consorcio: number }>> {
+): Promise<Map<string, ConsorcioRepasseBucket>> {
   const entries = (await fetchConsorcioEntries(supabase, params)).filter(isRegular);
-  const promoterByProposta = await resolveConsorcioPromoterByProposta(supabase);
+  const beneficiarioByProposta = await resolveConsorcioBeneficiarioByProposta(supabase);
 
-  const acc = new Map<string, { promoter_id: string; company_id: string | null; consorcio: number }>();
+  const acc = new Map<string, ConsorcioRepasseBucket>();
   for (const e of entries) {
-    const pid = promoterByProposta.get(chaveProposta(e.company_id, e.operation_number));
-    if (!pid) continue; // balde: sem promotor = sem repasse ate atribuir
+    const b = beneficiarioByProposta.get(chaveProposta(e.company_id, e.operation_number));
+    if (!b) continue; // balde: sem dono = sem repasse ate atribuir
     const repasse = repasseConsorcioPromotor(Number(e.commission_value || 0));
-    const ak = `${pid}|${e.company_id}`;
-    const cur = acc.get(ak) || { promoter_id: pid, company_id: e.company_id, consorcio: 0 };
+    const ak = `${b.kind}:${b.id}|${e.company_id}`;
+    const cur = acc.get(ak) || { beneficiario: b, company_id: e.company_id, consorcio: 0 };
     cur.consorcio += repasse;
     acc.set(ak, cur);
   }

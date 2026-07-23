@@ -151,6 +151,36 @@ export async function requireGestorConsorcio(): Promise<{
   return { session, role: "gestor_consorcio" };
 }
 
+/**
+ * Guard da FILA DE ATRIBUICAO DE PRODUTOS (/produtos/atribuicao).
+ *
+ * socio/funcionario: escopo TODOS (BBCAP + Conta Corrente + Consorcio).
+ * gestor_consorcio:  escopo CONSORCIO — ele so ve e migra propostas de consorcio,
+ *                    NUNCA BBCAP nem CONTA_CORRENTE. E o mesmo espirito do /equipe:
+ *                    o papel de gestao entra numa tela operacional, mas so na fatia
+ *                    que e dele.
+ *
+ * O escopo devolvido aqui e o gate REAL (a rota usa service_role, que bypassa RLS);
+ * a policy equivalente na fila e defesa em profundidade.
+ */
+export async function requireAtribuicaoProdutos(): Promise<{
+  session: AuthSession;
+  role: "socio" | "funcionario" | "gestor_consorcio";
+  escopo: "TODOS" | "CONSORCIO";
+}> {
+  const { session, role } = await requireAuthenticated();
+  if (role === "socio" || role === "funcionario") {
+    return { session, role, escopo: "TODOS" };
+  }
+  if (role === "gestor_consorcio") {
+    return { session, role, escopo: "CONSORCIO" };
+  }
+  throw new ApiGuardError(
+    403,
+    "Acesso restrito a socios, funcionarios e ao gestor de consorcio"
+  );
+}
+
 // ============================================================
 // Composicoes guard + client (Dia 4.2)
 // ============================================================
@@ -194,6 +224,13 @@ export async function withSocioAdmin() {
 
 export async function withSocioOrFuncionarioAdmin() {
   const user = await requireSocioOrFuncionario();
+  const supabase = getSupabaseAdmin();
+  return { user, supabase };
+}
+
+/** Fila de atribuicao de produtos + client service_role. Ver requireAtribuicaoProdutos. */
+export async function withAtribuicaoProdutosAdmin() {
+  const user = await requireAtribuicaoProdutos();
   const supabase = getSupabaseAdmin();
   return { user, supabase };
 }

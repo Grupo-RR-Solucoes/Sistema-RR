@@ -4,7 +4,8 @@ import {
   apiGuardErrorResponse,
   requireSocioOrFuncionario,
 } from "@/lib/auth/guards";
-import { canManageUserRole } from "@/lib/auth/permissions";
+import { canChangeUserRole, canManageUserRole } from "@/lib/auth/permissions";
+import { PAPEIS_COM_VENDA_PROPRIA } from "@/lib/produtoBeneficiario";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { UserRole } from "@/lib/auth/types";
 import { isValidCPF, onlyDigits } from "@/lib/validators/cpf";
@@ -24,7 +25,7 @@ export async function GET() {
     let query = supabase
       .from("app_users")
       .select(
-        "id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, cpf, active, created_at, created_by"
+        "id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, cpf, venda_propria, active, created_at, created_by"
       )
       .order("created_at", { ascending: false });
 
@@ -52,6 +53,8 @@ interface CreateUserBody {
   promoter_id?: string | null;
   /** CPF (qualquer formato): obrigatório p/ funcionario/promotor; ignorado p/ socio. */
   cpf?: string | null;
+  /** Venda propria (papel de gestao que tambem vende). So socio pode ligar. */
+  venda_propria?: boolean;
 }
 
 /**
@@ -115,19 +118,34 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    // gestor_consorcio pode TAMBEM ser promotor: promoter_id OPCIONAL, cnpj_id sempre
-    // null (a empresa vem do proprio registro de promotor). Mesmo campo do papel promotor.
-    if (role === "gestor_consorcio" && cnpj_id) {
+    // Papel de gestao NAO e promotor (correcao conceitual 21/07): nenhum papel alem de
+    // 'promotor' carrega cnpj_id/promoter_id. Quem e gestao e vende recebe pela venda
+    // propria (app_users.venda_propria + gestao_venda_propria), nunca pelo PMR.
+    if (role !== "promotor" && (cnpj_id || promoter_id)) {
       return NextResponse.json(
-        { error: "Gestor de consorcio nao tem empresa (cnpj_id)" },
+        { error: "Apenas promotor tem cnpj_id e promoter_id" },
         { status: 400 }
       );
     }
-    if (role !== "promotor" && role !== "gestor_consorcio" && (cnpj_id || promoter_id)) {
-      return NextResponse.json(
-        { error: "Socio/funcionario nao deve ter cnpj_id nem promoter_id" },
-        { status: 400 }
-      );
+
+    // VENDA PROPRIA — atributo do PAPEL DE GESTAO. So SOCIO liga (canChangeUserRole),
+    // e so para gestor_consorcio/supervisor/gerente_regional (o CHECK do banco e a
+    // ultima linha de defesa).
+    let venda_propria = false;
+    if (body.venda_propria === true) {
+      if (!canChangeUserRole(session.appUser.role)) {
+        return NextResponse.json(
+          { error: "Apenas socios podem habilitar venda propria." },
+          { status: 403 }
+        );
+      }
+      if (!(PAPEIS_COM_VENDA_PROPRIA as readonly string[]).includes(role)) {
+        return NextResponse.json(
+          { error: "Venda propria so existe para papeis de gestao." },
+          { status: 400 }
+        );
+      }
+      venda_propria = true;
     }
 
     // CPF: login por CPF é exclusivo de funcionario/promotor — obrigatório e
@@ -173,6 +191,7 @@ export async function POST(req: Request) {
         cnpj_id,
         promoter_id,
         cpf,
+        venda_propria,
         active: true,
         created_by: session.appUser.id,
       })
@@ -229,6 +248,7 @@ export async function POST(req: Request) {
         target_role: role,
         target_cnpj_id: cnpj_id,
         target_promoter_id: promoter_id,
+        target_venda_propria: venda_propria,
       },
       created_by: session.appUser.email,
     });

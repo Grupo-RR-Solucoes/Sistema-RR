@@ -36,7 +36,7 @@ export default async function UsuariosPage() {
   let query = supabase
     .from("app_users")
     .select(
-      "id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, cpf, active, created_at, created_by"
+      "id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, cpf, venda_propria, active, created_at, created_by"
     )
     .order("created_at", { ascending: false });
 

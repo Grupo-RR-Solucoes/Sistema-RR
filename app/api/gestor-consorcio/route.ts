@@ -3,8 +3,7 @@ import { NextResponse } from "next/server";
 import { apiGuardErrorResponse, requireGestorConsorcio } from "@/lib/auth/guards";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { fetchAllRows } from "@/lib/queryHelpers";
-import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
-import { detectMonthRegime } from "@/lib/cmsMonthly";
+import { fetchVendaPropriaDoUsuario } from "@/lib/gestaoVendaPropria";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,21 +14,18 @@ export const dynamic = "force-dynamic";
 //   1) o payout de 10% (consorcio_gestor_payout) — TODO o payout, pois e o unico
 //      gestor. Sem filtro por id -> ele ve inclusive as linhas orfas (gestor_user_id
 //      null gravado antes de existir gestor). Trocar o gestor = trocar o role.
-//   2) a PRODUCAO GERAL do consorcio (carteira_consorcio, todos os promotores) —
+//   2) a PRODUCAO GERAL do consorcio (carteira_consorcio, todos os vendedores) —
 //      valor/segmento/base, "quem vendeu quanto".
+//   3) a VENDA PROPRIA dele (gestao_venda_propria, SO as linhas do proprio
+//      app_user_id): as vendas que ele mesmo fez, com o mesmo percentual de um
+//      promotor. Ele NAO e promotor — nao ha promoter_id nem PMR envolvidos.
+//      Os 10% de gestao e a venda propria SOMAM (na venda dele: 40% aqui + 10% la),
+//      porque a base do payout ja inclui a parcela que ele vendeu.
 // CRITICO: NUNCA le promoter_monthly_results.consorcio_commission_value (o repasse de
 // 40% dos promotores). Mesma disciplina INVERTIDA do /equipe: mostra producao, esconde
 // a comissao alheia. Escola A: requireGestorConsorcio (gate por role) + service_role.
-//
-//   3) "MINHAS VENDAS": quando o gestor TAMBEM e promotor (app_users.promoter_id
-//      setado, standing — mesmo campo do papel promotor, ja na sessao), mostra a
-//      producao COMPLETA dele como promotor (credito+seguro+bbcap+cc+consorcio) reusando
-//      o MESMO buildPromoterAnalytics da /promotores, filtrado por session.appUser
-//      .promoterId. So o proprio id -> nao vaza a comissao de OUTROS promotores.
 // READ-ONLY.
 // ============================================================
-
-const COMP_RE = /^\d{4}-\d{2}$/;
 
 type PayoutRow = {
   competencia: string;
@@ -41,6 +37,7 @@ type PayoutRow = {
 
 type CarteiraRow = {
   promoter_id: string | null;
+  app_user_id: string | null;
   proposta: string;
   segmento_grupo: string | null;
   valor_bem: number;
@@ -56,7 +53,6 @@ export async function GET(req: Request) {
     // Gate por role. O gestor logado -> so o proprio payout.
     const { session } = await requireGestorConsorcio();
     const admin = getSupabaseAdmin();
-    const { searchParams } = new URL(req.url);
 
     // 1) PAYOUT dos 10%. O gestor e UNICO (definido pelo role) -> ele ve TODO o payout
     // do consorcio, inclusive as linhas ainda ORFAS (gestor_user_id null, gravadas
@@ -84,15 +80,27 @@ export async function GET(req: Request) {
     const carteira = await fetchAllRows<CarteiraRow>(() =>
       admin
         .from("carteira_consorcio")
-        .select("promoter_id, proposta, segmento_grupo, valor_bem, comissao_esperada, comissao_recebida, status")
+        .select("promoter_id, app_user_id, proposta, segmento_grupo, valor_bem, comissao_esperada, comissao_recebida, status")
     );
     const proms = await admin.from("promoters").select("id, name");
     if (proms.error) throw new Error(proms.error.message);
     const nameOf = new Map((proms.data || []).map((p: any) => [p.id, p.name]));
+    // Vendedores que NAO sao promotores (papeis de gestao com venda propria). Sem isto
+    // a proposta vendida pela gestao apareceria como "(nao atribuido)" — a tela
+    // mentiria sobre uma venda que tem dono. Allow-list: so id e nome.
+    const gest = await admin
+      .from("app_users")
+      .select("id, full_name, email")
+      .eq("venda_propria", true);
+    if (gest.error) throw new Error(gest.error.message);
+    const gestaoNameOf = new Map(
+      (gest.data || []).map((g: any) => [g.id, String(g.full_name || g.email || "(gestão)")])
+    );
 
     type Acc = {
       promoter_id: string | null;
       promoter_name: string;
+      is_gestao: boolean;
       propostas: Set<string>;
       parcelas_recebidas: number;
       base_recebida: number; // comissao-empresa recebida (base do consorcio, NAO o 40%)
@@ -103,12 +111,18 @@ export async function GET(req: Request) {
     const propostasGerais = new Set<string>();
     for (const c of carteira) {
       const recebida = c.status === "RECEBIDA" || c.status === "ENCERRADA";
-      const k = c.promoter_id ?? "__NAO_ATRIBUIDO__";
+      const k = c.promoter_id ?? (c.app_user_id ? `gestao:${c.app_user_id}` : "__NAO_ATRIBUIDO__");
       let a = porProm.get(k);
       if (!a) {
+        const nome = c.promoter_id
+          ? nameOf.get(c.promoter_id) ?? "(promotor removido)"
+          : c.app_user_id
+            ? `${gestaoNameOf.get(c.app_user_id) ?? "(gestão)"} — venda própria`
+            : "(não atribuído)";
         a = {
           promoter_id: c.promoter_id,
-          promoter_name: c.promoter_id ? nameOf.get(c.promoter_id) ?? "(promotor removido)" : "(não atribuído)",
+          promoter_name: nome,
+          is_gestao: Boolean(!c.promoter_id && c.app_user_id),
           propostas: new Set(),
           parcelas_recebidas: 0,
           base_recebida: 0,
@@ -130,6 +144,7 @@ export async function GET(req: Request) {
       .map((a) => ({
         promoter_id: a.promoter_id,
         promoter_name: a.promoter_name,
+        is_gestao: a.is_gestao,
         propostas: a.propostas.size,
         parcelas_recebidas: a.parcelas_recebidas,
         base_recebida: a.base_recebida,
@@ -142,66 +157,20 @@ export async function GET(req: Request) {
       por_promotor: porPromotor,
     };
 
-    // 3) MINHAS VENDAS — o gestor tambem e promotor? O vinculo e STANDING em
-    // app_users.promoter_id (mesmo campo do papel promotor), ja carregado na sessao.
-    // Se houver, reusa buildPromoterAnalytics (mesma logica da /promotores) filtrado
-    // por esse id, para a competencia pedida (?competencia) ou a corrente. NUNCA outros
-    // promotores. null = gestor puro -> bloco nao aparece.
-    let minhasVendas: any = null;
-    const meuPromoterId: string | null = session.appUser.promoterId ?? null;
-    if (meuPromoterId) {
-      const compParam = searchParams.get("competencia") || "";
-      let year: number;
-      let month: number;
-      if (COMP_RE.test(compParam)) {
-        const [y, m] = compParam.split("-").map(Number);
-        year = y;
-        month = m;
-      } else {
-        // sem parametro: usa a competencia mais recente do payout.
-        const base = competencias[0]?.competencia || "";
-        const [y, m] = (COMP_RE.test(base) ? base : "2026-06").split("-").map(Number);
-        year = y;
-        month = m;
-      }
+    // 3) MINHA VENDA PROPRIA — as vendas que o PROPRIO gestor fez, com o mesmo
+    // percentual de um promotor. Le gestao_venda_propria filtrado pelo app_user_id
+    // DELE (fetchVendaPropriaDoUsuario nem tem variante "todos"): nunca vaza a venda
+    // propria de outro papel de gestao, nem a comissao de promotor.
+    //
+    // Ele NAO e promotor: aqui nao ha promoter_id, PMR nem buildPromoterAnalytics.
+    // Vazio (sem venda propria habilitada/atribuida) -> o bloco nao aparece na tela.
+    const vp = await fetchVendaPropriaDoUsuario(admin, session.appUser.id);
+    const vendaPropria =
+      vp.competencias.length > 0
+        ? { habilitada: true, total: vp.total, competencias: vp.competencias }
+        : null;
 
-      let closed = false;
-      let closedSource: "cms" | "fechamento" | undefined;
-      try {
-        const regime = await detectMonthRegime(admin, year, month);
-        closed = regime !== "open";
-        closedSource = regime === "open" ? undefined : regime;
-      } catch {
-        closed = false;
-      }
-
-      const analytics = await buildPromoterAnalytics(admin, {
-        year,
-        month,
-        promoterId: meuPromoterId,
-        closed,
-        closedSource,
-      });
-      const s = (analytics.summaryRows || []).find((r: any) => r.promoter_id === meuPromoterId);
-      const nome = s?.promoter_name || nameOf.get(meuPromoterId) || "(minhas vendas)";
-      const num = (v: any) => Number(v || 0);
-      minhasVendas = {
-        vinculado: true,
-        promoter_id: meuPromoterId,
-        promoter_nome: nome,
-        competencia: `${year}-${String(month).padStart(2, "0")}`,
-        production_value: num(s?.production_value),
-        production_commission_value: num(s?.production_commission_value),
-        insurance_commission_value: num(s?.insurance_commission_value),
-        bbcap_commission_value: num(s?.bbcap_commission_value),
-        conta_corrente_commission_value: num(s?.conta_corrente_commission_value),
-        consorcio_commission_value: num(s?.consorcio_commission_value),
-        final_commission_value: num(s?.final_commission_value),
-        payable_commission_value: num(s?.payable_commission_value),
-      };
-    }
-
-    return NextResponse.json({ competencias, total, producao, minhasVendas });
+    return NextResponse.json({ competencias, total, producao, vendaPropria });
   } catch (error) {
     return apiGuardErrorResponse(error);
   }

@@ -29,6 +29,8 @@ export interface UsuarioRow {
   cnpj_id: string | null;
   promoter_id: string | null;
   cpf: string | null;
+  /** papel de gestao que TAMBEM vende (venda propria). Nunca torna promotor. */
+  venda_propria?: boolean;
   active: boolean;
   created_at: string;
   created_by: string | null;

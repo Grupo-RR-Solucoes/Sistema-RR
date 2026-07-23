@@ -8,6 +8,7 @@ import {
   canChangeUserRole,
   canManageUserRole,
 } from "@/lib/auth/permissions";
+import { PAPEIS_COM_VENDA_PROPRIA } from "@/lib/produtoBeneficiario";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import type { UserRole } from "@/lib/auth/types";
 import { isValidCPF, onlyDigits } from "@/lib/validators/cpf";
@@ -23,6 +24,8 @@ interface PatchUserBody {
   cpf?: string | null;
   /** E-mail: ao alterar, sincroniza app_users.email E auth.users. */
   email?: string | null;
+  /** Venda propria (papel de gestao que tambem vende). So socio pode alterar. */
+  venda_propria?: boolean;
 }
 
 /**
@@ -45,7 +48,7 @@ export async function PATCH(
 
     const { data: target, error: targetError } = await supabase
       .from("app_users")
-      .select("id, role, email, auth_user_id, active, cpf")
+      .select("id, role, email, auth_user_id, active, cpf, venda_propria")
       .eq("id", id)
       .single();
 
@@ -141,10 +144,6 @@ export async function PATCH(
         }
         update.cnpj_id = cnpj;
         update.promoter_id = promoter;
-      } else if (body.role === "gestor_consorcio") {
-        // gestor_consorcio pode TAMBEM vender: promoter_id OPCIONAL, cnpj_id null.
-        update.cnpj_id = null;
-        update.promoter_id = body.promoter_id ?? null;
       } else {
         update.cnpj_id = null;
         update.promoter_id = null;
@@ -153,6 +152,30 @@ export async function PATCH(
       // Role nao mudou — permite atualizar cnpj_id/promoter_id se vierem
       if (body.cnpj_id !== undefined) update.cnpj_id = body.cnpj_id;
       if (body.promoter_id !== undefined) update.promoter_id = body.promoter_id;
+    }
+
+    // VENDA PROPRIA — atributo do PAPEL DE GESTAO (NAO e vinculo a promotor). So
+    // SOCIO altera; so vale para gestor_consorcio/supervisor/gerente_regional. Ao sair
+    // de um papel de gestao o flag e zerado, senao o CHECK do banco recusaria o UPDATE
+    // (e o usuario ficaria com uma habilitacao invisivel).
+    const papelFinal = (body.role ?? target.role) as UserRole;
+    const papelDeGestao = (PAPEIS_COM_VENDA_PROPRIA as readonly string[]).includes(papelFinal);
+    if (body.venda_propria !== undefined) {
+      if (!canChangeUserRole(session.appUser.role)) {
+        return NextResponse.json(
+          { error: "Apenas socios podem habilitar venda propria." },
+          { status: 403 }
+        );
+      }
+      if (body.venda_propria === true && !papelDeGestao) {
+        return NextResponse.json(
+          { error: "Venda propria so existe para papeis de gestao." },
+          { status: 400 }
+        );
+      }
+      update.venda_propria = body.venda_propria === true;
+    } else if (body.role !== undefined && !papelDeGestao) {
+      update.venda_propria = false;
     }
 
     // CPF — segue o role FINAL (mesma regra do POST). funcionario/promotor:
@@ -187,7 +210,7 @@ export async function PATCH(
       .from("app_users")
       .update(update)
       .eq("id", id)
-      .select("id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, cpf, active, created_at")
+      .select("id, auth_user_id, email, full_name, role, cnpj_id, promoter_id, cpf, venda_propria, active, created_at")
       .single();
 
     if (error || !data) {

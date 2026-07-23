@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { allowedTargetRoles } from "@/lib/auth/permissions";
+import { PAPEIS_COM_VENDA_PROPRIA } from "@/lib/produtoBeneficiario";
 import type { UserRole } from "@/lib/auth/types";
 import { isValidCPF, maskCPF, onlyDigits } from "@/lib/validators/cpf";
 
@@ -43,6 +44,10 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
   const [cpf, setCpf] = useState(""); // só dígitos
   const [cnpjId, setCnpjId] = useState("");
   const [promoterId, setPromoterId] = useState("");
+  // VENDA PROPRIA (papel de gestao que tambem vende). So SOCIO liga.
+  const [vendaPropria, setVendaPropria] = useState(false);
+  const podeVendaPropria =
+    currentUserRole === "socio" && PAPEIS_COM_VENDA_PROPRIA.includes(role as never);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [invited, setInvited] = useState(false);
@@ -53,7 +58,7 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
   const [optionsError, setOptionsError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (role !== "promotor" && role !== "gestor_consorcio") return;
+    if (role !== "promotor") return;
     if (companies.length > 0) return; // ja carregado
     let cancelled = false;
     setOptionsLoading(true);
@@ -109,9 +114,10 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
       body.cnpj_id = cnpjId.trim();
       body.promoter_id = promoterId.trim();
     }
-    // gestor_consorcio que TAMBEM vende: envia so o promoter_id (opcional), sem cnpj_id.
-    if (role === "gestor_consorcio" && promoterId.trim()) {
-      body.promoter_id = promoterId.trim();
+    // VENDA PROPRIA — atributo do PAPEL DE GESTAO, nao vinculo a promotor. O gestor
+    // que vende NAO vira promotor: a comissao dele vive em gestao_venda_propria.
+    if (podeVendaPropria) {
+      body.venda_propria = vendaPropria;
     }
     try {
       const res = await fetch("/api/admin/usuarios", {
@@ -239,19 +245,24 @@ export default function CreateUsuarioModal({ onClose, onCreated, currentUserRole
                   </div>
                 ) : null}
 
-                {role === "gestor_consorcio" ? (
+                {podeVendaPropria ? (
                   <div className="condbox">
-                    <span className="ctag"><IcoUser />Também é promotor? (opcional)</span>
-                    {optionsError ? <div className="errbox">{optionsError}</div> : null}
+                    <span className="ctag"><IcoUser />Venda própria</span>
                     <div className="field">
-                      <label>Registro de promotor</label>
-                      <select value={promoterId} onChange={(e) => setPromoterId(e.target.value)} disabled={submitting || optionsLoading}>
-                        <option value="">Não / gestor puro</option>
-                        {promoters.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
-                      <span className="hint">Se o gestor também vende, ligue o registro de promotor dele — as vendas aparecem na tela dele automaticamente. Deixe vazio para gestor puro.</span>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={vendaPropria}
+                          onChange={(e) => setVendaPropria(e.target.checked)}
+                          disabled={submitting}
+                        />{" "}
+                        Este gestor também vende
+                      </label>
+                      <span className="hint">
+                        Habilita a pessoa como destino na fila de atribuição de produtos. Ela recebe
+                        o mesmo percentual de um promotor pelas próprias vendas (BBCAP, Conta
+                        Corrente e Consórcio) — <b>sem</b> virar promotor. Só sócio liga esta opção.
+                      </span>
                     </div>
                   </div>
                 ) : null}
