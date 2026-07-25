@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
 import { commitTrpVersion } from "@/lib/trp/commitVersion";
+import { detectTrpStaleAfetadasPorVersao } from "@/lib/trp/detectorReguaObsoleta";
 import { TrpValidationError } from "@/lib/trp/parseTrpDraft";
 
 // F6b sub-fase 3 — POST /api/trp/commit (SOCIO-ONLY, GRAVA a versão viva).
@@ -136,6 +137,29 @@ export async function POST(req: Request) {
       }
     }
 
+    // ---- OFERTA de reconsolidação (elo TRP->recálculo, Peça 4) ----
+    // A versão nova JÁ está viva (leituras vivas / mês aberto usam a nova). Aqui só
+    // OFERECEMOS reconsolidar as competências FECHADAS que ficaram desalinhadas com
+    // a nova régua (a subida + as que caíam em fallback pra ela). NADA recalcula
+    // sozinho — o Diego é quem clica Simular->Reconsolidar no card.
+    //
+    // BEST-EFFORT: a régua já gravou com sucesso. Se a detecção falhar, o commit
+    // RETORNA SUCESSO mesmo assim (o empurrão é um extra, não um gate) — o Diego
+    // ainda vê a dívida pelo botão "TRP fechadas" do card. Try/catch como o
+    // ledgerHealth faz com a Camada 2.
+    let competenciasFechadasAfetadas: Array<{ year: number; month: number }> | undefined;
+    try {
+      const afetadas = await detectTrpStaleAfetadasPorVersao(committed.id, supabase);
+      if (afetadas.length > 0) competenciasFechadasAfetadas = afetadas;
+    } catch (e) {
+      console.warn(
+        `[trp/commit] deteccao pos-commit (oferta de reconsolidacao) falhou — a regua ` +
+          `${committed.competencia} JA foi gravada. O Diego ve a divida pelo botao "TRP ` +
+          `fechadas". Detalhe:`,
+        e,
+      );
+    }
+
     return NextResponse.json({
       id: committed.id,
       competencia: committed.competencia,
@@ -143,8 +167,12 @@ export async function POST(req: Request) {
       is_active: committed.is_active,
       valid_from: committed.valid_from,
       valid_until: committed.valid_until,
-      // recálculo/badge de fallback é F6b.4; as LEITURAS VIVAS já usam a nova ativa.
-      recalculoPendente: true,
+      // OFERTA (não execução): competências FECHADAS a reconsolidar por causa desta
+      // versão. Ausente quando nenhuma ficou stale (sem oferta espúria). As leituras
+      // vivas e o mês aberto já usam a nova ativa — não precisam de oferta.
+      ...(competenciasFechadasAfetadas
+        ? { competencias_fechadas_afetadas: competenciasFechadasAfetadas }
+        : {}),
       ...(avisoStaging ? { avisoStaging } : {}),
     });
   } catch (error) {

@@ -84,6 +84,9 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
   const [committing, setCommitting] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<{ msg: string; detalhe?: string | null } | null>(null);
+  // Peca 4 (elo TRP->recalculo): competencias FECHADAS que a regua recem-gravada
+  // desalinhou. So OFERTA — link pro card de reconsolidacao (?reconsolidar=YYYY-MM).
+  const [oferta, setOferta] = useState<Array<{ year: number; month: number }> | null>(null);
   const [pendentes, setPendentes] = useState<PendItem[]>([]);
   const [loadingPend, setLoadingPend] = useState(false);
 
@@ -195,6 +198,7 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
     setCommitting(true);
     setActionMsg(null);
     setActionErr(null);
+    setOferta(null);
     try {
       const body = currentUploadId
         ? { uploadId: currentUploadId }
@@ -212,6 +216,14 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
       setActionMsg(
         `TRP de ${result.meta.competencia} gravada — versão ${json.version_no}. ` +
           `As leituras são ao vivo: os Recebíveis já usam a nova TRP.`,
+      );
+      // OFERTA (não execução): se a régua desalinhou competências fechadas, o
+      // servidor devolve a lista; renderizamos o link pro card. Ausente => sem oferta.
+      setOferta(
+        Array.isArray(json.competencias_fechadas_afetadas) &&
+          json.competencias_fechadas_afetadas.length > 0
+          ? json.competencias_fechadas_afetadas
+          : null,
       );
       setCurrentUploadId(null);
       loadPendentes();
@@ -379,6 +391,28 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
               {actionMsg.includes("Recebíveis") ? (
                 <div className="det">Abra os <a href="/recebiveis">Recebíveis</a> para conferir. O recálculo do derivado persistido e o badge de fallback são a próxima fase (F6b.4).</div>
               ) : null}
+            </Banner>
+          ) : null}
+          {oferta ? (
+            <Banner variant="warn">
+              <b>
+                A régua afeta {oferta.length} competência(s) FECHADA(s) — reconsolidar para alinhar o
+                PMR à nova TRP.
+              </b>
+              <div className="det">
+                Nada recalcula sozinho. Clique para abrir o card já na competência (depois Simular
+                -&gt; Reconsolidar):{" "}
+                {oferta.map((c, i) => (
+                  <span key={`${c.year}-${c.month}`}>
+                    {i > 0 ? ", " : ""}
+                    <a
+                      href={`/importacoes?reconsolidar=${c.year}-${String(c.month).padStart(2, "0")}`}
+                    >
+                      {String(c.month).padStart(2, "0")}/{c.year}
+                    </a>
+                  </span>
+                ))}
+              </div>
             </Banner>
           ) : null}
           {actionErr ? (

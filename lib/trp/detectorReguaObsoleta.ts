@@ -149,6 +149,40 @@ export async function detectTrpStaleForCompetencia(
 /** Piso de escopo (jan/2026) — a MESMA decisao documentada em lib/diagnostico/ledgerHealth.ts. */
 const PISO_KEY_TRP = 2026 * 12 + 1;
 
+const ordenaCompDesc = (
+  a: { year: number; month: number },
+  b: { year: number; month: number },
+) => b.year * 12 + b.month - (a.year * 12 + a.month);
+
+/**
+ * Competencias FECHADAS (>= piso) presentes no PMR. Fonte unica de enumeracao das
+ * duas varreduras TRP cross (evita duplicar). READ-ONLY. Reusa detectMonthRegime
+ * (mes aberto recalcula sozinho -> nao entra). Uma competencia sem PMR nao tem o
+ * que ficar obsoleto, por isso partimos do PMR (onde vive trp_version_id).
+ */
+async function enumerarCompetenciasFechadas(
+  sb: SupabaseClient,
+): Promise<Array<{ year: number; month: number }>> {
+  const { data, error } = await sb
+    .from("promoter_monthly_results")
+    .select("year, month");
+  if (error) throw error;
+
+  const comps = new Map<string, { year: number; month: number }>();
+  for (const r of data || []) {
+    const year = Number(r.year);
+    const month = Number(r.month);
+    if (year * 12 + month >= PISO_KEY_TRP) comps.set(`${year}-${month}`, { year, month });
+  }
+
+  const fechadas: Array<{ year: number; month: number }> = [];
+  for (const c of comps.values()) {
+    const regime = await detectMonthRegime(sb, c.year, c.month);
+    if (regime !== "open") fechadas.push(c);
+  }
+  return fechadas;
+}
+
 export interface TrpStaleCrossResult {
   /** Buckets SEPARADOS — nunca somar num numero so (igual a Camada 2). */
   counts: { ok: number; stale: number; desconhecido: number };
@@ -168,29 +202,13 @@ export async function detectTrpStaleCrossFechadas(
   client?: SupabaseClient,
 ): Promise<TrpStaleCrossResult> {
   const sb = client ?? (getSupabaseAdmin() as unknown as SupabaseClient);
-
-  // Competencias distintas presentes no PMR (>= piso). E onde vive trp_version_id;
-  // uma competencia sem PMR nao tem o que ficar obsoleto.
-  const { data, error } = await sb
-    .from("promoter_monthly_results")
-    .select("year, month");
-  if (error) throw error;
-
-  const comps = new Map<string, { year: number; month: number }>();
-  for (const r of data || []) {
-    const year = Number(r.year);
-    const month = Number(r.month);
-    if (year * 12 + month >= PISO_KEY_TRP) comps.set(`${year}-${month}`, { year, month });
-  }
+  const fechadas = await enumerarCompetenciasFechadas(sb);
 
   const counts = { ok: 0, stale: 0, desconhecido: 0 };
   const alteradas: Array<{ year: number; month: number }> = [];
   const desconhecidas: Array<{ year: number; month: number }> = [];
 
-  for (const { year, month } of comps.values()) {
-    const regime = await detectMonthRegime(sb, year, month);
-    if (regime === "open") continue; // mes aberto recalcula sozinho — nao e OFERTA
-
+  for (const { year, month } of fechadas) {
     const res = await detectTrpStaleForCompetencia({ year, month }, sb);
     if (res.has_stale) {
       counts.stale += 1;
@@ -204,10 +222,38 @@ export async function detectTrpStaleCrossFechadas(
     // else: todas NAO_APLICAVEL (competencia sem linha bbts) — nao entra em bucket.
   }
 
-  const ordena = (a: { year: number; month: number }, b: { year: number; month: number }) =>
-    b.year * 12 + b.month - (a.year * 12 + a.month);
-  alteradas.sort(ordena);
-  desconhecidas.sort(ordena);
-
+  alteradas.sort(ordenaCompDesc);
+  desconhecidas.sort(ordenaCompDesc);
   return { counts, alteradas, desconhecidas };
+}
+
+/**
+ * Competencias FECHADAS que ficaram STALE por resolverem para a versao `versionId`
+ * (Peca 4 do elo TRP->recalculo: o empurrao no commit). O CONJUNTO AFETADO = a
+ * competencia da regua subida + as que caiam em fallback pra ela.
+ *
+ * COMO determino o fallback SEM reimplementar a cascata: uma competencia resolve
+ * para `versionId` sse detectTrpStaleForCompetencia(...).current_version_id ===
+ * versionId — e current_version_id vem de resolveTrpRegraDb, que JA aplica a
+ * cascata para tras (competencia sem versao propria herda a anterior). Logo o
+ * filtro por versionId captura X e os fallbacks-pra-X, e NENHUMA competencia com
+ * versao propria diferente (nem stale pre-existente de outra regua). So devolve as
+ * que TAMBEM estao STALE (PMR atras da versao vigente). READ-ONLY.
+ */
+export async function detectTrpStaleAfetadasPorVersao(
+  versionId: string,
+  client?: SupabaseClient,
+): Promise<Array<{ year: number; month: number }>> {
+  const sb = client ?? (getSupabaseAdmin() as unknown as SupabaseClient);
+  const fechadas = await enumerarCompetenciasFechadas(sb);
+
+  const afetadas: Array<{ year: number; month: number }> = [];
+  for (const { year, month } of fechadas) {
+    const res = await detectTrpStaleForCompetencia({ year, month }, sb);
+    if (res.current_version_id === versionId && res.has_stale) {
+      afetadas.push({ year, month });
+    }
+  }
+  afetadas.sort(ordenaCompDesc);
+  return afetadas;
 }
