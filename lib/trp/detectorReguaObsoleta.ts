@@ -24,6 +24,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { detectMonthRegime } from "@/lib/cmsMonthly";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { resolveTrpRegraDb } from "@/lib/trp/resolveTrpRegraDb";
 
@@ -124,4 +125,89 @@ export async function detectTrpStaleForCompetencia(
     has_desconhecido: counts.desconhecido > 0,
     rows,
   };
+}
+
+// ---------------------------------------------------------------------------
+// CROSS-COMPETENCIA (Peca 1 do elo TRP->recalculo) — ESPELHO de detectRulesStale
+// (Camada 2, lib/rulesFingerprint.ts). Devolve o MESMO shape que o
+// PmrReconsolidarCard ja renderiza para a Camada 2 (counts + alteradas[] +
+// desconhecidas[]). NAO reimplementa a maquina de estados: reusa
+// detectTrpStaleForCompetencia por competencia e detectMonthRegime para o regime.
+//
+// SO competencias FECHADAS: 'open' e pulado (mes aberto ja recalcula do daily a
+// cada import — a OFERTA de reconsolidacao e so para o que nao recalcula sozinho).
+// PISO em 2026-01: MESMA decisao de escopo do ledgerHealth (o ledger de promotor
+// nasce no seed cms de jan/2026; 2025 esta fora de escopo).
+//
+// BLAST RADIUS: em mes fechado so linhas source='bbts' (ADS) usam TRP —
+// 'fechamento' (RR) e NAO_APLICAVEL (comissao vem pronta do arquivo) e 'daily'
+// nao existe no fechado. Uma competencia sem NENHUMA linha bbts fica com todas
+// NAO_APLICAVEL -> NAO entra em bucket nenhum. Logo a lista so mostra ADS. Se
+// aparecer uma competencia RR-pura como STALE, ha algo errado na classify.
+// ---------------------------------------------------------------------------
+
+/** Piso de escopo (jan/2026) — a MESMA decisao documentada em lib/diagnostico/ledgerHealth.ts. */
+const PISO_KEY_TRP = 2026 * 12 + 1;
+
+export interface TrpStaleCrossResult {
+  /** Buckets SEPARADOS — nunca somar num numero so (igual a Camada 2). */
+  counts: { ok: number; stale: number; desconhecido: number };
+  /** Competencias STALE (regua TRP mudou desde o calculo). */
+  alteradas: Array<{ year: number; month: number }>;
+  /** Competencias DESCONHECIDAS (bbts/daily fechado sem trp_version_id rastreado). */
+  desconhecidas: Array<{ year: number; month: number }>;
+}
+
+/**
+ * Varre as competencias FECHADAS com PMR e classifica cada uma quanto a TRP,
+ * reusando detectTrpStaleForCompetencia. READ-ONLY. STALE tem precedencia sobre
+ * DESCONHECIDO (reconsolidar resolve os dois). Espelho cross-competencia da
+ * Camada 1, no shape da Camada 2.
+ */
+export async function detectTrpStaleCrossFechadas(
+  client?: SupabaseClient,
+): Promise<TrpStaleCrossResult> {
+  const sb = client ?? (getSupabaseAdmin() as unknown as SupabaseClient);
+
+  // Competencias distintas presentes no PMR (>= piso). E onde vive trp_version_id;
+  // uma competencia sem PMR nao tem o que ficar obsoleto.
+  const { data, error } = await sb
+    .from("promoter_monthly_results")
+    .select("year, month");
+  if (error) throw error;
+
+  const comps = new Map<string, { year: number; month: number }>();
+  for (const r of data || []) {
+    const year = Number(r.year);
+    const month = Number(r.month);
+    if (year * 12 + month >= PISO_KEY_TRP) comps.set(`${year}-${month}`, { year, month });
+  }
+
+  const counts = { ok: 0, stale: 0, desconhecido: 0 };
+  const alteradas: Array<{ year: number; month: number }> = [];
+  const desconhecidas: Array<{ year: number; month: number }> = [];
+
+  for (const { year, month } of comps.values()) {
+    const regime = await detectMonthRegime(sb, year, month);
+    if (regime === "open") continue; // mes aberto recalcula sozinho — nao e OFERTA
+
+    const res = await detectTrpStaleForCompetencia({ year, month }, sb);
+    if (res.has_stale) {
+      counts.stale += 1;
+      alteradas.push({ year, month });
+    } else if (res.has_desconhecido) {
+      counts.desconhecido += 1;
+      desconhecidas.push({ year, month });
+    } else if (res.counts.ok > 0) {
+      counts.ok += 1;
+    }
+    // else: todas NAO_APLICAVEL (competencia sem linha bbts) — nao entra em bucket.
+  }
+
+  const ordena = (a: { year: number; month: number }, b: { year: number; month: number }) =>
+    b.year * 12 + b.month - (a.year * 12 + a.month);
+  alteradas.sort(ordena);
+  desconhecidas.sort(ordena);
+
+  return { counts, alteradas, desconhecidas };
 }
