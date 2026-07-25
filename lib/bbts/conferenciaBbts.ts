@@ -363,14 +363,31 @@ export async function carregarUniversoBbtsDb(
   const comp = competenciaKey(ym);
   const vig = vigenciaDaCompetencia(comp);
 
+  // FIX 2.3: a diaria VIVA ADS grava movement_date mas deixa contract_date NULO
+  // (a aba "Total" nao tem coluna de data de contratacao), entao filtrar so por
+  // contract_date zerava a conferencia no mes ABERTO. Fallback ESTREITO: mantem o
+  // filtro por contract_date IDENTICO para linhas com a data preenchida (mes
+  // fechado nao muda) e SO acrescenta as linhas com contract_date IS NULL cujo
+  // movement_date cai na MESMA janela de vigencia. Nao reclassifica nenhuma linha
+  // de fronteira ja existente (contract_date preenchido continua mandando) —
+  // blast radius = so o mes vivo. NAO preenche contract_date na gravacao: nao ha
+  // fonte e a semantica de contract_date ("data real de venda") e reservada.
+  //
+  // company_id.eq DENTRO de cada and() do or (alem do .eq de topo, que ja e
+  // AND-ado com o grupo inteiro): garante que NENHUMA clausula do or vaze linha
+  // de outra empresa, mesmo que alguem adicione um 3o disjunto no futuro.
+  const win = `contract_date.gte.${vig.validFrom},contract_date.lte.${vig.validUntil}`;
+  const winNull = `contract_date.is.null,movement_date.gte.${vig.validFrom},movement_date.lte.${vig.validUntil}`;
   const { data, error } = await supabase
     .from("daily_production_records")
     .select(
       "proposal_number, gross_value, term_months, installments, interest_rate, convenio_code, convenio_segment, convenio_type, product_description, status, is_srcc_restricted, bbts_pag_avista, raw_payload",
     )
     .eq("company_id", BBTS_COMPANY_ID)
-    .gte("contract_date", vig.validFrom)
-    .lte("contract_date", vig.validUntil);
+    .or(
+      `and(company_id.eq.${BBTS_COMPANY_ID},${win}),` +
+        `and(company_id.eq.${BBTS_COMPANY_ID},${winNull})`,
+    );
   if (error) throw new Error(`carregarUniversoBbtsDb: ${error.message}`);
 
   const prtRes = await supabase
