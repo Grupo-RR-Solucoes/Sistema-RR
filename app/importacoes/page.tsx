@@ -73,6 +73,12 @@ type DailyResult = {
   // para um socio -- por isso este flag, em vez de disparar um 403 e exibir um
   // falso "Nao foi possivel importar" com a diaria ja gravada.
   pendingRecalc: boolean;
+  // Socio: quando o recalculo (/api/calculate/monthly) falha por OUTRO motivo
+  // (nao permissao), o import JA commitou. Guardamos o erro do passo seguinte
+  // aqui em vez de tratar como falha de importacao -- a UI mostra que o dado
+  // ENTROU e que so a consolidacao falhou, com o motivo e a competencia.
+  recalcError: string | null;
+  recalcFailedPeriod: DailyAffectedPeriod | null;
 };
 
 const emptyPayload: ImportacoesPayload = {
@@ -359,24 +365,38 @@ export default function ImportacoesPage() {
         ? data.affected_periods
         : [];
       let recalculated = 0;
+      let recalcError: string | null = null;
+      let recalcFailedPeriod: DailyAffectedPeriod | null = null;
       const pendingRecalc = isFuncionario && affectedPeriods.length > 0;
       if (!isFuncionario && affectedPeriods.length > 0) {
         setDailyPhase("recalculating");
         for (const period of affectedPeriods) {
           setDailyRecalcLabel(competenceLabel(period.month, period.year));
-          const calcResponse = await fetch("/api/calculate/monthly", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ year: period.year, month: period.month }),
-          });
-          const calcPayload = await calcResponse.json();
-          if (!calcResponse.ok) {
-            throw new Error(
-              calcPayload?.error ||
-                "A planilha foi importada, mas o recálculo automático falhou."
-            );
+          // O import JÁ commitou. Se o recálculo falhar (por QUALQUER motivo —
+          // 403, erro de rede, exceção no motor) NÃO lançamos: isso viraria o
+          // falso "Não foi possível importar". Registramos o erro do passo
+          // seguinte, paramos o loop e deixamos a UI dizer que o dado entrou e
+          // só a consolidação falhou.
+          try {
+            const calcResponse = await fetch("/api/calculate/monthly", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ year: period.year, month: period.month }),
+            });
+            const calcPayload = await calcResponse.json().catch(() => ({}));
+            if (!calcResponse.ok) {
+              recalcError =
+                calcPayload?.error || "O recálculo automático falhou.";
+              recalcFailedPeriod = period;
+              break;
+            }
+            recalculated += 1;
+          } catch (netErr: any) {
+            recalcError =
+              netErr?.message || "Falha de rede ao recalcular a competência.";
+            recalcFailedPeriod = period;
+            break;
           }
-          recalculated += 1;
         }
       }
 
@@ -394,6 +414,8 @@ export default function ImportacoesPage() {
         // Falha silenciosa: API responde 200 mas nada entrou na base.
         zeroRows: inserted === 0 && updated === 0,
         pendingRecalc,
+        recalcError,
+        recalcFailedPeriod,
       });
       // Atualiza KPIs e histórico de cargas diárias no topo da tela.
       await loadData();
@@ -822,20 +844,26 @@ export default function ImportacoesPage() {
                         <p className="csub">
                           <span className="mono">{dailyResult.fileName}</span>
                           <span>·</span>
-                          {dailyResult.pendingRecalc
+                          {dailyResult.recalcError
+                            ? "importada · recálculo (consolidação) falhou"
+                            : dailyResult.pendingRecalc
                             ? "consolidação do PMR pendente (sócio)"
                             : `${dailyResult.recalculated} ${dailyResult.recalculated === 1 ? "competência recalculada" : "competências recalculadas"}`}
                         </p>
                       </div>
                     </div>
-                    <span className="chip g static lg"><span className="d" />Importada</span>
+                    {dailyResult.recalcError ? (
+                      <span className="chip a static lg"><span className="d" />Importada · recálculo falhou</span>
+                    ) : (
+                      <span className="chip g static lg"><span className="d" />Importada</span>
+                    )}
                   </div>
 
                   <div className="rstats">
                     <div className="rstat proc"><div className="rl"><span className="di" />Processados</div><div className="rn num">{formatInt(dailyResult.processed)}</div><div className="rs">linhas lidas</div></div>
                     <div className="rstat ins"><div className="rl"><span className="di" />Inseridos</div><div className="rn num">{formatInt(dailyResult.inserted)}</div><div className="rs">propostas novas</div></div>
                     <div className="rstat upd"><div className="rl"><span className="di" />Atualizados</div><div className="rn num">{formatInt(dailyResult.updated)}</div><div className="rs">já existiam</div></div>
-                    <div className="rstat comp"><div className="rl"><span className="di" />Competências</div><div className="rn num">{dailyResult.pendingRecalc ? "—" : formatInt(dailyResult.recalculated)}</div><div className="rs">{dailyResult.pendingRecalc ? "aguardam sócio" : "recalculadas"}</div></div>
+                    <div className="rstat comp"><div className="rl"><span className="di" />Competências</div><div className="rn num">{dailyResult.pendingRecalc ? "—" : formatInt(dailyResult.recalculated)}</div><div className="rs">{dailyResult.pendingRecalc ? "aguardam sócio" : dailyResult.recalcError ? "recalculadas antes da falha" : "recalculadas"}</div></div>
                     <div className="rstat err"><div className="rl"><span className="di" />Erros</div><div className="rn num">{formatInt(dailyResult.errorsCount)}</div><div className="rs">linhas ignoradas</div></div>
                   </div>
 
@@ -864,6 +892,33 @@ export default function ImportacoesPage() {
                         O recálculo consolidado do PMR é uma etapa de sócio — será feito por
                         um sócio na tela de importações (ou na reconsolidação de comissões).
                       </p>
+                    </div>
+                  ) : null}
+
+                  {dailyResult.recalcError ? (
+                    <div className="alert">
+                      <span className="aic"><IcoAlert22 /></span>
+                      <div className="abody">
+                        <div className="ahead">
+                          <span className="at">A diária foi importada — o recálculo é que falhou.</span>
+                          <span className="chip a lg"><span className="d" />consolidação pendente</span>
+                        </div>
+                        <p className="ax">
+                          <b>O dado ENTROU no banco</b> ({formatInt(dailyResult.inserted)} inseridas,{" "}
+                          {formatInt(dailyResult.updated)} atualizadas) e já aparece nos painéis do mês aberto.
+                          O que falhou foi o passo seguinte — o <b>recálculo consolidado do PMR</b>
+                          {dailyResult.recalcFailedPeriod
+                            ? ` de ${competenceLabel(dailyResult.recalcFailedPeriod.month, dailyResult.recalcFailedPeriod.year)}`
+                            : ""}. <b>Não reenvie a planilha.</b>
+                        </p>
+                        <div className="checklist">
+                          <div className="ci"><span className="cb"><IcoCheckSm /></span>Refaça só o recálculo pela tela da competência afetada (recálculo/reconsolidação do PMR).</div>
+                          <div className="ci"><span className="cb"><IcoCheckSm /></span>Reimportar a diária apenas duplicaria a leitura — a carga já está gravada.</div>
+                        </div>
+                        <div className="afoot">
+                          <span className="api">motivo do recálculo <span className="mono">{dailyResult.recalcError}</span></span>
+                        </div>
+                      </div>
                     </div>
                   ) : null}
                 </section>
