@@ -74,6 +74,16 @@ type DetectorRegras = {
   desconhecidas?: Array<{ year: number; month: number }>;
 };
 
+// Detector TRP CROSS-competencia (Camada 1, competencias FECHADAS). READ-ONLY:
+// /api/detector/trp-fechadas roda detectTrpStaleForCompetencia em cada competencia
+// fechada. MESMO shape da Camada 2 -> a lista clicavel reusa o MESMO irPara e o
+// mesmo estilo do contador. So a linha ADS (bbts) usa TRP no fechado.
+type DetectorTrpCross = {
+  counts?: { ok: number; stale: number; desconhecido: number };
+  alteradas?: Array<{ year: number; month: number }>;
+  desconhecidas?: Array<{ year: number; month: number }>;
+};
+
 const MESES = [
   "Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
@@ -122,6 +132,9 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
   const [cam2Busy, setCam2Busy] = useState(false);
   const [cam2Erro, setCam2Erro] = useState<string | null>(null);
   const [cam2, setCam2] = useState<DetectorRegras | null>(null);
+  const [trpAllBusy, setTrpAllBusy] = useState(false);
+  const [trpAllErro, setTrpAllErro] = useState<string | null>(null);
+  const [trpAll, setTrpAll] = useState<DetectorTrpCross | null>(null);
 
   const anos = useMemo(() => {
     const atual = new Date().getFullYear();
@@ -188,6 +201,26 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
       setCam2Erro(e?.message || "Falha de rede.");
     } finally {
       setCam2Busy(false);
+    }
+  }
+
+  // Espelho de verificarRegras() para a Camada 1 CROSS-competencia (TRP fechadas).
+  async function verificarTrpTodas() {
+    setTrpAllErro(null);
+    setTrpAll(null);
+    setTrpAllBusy(true);
+    try {
+      const r = await fetch(`/api/detector/trp-fechadas`);
+      const json = await r.json().catch(() => null);
+      if (!r.ok) {
+        setTrpAllErro(json?.error || `A rota respondeu ${r.status}.`);
+        return;
+      }
+      setTrpAll((json || {}) as DetectorTrpCross);
+    } catch (e: any) {
+      setTrpAllErro(e?.message || "Falha de rede.");
+    } finally {
+      setTrpAllBusy(false);
     }
   }
 
@@ -291,6 +324,14 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
               title="Camada 2: recomputa o hash das reguas (share, metas, repasse, chaves, fonte) de todas as competencias fechadas e mostra quais mudaram desde o calculo. Nao grava nada."
             >
               {cam2Busy ? "Verificando…" : "Verificar regras"}
+            </Button>
+            <Button
+              variant="secundario"
+              onClick={() => void verificarTrpTodas()}
+              disabled={busy !== null || trpAllBusy}
+              title="Camada 1 (TRP), todas as competencias FECHADAS: lista quais tem a regua de credito superada desde o calculo. Clique numa competencia para armar o Simular->Reconsolidar. Nao grava nada."
+            >
+              {trpAllBusy ? "Verificando…" : "TRP fechadas"}
             </Button>
             <Button
               variant="secundario"
@@ -458,6 +499,86 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
               edicao manual no Studio dentro do jsonb (% a-vista / SRCC) ou de taxa/prazo pode
               escapar; reatribuir promotor ja e avisado pela tela de Promotores. Mudanca na escada
               entrante (share_scale) nao e detectada ate a escala entrar em uso.
+            </p>
+          </div>
+        ) : null}
+
+        {trpAllErro ? (
+          <Banner variant="warn">
+            <b>Nao foi possivel verificar a TRP das competencias fechadas.</b>
+            <div className="det">{trpAllErro}</div>
+          </Banner>
+        ) : null}
+
+        {trpAll ? (
+          <div className="pmrrec__cam2">
+            <div className="pmrrec__chips">
+              <Chip variant={(trpAll.counts?.stale ?? 0) > 0 ? "warn" : "neutral"}>
+                {trpAll.counts?.stale ?? 0} com TRP superada
+              </Chip>
+              <Chip variant={(trpAll.counts?.desconhecido ?? 0) > 0 ? "risk" : "neutral"}>
+                {trpAll.counts?.desconhecido ?? 0} desconhecidas
+              </Chip>
+              <Chip variant={(trpAll.counts?.ok ?? 0) > 0 ? "ok" : "neutral"}>
+                {trpAll.counts?.ok ?? 0} OK
+              </Chip>
+            </div>
+
+            {(trpAll.alteradas?.length ?? 0) > 0 ? (
+              <div className="cam2-grp">
+                <span className="cam2-grp__l">
+                  <b>TRP mudou desde o calculo</b> — clique para reconsolidar:
+                </span>
+                <div className="cam2-grp__list">
+                  {trpAll.alteradas!.map((c) => (
+                    <button
+                      key={`t-s-${c.year}-${c.month}`}
+                      type="button"
+                      className="cam2-comp cam2-comp--stale"
+                      onClick={() => irPara(c.year, c.month)}
+                    >
+                      {String(c.month).padStart(2, "0")}/{c.year}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {(trpAll.desconhecidas?.length ?? 0) > 0 ? (
+              <div className="cam2-grp">
+                <span className="cam2-grp__l">
+                  <b>Desconhecidas</b> (linhas ADS calculadas antes do rastreamento de versao; a
+                  proxima reconsolidacao grava o baseline e o estado passa a ser confiavel):
+                </span>
+                <div className="cam2-grp__list">
+                  {trpAll.desconhecidas!.map((c) => (
+                    <button
+                      key={`t-d-${c.year}-${c.month}`}
+                      type="button"
+                      className="cam2-comp cam2-comp--desc"
+                      onClick={() => irPara(c.year, c.month)}
+                    >
+                      {String(c.month).padStart(2, "0")}/{c.year}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {(trpAll.alteradas?.length ?? 0) === 0 && (trpAll.desconhecidas?.length ?? 0) === 0 ? (
+              <Banner variant="ok">
+                <b>Nenhuma competencia fechada com TRP superada.</b>
+                <div className="det">
+                  As competencias ADS fechadas rastreadas batem com a TRP vigente. STALE e
+                  DESCONHECIDO sao estados distintos — aqui os dois estao zerados.
+                </div>
+              </Banner>
+            ) : null}
+
+            <p className="pmrrec__hint">
+              <b>TRP fechadas</b> cobre a regua de credito versionada das competencias FECHADAS. So a
+              linha ADS (bbts) usa TRP no fechado — o RR vem pronto do arquivo (nao aplicavel). Mes
+              aberto recalcula sozinho, entao nao entra aqui.
             </p>
           </div>
         ) : null}
