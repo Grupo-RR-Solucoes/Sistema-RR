@@ -67,6 +67,12 @@ type DailyResult = {
   affectedPeriods: DailyAffectedPeriod[];
   recalculated: number;
   zeroRows: boolean;
+  // Funcionario importa a diaria, mas o recalculo consolidado (PMR) roda no
+  // /api/calculate/monthly, que e socio-only (D26). Quando o ator e funcionario
+  // nao chamamos esse endpoint: a carga entra e a consolidacao fica pendente
+  // para um socio -- por isso este flag, em vez de disparar um 403 e exibir um
+  // falso "Nao foi possivel importar" com a diaria ja gravada.
+  pendingRecalc: boolean;
 };
 
 const emptyPayload: ImportacoesPayload = {
@@ -340,11 +346,21 @@ export default function ImportacoesPage() {
       // CRÍTICO — recálculo em loop (porte de app/importacao-diaria/page.js):
       // a importação invalida os snapshots mensais; o dashboard só volta a
       // bater se recalcularmos cada competência afetada aqui no client.
+      //
+      // MAS /api/calculate/monthly é sócio-only (D26: batch invasivo que
+      // reconsolida até competência FECHADA). A carga diária, ao contrário, é
+      // liberada para funcionário. Chamar o recálculo para funcionário devolvia
+      // 403 "Acesso restrito a socios" DEPOIS de a diária já ter sido gravada —
+      // front e back divergindo, com um falso "Não foi possível importar".
+      // Alinhamento: só o sócio dispara o recálculo consolidado; para o
+      // funcionário a carga entra (mês aberto já lê daily_production_records ao
+      // vivo) e a consolidação do PMR fica pendente para um sócio.
       const affectedPeriods: DailyAffectedPeriod[] = Array.isArray(data?.affected_periods)
         ? data.affected_periods
         : [];
       let recalculated = 0;
-      if (affectedPeriods.length > 0) {
+      const pendingRecalc = isFuncionario && affectedPeriods.length > 0;
+      if (!isFuncionario && affectedPeriods.length > 0) {
         setDailyPhase("recalculating");
         for (const period of affectedPeriods) {
           setDailyRecalcLabel(competenceLabel(period.month, period.year));
@@ -377,6 +393,7 @@ export default function ImportacoesPage() {
         recalculated,
         // Falha silenciosa: API responde 200 mas nada entrou na base.
         zeroRows: inserted === 0 && updated === 0,
+        pendingRecalc,
       });
       // Atualiza KPIs e histórico de cargas diárias no topo da tela.
       await loadData();
@@ -805,7 +822,9 @@ export default function ImportacoesPage() {
                         <p className="csub">
                           <span className="mono">{dailyResult.fileName}</span>
                           <span>·</span>
-                          {dailyResult.recalculated} {dailyResult.recalculated === 1 ? "competência recalculada" : "competências recalculadas"}
+                          {dailyResult.pendingRecalc
+                            ? "consolidação do PMR pendente (sócio)"
+                            : `${dailyResult.recalculated} ${dailyResult.recalculated === 1 ? "competência recalculada" : "competências recalculadas"}`}
                         </p>
                       </div>
                     </div>
@@ -816,7 +835,7 @@ export default function ImportacoesPage() {
                     <div className="rstat proc"><div className="rl"><span className="di" />Processados</div><div className="rn num">{formatInt(dailyResult.processed)}</div><div className="rs">linhas lidas</div></div>
                     <div className="rstat ins"><div className="rl"><span className="di" />Inseridos</div><div className="rn num">{formatInt(dailyResult.inserted)}</div><div className="rs">propostas novas</div></div>
                     <div className="rstat upd"><div className="rl"><span className="di" />Atualizados</div><div className="rn num">{formatInt(dailyResult.updated)}</div><div className="rs">já existiam</div></div>
-                    <div className="rstat comp"><div className="rl"><span className="di" />Competências</div><div className="rn num">{formatInt(dailyResult.recalculated)}</div><div className="rs">recalculadas</div></div>
+                    <div className="rstat comp"><div className="rl"><span className="di" />Competências</div><div className="rn num">{dailyResult.pendingRecalc ? "—" : formatInt(dailyResult.recalculated)}</div><div className="rs">{dailyResult.pendingRecalc ? "aguardam sócio" : "recalculadas"}</div></div>
                     <div className="rstat err"><div className="rl"><span className="di" />Erros</div><div className="rn num">{formatInt(dailyResult.errorsCount)}</div><div className="rs">linhas ignoradas</div></div>
                   </div>
 
@@ -834,6 +853,17 @@ export default function ImportacoesPage() {
                           </div>
                         ))}
                       </div>
+                    </div>
+                  ) : null}
+
+                  {dailyResult.pendingRecalc ? (
+                    <div className="comp-sec">
+                      <div className="comp-lab">Consolidação do PMR</div>
+                      <p className="csub">
+                        A carga diária foi importada e já aparece nos painéis do mês aberto.
+                        O recálculo consolidado do PMR é uma etapa de sócio — será feito por
+                        um sócio na tela de importações (ou na reconsolidação de comissões).
+                      </p>
                     </div>
                   ) : null}
                 </section>
