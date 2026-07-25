@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { detectRulesStale } from "@/lib/rulesFingerprint";
+import { detectTrpStaleCrossFechadas } from "@/lib/trp/detectorReguaObsoleta";
 import { auditCmsVsPmr } from "@/lib/cms/auditCmsVsPmr";
 
 // ============================================================================
@@ -253,6 +254,33 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
   }
 
   // =========================================================================
+  // trp_stale (ERRO) + trp_desconhecido (ALERTA) — CONSOME a Camada 1
+  //     cross-competencia (detectTrpStaleCrossFechadas), NAO reimplementa. Mesma
+  //     disciplina da Camada 2: buckets SEPARADOS. So a linha ADS (bbts) fechada
+  //     usa TRP (RR vem pronto do arquivo -> NAO_APLICAVEL). STALE = a TRP mudou
+  //     desde o calculo (reconsolidar); DESCONHECIDO = ADS fechado sem
+  //     trp_version_id rastreado (resolve na proxima reconsolidacao) -> ALERTA.
+  // =========================================================================
+  let trpStaleCount = 0;
+  let trpDesconhecidoCount = 0;
+  let trpStaleDetalhe: unknown = [];
+  let trpDesconhecidoDetalhe: unknown = [];
+  try {
+    const trp = await detectTrpStaleCrossFechadas(admin);
+    trpStaleCount = trp.counts.stale;
+    trpDesconhecidoCount = trp.counts.desconhecido;
+    trpStaleDetalhe = trp.alteradas;
+    trpDesconhecidoDetalhe = trp.desconhecidas;
+  } catch (e: any) {
+    // Detector auxiliar: se falhar, reporta no proprio check em vez de derrubar
+    // o diagnostico (igual a Camada 2).
+    trpStaleCount = 0;
+    trpDesconhecidoCount = 0;
+    trpStaleDetalhe = { erro: e?.message || "detectTrpStaleCrossFechadas falhou" };
+    trpDesconhecidoDetalhe = trpStaleDetalhe;
+  }
+
+  // =========================================================================
   // promotor_multi_linha (INFO) — promotores com 2+ linhas na MESMA
   //     competencia (a linha RR + a linha ADS). NAO e erro: e o esperado (4 em
   //     2026-06). Serve de telemetria para flagrar explosao anomala. NUNCA
@@ -354,6 +382,22 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
       descricao:
         "Camada 2: PMR fechado sem baseline de fingerprint (fechado antes do detector). Resolve na proxima reconsolidacao.",
       detalhe: desconhecidoDetalhe,
+    },
+    {
+      id: "trp_stale",
+      severity: "erro",
+      count: trpStaleCount,
+      descricao:
+        "Camada 1 (TRP): competencia FECHADA cuja regua de credito (linha ADS/bbts) mudou desde o calculo do PMR (reconsolidar para alinhar).",
+      detalhe: trpStaleDetalhe,
+    },
+    {
+      id: "trp_desconhecido",
+      severity: "alerta",
+      count: trpDesconhecidoCount,
+      descricao:
+        "Camada 1 (TRP): PMR fechado da ADS sem trp_version_id rastreado (calculado antes do rastreamento). Resolve na proxima reconsolidacao.",
+      detalhe: trpDesconhecidoDetalhe,
     },
     {
       id: "cms_vs_pmr_stale",
