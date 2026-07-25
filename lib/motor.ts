@@ -388,7 +388,22 @@ export function inferCreditTable(op: Operation) {
     ["2991", "2992", "2996", "2997", "2889", "2890"].includes(productCode) ||
     description.includes("CREDITO SALARIO") ||
     description.includes("CREDITO BENEFICIO") ||
-    description.includes("CREDITO AUTOMATIC")
+    description.includes("CREDITO AUTOMATIC") ||
+    // CORRECAO-2: familia "CDC Novo" (Automatico/Salario/Beneficio) e NAO_CONSIGNADO
+    // pela DESCRICAO, mesmo com convenio_segment=PRIVADO (2 dos 6 casos ADS). O
+    // fechamento ADS traz product_code NULL e nao "CREDITO AUTOMATIC", entao os
+    // matchers acima nao pegavam e o contrato caia em PRIVADO/PUBLICO_GERAL (:412).
+    // Mesmo principio da CORRECAO-1 (privado por descricao): a DESCRICAO manda, nao
+    // o segmento. Matcher ESTREITO — exige o token \bCDC\b — nao colide com nada:
+    //   - dispara ANTES do fallback PRIVADO (:412), reroteando os 2 de conv. PRIVADO;
+    //   - o check de "13" (:383) dispara ANTES deste, entao "13o salario" (NAO
+    //     consignado, mas 13) vai para ADIANTAMENTO_13 e NUNCA cai aqui;
+    //   - "CONSIGNADO PRIVADO" (populacao da CORRECAO-1) nao tem \bCDC\b -> intacto.
+    // Blast radius medido = 6 registros no banco (os unicos com \bCDC\b + familia).
+    (/\bCDC\b/.test(description) &&
+      (/AUTOMATIC/.test(description) ||
+        /\bSALARIO\b/.test(description) ||
+        /\bBENEFICIO\b/.test(description)))
   ) {
     return "AUTOMATICO_SALARIO_BENEFICIO";
   }
