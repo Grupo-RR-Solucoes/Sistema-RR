@@ -129,7 +129,7 @@ export async function consolidateMonthlyFromBbts(
     supabase
       .from("daily_production_records")
       .select(
-        "proposal_number, assigned_promoter_id, gross_value, net_value, insurance_value, insurance_type, interest_rate, term_months, convenio_code, product_description, product_code, movement_date, contract_date, proposal_date, status, is_srcc_restricted, raw_payload"
+        "proposal_number, assigned_promoter_id, gross_value, net_value, insurance_value, insurance_type, interest_rate, term_months, convenio_code, convenio_segment, product_description, product_code, movement_date, contract_date, proposal_date, status, is_srcc_restricted, raw_payload"
       )
       .eq("company_id", BBTS_COMPANY_ID)
   );
@@ -212,6 +212,12 @@ export async function consolidateMonthlyFromBbts(
         product_description: r.product_description ?? null,
         product_code: r.product_code ?? null,
         convenio_code: r.convenio_code ?? null,
+        // FIX rota: passa convenio_segment ao motor, igual a conferencia
+        // (toOperacao em conferenciaBbts.ts:252). Sem isto, um consignado
+        // PRIVADO cujo produto nao aciona matcher de descricao (ex. "Consignado
+        // Novo Correntista") caia em PUBLICO_GERAL aqui e em PRIVADO na
+        // conferencia -> base do promotor e devido BBTS discordavam de categoria.
+        convenio_segment: r.convenio_segment ?? null,
         valor_liquido: gross,
         valor_bruto: gross,
         taxa_juros: toNumber(r.interest_rate),
