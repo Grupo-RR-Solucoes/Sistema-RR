@@ -36,12 +36,45 @@ export const UI_CSS = `
 .rrui-kpiband__stat--accent:first-child::after{left:0;}
 .rrui-kpiband__label{font-size:11.5px;font-weight:500;letter-spacing:.01em;color:rgba(255,255,255,.62);margin:0 0 10px;}
 .rrui-kpiband__value{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-size:var(--kpi-value,30px);font-weight:600;letter-spacing:-.02em;line-height:1;color:#fff;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.rrui-kpiband__delta{margin-top:9px;}
 .rrui-kpiband__sub{font-size:12px;margin-top:9px;color:rgba(255,255,255,.55);}
 .rrui-kpiband__sub--gold{color:var(--gold);}
 .rrui-kpiband__sub--amber{color:var(--gold-soft);}
 .rrui-kpiband__sub--ok{color:var(--ok-soft);}
 @media (max-width:920px){ .rrui-kpiband{--kpi-cols:2;row-gap:22px;} .rrui-kpiband__stat{padding-left:0;} .rrui-kpiband__stat + .rrui-kpiband__stat::before{display:none;} }
 @media (max-width:560px){ .rrui-kpiband{--kpi-cols:1;} }
+
+/* ===== DeltaBadge — variacao vs mes anterior ("^ 12,4% vs junho") =====
+   Vive sobre o navy (dentro do KpiBand), por isso usa as variantes -soft dos
+   semanticos: os escuros do kit (--ok/--risk) sao ilegiveis em fundo escuro.
+   O numero herda a Mono do kit para nao "dancar" quando o valor muda. */
+.rrui-delta{display:inline-flex;align-items:center;gap:6px;font-size:12px;line-height:1;white-space:nowrap;}
+.rrui-delta__seta{width:12px;height:12px;flex:none;display:block;}
+.rrui-delta__valor{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-weight:600;font-variant-numeric:tabular-nums;}
+.rrui-delta__ref{color:rgba(255,255,255,.55);font-weight:400;}
+/* rotulo da janela ("1-26", "mes cheio"): discreto — informa sem competir com
+   o numero. Ver rotuloJanela() em lib/delta/calcularDelta. */
+.rrui-delta__janela{color:rgba(255,255,255,.42);}
+.rrui-delta__aviso{margin-left:2px;}
+.rrui-delta--up{color:var(--ok-soft);}
+.rrui-delta--down{color:var(--risk-soft);}
+.rrui-delta--flat{color:rgba(255,255,255,.55);}
+.rrui-delta--flat .rrui-delta__valor{font-weight:500;}
+
+/* --- variante SOBRE FUNDO CLARO ---
+   O badge acima e calibrado para o navy: os textos secundarios usam
+   rgba(255,255,255,a) e o up/down usa as variantes -soft (claras, feitas para
+   fundo escuro). Num card branco isso vira texto branco sobre branco.
+   Envolva o <DeltaBadge/> num .rrui-delta-claro e SO as cores mudam -- mesmo
+   componente, mesma marcacao, sem duplicar nada.
+     up/down  -> semaforo SATURADO (--sem-ok/--sem-risk), que e a familia com
+                 contraste correto sobre branco (as -soft sao para o navy).
+     ref      -> --ink-2 (cinza escuro legivel), janela -> --ink-3. */
+.rrui-delta-claro .rrui-delta--up{color:var(--sem-ok);}
+.rrui-delta-claro .rrui-delta--down{color:var(--sem-risk);}
+.rrui-delta-claro .rrui-delta--flat{color:var(--ink-3);}
+.rrui-delta-claro .rrui-delta__ref{color:var(--ink-2);}
+.rrui-delta-claro .rrui-delta__janela{color:var(--ink-3);}
 
 /* ===== KpiHero — indicador grande embutido no navy (vertical ou two-column) ===== */
 .rrui-kpihero{margin-top:28px;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}

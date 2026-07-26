@@ -23,6 +23,16 @@ import {
 // MOV 3: o regime da competência — o MESMO enum canônico que /promotores, o
 // dashboard, o relatório e o DRE usam. O /equipe era o último leitor fora do consenso.
 import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
+// DELTA vs mes anterior (Fase 3). calcularDelta e a UNICA fonte de calculo do
+// sistema — aqui so montamos as DUAS pontas da mesma metrica e chamamos.
+import {
+  competenciaAnterior,
+  deltaDaSerie,
+  resolverJanela,
+  type PontoSerie,
+  type ResultadoDelta,
+} from "@/lib/delta/calcularDelta";
+import { nowInFortaleza } from "@/lib/dateFortaleza";
 
 /**
  * F4 — Visão do gestor. Monta a produção/desempenho do TIME do gestor logado,
@@ -145,6 +155,13 @@ export interface TeamProductionPayload {
   period_projection: { production_value: number };
   /** Série mensal agregada do time, jan/2026 → competência corrente. */
   monthlySeries: MonthPoint[];
+  /**
+   * DELTA da produção do time vs mês anterior — já calculado (Fase 3).
+   * A tela renderiza via <DeltaBadge/> e NÃO refaz conta nenhuma.
+   * Só produção-empresa: os demais KPIs do /equipe (% da meta, projeção) não
+   * recebem delta — ver o bloco que o monta.
+   */
+  deltaProducao: ResultadoDelta;
   /** Série mensal por promotor (mesma janela). */
   perPromoterMonthly: PromoterMonthly[];
   /** Entrega 2 — meta própria do gestor (override ?? derivada) na competência. */
@@ -490,10 +507,110 @@ export function assembleTeamProduction(
     }),
   }));
 
+  // ---- DELTA da produção do time vs mês anterior (Fase 3) ----
+  // Só a PRODUÇÃO-EMPRESA ganha delta nesta tela. "% da meta" e "Projeção fim
+  // do mês" ficam de fora de propósito: a primeira mistura duas partes móveis
+  // (uma queda pode ser meta que subiu, não produção que caiu) e a segunda é
+  // previsão, não realizado.
+  //
+  // Recorte por dia (mesma regra do Dashboard): competência ABERTA compara
+  // 1..N contra 1..N; FECHADA compara mês-cheio. As duas pontas do recorte saem
+  // da MESMA vw_team_production, com o MESMO predicado de elegibilidade e o
+  // MESMO extractYearMonth — só o filtro de dia muda. Escopo de time
+  // preservado: a view já vem filtrada pela árvore do gestor via RLS.
+  const agoraDelta = nowInFortaleza();
+  const compAtual = { year: period.year, month: period.month };
+  const compAnt = competenciaAnterior(compAtual);
+  const ehCorrente = period.year === agoraDelta.year && period.month === agoraDelta.month;
+  // FASE 2.1 — dias-do-mes com produção lançada na competência CORRENTE, para
+  // o corte virar min(hoje, último dia com dado). Mesmo predicado da soma
+  // abaixo, sobre a mesma vw_team_production.
+  // Só dias do MÊS-CALENDÁRIO da competência: o "dia-cabeça" herdado do mês
+  // anterior (30/06 na competência de julho) tem dia-do-mês alto e viraria o
+  // máximo, mascarando até onde a diária foi de fato carregada.
+  const prefixoMesCorrente = `${compAtual.year}-${String(compAtual.month).padStart(2, "0")}-`;
+  const diasComDadoCorrente = new Set<number>();
+  for (const r of rows) {
+    if (!r.assigned_promoter_id) continue;
+    if (!isEligible(r)) continue;
+    const p = extractYearMonth(r);
+    if (!p || p.year !== compAtual.year || p.month !== compAtual.month) continue;
+    const bruta = String(r.movement_date || r.contract_date || r.proposal_date || "");
+    if (!bruta.startsWith(prefixoMesCorrente)) continue;
+    const dia = Number(bruta.slice(8, 10));
+    if (dia >= 1 && dia <= 31) diasComDadoCorrente.add(dia);
+  }
+
+  const janelaPedida = resolverJanela({
+    competencia: compAtual,
+    modo: !periodoFechado && ehCorrente ? "ate-dia-N" : "mes-cheio",
+    dia: agoraDelta.day,
+    diasComDadoNoMesCorrente: diasComDadoCorrente,
+  });
+
+  function somaTimeRecortado(comp: { year: number; month: number }, ateDia: number | null) {
+    let total = 0;
+    let linhas = 0;
+    for (const r of rows) {
+      if (!r.assigned_promoter_id) continue;
+      if (!isEligible(r)) continue;
+      const p = extractYearMonth(r);
+      if (!p || p.year !== comp.year || p.month !== comp.month) continue;
+      linhas += 1;
+      if (ateDia != null) {
+        const bruta = r.movement_date || r.contract_date || r.proposal_date;
+        const dia = Number(String(bruta ?? "").slice(8, 10));
+        if (!(dia >= 1 && dia <= ateDia)) continue;
+      }
+      total += toNumber(r.net_value);
+    }
+    return { total: Math.round(total * 100) / 100, linhas };
+  }
+
+  // Série de MÊS CHEIO: monthlySeries já é a série canônica do time (híbrida
+  // daily/PMR, mesma do /projecao). É o fallback e o caminho do mês fechado.
+  const serieCheia: PontoSerie[] = monthlySeries.map((m) => ({
+    year: m.year,
+    month: m.month,
+    valor: m.production_value,
+    fonte: m.year === period.year && m.month === period.month && !periodoFechado ? "daily" : "pmr",
+  }));
+
+  let deltaProducao: ResultadoDelta;
+  if (janelaPedida.modo === "ate-dia-N") {
+    const atual = somaTimeRecortado(compAtual, janelaPedida.diaCorteAtual);
+    const anterior = somaTimeRecortado(compAnt, janelaPedida.diaCorteAnterior);
+    // O recorte exige daily nas DUAS pontas (jan/fev/mar/mai de 2026 não têm).
+    if (atual.linhas > 0 && anterior.linhas > 0) {
+      deltaProducao = deltaDaSerie({
+        serie: [
+          { year: compAnt.year, month: compAnt.month, valor: anterior.total, fonte: "daily" },
+          { year: compAtual.year, month: compAtual.month, valor: atual.total, fonte: "daily" },
+        ],
+        competencia: compAtual,
+        janela: janelaPedida,
+      });
+    } else {
+      deltaProducao = deltaDaSerie({
+        serie: serieCheia,
+        competencia: compAtual,
+        janela: resolverJanela({
+          competencia: compAtual,
+          modo: "ate-dia-N",
+          dia: agoraDelta.day,
+          recorteIndisponivel: true,
+        }),
+      });
+    }
+  } else {
+    deltaProducao = deltaDaSerie({ serie: serieCheia, competencia: compAtual });
+  }
+
   return {
     period,
     periods,
     rows: outRows,
+    deltaProducao,
     totals: {
       promoters: outRows.length,
       production_value: tNet,

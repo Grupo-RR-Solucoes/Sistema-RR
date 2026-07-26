@@ -187,6 +187,20 @@ export async function GET(req: Request) {
     const closed = regime !== "open";
     const closedSource = regime === "open" ? undefined : regime; // 'cms' | 'fechamento'
 
+    // DELTA (Fase 3): regime da competência ANTERIOR — define de qual fonte sai
+    // o M-1 do delta ('cms' vs 'fechamento'+'bbts'). Se o M-1 ainda estiver
+    // aberto (ou a detecção falhar), fica undefined e o delta some sozinho.
+    let previousClosedSource: "cms" | "fechamento" | undefined;
+    if (yearN && monthN) {
+      const anterior = monthN <= 1 ? { year: yearN - 1, month: 12 } : { year: yearN, month: monthN - 1 };
+      try {
+        const regimeAnterior = await detectMonthRegime(supabase, anterior.year, anterior.month);
+        previousClosedSource = regimeAnterior === "open" ? undefined : regimeAnterior;
+      } catch {
+        previousClosedSource = undefined;
+      }
+    }
+
     const payload = await buildPromoterAnalytics(supabase, {
       year: yearN,
       month: monthN,
@@ -194,6 +208,7 @@ export async function GET(req: Request) {
       promoterId: effectivePromoterId,
       closed,
       closedSource,
+      previousClosedSource,
       // Master é balde temporário: ao selecioná-la na aba Migração, listar o que
       // ainda está sem promotor (assigned_promoter_id NULL) p/ redistribuir.
       // Só atua no mês ABERTO — no fechado a rota retorna cmsRows antes (abaixo).

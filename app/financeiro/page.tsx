@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+import { UiStyles, HeaderNavy, KpiBand, DeltaBadge } from "@/components/ui";
+import type { ResultadoDelta } from "@/lib/delta/calcularDelta";
 
 // Etapa 8 (enxugar menu) Fase 3 — Tela A "Financeiro" (socio): consolida o antigo
 // /financeiro (Caixa & Resultado) + /dre numa tela de 2 abas. Reusa /api/financeiro
@@ -50,6 +51,15 @@ type DrePayload = {
   companies: DreRow[];
   group: DreRow | null;
   alerts: string[];
+  // DELTA vs mes anterior (Fase 3) — linhas do GRUPO, ja calculado em lib/dre
+  // por calcularDelta. Alimenta os 3 cards do header + o card de seguro.
+  // A TABELA .dre-tbl fica sem delta (regra transversal). null = DRE nao monta.
+  deltas: {
+    receita: ResultadoDelta;
+    comissoes: ResultadoDelta;
+    resultadoLiquido: ResultadoDelta;
+    receitaSeguro: ResultadoDelta;
+  } | null;
 };
 
 const brl = (v: number | null | undefined) =>
@@ -291,6 +301,39 @@ export default function FinanceiroPage() {
               />
             </>
           ) : null}
+          {/* Aba DRE — as 3 linhas do GRUPO como cards de KPI, com delta.
+              A regra transversal ("delta só em card, nunca em tabela") existe
+              para não poluir tabela densa, não para excluir tela: o DRE é onde
+              o comparativo mês-a-mês tem mais valor gerencial, só faltava card
+              onde morar. Este KpiBand é o MESMO padrão do Dashboard e da
+              /equipe. A tabela .dre-tbl abaixo segue com os números puros.
+              O DRE só monta em mês fechado, então é sempre cheio-vs-cheio. */}
+          {tab === "dre" && dre?.closed && dre.group ? (
+            <KpiBand
+              valueSize={24}
+              items={[
+                {
+                  label: "Receita",
+                  value: kpiVal(dre.group.receita, "in"),
+                  sub: "fechamento + complementares · competência",
+                  delta: dre.deltas?.receita,
+                },
+                {
+                  label: "Comissões",
+                  value: kpiVal(dre.group.comissoes, "out"),
+                  sub: "repasse aos promotores (PMR)",
+                  delta: dre.deltas?.comissoes,
+                },
+                {
+                  label: "Resultado líquido",
+                  value: kpiVal(dre.group.resultadoLiquido, "saldo"),
+                  sub: "receita − comissões − despesas",
+                  accent: true,
+                  delta: dre.deltas?.resultadoLiquido,
+                },
+              ]}
+            />
+          ) : null}
         </HeaderNavy>
 
         {error ? <div className="banner err">{error}</div> : null}
@@ -435,8 +478,18 @@ export default function FinanceiroPage() {
                       já inclusa na receita abaixo — não é parcela adicional
                     </div>
                   </div>
-                  <div className="num" style={{ fontSize: 26, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono',ui-monospace,monospace", fontVariantNumeric: "tabular-nums" }}>
-                    {brl2(dre.group.receitaSeguro)}
+                  <div style={{ textAlign: "right" }}>
+                    <div className="num" style={{ fontSize: 26, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap", fontFamily: "'IBM Plex Mono',ui-monospace,monospace", fontVariantNumeric: "tabular-nums" }}>
+                      {brl2(dre.group.receitaSeguro)}
+                    </div>
+                    {/* Delta vem PRONTO de lib/dre (calcularDelta no servidor).
+                        Card sobre fundo CLARO: o DeltaBadge do kit e calibrado
+                        para o navy, entao aqui vai a variante --sobre-claro. */}
+                    {dre.deltas ? (
+                      <div className="rrui-delta-claro" style={{ marginTop: 6 }}>
+                        <DeltaBadge delta={dre.deltas.receitaSeguro} />
+                      </div>
+                    ) : null}
                   </div>
                 </section>
                 <section className="card">

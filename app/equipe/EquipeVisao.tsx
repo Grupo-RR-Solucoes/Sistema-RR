@@ -451,6 +451,9 @@ export default function EquipeVisao({ role, email, fullName }: Props) {
                 value: brl(totals?.production_value ?? 0),
                 sub: `${totals?.promoters ?? 0} promotor${(totals?.promoters ?? 0) === 1 ? "" : "es"} · ${totals?.proposal_count ?? 0} propostas`,
                 accent: true,
+                // Delta vem PRONTO de buildTeamProduction (lib/delta/calcularDelta
+                // roda no servidor). Aqui não há conta nenhuma — só repasse.
+                delta: data?.deltaProducao,
               },
               {
                 label: "% da meta",

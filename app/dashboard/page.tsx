@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { UiStyles, HeaderNavy, KpiBand, Banner, Table, Num, Chip } from "@/components/ui";
 import type { ChipVariant } from "@/components/ui";
 import FatorRSection from "@/components/dashboard/FatorRSection";
+import type { ResultadoDelta } from "@/lib/delta/calcularDelta";
 
 // ============================================================
 // DASHBOARD (Visão geral). Header = bloco navy com os 4 stats embutidos
@@ -14,6 +15,22 @@ import FatorRSection from "@/components/dashboard/FatorRSection";
 // <Table>/<Num>/<Chip> do kit; <UiStyles/> injeta a CSS dos primitivos. LÓGICA,
 // FETCH e CÁLCULOS INALTERADOS. Gráfico = produção REALIZADA do grupo
 // (promoter_monthly_results); jun = mês corrente PARCIAL, marcado.
+//
+// DELTA vs mes anterior (Frente DELTA, Fase 1) — 3 dos 6 KPIs:
+//   COM delta: Producao do grupo, Comissao bruta (empresa), Comissao de seguro.
+//   SEM delta, de proposito:
+//     - Previsao de receita: e um pipeline ESTIMADO para frente (closingAnalytics
+//       em fastDashboardMode), nao uma serie historica. Nao existe "previsao de
+//       junho" guardada para comparar — o delta seria inventado.
+//     - Limite Simples: RBT12 e janela movel de 12 meses. A variacao mes-a-mes
+//       e estruturalmente pequena e a leitura util do card e "% do teto", nao a
+//       variacao. Candidato de Fase 3 se o Diego quiser.
+//     - Penetracao media (Seguridade): metrica percentual — variaria em p.p.
+//       (o helper ja suporta), mas o M-1 exige um buildPromoterAnalytics inteiro
+//       da competencia anterior, caro demais para pendurar no Dashboard agora.
+//       Fase 3.
+// A CONTA NAO MORA AQUI: os deltas chegam prontos de /api/dashboard, calculados
+// por lib/delta/calcularDelta. Esta tela so repassa para o <KpiBand>.
 // ============================================================
 
 type CnpjRow = { nome: string; faixa: string; rbt12: number; sinal: "verde" | "amarelo" | "acima" };
@@ -51,6 +68,12 @@ type Payload = {
   penetracaoSeguroGrupo: number;
   seguroLabel: string;
   seguroMasterSemRegra: number;
+  // DELTA vs mes anterior — vem PRONTO da rota (lib/delta/calcularDelta roda no
+  // servidor). Esta tela so repassa para o <KpiBand delta=...>; nao ha conta de
+  // delta aqui, nem pode haver (ver REGRA DE OURO no helper).
+  deltaProducao: ResultadoDelta;
+  deltaComissaoEmpresa: ResultadoDelta;
+  deltaComissaoSeguro: ResultadoDelta;
 };
 
 function brl0(v?: number) {
@@ -187,10 +210,25 @@ function Header({
         </span>
       }
     >
+      {/* delta vs mes anterior: vem pronto da rota (data.delta*), a tela so passa
+          adiante. Previsao de receita e Limite Simples ficam SEM delta de
+          proposito — ver comentario no topo do arquivo. */}
       <KpiBand
         items={[
-          { label: "Produção do grupo · mês", value: prod, sub: prodSub, accent: true },
-          { label: "Comissão bruta (empresa)", value: brutaEmpresa, sub: brutaSub, subTone: "gold" },
+          {
+            label: "Produção do grupo · mês",
+            value: prod,
+            sub: prodSub,
+            accent: true,
+            delta: data?.deltaProducao,
+          },
+          {
+            label: "Comissão bruta (empresa)",
+            value: brutaEmpresa,
+            sub: brutaSub,
+            subTone: "gold",
+            delta: data?.deltaComissaoEmpresa,
+          },
           { label: "Previsão de receita", value: prev, sub: "estimado", subTone: "amber" },
           { label: "Limite Simples", value: lim, sub: limSub, subTone: "ok" },
         ]}
@@ -242,6 +280,7 @@ function Seguridade({ data }: { data: Payload | null }) {
             sub: comissaoSub,
             subTone: "gold",
             accent: true,
+            delta: data?.deltaComissaoSeguro,
           },
           {
             label: "Penetração média",
