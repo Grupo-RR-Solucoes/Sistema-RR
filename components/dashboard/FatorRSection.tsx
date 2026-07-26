@@ -78,7 +78,7 @@ export default function FatorRSection() {
   return (
     <section className="fatorr">
       <HeaderNavy
-        brand="MONITOR FISCAL"
+        eyebrow="MONITOR FISCAL"
         title="Simples & Fator R por CNPJ"
         subtitle="Apuração individual por CNPJ (janela RBT12 de 12 meses). Anexo III enquanto Fator R ≥ 28%."
       >

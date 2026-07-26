@@ -22,7 +22,7 @@ export const UI_CSS = `
 .rrui-hnavy::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),transparent);opacity:.55;}
 .rrui-hnavy--noline::after{display:none;}
 .rrui-hnavy__top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
-.rrui-hnavy__brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--accent);margin:0 0 7px;}
+.rrui-hnavy__eyebrow{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--accent);margin:0 0 7px;}
 .rrui-hnavy__title{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
 .rrui-hnavy__subtitle{font-size:13px;color:rgba(255,255,255,.62);margin:8px 0 0;}
 .rrui-hnavy__aside{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}

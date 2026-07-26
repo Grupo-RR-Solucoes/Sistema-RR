@@ -1066,7 +1066,7 @@ function PromotoresFullPage() {
 
         {/* HEADER + KPIs */}
         <HeaderNavy
-          brand="GRUPO RR CRED"
+          eyebrow="GRUPO RR CRED"
           title="Promotores, metas e comissões"
           actions={
             <div className="comp">

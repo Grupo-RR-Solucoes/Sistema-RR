@@ -254,7 +254,7 @@ export default function AtribuicaoClient() {
         </nav>
 
         <HeaderNavy
-          brand="GRUPO RR CRED"
+          eyebrow="GRUPO RR CRED"
           title={soConsorcio ? "Atribuição de consórcio" : "Atribuição de produtos"}
           subtitle={
             soConsorcio

@@ -291,7 +291,7 @@ export default function ReceitasPage() {
         </nav>
 
         <HeaderNavy
-          brand="GRUPO RR CRED"
+          eyebrow="GRUPO RR CRED"
           title="Receita & Simples"
           actions={
             <div className="hr-right">

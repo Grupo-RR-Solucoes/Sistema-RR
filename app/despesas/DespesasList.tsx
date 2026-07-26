@@ -351,7 +351,7 @@ export default function DespesasList({
         {/* HEADER navy (kit) — CTA em actions; KPIs como children. Barras de
             status dos KPIs viram subTone no sublabel (ok/amber legíveis no navy) */}
         <HeaderNavy
-          brand="GRUPO RR CRED"
+          eyebrow="GRUPO RR CRED"
           title="Despesas operacionais"
           subtitle="Fonte que alimenta o Caixa e a DRE · sócios + equipe"
           actions={

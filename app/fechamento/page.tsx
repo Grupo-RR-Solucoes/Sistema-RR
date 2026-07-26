@@ -60,7 +60,7 @@ export default function FechamentoPage() {
         <nav className="crumb"><Link href="/dashboard">Dashboard</Link><span className="sep">/</span><span>Fechamento</span></nav>
 
         <HeaderNavy
-          brand="GRUPO RR CRED"
+          eyebrow="GRUPO RR CRED"
           title="Fechamento mensal"
           actions={
             <div className="comp">

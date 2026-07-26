@@ -179,7 +179,7 @@ function Header({
 
   return (
     <HeaderNavy
-      brand="GRUPO RR CRED"
+      eyebrow="GRUPO RR CRED"
       title="Dashboard"
       badge={
         <span className="badge">
@@ -262,7 +262,7 @@ function Seguridade({ data }: { data: Payload | null }) {
   );
   return (
     <HeaderNavy
-      brand="SEGURIDADE"
+      eyebrow="SEGURIDADE"
       title="Seguro · grupo"
       badge={
         <span className="badge">

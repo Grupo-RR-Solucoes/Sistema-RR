@@ -475,7 +475,7 @@ export default function ImportacoesPage() {
 
         {/* HEADER navy (kit) — KPIs + abas como children (modelo Financeiro) */}
         <HeaderNavy
-          brand="GRUPO RR CRED"
+          eyebrow="GRUPO RR CRED"
           title="Importações"
           subtitle="Entrada de dados do sistema"
           actions={

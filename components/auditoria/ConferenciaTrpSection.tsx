@@ -163,7 +163,7 @@ export default function ConferenciaTrpSection() {
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
 
       <HeaderNavy
-        brand="AUDITORIA"
+        eyebrow="AUDITORIA"
         title="Conferência TRP × realizado"
         subtitle="Régua TRP × pago por competência → pagou menos que devido → R$ a cobrar."
         actions={
