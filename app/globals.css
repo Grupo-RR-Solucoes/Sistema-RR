@@ -25,9 +25,6 @@
   --rr-shadow: 0 8px 24px rgba(15, 31, 74, 0.08);
   --rr-shadow-soft: 0 4px 12px rgba(15, 31, 74, 0.05);
 
-  --rr-sidebar-width: 220px;
-  --rr-sidebar-collapsed-width: 64px;
-
   /* === Design System RR — tokens canônicos (Sistema_de_Design_RR) — Etapa 1 ===
      Aditivos. Os --rr-* acima e os tokens redeclarados nas páginas seguem
      intactos; dedup/migração para estes é a Etapa 3. */
@@ -125,26 +122,201 @@ a {
 
 .rr-shell {
   min-height: 100vh;
-  display: grid;
-  grid-template-columns: var(--rr-sidebar-width) minmax(0, 1fr);
-  transition: grid-template-columns 180ms ease;
 }
 
-.rr-shell[data-sidebar-collapsed="true"] {
-  grid-template-columns: var(--rr-sidebar-collapsed-width) minmax(0, 1fr);
-}
+/* ===================================================================
+   BARRA DO TOPO — navegacao principal, permanente.
 
-.rr-sidebar {
+   STICKY, nao fixed: com a sidebar fora do grid o documento voltou a ter
+   fluxo unico, entao sticky basta e evita padding-top compensatorio no
+   body + o bug de ancora escondida sob barra fixa.
+
+   BORDA + SOMBRA sao obrigatorias, nao decoracao: /comissoes/editar tem
+   header navy proprio e a barra encostaria em outro navy sem separacao.
+
+   CORES SO POR TOKEN — ver o comentario no topo de components/TopNav.tsx.
+   =================================================================== */
+.rr-nav {
   position: sticky;
   top: 0;
-  height: 100vh;
+  z-index: var(--nav-z);
+  height: var(--nav-h);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 18px;
+  background: var(--navy);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 6px 18px rgba(15, 31, 74, 0.28);
+}
+
+.rr-nav__burger,
+.rr-nav__logout {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.88);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.rr-nav__burger:hover,
+.rr-nav__logout:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.rr-nav__burger:focus-visible,
+.rr-nav__logout:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.rr-nav__logoutform {
+  margin: 0;
+  display: inline-flex;
+}
+
+.rr-nav__brand {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  border-radius: 8px;
+}
+.rr-nav__brand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.rr-nav__nav {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rr-nav__list {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+/* ---- ITEM: tres sinais independentes de estado ----
+   ativo = fundo + indicador amarelo + peso; hover = so fundo fraco.
+   O hover NUNCA usa o acento: amarelo significa "onde eu estou", e so. */
+.rr-nav__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 13px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.14s, color 0.14s;
+}
+.rr-nav__item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+.rr-nav__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.rr-nav__item.active {
+  background: var(--nav-item-active);
+  box-shadow: inset 0 -3px 0 var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.rr-nav__item.active:hover {
+  background: var(--nav-item-active);
+}
+.rr-nav__ic {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+.rr-nav__ic svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+.rr-nav__user {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* avatar invertido em relacao a topbar antiga: ali era navy sobre branco,
+   aqui e acento sobre navy — o mesmo par, na ordem que o fundo pede. */
+.rr-nav__avatar {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--navy);
+  font-size: 13px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+.rr-nav__uinfo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+.rr-nav__uname {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+.rr-nav__urole {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.04em;
+}
+
+/* ===================================================================
+   DRAWER — a sidebar de sempre, agora sob demanda em TODO breakpoint.
+   Antes estas regras viviam num @media (max-width:1024px); agora sao a
+   base. Nada aqui e mecanica nova.
+   =================================================================== */
+.rr-sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: min(86vw, 280px);
+  height: 100dvh;
+  transform: translateX(-100%);
+  transition: transform 180ms ease;
+  z-index: 40;
   overflow: hidden; /* header/divisor fixos; so a .rr-sb-nav rola */
   background: var(--navy);
-  transition: width 180ms ease;
   display: flex;
   flex-direction: column;
   padding: 16px 12px;
   color: rgba(255, 255, 255, 0.88);
+}
+
+.rr-shell[data-drawer-open="true"] .rr-sidebar {
+  transform: translateX(0);
 }
 
 /* ===== Sidebar redesign (mock Sidebar_Sistema_RR) ===== */
@@ -155,11 +327,6 @@ a {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 6px 0;
-}
-.rr-shell[data-sidebar-collapsed="true"] .rr-sb-head {
-  flex-direction: column;
-  gap: 12px;
-  padding: 8px 0 0;
 }
 .rr-sb-toggle {
   width: 28px;
@@ -185,9 +352,6 @@ a {
   height: 1px;
   background: rgba(255, 255, 255, 0.1);
   margin: 14px 6px 6px;
-}
-.rr-shell[data-sidebar-collapsed="true"] .rr-sb-divider {
-  margin: 14px 4px 6px;
 }
 
 /* area de navegacao — unica que rola */
@@ -236,16 +400,6 @@ a {
 }
 .rr-sb-group:first-child .rr-sb-sect {
   padding-top: 8px;
-}
-/* recolhido: rotulo de secao vira tracinho */
-.rr-shell[data-sidebar-collapsed="true"] .rr-sb-sect {
-  height: 1px;
-  font-size: 0;
-  padding: 0;
-  margin: 13px 10px 12px;
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-  letter-spacing: 0;
 }
 
 .rr-sb-item {
@@ -304,28 +458,6 @@ a {
   color: var(--navy);
 }
 
-/* recolhido: so o icone, centralizado */
-.rr-shell[data-sidebar-collapsed="true"] .rr-sb-item {
-  justify-content: center;
-  padding: 7px 0;
-  gap: 0;
-}
-.rr-shell[data-sidebar-collapsed="true"] .rr-sb-lbl {
-  opacity: 0;
-  width: 0;
-  overflow: hidden;
-}
-
-/* Tooltip do recolhido: usa o `title` nativo do item (ver AppShell). Um
-   tooltip CSS (::after) seria clipado pela .rr-sb-nav rolavel — por isso o
-   nome do item vem via atributo title, que o navegador renderiza por cima. */
-
-.rr-content {
-  min-width: 0;
-  display: grid;
-  grid-template-rows: 40px 1fr;
-}
-
 .rr-main {
   padding: 20px 24px 32px;
   background: var(--bg);
@@ -337,15 +469,6 @@ a {
   gap: 16px;
 }
 
-.rr-topbar {
-  position: sticky;
-  top: 0;
-  z-index: 12;
-  background: var(--paper);
-  border-bottom: 1px solid var(--rr-line);
-  height: 40px;
-}
-
 
 .rr-home-card:hover {
   border-color: #0d4de3;
@@ -354,43 +477,20 @@ a {
 }
 
 .rr-sidebar-backdrop {
-  display: none;
+  position: fixed;
+  inset: 0;
+  border: 0;
+  display: block;
+  opacity: 0;
+  pointer-events: none;
+  background: rgba(15, 31, 74, 0.42);
+  transition: opacity 160ms ease;
+  z-index: 30;
 }
 
-@media (max-width: 1024px) {
-  .rr-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .rr-sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    width: min(86vw, 260px);
-    height: 100dvh;
-    transform: translateX(-100%);
-    z-index: 40;
-  }
-
-  .rr-shell[data-mobile-open="true"] .rr-sidebar {
-    transform: translateX(0);
-  }
-
-  .rr-sidebar-backdrop {
-    position: fixed;
-    inset: 0;
-    border: 0;
-    display: block;
-    opacity: 0;
-    pointer-events: none;
-    background: rgba(15, 31, 74, 0.42);
-    transition: opacity 160ms ease;
-    z-index: 30;
-  }
-
-  .rr-shell[data-mobile-open="true"] .rr-sidebar-backdrop {
-    opacity: 1;
-    pointer-events: auto;
-  }
+.rr-shell[data-drawer-open="true"] .rr-sidebar-backdrop {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 @media (max-width: 720px) {
