@@ -125,8 +125,19 @@ export type FinanceSummary = {
   pendingExpenses: number;
   comissoesPagas: number;
   // INFORMATIVO — "do qual seguro" do repasse: Σ PMR.insurance_commission_value
-  // da competencia M (mesma de comissoesPagas). JA dentro de comissoesPagas
-  // (final = producao + seguro) — NAO somar. Competencia M, nao M-1.
+  // da competencia M-1, a MESMA de comissoesPagas (os dois leem o mesmo
+  // prevSelKey). JA dentro de comissoesPagas (final = producao + seguro) —
+  // NAO somar.
+  //
+  // ATENCAO ao ler codigo antigo: ate a CORRECAO B este campo era competencia M
+  // e o comentario aqui dizia "Competencia M, nao M-1". A CORRECAO B moveu
+  // comissoesPagas e este campo para M-1 (ver o calculo em ~linha 620, que
+  // registra "antes lia M, ficaria descasado do liquido agora deslocado") e o
+  // comentario ficou para tras. Conferido em 26/07/2026: comissoesPagas,
+  // paidInsuranceShare e receivedEmpresa leem os TRES a competencia M-1, entao
+  // o card "Saldo de comissoes a vista" (receivedEmpresa − comissoesPagas)
+  // subtrai a mesma competencia dos dois lados. O numero esta CERTO — nao
+  // "conserte" o deslocamento achando que ha competencia cruzada aqui.
   paidInsuranceShare: number;
   operatingResult: number;
   cashBalance: number;
