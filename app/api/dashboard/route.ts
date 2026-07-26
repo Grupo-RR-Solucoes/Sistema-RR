@@ -6,6 +6,7 @@ import {
   calcularDelta,
   competenciaAnterior,
   deltaDaSerie,
+  resolverJanela,
   type PontoSerie,
 } from "@/lib/delta/calcularDelta";
 import { buildClosingAnalytics } from "@/lib/closingAnalytics";
@@ -84,6 +85,18 @@ type DailyUnassignedRow = {
   raw_payload: Record<string, unknown> | null;
 };
 
+// Linha do daily usada SO pelo recorte por dia do delta (Fase 2). Enxuta de
+// proposito: o recorte precisa de valor, competencia e os filtros de validade —
+// nada de seguro/prazo, que so a produção master usa.
+type DailyRecorteRow = {
+  company_id: string | null;
+  status: string | null;
+  is_srcc_restricted: boolean | null;
+  net_value: number | null;
+  movement_date: string | null;
+  cancellation_date: string | null;
+};
+
 // Mesma regra de validade/produção do motor (app/api/calculate/monthly/route.ts):
 // PRODUCAO + não cancelado/pendente/SRCC-restrito. Usada só para somar a
 // produção em chave MASTER ainda não redistribuída (assigned_promoter_id null),
@@ -108,7 +121,12 @@ function isPendingStatus(status: unknown) {
   const s = normStatus(status);
   return s.includes("PEND") || s.includes("ANALIS") || s.includes("PROCESS");
 }
-function isValidDailyRecord(r: DailyUnassignedRow) {
+// Assinatura pelo que a funcao REALMENTE le (3 campos), e nao pela linha
+// inteira: assim serve tanto a DailyUnassignedRow quanto a DailyRecorteRow (o
+// recorte da Fase 2), que e um subconjunto enxuto da mesma tabela.
+function isValidDailyRecord(
+  r: Pick<DailyUnassignedRow, "cancellation_date" | "status" | "is_srcc_restricted">
+) {
   if (r.cancellation_date) return false;
   if (isCancelledStatus(r.status)) return false;
   if (isPendingStatus(r.status)) return false;
@@ -216,6 +234,26 @@ export async function GET(req: Request) {
     const monthClosed = regime !== "open";
     const closedSource = regime === "open" ? undefined : regime;
 
+    // ---- FASE 2: janela do delta ----
+    // O recorte "ate-dia-N" so faz sentido quando a competencia renderizada E a
+    // corrente E esta aberta. Competencia FECHADA compara dois totais finais
+    // (mes-cheio, caminho da Fase 1, intocado). E se o usuario navegar para uma
+    // competencia passada, "dia de hoje" nao significa nada la — por isso a
+    // comparacao explicita com agora.year/agora.month, e nao so !monthClosed.
+    const ehCompetenciaCorrente = year === agora.year && month === agora.month;
+    const modoJanelaPedido = !monthClosed && ehCompetenciaCorrente ? "ate-dia-N" : "mes-cheio";
+
+    // Janela de datas para buscar o daily das DUAS competencias do delta. Folga
+    // nos dois extremos: a competencia comeca no ultimo dia util do mes anterior
+    // (dia 28-31) e termina no ultimo dia util do proprio mes.
+    const compAnteriorRange = competenciaAnterior({ year, month });
+    const doisMesesAntes = competenciaAnterior(compAnteriorRange);
+    const mesSeguinte = { year: month === 12 ? year + 1 : year, month: month === 12 ? 1 : month + 1 };
+    const recorteRange = {
+      inicio: `${doisMesesAntes.year}-${String(doisMesesAntes.month).padStart(2, "0")}-20`,
+      fim: `${mesSeguinte.year}-${String(mesSeguinte.month).padStart(2, "0")}-10`,
+    };
+
     const [
       pmrRows,
       closingPayload,
@@ -225,6 +263,7 @@ export async function GET(req: Request) {
       activeCompanies,
       dailyUnassigned,
       insuranceSlipRules,
+      dailyRecorte,
     ] = await Promise.all([
         fetchAllRows<PmrRow>(() =>
           supabase
@@ -255,6 +294,21 @@ export async function GET(req: Request) {
             .lt("movement_date", `${year + 1}-01-10`)
         ),
         fetchInsuranceSlipRules(supabase),
+        // FASE 2 (recorte por dia): daily de TODOS os promotores — atribuidos e
+        // master — das DUAS competencias do delta. Query separada da
+        // dailyUnassigned de proposito: aquela filtra assigned_promoter_id null
+        // (so o balde); o recorte precisa da producao inteira, e precisa dela
+        // com data por linha. Janela de datas folgada nos dois extremos porque
+        // a competencia comeca no ultimo dia util do mes anterior.
+        fetchAllRows<DailyRecorteRow>(() =>
+          supabase
+            .from("daily_production_records")
+            .select(
+              "company_id, status, is_srcc_restricted, net_value, movement_date, cancellation_date"
+            )
+            .gte("movement_date", recorteRange.inicio)
+            .lt("movement_date", recorteRange.fim)
+        ),
       ]);
 
     // ---- produção mensal do grupo (ano corrente) ----
@@ -513,17 +567,15 @@ export async function GET(req: Request) {
       show: cons.semaforo === "amarelo" || cons.semaforo === "vermelho",
     };
 
-    // ---- DELTA vs mes anterior (FASE 1: mes-cheio vs mes-cheio) ----
+    // ---- DELTA vs mes anterior ----
     // O delta e calculado AQUI, no servidor, e viaja pronto para a tela. A tela
     // so desenha (<DeltaBadge/>) — nao tem como recalcular, que e o ponto da
     // REGRA DE OURO em lib/delta/calcularDelta.
     //
-    // TODO-FASE-2 (recorte por dia): em competencia FECHADA este delta ja e
-    // 100% correto. Em competencia ABERTA a ponta atual e PARCIAL (producao ate
-    // hoje) e a anterior e CHEIA — o delta aparece artificialmente negativo, e
-    // quanto mais cedo no mes, pior. A Fase 2 corrige comparando os N primeiros
-    // DIAS UTEIS de cada competencia (nao o dia-do-mes calendario, que embute
-    // vies proprio — ver o TODO no fim de lib/delta/calcularDelta.ts).
+    // JANELA (Fase 2): competencia FECHADA compara mes-cheio vs mes-cheio;
+    // ABERTA recorta as duas pontas no mesmo dia-do-mes. Hoje so a PRODUCAO
+    // consegue recortar (tem daily com data por linha nas duas pontas); comissao
+    // e seguro caem para mes-cheio rotulado — ver o bloco de cada um abaixo.
     const competencia = { year, month };
     const compAnterior = competenciaAnterior(competencia);
 
@@ -551,27 +603,105 @@ export async function GET(req: Request) {
         : Promise.resolve(null),
     ]);
 
-    // PRODUCAO — caminho preferido: as duas pontas saem da MESMA serie
-    // (producaoMensal), montada por uma unica expressao la em cima. Sao a mesma
-    // metrica por construcao. producaoMensal cobre so o ano corrente, entao em
-    // janeiro o M-1 (dezembro do ano anterior) nao esta la e o delta some — que
-    // e o comportamento certo: o ledger PMR nasce em jan/2026.
-    const serieProducao: PontoSerie[] = producaoMensal.map((p) => ({
+    // ---- PRODUCAO ----
+    // Serie de MES CHEIO (Fase 1): as duas pontas saem do mesmo array, montado
+    // por uma unica expressao la em cima. producaoMensal cobre so o ano
+    // corrente, entao em janeiro o M-1 (dezembro do ano anterior) nao esta la e
+    // o delta some — que e o comportamento certo: o ledger PMR nasce em jan/2026.
+    const serieProducaoCheia: PontoSerie[] = producaoMensal.map((p) => ({
       year,
       month: p.month,
       valor: p.valor,
       fonte: p.parcial && !monthClosed ? "daily-vivo" : "pmr+master",
     }));
-    const deltaProducao = deltaDaSerie({ serie: serieProducao, competencia });
+
+    // RECORTE POR DIA (Fase 2). Soma o daily das duas competencias aplicando o
+    // corte de dia-do-mes em cada uma. As duas pontas saem da MESMA query, com o
+    // MESMO predicado de validade — so o filtro de dia muda. E o que torna a
+    // comparacao legitima: mesma fonte, mesma definicao, janela igual.
+    //
+    // Nota: o valor recortado NAO reconcilia com o "mes cheio" do proprio card,
+    // e nao deveria — o corte <= N exclui o primeiro dia da janela de
+    // competencia (que cai em dia 28-31), simetricamente nos dois lados.
+    const janelaPedida = resolverJanela({
+      competencia,
+      modo: modoJanelaPedido,
+      dia: agora.day,
+    });
+
+    function somaDailyRecortado(comp: { year: number; month: number }, ateDia: number | null) {
+      let total = 0;
+      let linhas = 0;
+      for (const r of dailyRecorte || []) {
+        if (!r.company_id || !activeIds.has(r.company_id)) continue;
+        if (!isProductionStatus(r.status)) continue;
+        if (!isValidDailyRecord(r)) continue;
+        const period = getProductionPeriodFromValue(r.movement_date);
+        if (!period || period.year !== comp.year || period.month !== comp.month) continue;
+        linhas += 1;
+        if (ateDia != null) {
+          const dia = Number(String(r.movement_date).slice(8, 10));
+          if (!(dia >= 1 && dia <= ateDia)) continue;
+        }
+        total += toNumber(r.net_value);
+      }
+      return { total: roundMoney(total), linhas };
+    }
+
+    let deltaProducao;
+    if (janelaPedida.modo === "ate-dia-N") {
+      const atual = somaDailyRecortado(competencia, janelaPedida.diaCorteAtual);
+      const anterior = somaDailyRecortado(compAnterior, janelaPedida.diaCorteAnterior);
+      // O recorte exige daily nas DUAS pontas. jan/fev/mar/mai de 2026 nao tem
+      // daily nenhum — ali o corte por dia e impossivel e o card cai para
+      // mes-cheio ROTULADO, em vez de comparar contra um zero inventado.
+      const temDailyNasDuas = atual.linhas > 0 && anterior.linhas > 0;
+      if (temDailyNasDuas) {
+        deltaProducao = deltaDaSerie({
+          serie: [
+            { year: compAnterior.year, month: compAnterior.month, valor: anterior.total, fonte: "daily" },
+            { year: competencia.year, month: competencia.month, valor: atual.total, fonte: "daily" },
+          ],
+          competencia,
+          janela: janelaPedida,
+        });
+      } else {
+        deltaProducao = deltaDaSerie({
+          serie: serieProducaoCheia,
+          competencia,
+          janela: resolverJanela({ competencia, modo: "ate-dia-N", dia: agora.day, recorteIndisponivel: true }),
+        });
+      }
+    } else {
+      // Competencia FECHADA (ou navegacao para mes passado): mes-cheio, caminho
+      // da Fase 1 inalterado.
+      deltaProducao = deltaDaSerie({ serie: serieProducaoCheia, competencia });
+    }
 
     // COMISSAO-EMPRESA e SEGURO — nao ha serie pronta (a fonte muda com o
     // regime da competencia). As duas pontas passam pelos MESMOS leitores
     // extraidos acima; a fonte de cada ponta viaja junto para a tela poder
     // sinalizar comparacao cross-source.
+    //
+    // RECORTE POR DIA: IMPOSSIVEL nestes dois. A ponta M-1 vem de
+    // fechamento_mensal_empresa / cms_promoter_entries, que sao agregados
+    // MENSAIS por empresa — nao ha data por linha para cortar. Recortar so a
+    // ponta atual daria uma janela desigual, que e exatamente o vies que a
+    // Fase 2 existe para matar. Entao, em mes aberto, os dois caem para
+    // mes-cheio com recorteIndisponivel e o card ROTULA. Preferimos um card
+    // que diz "mes cheio" a um card que mente que a janela e igual.
+    const janelaSemRecorte = resolverJanela({
+      competencia,
+      modo: modoJanelaPedido,
+      dia: agora.day,
+      recorteIndisponivel: modoJanelaPedido === "ate-dia-N",
+    });
+
     const deltaComissaoEmpresa = calcularDelta({
       competencia,
       valorAtual: comissaoBrutaEmpresa,
       valorAnterior: comissaoEmpresaAnterior,
+      janela: janelaSemRecorte,
       fonteAtual: regime === "open" ? "motor-vivo" : regime,
       fonteAnterior: anteriorFechado ? regimeAnterior : null,
     });
@@ -580,6 +710,7 @@ export async function GET(req: Request) {
       competencia,
       valorAtual: comissaoSeguroGrupo,
       valorAnterior: seguroEmpresaAnterior,
+      janela: janelaSemRecorte,
       fonteAtual: monthClosed ? "fechamento" : "daily-vivo",
       fonteAnterior: anteriorFechado ? "fechamento" : null,
     });

@@ -52,6 +52,9 @@ export const UI_CSS = `
 .rrui-delta__seta{width:12px;height:12px;flex:none;display:block;}
 .rrui-delta__valor{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-weight:600;font-variant-numeric:tabular-nums;}
 .rrui-delta__ref{color:rgba(255,255,255,.55);font-weight:400;}
+/* rotulo da janela ("1-26", "mes cheio"): discreto — informa sem competir com
+   o numero. Ver rotuloJanela() em lib/delta/calcularDelta. */
+.rrui-delta__janela{color:rgba(255,255,255,.42);}
 .rrui-delta__aviso{margin-left:2px;}
 .rrui-delta--up{color:var(--ok-soft);}
 .rrui-delta--down{color:var(--risk-soft);}
