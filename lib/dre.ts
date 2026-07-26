@@ -9,6 +9,12 @@ import { receitaFechamentoDoMes, type FechamentoRow } from "@/lib/rbt12";
 // o consolidador usa (movement -> contract -> proposal).
 import { BBTS_COMPANY_ID } from "@/lib/bbtsMonthly";
 import { getProductionPeriodFromValue, getProductionPeriodKey } from "@/lib/productionPeriod";
+// DELTA vs mes anterior (Fase 3) — calcularDelta e a UNICA fonte de calculo.
+import {
+  calcularDelta,
+  competenciaAnterior,
+  type ResultadoDelta,
+} from "@/lib/delta/calcularDelta";
 
 // ============================================================
 // DRE GERENCIAL (Demonstrativo de Resultado) — EIXO DE PRODUÇÃO, por competência.
@@ -88,6 +94,23 @@ export type DrePayload = {
   companies: DreLine[];
   group: DreLine | null;
   alerts: string[];
+  /**
+   * DELTA vs mes anterior das linhas do GRUPO — alimenta os cards do header da
+   * aba DRE (KpiBand) e o card informativo de seguro.
+   *
+   * A TABELA .dre-tbl (uma linha por CNPJ + a do grupo) NAO recebe delta:
+   * regra transversal do Diego — delta so em card de KPI, nunca em tabela,
+   * grid ou lista.
+   *
+   * Sempre cheio-vs-cheio (o DRE so monta em mes fechado). Cada campo compara
+   * a MESMA linha nos dois meses. null quando o DRE nao monta.
+   */
+  deltas: {
+    receita: ResultadoDelta;
+    comissoes: ResultadoDelta;
+    resultadoLiquido: ResultadoDelta;
+    receitaSeguro: ResultadoDelta;
+  } | null;
 };
 
 type CompanyRow = { id: string; cnpj: string; name: string; active?: boolean | null };
@@ -194,7 +217,10 @@ async function listClosedPeriods(supabase: SupabaseClient): Promise<DrePeriod[]>
 export async function buildDre(
   supabase: SupabaseClient,
   year?: number,
-  month?: number
+  month?: number,
+  // DELTA (Fase 3): quando true, NAO calcula o delta — evita recursao infinita
+  // na chamada que busca o M-1. So o buildDre externo (o da tela) calcula.
+  opts?: { semDelta?: boolean }
 ): Promise<DrePayload> {
   const periods = await listClosedPeriods(supabase);
 
@@ -209,7 +235,7 @@ export async function buildDre(
       : periods[0]) || null;
 
   if (!selected) {
-    return { closed: false, period: null, periods, companies: [], group: null, alerts: [
+    return { closed: false, period: null, periods, companies: [], group: null, deltas: null, alerts: [
       "Nenhum mês fechado disponível. O DRE só monta sobre competências com fechamento concluído.",
     ] };
   }
@@ -232,6 +258,7 @@ export async function buildDre(
       periods,
       companies: [],
       group: null,
+      deltas: null,
       alerts: [
         `Competência ${selected.label} ainda não fechada — aguardando fechamento do mês. ` +
           "A receita só existe após o fechamento; o DRE é de resultado realizado e não exibe número parcial.",
@@ -282,6 +309,7 @@ export async function buildDre(
       toNum(receitaSeguroByCompany.get(company.id)) + toNum(row.valor_seguro)
     );
   }
+
 
   // ---- RECEITA DA ADS: mesmo fluxo do RR, fonte diferente ----
   //
@@ -346,6 +374,7 @@ export async function buildDre(
       periods,
       companies: [],
       group: null,
+      deltas: null,
       alerts: [
         `Competência ${selected.label} sem fechamento — receita indisponível. ` +
           "O DRE é de resultado realizado e só monta quando o fechamento do mês existe.",
@@ -406,6 +435,7 @@ export async function buildDre(
       periods,
       companies: [],
       group: null,
+      deltas: null,
       alerts: [
         `Sem produção de promotores em ${selected.label} na base consolidada (PMR) — o DRE não ` +
           "monta: exibir a receita do fechamento com comissão 0 daria um resultado falso.",
@@ -610,5 +640,68 @@ export async function buildDre(
     resultadoLiquido: gResultadoLiquido,
   };
 
-  return { closed: true, period: selected, periods, companies: visibleCompanies, group, alerts };
+  // ==========================================================================
+  // DELTA vs mes anterior (Fase 3) — para os CARDS do header da aba DRE.
+  //
+  // POR QUE O DRE TEM CARD: a regra transversal do Diego ("delta so em card de
+  // KPI, nunca em tabela") existe para nao poluir tabela densa — nao para
+  // excluir uma tela. O DRE e justamente onde o comparativo mes-a-mes tem mais
+  // valor gerencial; so faltava card onde morar. O KpiBand no header e o MESMO
+  // padrao do Dashboard e da /equipe, nao UI inventada. A tabela .dre-tbl
+  // abaixo segue com os numeros puros.
+  //
+  // COMO O M-1 E OBTIDO: chamando o PROPRIO buildDre para a competencia
+  // anterior (com semDelta, senao recursao infinita). E a unica forma de
+  // garantir "linha com a MESMA linha": receita do M-1 sai da mesma soma de
+  // fechamento + complementares + ADS, comissoes da mesma agregacao do PMR por
+  // CNPJ, resultado da mesma subtracao. Reimplementar um leitor leve de M-1
+  // aqui seria exatamente como a divergencia nasce.
+  //
+  // SEMPRE cheio-vs-cheio: o DRE so monta em mes FECHADO (as duas pontas sao
+  // totais finais) e nenhuma das fontes tem data por linha para recortar.
+  // M-1 sem DRE montavel => group null => valorAnterior null => o helper
+  // esconde o delta daquele card.
+  let deltas: DrePayload["deltas"] = null;
+  if (!opts?.semDelta) {
+    const compAnterior = competenciaAnterior({ year: selected.year, month: selected.month });
+    let anterior: DreLine | null = null;
+    try {
+      const dreAnterior = await buildDre(supabase, compAnterior.year, compAnterior.month, {
+        semDelta: true,
+      });
+      anterior = dreAnterior.closed ? dreAnterior.group : null;
+    } catch {
+      anterior = null;
+    }
+
+    const comp = { year: selected.year, month: selected.month };
+    const fonte = "dre-fechado";
+    const par = (atual: number, pegar: (l: DreLine) => number) =>
+      calcularDelta({
+        competencia: comp,
+        valorAtual: atual,
+        valorAnterior: anterior ? pegar(anterior) : null,
+        fonteAtual: fonte,
+        fonteAnterior: anterior ? fonte : null,
+      });
+
+    deltas = {
+      // Cada ponta le a MESMA propriedade da MESMA estrutura nos dois meses.
+      // Nunca cruzar linhas (receita x resultado, etc.).
+      receita: par(gReceita, (l) => l.receita),
+      comissoes: par(gComissoes, (l) => l.comissoes),
+      resultadoLiquido: par(gResultadoLiquido, (l) => l.resultadoLiquido),
+      receitaSeguro: par(gReceitaSeguro, (l) => l.receitaSeguro),
+    };
+  }
+
+  return {
+    closed: true,
+    period: selected,
+    periods,
+    companies: visibleCompanies,
+    group,
+    deltas,
+    alerts,
+  };
 }

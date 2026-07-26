@@ -61,6 +61,21 @@ export const UI_CSS = `
 .rrui-delta--flat{color:rgba(255,255,255,.55);}
 .rrui-delta--flat .rrui-delta__valor{font-weight:500;}
 
+/* --- variante SOBRE FUNDO CLARO ---
+   O badge acima e calibrado para o navy: os textos secundarios usam
+   rgba(255,255,255,a) e o up/down usa as variantes -soft (claras, feitas para
+   fundo escuro). Num card branco isso vira texto branco sobre branco.
+   Envolva o <DeltaBadge/> num .rrui-delta-claro e SO as cores mudam -- mesmo
+   componente, mesma marcacao, sem duplicar nada.
+     up/down  -> semaforo SATURADO (--sem-ok/--sem-risk), que e a familia com
+                 contraste correto sobre branco (as -soft sao para o navy).
+     ref      -> --ink-2 (cinza escuro legivel), janela -> --ink-3. */
+.rrui-delta-claro .rrui-delta--up{color:var(--sem-ok);}
+.rrui-delta-claro .rrui-delta--down{color:var(--sem-risk);}
+.rrui-delta-claro .rrui-delta--flat{color:var(--ink-3);}
+.rrui-delta-claro .rrui-delta__ref{color:var(--ink-2);}
+.rrui-delta-claro .rrui-delta__janela{color:var(--ink-3);}
+
 /* ===== KpiHero — indicador grande embutido no navy (vertical ou two-column) ===== */
 .rrui-kpihero{margin-top:28px;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}
 .rrui-kpihero__row{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;}
