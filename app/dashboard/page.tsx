@@ -86,6 +86,19 @@ function brl0(v?: number) {
     Number(v || 0)
   );
 }
+/**
+ * 4a — valor EXATO, com centavos. O grafico mostra o eixo em milhoes e o card
+ * usa brl0 (sem centavos); o tooltip existe justamente para dar o numero cheio,
+ * entao arredondar aqui anularia o motivo dele.
+ */
+function brlExato(v?: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Number(v || 0));
+}
 function pct1(v?: number | null) {
   return `${((Number(v || 0)) * 100).toFixed(1).replace(".", ",")}%`;
 }
@@ -331,6 +344,8 @@ function AlertProjecao({ p }: { p: Projecao }) {
 function ChartCard({ data, error }: { data: Payload | null; error: string }) {
   const chart = useMemo(() => (data ? buildChart(data.producaoMensal) : null), [data]);
   const corrente = data?.producaoMensal.find((m) => m.parcial);
+  // 4a — indice do ponto sob o cursor (ou com foco de teclado). null = nenhum.
+  const [hover, setHover] = useState<number | null>(null);
   return (
     <section className="card">
       <div className="card-head">
@@ -370,8 +385,57 @@ function ChartCard({ data, error }: { data: Payload | null; error: string }) {
               <g key={i}>
                 {d.parcial ? <circle cx={d.x} cy={d.y} r={9} fill="#D6A13F" opacity="0.18" /> : null}
                 <circle cx={d.x} cy={d.y} r={d.parcial ? 5.5 : 4.5} fill="#D6A13F" stroke="#FFFFFF" strokeWidth="2" />
+                {/* ALVO DE HOVER invisivel, r=18: o ponto desenhado tem 4,5px de
+                    raio e acertar isso com o mouse e trabalhoso. O alvo grande
+                    resolve sem mudar o desenho. focusable p/ chegar por teclado. */}
+                <circle
+                  cx={d.x}
+                  cy={d.y}
+                  r={18}
+                  fill="transparent"
+                  style={{ cursor: "pointer" }}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`${d.mes}: ${brlExato(d.valor)}${d.parcial ? " (parcial)" : ""}`}
+                  onMouseEnter={() => setHover(i)}
+                  onMouseLeave={() => setHover((h) => (h === i ? null : h))}
+                  onFocus={() => setHover(i)}
+                  onBlur={() => setHover((h) => (h === i ? null : h))}
+                />
               </g>
             ))}
+            {/* TOOLTIP — desenhado por ultimo para ficar acima de tudo. SVG puro:
+                o grafico e SVG e um balao em HTML precisaria converter coordenada
+                de viewBox para pixel, que quebra quando o card muda de largura. */}
+            {hover != null && chart.dots[hover] ? (() => {
+              const d = chart.dots[hover];
+              const texto = brlExato(d.valor);
+              // Largura estimada pela contagem de caracteres (SVG nao mede texto
+              // antes de renderizar). 8,2px por caractere na mono de 15px.
+              const w = Math.max(132, texto.length * 8.2 + 28);
+              const h = d.parcial ? 54 : 40;
+              // Vira para dentro nas pontas, para o balao nao sair do viewBox.
+              const x = Math.min(Math.max(d.x - w / 2, chart.x0 - 40), chart.x1 + 40 - w);
+              // Acima do ponto; abaixo quando nao ha espaco em cima.
+              const acima = d.y - h - 14 > 0;
+              const y = acima ? d.y - h - 14 : d.y + 14;
+              return (
+                <g pointerEvents="none">
+                  <rect x={x} y={y} width={w} height={h} rx={8} fill="#0F1F4A" opacity="0.96" />
+                  <text x={x + w / 2} y={y + 17} textAnchor="middle" fill="#9AA1B0" fontSize="11" fontWeight="600" letterSpacing="0.04em">
+                    {d.mes.toUpperCase()}
+                  </text>
+                  <text x={x + w / 2} y={y + 33} textAnchor="middle" fill="#FFFFFF" fontSize="15" fontWeight="700" className="mono">
+                    {texto}
+                  </text>
+                  {d.parcial ? (
+                    <text x={x + w / 2} y={y + 47} textAnchor="middle" fill="#D6A13F" fontSize="10" fontWeight="600">
+                      parcial · mês em curso
+                    </text>
+                  ) : null}
+                </g>
+              );
+            })() : null}
             {chart.xlabels.map((l, i) => (
               <text key={i} x={l.x} y={328} textAnchor="middle" fill={l.parcial ? "#0F1F4A" : "#9AA1B0"} fontSize="13" fontWeight={l.parcial ? 600 : 400}>
                 {l.label}
@@ -497,7 +561,14 @@ function buildChart(serie: MesPonto[]) {
     y: fy(v),
     label: v === 0 ? "0" : `${v.toFixed(1).replace(".", ",")}M`,
   }));
-  const dots = serie.map((d, i) => ({ x: pts[i][0], y: pts[i][1], parcial: d.parcial }));
+  // valor/mes viajam no dot para o tooltip (4a) nao precisar reindexar a serie.
+  const dots = serie.map((d, i) => ({
+    x: pts[i][0],
+    y: pts[i][1],
+    parcial: d.parcial,
+    valor: d.valor,
+    mes: d.mes,
+  }));
   const xlabels = serie.map((d, i) => ({ x: fx(i), label: d.mes, parcial: d.parcial }));
 
   return { x0, x1, solid, area, dashed, ticks, dots, xlabels };
