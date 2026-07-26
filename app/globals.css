@@ -52,6 +52,41 @@
   --r-btn: 8px;      --r-card: 12px;     --r-lg: 20px;   /* --r-lg: bloco navy (HeaderNavy) */
   --sh-1: 0 8px 24px rgba(15, 31, 74, 0.08);
   --sh-2: 0 4px 12px rgba(15, 31, 74, 0.05);
+
+  /* ===== NAVEGACAO — barra do topo (frente menu-topo) =====
+     A barra em si chega na Fase 3; os tokens nascem aqui porque o
+     --chrome-offset abaixo ja e consumido pelas tabelas nesta fase. */
+
+  /* Altura da barra do topo. */
+  --nav-h: 56px;
+
+  /* Camada da barra. Hierarquia do sistema:
+       1-4   celulas/thead sticky (dentro do proprio container de scroll)
+       20    A BARRA  <- aqui
+       30-40 backdrop + drawer do menu
+       50    overlays de modal (/admin/usuarios, /despesas)
+       60    drawers de /equipe e /projecao
+       100+  toasts
+     Acima do conteudo, abaixo de tudo que e sobreposicao. */
+  --nav-z: 20;
+
+  /* Fundo do item ATIVO da barra. Derivado do --navy real (#0F1F4A), um tom
+     acima — mancha perceptivel na periferia sem virar bloco chapado.
+     Medido: branco por cima = 11,67:1 (AAA, alvo era >= 7:1); separacao vs
+     --navy = 1,369:1; separacao vs o hover = 1,198:1. Nao reusa --navy-bar
+     (#1E3066) porque aquele fica a 1,111:1 do hover — ativo e hover
+     ficariam parecidos demais de relance. */
+  --nav-item-active: #20356F;
+
+  /* ALTURA DO CHROME acima da janela de rolagem das tabelas.
+     = barra/topbar + padding do main + header da tela + folga.
+     AS 30 CHAMADAS DE <Table scrollable> DEPENDEM DESTE VALOR.
+     Se mudar --nav-h, RECALCULE aqui — senao as tabelas ficam com a janela
+     errada em silencio (curta demais, ou passando do viewport).
+     Hoje (PRE-BARRA): topbar 40 + 200 de padding/header/folga = 240px, o
+     mesmo numero que estava espalhado em 5 lugares. A Fase 5 troca o termo
+     da topbar por var(--nav-h) e recalibra. */
+  --chrome-offset: 240px;
 }
 
 * {
@@ -426,7 +461,7 @@ a {
    /comissoes/editar reserva 220px adicionais no rodape). */
 .rr-table-wrap--scrollable {
   overflow-y: auto;
-  max-height: calc(100vh - 240px);
+  max-height: calc(100vh - var(--chrome-offset));
 }
 
 .rr-table-wrap--scrollable thead {

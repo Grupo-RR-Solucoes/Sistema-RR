@@ -2503,7 +2503,7 @@ const CSS = `
 .rrprom .head-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
 .rrprom .state{padding:26px 24px;font-size:13.5px;color:var(--ink-3);}
 
-.rrprom .scroll{overflow:auto;max-height:calc(100vh - 240px);}
+.rrprom .scroll{overflow:auto;max-height:calc(100vh - var(--chrome-offset));}
 .rrprom table{border-collapse:collapse;width:100%;min-width:760px;font-size:13.5px;}
 .rrprom table.wide{min-width:1600px;}
 .rrprom thead th{position:sticky;top:0;z-index:3;font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);text-align:right;padding:11px 16px;border-bottom:1px solid var(--bd);white-space:nowrap;background:var(--card);}

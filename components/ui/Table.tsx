@@ -17,15 +17,22 @@ export interface TableProps {
   minWidth?: number;
   /**
    * Só no modo scrollable: desconto (px) na altura da janela —
-   * max-height: calc(100vh - {maxHeightOffset}px). Telas com barras de ação
-   * fixas (ex.: /comissoes/editar) precisam de offset maior. Default: 240.
+   * max-height: calc(100vh - {maxHeightOffset}px).
+   *
+   * OMITIR é o normal: sem este prop a janela vem do CSS
+   * (.rr-table-wrap--scrollable → calc(100vh - var(--chrome-offset))), que é a
+   * fonte ÚNICA da altura do chrome. Antes o default era um 240 repetido aqui,
+   * que duplicava o valor do CSS — dois lugares para manter em sincronia, e o
+   * inline sempre ganhando.
+   *
+   * Passe um número só quando a tela tiver chrome EXTRA que o token não conhece
+   * (ex.: uma barra de ação fixa no rodapé). Hoje nenhuma passa.
    */
   maxHeightOffset?: number;
   className?: string;
 }
 
 const DEFAULT_MIN_WIDTH = 720;
-const DEFAULT_MAX_HEIGHT_OFFSET = 240;
 
 /**
  * Tabela densa do kit (ftable). Composição por markup nativo (thead/tbody/tfoot)
@@ -64,7 +71,7 @@ export function Table({
   children,
   scrollable,
   minWidth = DEFAULT_MIN_WIDTH,
-  maxHeightOffset = DEFAULT_MAX_HEIGHT_OFFSET,
+  maxHeightOffset,
   className,
 }: TableProps) {
   const wrap = [
@@ -74,10 +81,12 @@ export function Table({
   ]
     .filter(Boolean)
     .join(" ");
-  // max-height inline só no modo scrollable (sobrepõe o default do CSS).
-  const wrapStyle = scrollable
-    ? { maxHeight: `calc(100vh - ${maxHeightOffset}px)` }
-    : undefined;
+  // max-height inline SÓ quando a tela pede offset próprio. Sem ele a altura
+  // vem do CSS (var(--chrome-offset)) — um valor, um lugar.
+  const wrapStyle =
+    scrollable && maxHeightOffset != null
+      ? { maxHeight: `calc(100vh - ${maxHeightOffset}px)` }
+      : undefined;
   return (
     <div className={wrap} style={wrapStyle}>
       <table className="rrui-table" style={{ minWidth }}>
