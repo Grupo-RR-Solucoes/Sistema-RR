@@ -74,6 +74,11 @@ type Payload = {
   deltaProducao: ResultadoDelta;
   deltaComissaoEmpresa: ResultadoDelta;
   deltaComissaoSeguro: ResultadoDelta;
+  // 3b — previsao do mes cheio x receita REALIZADA do M-1 (tambem mes cheio).
+  // Unico card cujas pontas sao metricas diferentes de proposito; por isso
+  // fontesDivergentes vem true e nao ha rotulo de janela.
+  deltaPrevisaoReceita: ResultadoDelta;
+  receitaRealizadaAnterior: number | null;
 };
 
 function brl0(v?: number) {
@@ -211,8 +216,11 @@ function Header({
       }
     >
       {/* delta vs mes anterior: vem pronto da rota (data.delta*), a tela so passa
-          adiante. Previsao de receita e Limite Simples ficam SEM delta de
-          proposito — ver comentario no topo do arquivo. */}
+          adiante. Previsao de receita GANHOU delta (3b): previsao do mes cheio
+          contra a receita realizada do M-1, tambem mes cheio — as duas pontas
+          sao metricas diferentes de proposito, e o sub do card diz isso.
+          Limite Simples segue SEM delta: e um percentual de teto fiscal, nao
+          uma grandeza do mes; "subiu 2 p.p." ali nao significa desempenho. */}
       <KpiBand
         items={[
           {
@@ -229,7 +237,19 @@ function Header({
             subTone: "gold",
             delta: data?.deltaComissaoEmpresa,
           },
-          { label: "Previsão de receita", value: prev, sub: "estimado", subTone: "amber" },
+          {
+            label: "Previsão de receita",
+            value: prev,
+            // O sub diz o que o delta esta comparando. Este card e o UNICO que
+            // compara metricas diferentes (previsao x realizado) e o unico em
+            // mes-cheio dos dois lados — por isso nao ganha rotulo "1-N" e por
+            // isso o sub e explicito, para ninguem ler como os outros.
+            sub: data?.deltaPrevisaoReceita?.mostrar
+              ? `estimado · vs ${data.deltaPrevisaoReceita.labelAnterior} realizado (mês cheio)`
+              : "estimado",
+            subTone: "amber",
+            delta: data?.deltaPrevisaoReceita,
+          },
           { label: "Limite Simples", value: lim, sub: limSub, subTone: "ok" },
         ]}
       />
