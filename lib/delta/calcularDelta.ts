@@ -71,6 +71,16 @@ export type Janela = {
   /** Dia de corte na competencia ATUAL. null em "mes-cheio". */
   diaCorteAtual: number | null;
   /**
+   * Dia de HOJE, antes de qualquer limitacao (Fase 2.1). Guardado para dar
+   * para explicar a diferenca quando `limitadoPorDado` e true.
+   */
+  diaHoje: number | null;
+  /**
+   * true quando o corte foi puxado para tras porque a competencia atual ainda
+   * nao tem dado ate hoje (atraso de importacao). Ver ultimoDiaComDado.
+   */
+  limitadoPorDado: boolean;
+  /**
    * Dia de corte na competencia ANTERIOR. Pode ser MENOR que o atual: se hoje e
    * 31 e o mes anterior tem 30 dias, cortar em 31 la nao existe -- o corte e
    * clampado para 30, que e o mes anterior inteiro. null em "mes-cheio".
@@ -205,11 +215,59 @@ export function ultimoDiaDoMes(comp: Competencia): number {
   return new Date(Date.UTC(comp.year, comp.month, 0)).getUTCDate();
 }
 
+/**
+ * FASE 2.1 — o maior dia-do-mes que TEM dado, dentre os informados.
+ *
+ * Recebe os dias (1..31) que tem PELO MENOS UMA linha na competencia corrente.
+ * Devolve o MAIOR deles — nunca o primeiro buraco. A distincao importa: um
+ * domingo ou feriado no meio do mes nao tem linha e NAO deve encurtar a janela;
+ * so o fim da serie e que revela ate onde o dado realmente vai.
+ *
+ * `null` quando nao ha nenhum dia com dado (a competencia nao tem daily).
+ */
+export function ultimoDiaComDado(dias: Iterable<number> | null | undefined): number | null {
+  if (!dias) return null;
+  let max: number | null = null;
+  for (const d of dias) {
+    const n = Math.trunc(Number(d));
+    if (!Number.isFinite(n) || n < 1 || n > 31) continue;
+    if (max == null || n > max) max = n;
+  }
+  return max;
+}
+
 export type ParametrosJanela = {
   competencia: Competencia;
   modo: ModoJanela;
   /** Dia de hoje (1..31). Obrigatorio em "ate-dia-N". */
   dia?: number | null;
+  /**
+   * FASE 2.1 — dias-do-mes que TEM dado na competencia CORRENTE (>= 1 linha
+   * cada). O corte vira min(hoje, maior dia com dado).
+   *
+   * POR QUE: o corte diz "ate o dia N"; o dado diz "ate o ultimo dia
+   * importado". Se a diaria do mes corrente esta 3 dias atrasada, a ponta atual
+   * cobre menos dias reais que a anterior mesmo com o mesmo N — e o card mostra
+   * queda onde houve alta. Medido em 26/07/2026: com N=26 a producao do grupo
+   * dava -10,6%; com as duas pontas em 1-23 (ultimo dia importado) da +3,0%.
+   * O sinal inverte por atraso de carga, nao por desempenho.
+   *
+   * O DADO e por escopo (cada tela tem o seu conjunto), mas a REGRA mora aqui.
+   * Consequencia aceita: num escopo que nao vendeu no ultimo dia importado, o N
+   * recua um dia. A janela fica mais curta, porem CONTINUA IGUAL nos dois lados
+   * e o rotulo mostra o N real — encurtar honestamente e melhor que comparar
+   * janelas desiguais.
+   *
+   * CONTRATO — passe SO os dias do MES-CALENDARIO da competencia. NAO inclua o
+   * "dia-cabeca" que a janela de producao herda do mes anterior: a competencia
+   * de julho comeca no ultimo dia util de junho (dia 30), e um 30 no conjunto
+   * viraria o maximo, mascarando que o dado real so vai ate o dia 23. A
+   * pergunta aqui e "ate que dia DESTE mes a diaria foi carregada" — o
+   * dia-cabeca e do mes passado e nao responde isso.
+   *
+   * Ausente/vazio => sem limitacao (comportamento da Fase 2).
+   */
+  diasComDadoNoMesCorrente?: Iterable<number> | null;
   /**
    * true quando quem chama JA SABE que nao consegue recortar (falta dado com
    * data por linha em alguma das pontas). Forca mes-cheio e marca o motivo.
@@ -229,12 +287,14 @@ export type ParametrosJanela = {
  * `clampado` deixa explicito que a janela NAO e identica, e a tela pode dizer.
  */
 export function resolverJanela(params: ParametrosJanela): Janela {
-  const { competencia, modo, dia, recorteIndisponivel } = params;
+  const { competencia, modo, dia, recorteIndisponivel, diasComDadoNoMesCorrente } = params;
 
   if (modo === "mes-cheio" || recorteIndisponivel) {
     return {
       modo: "mes-cheio",
       diaCorteAtual: null,
+      diaHoje: null,
+      limitadoPorDado: false,
       diaCorteAnterior: null,
       clampado: false,
       recorteIndisponivel: recorteIndisponivel === true,
@@ -245,13 +305,21 @@ export function resolverJanela(params: ParametrosJanela): Janela {
   const maxAtual = ultimoDiaDoMes(competencia);
   const maxAnterior = ultimoDiaDoMes(anterior);
 
-  // dia de hoje, sanitizado para o intervalo valido do mes corrente.
-  const n = Math.min(Math.max(Math.trunc(dia ?? 0), 1), maxAtual);
+  // 1) dia de hoje, sanitizado para o intervalo valido do mes corrente.
+  const hoje = Math.min(Math.max(Math.trunc(dia ?? 0), 1), maxAtual);
+
+  // 2) FASE 2.1 — nao adianta cortar em 26 se o dado so vai ate 23.
+  const ultimoDado = ultimoDiaComDado(diasComDadoNoMesCorrente);
+  const n = ultimoDado != null ? Math.min(hoje, ultimoDado) : hoje;
+
+  // 3) clamp de fim de mes (Fase 2) — aplicado DEPOIS, sobre o N ja limitado.
   const nAnterior = Math.min(n, maxAnterior);
 
   return {
     modo: "ate-dia-N",
     diaCorteAtual: n,
+    diaHoje: hoje,
+    limitadoPorDado: n < hoje,
     diaCorteAnterior: nAnterior,
     clampado: nAnterior < n,
     recorteIndisponivel: false,
@@ -261,6 +329,8 @@ export function resolverJanela(params: ParametrosJanela): Janela {
 const JANELA_CHEIA: Janela = {
   modo: "mes-cheio",
   diaCorteAtual: null,
+  diaHoje: null,
+  limitadoPorDado: false,
   diaCorteAnterior: null,
   clampado: false,
   recorteIndisponivel: false,
@@ -499,11 +569,12 @@ export function rotuloJanela(r: ResultadoDelta): string | null {
 //    de lib/trp/vigencia.ts, ja holiday-aware) eliminaria isso; fica anotado
 //    como opcao, nao como pendencia.
 //
-// 2) ATRASO DE IMPORTACAO. O corte diz "ate o dia N"; o dado diz "ate o ultimo
-//    dia importado". Se a diaria do mes corrente esta 3 dias atrasada, a ponta
-//    atual cobre menos dias reais que a anterior mesmo com o mesmo N. Quem
-//    quiser janela de verdade igual precisa cortar pelo ultimo dia COM DADO do
-//    mes corrente, nao pelo dia de hoje.
+// 2) ATRASO DE IMPORTACAO — CORRIGIDO na Fase 2.1. O corte agora e
+//    min(hoje, ultimo dia com dado na competencia corrente), via
+//    `diasComDadoNoMesCorrente` em resolverJanela. Fica o registro do que
+//    acontecia antes: em 26/07/2026 a diaria de julho estava carregada ate
+//    23/07 e o card mostrava -10,6%; com as duas pontas em 1-23, +3,0%.
+//    O sinal invertia por atraso de carga, nao por desempenho.
 //
 // 3) O PRIMEIRO DIA DA JANELA DE COMPETENCIA. A competencia do sistema comeca
 //    no ultimo dia util do mes anterior (getProductionWindow), cujo dia-do-mes

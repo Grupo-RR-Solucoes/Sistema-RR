@@ -20,6 +20,7 @@ import {
   resolverJanela,
   rotuloComparacao,
   rotuloJanela,
+  ultimoDiaComDado,
   ultimoDiaDoMes,
   type PontoSerie,
 } from "../delta/calcularDelta.ts";
@@ -322,6 +323,134 @@ test("32) mes FECHADO nao ganha rotulo de janela (nao poluir o card)", () => {
   const r = calcularDelta({ competencia: JUL, valorAtual: 110, valorAnterior: 100 });
   assert.equal(r.janela.modo, "mes-cheio");
   assert.equal(rotuloJanela(r), null);
+});
+
+// ---------------------------------------------------------------------------
+// FASE 2.1 — N = min(hoje, ultimo dia com dado)
+// ---------------------------------------------------------------------------
+
+test("34) ultimoDiaComDado devolve o MAIOR dia, nao o primeiro buraco", () => {
+  // buracos no meio (domingos/feriados) nao podem encurtar a janela
+  assert.equal(ultimoDiaComDado([1, 2, 3, 6, 7, 8, 13, 20, 23]), 23);
+  assert.equal(ultimoDiaComDado([5]), 5);
+  assert.equal(ultimoDiaComDado([]), null);
+  assert.equal(ultimoDiaComDado(null), null);
+  assert.equal(ultimoDiaComDado(undefined), null);
+});
+
+test("35) ultimoDiaComDado ignora dias fora de 1..31", () => {
+  assert.equal(ultimoDiaComDado([10, 0, 32, -3, 99, 12]), 12);
+});
+
+test("36) CASO REAL 26/07: dado ate 23 -> corta em 23 nos DOIS lados", () => {
+  const j = resolverJanela({
+    competencia: JUL,
+    modo: "ate-dia-N",
+    dia: 26,
+    diasComDadoNoMesCorrente: [1, 2, 3, 6, 7, 8, 9, 10, 13, 14, 15, 16, 17, 20, 21, 22, 23],
+  });
+  assert.equal(j.diaCorteAtual, 23);
+  assert.equal(j.diaCorteAnterior, 23); // MESMO N na ponta anterior
+  assert.equal(j.diaHoje, 26);
+  assert.equal(j.limitadoPorDado, true);
+  assert.equal(j.clampado, false);
+});
+
+test("37) dado em dia igual/maior que hoje -> nao limita (vence o hoje)", () => {
+  const j = resolverJanela({
+    competencia: JUL,
+    modo: "ate-dia-N",
+    dia: 26,
+    diasComDadoNoMesCorrente: [20, 26],
+  });
+  assert.equal(j.diaCorteAtual, 26);
+  assert.equal(j.limitadoPorDado, false);
+});
+
+test("38) sem dado nenhum no mes corrente -> cai no comportamento da fase 2", () => {
+  const j = resolverJanela({
+    competencia: JUL,
+    modo: "ate-dia-N",
+    dia: 26,
+    diasComDadoNoMesCorrente: [],
+  });
+  assert.equal(j.diaCorteAtual, 26);
+  assert.equal(j.limitadoPorDado, false);
+});
+
+test("39) o CLAMP de fim de mes continua valendo DEPOIS da limitacao 2.1", () => {
+  // hoje 31/07, dado ate 31, M-1 = junho (30 dias) -> clampa em 30
+  const j = resolverJanela({
+    competencia: JUL,
+    modo: "ate-dia-N",
+    dia: 31,
+    diasComDadoNoMesCorrente: [29, 30, 31],
+  });
+  assert.equal(j.diaCorteAtual, 31);
+  assert.equal(j.diaCorteAnterior, 30);
+  assert.equal(j.clampado, true);
+  assert.equal(j.limitadoPorDado, false);
+});
+
+test("40) limitacao 2.1 E clamp juntos: dado ate 31, hoje 31, M-1 fevereiro", () => {
+  const j = resolverJanela({
+    competencia: { year: 2026, month: 3 },
+    modo: "ate-dia-N",
+    dia: 31,
+    diasComDadoNoMesCorrente: [30],
+  });
+  assert.equal(j.diaCorteAtual, 30); // limitado pelo dado
+  assert.equal(j.limitadoPorDado, true);
+  assert.equal(j.diaCorteAnterior, 28); // depois clampado por fevereiro
+  assert.equal(j.clampado, true);
+});
+
+test("41) o rotulo mostra o N REAL, nao o dia de hoje", () => {
+  const j = resolverJanela({
+    competencia: JUL,
+    modo: "ate-dia-N",
+    dia: 26,
+    diasComDadoNoMesCorrente: [23],
+  });
+  const r = calcularDelta({ competencia: JUL, valorAtual: 110, valorAnterior: 100, janela: j });
+  assert.equal(rotuloJanela(r), "1-23");
+});
+
+test("42b) REGRESSAO — o dia-cabeca da competencia nao pode virar o maximo", () => {
+  // A janela de producao de julho comeca no ultimo dia util de JUNHO (30/06).
+  // Esse registro tem dia-do-mes 30. Se ele entrar no conjunto, max=30 e a
+  // limitacao 2.1 nao acontece — o card volta a ler atraso de importacao como
+  // queda. Quem monta o conjunto DEVE filtrar pelo mes-calendario (ver o
+  // contrato de diasComDadoNoMesCorrente).
+  const comCabeca = [30, 1, 2, 3, 23]; // 30 = 30/06, indevido
+  const semCabeca = [1, 2, 3, 23]; // so julho
+  assert.equal(ultimoDiaComDado(comCabeca), 30); // <- o que dava errado
+  assert.equal(ultimoDiaComDado(semCabeca), 23); // <- o correto
+
+  const errado = resolverJanela({
+    competencia: JUL, modo: "ate-dia-N", dia: 26,
+    diasComDadoNoMesCorrente: comCabeca,
+  });
+  const certo = resolverJanela({
+    competencia: JUL, modo: "ate-dia-N", dia: 26,
+    diasComDadoNoMesCorrente: semCabeca,
+  });
+  assert.equal(errado.diaCorteAtual, 26);
+  assert.equal(errado.limitadoPorDado, false);
+  assert.equal(certo.diaCorteAtual, 23);
+  assert.equal(certo.limitadoPorDado, true);
+});
+
+test("42) mes-cheio ignora diasComDado (nao vaza para competencia fechada)", () => {
+  const j = resolverJanela({
+    competencia: JUL,
+    modo: "mes-cheio",
+    dia: 26,
+    diasComDadoNoMesCorrente: [23],
+  });
+  assert.equal(j.diaCorteAtual, null);
+  assert.equal(j.limitadoPorDado, false);
+  assert.equal(j.diaHoje, null);
 });
 
 test("33) deltaDaSerie repassa a janela intacta", () => {

@@ -1402,13 +1402,34 @@ export function selectPromoterView(
   const agoraDelta = nowInFortaleza();
   const ehCorrenteDelta =
     latestPeriod.year === agoraDelta.year && latestPeriod.month === agoraDelta.month;
+  const universo = new Set(idsVisiveis);
+
+  // FASE 2.1 — dias-do-mes com produção lançada na competência CORRENTE, para o
+  // corte virar min(hoje, último dia com dado). Mesmo predicado e mesmo
+  // universo da soma abaixo.
+  // Só dias do MÊS-CALENDÁRIO da competência: o "dia-cabeça" herdado do mês
+  // anterior (30/06 na competência de julho) tem dia-do-mês alto e viraria o
+  // máximo, mascarando até onde a diária foi de fato carregada.
+  const prefixoMesCorrente = `${compAtualDelta.year}-${String(compAtualDelta.month).padStart(2, "0")}-`;
+  const diasComDadoCorrente = new Set<number>();
+  for (const record of base.records) {
+    const pid = record.assigned_promoter_id || "";
+    if (!universo.has(pid)) continue;
+    if (!isEligibleProductionRecord(record)) continue;
+    const p = extractYearMonth(record);
+    if (!p || p.year !== compAtualDelta.year || p.month !== compAtualDelta.month) continue;
+    const bruta = String(record.movement_date || record.contract_date || record.proposal_date || "");
+    if (!bruta.startsWith(prefixoMesCorrente)) continue;
+    const dia = Number(bruta.slice(8, 10));
+    if (dia >= 1 && dia <= 31) diasComDadoCorrente.add(dia);
+  }
+
   const janelaProducao = resolverJanela({
     competencia: compAtualDelta,
     modo: !base.closedSourceAtual && ehCorrenteDelta ? "ate-dia-N" : "mes-cheio",
     dia: agoraDelta.day,
+    diasComDadoNoMesCorrente: diasComDadoCorrente,
   });
-
-  const universo = new Set(idsVisiveis);
   function somaRecordsRecortado(comp: { year: number; month: number }, ateDia: number | null) {
     let total = 0;
     let linhas = 0;

@@ -522,10 +522,30 @@ export function assembleTeamProduction(
   const compAtual = { year: period.year, month: period.month };
   const compAnt = competenciaAnterior(compAtual);
   const ehCorrente = period.year === agoraDelta.year && period.month === agoraDelta.month;
+  // FASE 2.1 — dias-do-mes com produção lançada na competência CORRENTE, para
+  // o corte virar min(hoje, último dia com dado). Mesmo predicado da soma
+  // abaixo, sobre a mesma vw_team_production.
+  // Só dias do MÊS-CALENDÁRIO da competência: o "dia-cabeça" herdado do mês
+  // anterior (30/06 na competência de julho) tem dia-do-mês alto e viraria o
+  // máximo, mascarando até onde a diária foi de fato carregada.
+  const prefixoMesCorrente = `${compAtual.year}-${String(compAtual.month).padStart(2, "0")}-`;
+  const diasComDadoCorrente = new Set<number>();
+  for (const r of rows) {
+    if (!r.assigned_promoter_id) continue;
+    if (!isEligible(r)) continue;
+    const p = extractYearMonth(r);
+    if (!p || p.year !== compAtual.year || p.month !== compAtual.month) continue;
+    const bruta = String(r.movement_date || r.contract_date || r.proposal_date || "");
+    if (!bruta.startsWith(prefixoMesCorrente)) continue;
+    const dia = Number(bruta.slice(8, 10));
+    if (dia >= 1 && dia <= 31) diasComDadoCorrente.add(dia);
+  }
+
   const janelaPedida = resolverJanela({
     competencia: compAtual,
     modo: !periodoFechado && ehCorrente ? "ate-dia-N" : "mes-cheio",
     dia: agoraDelta.day,
+    diasComDadoNoMesCorrente: diasComDadoCorrente,
   });
 
   function somaTimeRecortado(comp: { year: number; month: number }, ateDia: number | null) {

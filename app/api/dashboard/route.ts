@@ -623,10 +623,32 @@ export async function GET(req: Request) {
     // Nota: o valor recortado NAO reconcilia com o "mes cheio" do proprio card,
     // e nao deveria — o corte <= N exclui o primeiro dia da janela de
     // competencia (que cai em dia 28-31), simetricamente nos dois lados.
+    // FASE 2.1 — dias-do-mes que TEM producao lancada na competencia CORRENTE.
+    // Alimenta o min(hoje, ultimo dia com dado) do resolverJanela: sem isso o
+    // corte pede ate hoje e o dado so vai ate a ultima diaria importada, e o
+    // card le atraso de carga como queda. Mesmo predicado da soma abaixo.
+    // So dias do MES-CALENDARIO da competencia. O "dia-cabeca" que a janela
+    // herda do mes anterior (30/06 na competencia de julho) tem dia-do-mes 30 e
+    // viraria o maximo, mascarando que a diaria so foi carregada ate o dia 23.
+    const prefixoMesCorrente = `${competencia.year}-${String(competencia.month).padStart(2, "0")}-`;
+    const diasComDadoCorrente = new Set<number>();
+    for (const r of dailyRecorte || []) {
+      if (!r.company_id || !activeIds.has(r.company_id)) continue;
+      if (!isProductionStatus(r.status)) continue;
+      if (!isValidDailyRecord(r)) continue;
+      const period = getProductionPeriodFromValue(r.movement_date);
+      if (!period || period.year !== competencia.year || period.month !== competencia.month) continue;
+      const bruta = String(r.movement_date ?? "");
+      if (!bruta.startsWith(prefixoMesCorrente)) continue;
+      const dia = Number(bruta.slice(8, 10));
+      if (dia >= 1 && dia <= 31) diasComDadoCorrente.add(dia);
+    }
+
     const janelaPedida = resolverJanela({
       competencia,
       modo: modoJanelaPedido,
       dia: agora.day,
+      diasComDadoNoMesCorrente: diasComDadoCorrente,
     });
 
     function somaDailyRecortado(comp: { year: number; month: number }, ateDia: number | null) {

@@ -56,6 +56,11 @@ export default function DeltaBadge({ delta, semRotulo }: DeltaBadgeProps) {
         ? `Janela recortada: dias 1-${delta.janela.diaCorteAtual} da competencia atual contra 1-${delta.janela.diaCorteAnterior} de ${delta.labelAnterior} (o mes anterior tem menos dias).`
         : `Janela recortada nos dois lados: dias 1-${delta.janela.diaCorteAtual} de cada competencia.`
     );
+    if (delta.janela.limitadoPorDado) {
+      avisos.push(
+        `O corte parou no dia ${delta.janela.diaCorteAtual} (e nao no dia ${delta.janela.diaHoje}, hoje) porque a competencia atual so tem producao lancada ate ali. Comparar ate hoje leria o atraso de importacao como queda.`
+      );
+    }
   }
   if (delta.fontesDivergentes) {
     avisos.push(
