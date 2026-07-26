@@ -210,9 +210,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const barItems: TopNavItem[] = useMemo(() => {
     if (visibleItems.length <= NAV_BARRA.length) return visibleItems;
     const porHref = new Map(visibleItems.map((i) => [i.href, i]));
-    return NAV_BARRA.map((href) => porHref.get(href)).filter(
+    const preferidos = NAV_BARRA.map((href) => porHref.get(href)).filter(
       (i): i is NavItem => i != null
     );
+    // COMPLETA ATE 6 na ordem de declaracao dos grupos. Sem isso o funcionario
+    // (10 destinos, mas so 2 entre os preferidos — Dashboard, Financeiro,
+    // Fechamento e Auditoria sao socio-only) ficaria com a barra quase vazia e
+    // 8 itens escondidos, justamente o segundo papel mais ativo do sistema.
+    const naBarra = new Set(preferidos.map((i) => i.href));
+    const resto = visibleItems.filter((i) => !naBarra.has(i.href));
+    return [...preferidos, ...resto.slice(0, NAV_BARRA.length - preferidos.length)];
   }, [visibleItems]);
 
   // Hamburguer CONDICIONAL: so quando ha destino que a barra nao mostra.
