@@ -852,6 +852,41 @@ function PromotoresFullPage() {
     [data.summaryRows, promoterId]
   );
 
+  // ==========================================================================
+  // 4b — EDICAO DO PROMOTOR VIRA DRAWER.
+  //
+  // Antes era uma coluna fixa de 340px no .resumo-grid, presente SEMPRE — mesmo
+  // sem promotor selecionado, quando so mostrava "Nenhum promotor selecionado".
+  // Nao era painel mal posicionado: era coluna permanente para conteudo
+  // eventual. A tabela pagava 340px de largura o tempo todo, e esta e a tela
+  // cuja aba wide pede 1600px.
+  //
+  // A mecanica NAO E NOVA: e a mesma do drawer do menu (AppShell) — fixed,
+  // translateX, backdrop, Escape, trava de scroll. Codigo promovido, nao
+  // inventado.
+  //
+  // Drawer e nao modal porque o modal esconderia a tabela justamente quando se
+  // quer conferir a linha que esta sendo editada; aqui ela fica visivel atras
+  // do backdrop.
+  // ==========================================================================
+  const [editDrawerOpen, setEditDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!editDrawerOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setEditDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [editDrawerOpen]);
+
+  useEffect(() => {
+    document.body.style.overflow = editDrawerOpen ? "hidden" : "";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [editDrawerOpen]);
+
   const proposalTotals = useMemo(
     () =>
       data.proposalRows.reduce(
@@ -1306,7 +1341,10 @@ function PromotoresFullPage() {
                             <tr
                               key={row.promoter_id}
                               className={`clk${promoterId === row.promoter_id ? " sel" : ""}`}
-                              onClick={() => setPromoterId(row.promoter_id)}
+                              onClick={() => {
+                                setPromoterId(row.promoter_id);
+                                setEditDrawerOpen(true);
+                              }}
                             >
                               <td className="l sticky prom" data-l="Promotor">
                                 {row.promoter_name}
@@ -1356,7 +1394,38 @@ function PromotoresFullPage() {
                 )}
               </div>
 
-              <aside className="edit">
+              {/* BACKDROP — mesma mecanica do drawer do menu (AppShell): botao
+                  de verdade, para fechar por clique e por teclado. Semi-
+                  transparente de proposito: a linha que voce clicou continua
+                  visivel atras, que e a vantagem do drawer sobre o modal. */}
+              <button
+                type="button"
+                className="editbackdrop"
+                data-open={editDrawerOpen ? "true" : "false"}
+                aria-label="Fechar edição"
+                tabIndex={editDrawerOpen ? 0 : -1}
+                onClick={() => setEditDrawerOpen(false)}
+              />
+
+              <aside
+                className="edit"
+                data-open={editDrawerOpen ? "true" : "false"}
+                aria-hidden={editDrawerOpen ? undefined : true}
+                aria-label="Edição do promotor"
+              >
+                <button
+                  type="button"
+                  className="editclose"
+                  onClick={() => setEditDrawerOpen(false)}
+                  aria-label="Fechar edição"
+                  title="Fechar"
+                  tabIndex={editDrawerOpen ? 0 : -1}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                  </svg>
+                </button>
                 {!selectedPromoterSummary ? (
                   <div>
                     <h3>Edição do promotor</h3>
@@ -2554,8 +2623,42 @@ const CSS = `
 .rrprom .iconbtn:hover{border-color:#BFC6D2;color:var(--red);}
 .rrprom .iconbtn:disabled{opacity:.5;cursor:default;}
 
-.rrprom .resumo-grid{display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start;}
-.rrprom .edit{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:22px 22px;position:sticky;top:20px;}
+/* 4b — a coluna de 340px saiu. A tabela ocupa a largura toda, sempre, e a
+   edicao virou drawer (abaixo). Uma coluna so: o grid vira formalidade, mas
+   fica porque o gap ainda separa os blocos empilhados. */
+.rrprom .resumo-grid{display:grid;grid-template-columns:1fr;gap:20px;align-items:start;}
+
+/* DRAWER DA EDICAO — mecanica identica a do drawer do menu (globals.css
+   .rr-sidebar): fixed, translateX(100%), transicao no transform. Entra pela
+   DIREITA porque e detalhe da linha, nao navegacao (o menu entra pela
+   esquerda; lados diferentes evitam que os dois sejam confundidos).
+   z-index 60 = a faixa dos drawers de tela (/equipe, /projecao), acima do
+   drawer do menu (30-40) e dos overlays de modal (50). */
+.rrprom .edit{
+  position:fixed;inset:0 0 0 auto;width:min(92vw,380px);height:100dvh;z-index:60;
+  transform:translateX(100%);transition:transform 180ms ease;
+  overflow-y:auto;overscroll-behavior:contain;
+  background:var(--card);border-left:1px solid var(--bd);
+  box-shadow:-12px 0 32px rgba(15,31,74,.18);padding:22px 22px 32px;
+}
+.rrprom .edit[data-open="true"]{transform:translateX(0);}
+/* Backdrop LEVE (.32): o ponto do drawer e a linha continuar legivel atras.
+   Um backdrop de modal (.6+) anularia a razao de nao ser modal. */
+.rrprom .editbackdrop{
+  position:fixed;inset:0;border:0;display:block;z-index:59;
+  background:rgba(15,31,74,.32);opacity:0;pointer-events:none;
+  transition:opacity 160ms ease;cursor:pointer;
+}
+.rrprom .editbackdrop[data-open="true"]{opacity:1;pointer-events:auto;}
+.rrprom .editclose{
+  position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:8px;
+  background:var(--neu,#F1F3F7);border:1px solid var(--bd);color:var(--ink-2);
+  display:grid;place-items:center;cursor:pointer;
+}
+.rrprom .editclose:hover{background:#E7EAF1;color:var(--ink);}
+@media (prefers-reduced-motion:reduce){
+  .rrprom .edit,.rrprom .editbackdrop{transition:none;}
+}
 .rrprom .edit h3{font-size:14.5px;font-weight:600;margin:0;color:var(--ink);}
 .rrprom .edit .who{font-size:12.5px;color:var(--ink-3);margin:3px 0 0;}
 .rrprom .edit .empty{font-size:13px;color:var(--ink-3);line-height:1.6;}
