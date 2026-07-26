@@ -137,6 +137,27 @@ export default function TopNav({
         </button>
       ) : null}
 
+      {/* LOGO COMPACTO (marca isolada), NAO o lockup completo — medido.
+
+          A arte full e 1177x696 (proporcao 1,69). A barra tem 56px de altura,
+          entao o lockup caberia no maximo a ~44px de altura (74px de largura).
+          Dentro da arte, "GRUPO RR" ocupa ~8,6% da altura e "CRED" ~12,9%:
+          a 44px isso da 3,8px e 5,7px de altura de letra. Ilegivel — vira
+          borrao, nao marca. Para "CRED" chegar aos 8px minimos de leitura a
+          arte precisaria de 62px de altura, e "GRUPO RR" de 93px: mais que a
+          barra inteira. Recortar a margem morta da arte (~15%) nao muda a
+          conclusao.
+
+          Nao e questao de pixelizar — 74x44 e um downscale de 16x, limpo. E
+          tamanho de letra mesmo. Como a marca isolada ja renderiza a 41px de
+          altura, o lockup na barra entregaria o MESMO simbolo mais um borrao
+          ao lado, por 34px de largura a mais.
+
+          O lockup completo continua no header do drawer (BrandLogo md, 150px),
+          onde ha largura e altura para ele. Se o nome precisar aparecer na
+          barra, o caminho e outro: marca + texto em HTML (nao a arte raster),
+          decisao de design que reverte o "sem texto recriado em CSS" descrito
+          no BrandLogo. */}
       <Link href="/" className="rr-nav__brand" aria-label="Inicio">
         <BrandLogo size="sm" tone="dark" />
       </Link>

@@ -28,6 +28,13 @@ type NavItem = {
   label: string;
   icon: string;
   visibleTo: UserRole[];
+  /**
+   * Rotulo curto SO para a barra. O drawer continua mostrando o `label`
+   * inteiro, onde ha largura de sobra e o texto precisa ser autoexplicativo.
+   * Existe por causa de "Atribuicao de produtos": 195px de item contra 120px
+   * do encurtado — 75px, o custo de meio item de barra.
+   */
+  barLabel?: string;
 };
 
 type NavGroup = {
@@ -79,7 +86,7 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/admin/usuarios", label: "Usuários", icon: "usercog", visibleTo: ["socio", "funcionario"] },
       { href: "/admin/equipes", label: "Equipes", icon: "network", visibleTo: ["socio", "funcionario"] },
-      { href: "/produtos/atribuicao", label: "Atribuição de produtos", icon: "clipboard", visibleTo: ["socio", "funcionario"] },
+      { href: "/produtos/atribuicao", label: "Atribuição de produtos", icon: "clipboard", visibleTo: ["socio", "funcionario"], barLabel: "Atribuição" },
     ],
   },
   {
@@ -102,20 +109,44 @@ const navGroups: NavGroup[] = [
 ];
 
 /**
- * OS 6 DA BARRA — destinos frequentes. O resto vai para o drawer.
+ * OS 7 DA BARRA — destinos frequentes. O resto vai para o drawer.
  *
  * Ordem = a da barra. O filtro por papel continua sendo o visibleTo de cada
  * item; isto aqui so escolhe QUAIS dos visiveis sobem para a barra. Papel com
  * poucos destinos (promotor 2, supervisor 1, gestor_consorcio 2) nao tem nada
  * fora desta lista, entao nem ve hamburguer.
+ *
+ * POR QUE 7, E NAO 6 NEM 9 — medido, nao chutado.
+ *
+ * Largura de um item = 26 (padding 13x2) + 17 (icone) + 8 (gap) + rotulo.
+ * Cromo fixo da barra = 36 (padding) + 32 (2 gaps de 16) + 40 (logo compacto)
+ * + 50 (hamburguer 34 + gap 16) + ate 264 do bloco de usuario (avatar 30 +
+ * gap 10 + nome com max-width 180 + gap 10 + sair 34).
+ *
+ *   viewport   sobra p/ a lista   cabe
+ *   1366       944                7  (834px usados, folga 110)
+ *   1440       1018               8  (956px usados, folga 62)
+ *   1920       1498               9  (1072px usados, folga 426)
+ *
+ * 7 e o maior numero que cabe no MENOR viewport suportado. Nao fixamos em 8
+ * ou 9 porque o corte teria de ser por media query, e esconder item por CSS
+ * quebra em silencio o papel que tem exatamente 8 ou 9 destinos: esse papel
+ * nao ganha hamburguer (visibleItems <= NAV_BARRA.length), entao o item
+ * escondido ficaria INALCANCAVEL. Hoje nenhum papel tem 8 ou 9 — mas o
+ * proximo pode ter, e a falha seria invisivel ate alguem reclamar.
+ *
+ * Ordem de prioridade dada pelo Diego: os 6 primeiros sao os que ele pediu;
+ * Financeiro entra como 7o. Fechamento e Auditoria (menos usados) ficam no
+ * drawer, que continua mostrando TUDO.
  */
 const NAV_BARRA = [
   "/dashboard",
   "/promotores",
   "/projecao",
+  "/importacoes",
+  "/cadastros",
+  "/produtos/atribuicao",
   "/financeiro",
-  "/fechamento",
-  "/auditoria",
 ] as const;
 
 /**
@@ -208,18 +239,28 @@ export default function AppShell({ children }: { children: ReactNode }) {
    * resultado possivel justamente para quem tem menos a navegar.
    */
   const barItems: TopNavItem[] = useMemo(() => {
-    if (visibleItems.length <= NAV_BARRA.length) return visibleItems;
+    // Na barra vale o rotulo curto quando existe; o drawer fica com o inteiro.
+    const paraBarra = (i: NavItem): TopNavItem => ({
+      href: i.href,
+      icon: i.icon,
+      label: i.barLabel ?? i.label,
+    });
+    if (visibleItems.length <= NAV_BARRA.length)
+      return visibleItems.map(paraBarra);
     const porHref = new Map(visibleItems.map((i) => [i.href, i]));
     const preferidos = NAV_BARRA.map((href) => porHref.get(href)).filter(
       (i): i is NavItem => i != null
     );
-    // COMPLETA ATE 6 na ordem de declaracao dos grupos. Sem isso o funcionario
-    // (10 destinos, mas so 2 entre os preferidos — Dashboard, Financeiro,
-    // Fechamento e Auditoria sao socio-only) ficaria com a barra quase vazia e
-    // 8 itens escondidos, justamente o segundo papel mais ativo do sistema.
+    // COMPLETA ATE 7 na ordem de declaracao dos grupos. Sem isso o funcionario
+    // (10 destinos, mas so 4 entre os preferidos — Dashboard, Financeiro,
+    // Fechamento e Auditoria sao socio-only) ficaria com a barra rala e o
+    // resto escondido, justamente o segundo papel mais ativo do sistema.
     const naBarra = new Set(preferidos.map((i) => i.href));
     const resto = visibleItems.filter((i) => !naBarra.has(i.href));
-    return [...preferidos, ...resto.slice(0, NAV_BARRA.length - preferidos.length)];
+    return [
+      ...preferidos,
+      ...resto.slice(0, NAV_BARRA.length - preferidos.length),
+    ].map(paraBarra);
   }, [visibleItems]);
 
   // Hamburguer CONDICIONAL: so quando ha destino que a barra nao mostra.
