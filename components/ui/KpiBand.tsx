@@ -1,5 +1,8 @@
 import type { CSSProperties, ReactNode } from "react";
 
+import type { ResultadoDelta } from "@/lib/delta/calcularDelta";
+import DeltaBadge from "./DeltaBadge";
+
 export type KpiSubTone = "gold" | "amber" | "ok" | "neutral";
 
 export interface KpiStat {
@@ -16,6 +19,19 @@ export interface KpiStat {
   subTone?: KpiSubTone;
   /** Destaca este stat com realce var(--accent) (#FFF000). */
   accent?: boolean;
+  /**
+   * Variacao vs mes anterior. Recebe o resultado de lib/delta/calcularDelta e
+   * renderiza o <DeltaBadge/> entre o valor e o sub.
+   *
+   * SLOT PROPRIO de proposito: todo stat do sistema ja usa `sub` para outra
+   * informacao (rotulo de fonte, link de pendencia, "do qual..."). Empilhar o
+   * delta dentro do `sub` obrigaria cada tela a remontar o texto — e a conta
+   * voltaria a ser feita fora do helper canonico.
+   *
+   * O proprio badge some quando nao ha comparacao honesta (M-1 zero/ausente),
+   * entao a tela pode passar o delta sem condicional.
+   */
+  delta?: ResultadoDelta;
 }
 
 export interface KpiBandProps {
@@ -48,6 +64,11 @@ export default function KpiBand({ items, columns, valueSize }: KpiBandProps) {
         >
           <p className="rrui-kpiband__label">{s.label}</p>
           <div className="rrui-kpiband__value">{s.value}</div>
+          {s.delta ? (
+            <div className="rrui-kpiband__delta">
+              <DeltaBadge delta={s.delta} />
+            </div>
+          ) : null}
           {s.sub != null ? (
             <div
               className={

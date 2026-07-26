@@ -12,6 +12,9 @@ export type { HeaderNavyProps } from "./HeaderNavy";
 export { default as KpiBand } from "./KpiBand";
 export type { KpiBandProps, KpiStat, KpiSubTone } from "./KpiBand";
 
+export { default as DeltaBadge } from "./DeltaBadge";
+export type { DeltaBadgeProps } from "./DeltaBadge";
+
 export { default as KpiHero } from "./KpiHero";
 export type { KpiHeroProps, KpiHeroMeter, KpiHeroSecondary, KpiHeroTone, Semaforo } from "./KpiHero";
 

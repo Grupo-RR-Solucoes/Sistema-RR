@@ -36,12 +36,27 @@ export const UI_CSS = `
 .rrui-kpiband__stat--accent:first-child::after{left:0;}
 .rrui-kpiband__label{font-size:11.5px;font-weight:500;letter-spacing:.01em;color:rgba(255,255,255,.62);margin:0 0 10px;}
 .rrui-kpiband__value{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-size:var(--kpi-value,30px);font-weight:600;letter-spacing:-.02em;line-height:1;color:#fff;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.rrui-kpiband__delta{margin-top:9px;}
 .rrui-kpiband__sub{font-size:12px;margin-top:9px;color:rgba(255,255,255,.55);}
 .rrui-kpiband__sub--gold{color:var(--gold);}
 .rrui-kpiband__sub--amber{color:var(--gold-soft);}
 .rrui-kpiband__sub--ok{color:var(--ok-soft);}
 @media (max-width:920px){ .rrui-kpiband{--kpi-cols:2;row-gap:22px;} .rrui-kpiband__stat{padding-left:0;} .rrui-kpiband__stat + .rrui-kpiband__stat::before{display:none;} }
 @media (max-width:560px){ .rrui-kpiband{--kpi-cols:1;} }
+
+/* ===== DeltaBadge — variacao vs mes anterior ("^ 12,4% vs junho") =====
+   Vive sobre o navy (dentro do KpiBand), por isso usa as variantes -soft dos
+   semanticos: os escuros do kit (--ok/--risk) sao ilegiveis em fundo escuro.
+   O numero herda a Mono do kit para nao "dancar" quando o valor muda. */
+.rrui-delta{display:inline-flex;align-items:center;gap:6px;font-size:12px;line-height:1;white-space:nowrap;}
+.rrui-delta__seta{width:12px;height:12px;flex:none;display:block;}
+.rrui-delta__valor{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;font-weight:600;font-variant-numeric:tabular-nums;}
+.rrui-delta__ref{color:rgba(255,255,255,.55);font-weight:400;}
+.rrui-delta__aviso{margin-left:2px;}
+.rrui-delta--up{color:var(--ok-soft);}
+.rrui-delta--down{color:var(--risk-soft);}
+.rrui-delta--flat{color:rgba(255,255,255,.55);}
+.rrui-delta--flat .rrui-delta__valor{font-weight:500;}
 
 /* ===== KpiHero — indicador grande embutido no navy (vertical ou two-column) ===== */
 .rrui-kpihero{margin-top:28px;border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}

@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
+import {
+  calcularDelta,
+  competenciaAnterior,
+  deltaDaSerie,
+  type PontoSerie,
+} from "@/lib/delta/calcularDelta";
 import { buildClosingAnalytics } from "@/lib/closingAnalytics";
 import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { calcularRbt12 } from "@/lib/rbt12";
@@ -107,6 +114,70 @@ function isValidDailyRecord(r: DailyUnassignedRow) {
   if (isPendingStatus(r.status)) return false;
   if (r.is_srcc_restricted === true) return false;
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// DELTA vs mes anterior — leitores de competencia FECHADA.
+//
+// Existem como funcao (e nao inline, como estavam) exatamente para que as DUAS
+// pontas do delta leiam pela MESMA definicao de metrica. E a contrapartida, do
+// lado da fonte, da REGRA DE OURO de lib/delta/calcularDelta: o helper garante
+// que a conta e unica; estas funcoes garantem que o que entra na conta e a
+// mesma coisa nos dois meses. Se a fonte da comissao-empresa mudar um dia,
+// muda aqui e as duas pontas mudam juntas — nao ha como uma so.
+// ---------------------------------------------------------------------------
+
+/**
+ * Comissao-EMPRESA de credito a vista de uma competencia FECHADA.
+ * Split de regime identico ao que o mes corrente ja usava:
+ *   cms (jan-mai)      -> Sigma cms_promoter_entries.company_commission
+ *   fechamento (jun+)  -> Sigma fechamento_mensal_empresa.valor_avista
+ */
+async function lerComissaoEmpresaCreditoFechada(
+  supabase: SupabaseClient,
+  regime: "cms" | "fechamento",
+  year: number,
+  month: number
+): Promise<number> {
+  if (regime === "cms") {
+    const entries = await fetchAllRows<{ company_commission: number | null }>(() =>
+      supabase
+        .from("cms_promoter_entries")
+        .select("company_commission")
+        .eq("prod_year", year)
+        .eq("prod_month", month)
+    );
+    return roundMoney(entries.reduce((sum, r) => sum + toNumber(r.company_commission), 0));
+  }
+  const fechAvista = await fetchAllRows<{ valor_avista: number | null }>(() =>
+    supabase
+      .from("fechamento_mensal_empresa")
+      .select("valor_avista")
+      .eq("ano", year)
+      .eq("mes", month)
+  );
+  return roundMoney(fechAvista.reduce((sum, r) => sum + toNumber(r.valor_avista), 0));
+}
+
+/**
+ * Comissao-EMPRESA de seguro de uma competencia FECHADA. Fonte unica para os
+ * DOIS regimes fechados (fechamento_mensal_empresa.valor_seguro) — a mesma do
+ * financeiro/DRE. NAO e o share do promotor (cms.promoter_insurance), que e a
+ * camada de repasse e nao o ganho da empresa.
+ */
+async function lerSeguroEmpresaFechada(
+  supabase: SupabaseClient,
+  year: number,
+  month: number
+): Promise<number> {
+  const fechSeguro = await fetchAllRows<{ valor_seguro: number | null }>(() =>
+    supabase
+      .from("fechamento_mensal_empresa")
+      .select("valor_seguro")
+      .eq("ano", year)
+      .eq("mes", month)
+  );
+  return roundMoney(fechSeguro.reduce((sum, r) => sum + toNumber(r.valor_seguro), 0));
 }
 
 export async function GET(req: Request) {
@@ -301,17 +372,9 @@ export async function GET(req: Request) {
     let comissaoBrutaEmpresaNaoAtribuida = 0;
     let comissaoBrutaEmpresaNaoAtribuidaCount = 0;
     if (regime === "cms") {
-      // jan-mai: seed do financeiro. Ground truth = COMISSÃO PF do cms. INALTERADO.
-      const entries = await fetchAllRows<{ company_commission: number | null }>(() =>
-        supabase
-          .from("cms_promoter_entries")
-          .select("company_commission")
-          .eq("prod_year", year)
-          .eq("prod_month", month)
-      );
-      comissaoBrutaEmpresa = roundMoney(
-        entries.reduce((sum, r) => sum + toNumber(r.company_commission), 0)
-      );
+      // jan-mai: seed do financeiro. Ground truth = COMISSÃO PF do cms. INALTERADO
+      // (leitura extraída para lerComissaoEmpresaCreditoFechada, mesma query).
+      comissaoBrutaEmpresa = await lerComissaoEmpresaCreditoFechada(supabase, "cms", year, month);
       comissaoBrutaEmpresaLabel = `${MES[month - 1]}/${year} · fechado`;
     } else if (regime === "fechamento") {
       // jun+ (e abril): NÃO existe cms — o booleano antigo mandava ler cms aqui e
@@ -321,15 +384,11 @@ export async function GET(req: Request) {
       // A fonte certa é o fechamento: valor_avista = Σ da COMISSÃO PF das linhas
       // CASH (monthlyClosingImport acumula exatamente isso). É a MESMA tabela que o
       // seguro do grupo já usa aqui embaixo (valor_seguro) e a mesma do financeiro/DRE.
-      const fechAvista = await fetchAllRows<{ valor_avista: number | null }>(() =>
-        supabase
-          .from("fechamento_mensal_empresa")
-          .select("valor_avista")
-          .eq("ano", year)
-          .eq("mes", month)
-      );
-      comissaoBrutaEmpresa = roundMoney(
-        fechAvista.reduce((sum, r) => sum + toNumber(r.valor_avista), 0)
+      comissaoBrutaEmpresa = await lerComissaoEmpresaCreditoFechada(
+        supabase,
+        "fechamento",
+        year,
+        month
       );
       comissaoBrutaEmpresaLabel = `${MES[month - 1]}/${year} · fechado`;
     } else {
@@ -361,17 +420,9 @@ export async function GET(req: Request) {
       // TOTAL do grupo = comissão-EMPRESA do fechamento (fechamento_mensal_empresa.
       // valor_seguro) — MESMA fonte do financeiro/DRE. NÃO o share do promotor
       // (cms.promoter_insurance), que é a camada de repasse, não o ganho da empresa.
-      // Vale para os DOIS regimes fechados (cms e fechamento) — já estava certo.
-      const fechSeguro = await fetchAllRows<{ valor_seguro: number | null }>(() =>
-        supabase
-          .from("fechamento_mensal_empresa")
-          .select("valor_seguro")
-          .eq("ano", year)
-          .eq("mes", month)
-      );
-      comissaoSeguroGrupo = roundMoney(
-        fechSeguro.reduce((sum, r) => sum + toNumber(r.valor_seguro), 0)
-      );
+      // Vale para os DOIS regimes fechados (cms e fechamento) — já estava certo
+      // (leitura extraída para lerSeguroEmpresaFechada, mesma query).
+      comissaoSeguroGrupo = await lerSeguroEmpresaFechada(supabase, year, month);
 
       // PENETRAÇÃO ponderada — a fonte muda com o regime.
       if (regime === "cms") {
@@ -462,6 +513,77 @@ export async function GET(req: Request) {
       show: cons.semaforo === "amarelo" || cons.semaforo === "vermelho",
     };
 
+    // ---- DELTA vs mes anterior (FASE 1: mes-cheio vs mes-cheio) ----
+    // O delta e calculado AQUI, no servidor, e viaja pronto para a tela. A tela
+    // so desenha (<DeltaBadge/>) — nao tem como recalcular, que e o ponto da
+    // REGRA DE OURO em lib/delta/calcularDelta.
+    //
+    // TODO-FASE-2 (recorte por dia): em competencia FECHADA este delta ja e
+    // 100% correto. Em competencia ABERTA a ponta atual e PARCIAL (producao ate
+    // hoje) e a anterior e CHEIA — o delta aparece artificialmente negativo, e
+    // quanto mais cedo no mes, pior. A Fase 2 corrige comparando os N primeiros
+    // DIAS UTEIS de cada competencia (nao o dia-do-mes calendario, que embute
+    // vies proprio — ver o TODO no fim de lib/delta/calcularDelta.ts).
+    const competencia = { year, month };
+    const compAnterior = competenciaAnterior(competencia);
+
+    // Regime do M-1: decide QUAL leitor usa (cms x fechamento). Se o M-1 ainda
+    // estiver aberto nao ha valor consolidado -> valorAnterior null -> o helper
+    // esconde o delta sozinho (motivo "sem-anterior").
+    const regimeAnterior = await detectMonthRegime(
+      supabase,
+      compAnterior.year,
+      compAnterior.month
+    ).catch(() => "open" as MonthRegime);
+    const anteriorFechado = regimeAnterior !== "open";
+
+    const [comissaoEmpresaAnterior, seguroEmpresaAnterior] = await Promise.all([
+      anteriorFechado
+        ? lerComissaoEmpresaCreditoFechada(
+            supabase,
+            regimeAnterior as "cms" | "fechamento",
+            compAnterior.year,
+            compAnterior.month
+          )
+        : Promise.resolve(null),
+      anteriorFechado
+        ? lerSeguroEmpresaFechada(supabase, compAnterior.year, compAnterior.month)
+        : Promise.resolve(null),
+    ]);
+
+    // PRODUCAO — caminho preferido: as duas pontas saem da MESMA serie
+    // (producaoMensal), montada por uma unica expressao la em cima. Sao a mesma
+    // metrica por construcao. producaoMensal cobre so o ano corrente, entao em
+    // janeiro o M-1 (dezembro do ano anterior) nao esta la e o delta some — que
+    // e o comportamento certo: o ledger PMR nasce em jan/2026.
+    const serieProducao: PontoSerie[] = producaoMensal.map((p) => ({
+      year,
+      month: p.month,
+      valor: p.valor,
+      fonte: p.parcial && !monthClosed ? "daily-vivo" : "pmr+master",
+    }));
+    const deltaProducao = deltaDaSerie({ serie: serieProducao, competencia });
+
+    // COMISSAO-EMPRESA e SEGURO — nao ha serie pronta (a fonte muda com o
+    // regime da competencia). As duas pontas passam pelos MESMOS leitores
+    // extraidos acima; a fonte de cada ponta viaja junto para a tela poder
+    // sinalizar comparacao cross-source.
+    const deltaComissaoEmpresa = calcularDelta({
+      competencia,
+      valorAtual: comissaoBrutaEmpresa,
+      valorAnterior: comissaoEmpresaAnterior,
+      fonteAtual: regime === "open" ? "motor-vivo" : regime,
+      fonteAnterior: anteriorFechado ? regimeAnterior : null,
+    });
+
+    const deltaComissaoSeguro = calcularDelta({
+      competencia,
+      valorAtual: comissaoSeguroGrupo,
+      valorAnterior: seguroEmpresaAnterior,
+      fonteAtual: monthClosed ? "fechamento" : "daily-vivo",
+      fonteAnterior: anteriorFechado ? "fechamento" : null,
+    });
+
     return NextResponse.json({
       periodoLabel: `${MES[month - 1]}/${year}`,
       // MOV 2 (A): a competência renderizada e o regime dela — a tela usa para
@@ -489,6 +611,11 @@ export async function GET(req: Request) {
       penetracaoSeguroGrupo,
       seguroLabel,
       seguroMasterSemRegra,
+      // DELTA vs mes anterior — ja calculado (ResultadoDelta serializavel). A
+      // tela renderiza via <DeltaBadge/> e nao refaz conta nenhuma.
+      deltaProducao,
+      deltaComissaoEmpresa,
+      deltaComissaoSeguro,
     });
   } catch (error) {
     return apiGuardErrorResponse(error);
