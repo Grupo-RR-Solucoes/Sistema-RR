@@ -6,6 +6,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useUser } from "../../lib/auth/useUser";
 import PromotorView from "./PromotorView";
 import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+import type { ResultadoDelta } from "@/lib/delta/calcularDelta";
 
 type PeriodOption = {
   key: string;
@@ -110,6 +111,11 @@ type PromoterPayload = {
   selectedPeriod: PeriodOption;
   selectedPromoterId: string;
   selectedCompanyId: string;
+  // DELTA vs mes anterior (Fase 3) — vem PRONTO da rota. Opcional porque o
+  // emptyPayload (pre-fetch) nao tem delta. So os 2 cards de topo usam; a
+  // TABELA de promotores fica sem, pela regra transversal.
+  deltaProducao?: ResultadoDelta;
+  deltaComissao?: ResultadoDelta;
   summary: {
     promoters: number;
     production: number;
@@ -1110,8 +1116,17 @@ function PromotoresFullPage() {
                   ) : (
                     "crédito + seguro"
                   ),
+                // Recorta por dia em competencia aberta (daily nas 2 pontas).
+                delta: data.deltaProducao,
               },
-              { label: "Comissão bruta", value: formatCurrency(data.summary.finalCommission), sub: "antes de descontos" },
+              {
+                label: "Comissão bruta",
+                value: formatCurrency(data.summary.finalCommission),
+                sub: "antes de descontos",
+                // Sempre cheio-vs-cheio: o PMR nao tem data por linha, entao nao
+                // ha dia para cortar no M-1. Em mes aberto o badge rotula.
+                delta: data.deltaComissao,
+              },
               { label: "Comissão a pagar", value: formatCurrency(data.summary.payableCommission), sub: "líquido a repassar", subTone: "gold" },
               { label: "Penetração média", value: formatPercent(data.summary.averageInsurancePenetration), sub: "seguro / crédito" },
             ]}

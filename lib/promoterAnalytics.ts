@@ -10,6 +10,15 @@ import { buildTrpCreditProvider } from "@/lib/trp/creditTrpProvider";
 import { getPrazoTrp } from "@/lib/prazoTrp";
 import { capAvistaRR } from "@/lib/tetoAvistaRR";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
+// DELTA vs mes anterior (Fase 3) — calcularDelta e a UNICA fonte de calculo do
+// sistema. Aqui so montamos as duas pontas da mesma metrica e chamamos.
+import {
+  calcularDelta,
+  competenciaAnterior,
+  resolverJanela,
+  type ResultadoDelta,
+} from "@/lib/delta/calcularDelta";
+import { nowInFortaleza } from "@/lib/dateFortaleza";
 import {
   getAgencyCode as getAgencyCodeShared,
   getSrccRestrictionLabel as getSrccRestrictionLabelShared,
@@ -154,6 +163,17 @@ export type PromoterAnalyticsPayload = {
   selectedPeriod: { key: string; label: string; year: number; month: number };
   selectedPromoterId: string;
   selectedCompanyId: string;
+  /**
+   * DELTA vs mês anterior (Fase 3) — SÓ para os 2 cards de topo da /promotores.
+   * Já calculado por lib/delta/calcularDelta no servidor; a tela só renderiza
+   * via <DeltaBadge/>. A TABELA de promotores não recebe delta (regra
+   * transversal: delta só em card de KPI).
+   *
+   *   deltaProducao — recorta por dia em competência aberta (daily nas 2 pontas).
+   *   deltaComissao — sempre cheio-vs-cheio (o PMR não tem data por linha).
+   */
+  deltaProducao: ResultadoDelta;
+  deltaComissao: ResultadoDelta;
   summary: {
     promoters: number;
     production: number;
@@ -499,12 +519,18 @@ export async function loadPromoterAnalyticsBase(
     // escopo (sem filtro = fechamento+bbts; grupo/empresa = só as do escopo), em vez
     // do .find() de UMA linha. AUSENTE => comportamento anterior (dre/projecao intactos).
     closedSource?: "cms" | "fechamento";
+    // DELTA (Fase 3) — REGIME DA COMPETÊNCIA ANTERIOR (M-1), detectado por quem
+    // chama. Define de qual fonte sai o M-1 do delta ('cms' vs
+    // 'fechamento'+'bbts'). Ausente => sem M-1 => o delta some (é o certo:
+    // sem o regime não dá para escolher a fonte com segurança).
+    previousClosedSource?: "cms" | "fechamento";
   }
 ) {
   const yearParam = filters?.year;
   const monthParam = filters?.month;
   const companyId = filters?.companyId || "";
   const closedSource = filters?.closedSource;
+  const previousClosedSource = filters?.previousClosedSource;
 
   // companies PRIMEIRO — necessário para resolver o escopo de grupo (Grupo RR / ADS)
   // antes de escopar o daily. Os promotores são buscados SEM filtro de empresa: no
@@ -1021,6 +1047,40 @@ export async function loadPromoterAnalyticsBase(
 
   const recordsById = new Map(recordsForPeriod.map((record) => [record.id, record]));
 
+  // ---- M-1 do DELTA (Fase 3) — PMR da competência anterior ----
+  // Agregado AQUI, junto do agregado do mês corrente, para as duas pontas
+  // saírem do MESMO `monthlyResults` com o MESMO filtro de escopo. O universo
+  // de promotores é recortado depois (em selectPromoterView) pelos próprios
+  // summaryRows visíveis — assim o M-1 herda master/escopo/seleção sem
+  // reimplementar nenhum filtro.
+  //
+  // previousClosedSource é o REGIME do M-1 (quem chama detecta e passa). Sem
+  // ele o mapa fica vazio e o delta some — que é o certo: sem saber o regime
+  // não dá para escolher a fonte, e somar 'cms' com 'fechamento' poderia
+  // duplicar uma competência que tenha as duas.
+  const compAnteriorPmr = competenciaAnterior({
+    year: latestPeriod.year,
+    month: latestPeriod.month,
+  });
+  const fontesAnteriores =
+    previousClosedSource === "cms"
+      ? ["cms"]
+      : previousClosedSource === "fechamento"
+        ? ["fechamento", "bbts"]
+        : [];
+  const pmrAnteriorPorPromotor = new Map<string, { producao: number; comissao: number }>();
+  if (fontesAnteriores.length > 0) {
+    for (const row of monthlyResults) {
+      if (row.year !== compAnteriorPmr.year || row.month !== compAnteriorPmr.month) continue;
+      if (!fontesAnteriores.includes(String(row.source || ""))) continue;
+      if (scope.companyIds && !scope.companyIds.includes(row.company_id || "")) continue;
+      const cur = pmrAnteriorPorPromotor.get(row.promoter_id) ?? { producao: 0, comissao: 0 };
+      cur.producao += toNumber(row.production_value);
+      cur.comissao += toNumber(row.final_commission_value);
+      pmrAnteriorPorPromotor.set(row.promoter_id, cur);
+    }
+  }
+
   return {
     periods,
     latestPeriod,
@@ -1030,6 +1090,11 @@ export async function loadPromoterAnalyticsBase(
     promoterById,
     filteredSummaryRows,
     recordsForPeriod,
+    // DELTA (Fase 3): M-1 por promotor + o regime que o produziu.
+    pmrAnteriorPorPromotor,
+    competenciaAnteriorPmr: compAnteriorPmr,
+    previousClosedSource: previousClosedSource ?? null,
+    closedSourceAtual: closedSource ?? null,
     // ADITIVO — base crua de TODOS os meses (sem recorte por competência) para
     // consumidores que precisam da série histórica (ex.: drill-down da /projecao).
     // recordsForPeriod continua sendo o recorte do mês selecionado (inalterado).
@@ -1303,11 +1368,134 @@ export function selectPromoterView(
     }
   );
 
+  // ==========================================================================
+  // DELTA vs mês anterior (Fase 3) — SÓ os 2 cards de topo.
+  // A tabela de promotores NÃO recebe delta (regra transversal: delta só em
+  // card de KPI; tabela fica com os números puros).
+  //
+  // Universo do M-1 = os MESMOS promotores visíveis agora (visibleSummaryRows).
+  // Isso faz o M-1 herdar escopo de empresa, exclusão de master e a seleção de
+  // promotor sem reimplementar nenhum filtro. Promotor novo (sem linha no M-1)
+  // simplesmente não soma — e, quando é o selecionado, o valorAnterior fica
+  // null e o helper esconde o delta em vez de mostrar +infinito.
+  // ==========================================================================
+  const compAtualDelta = { year: latestPeriod.year, month: latestPeriod.month };
+  const idsVisiveis = visibleSummaryRows.map((r) => r.promoter_id);
+  const temM1 = base.previousClosedSource != null;
+
+  let producaoAnterior = 0;
+  let comissaoAnterior = 0;
+  let promotoresComM1 = 0;
+  for (const pid of idsVisiveis) {
+    const p = base.pmrAnteriorPorPromotor.get(pid);
+    if (!p) continue;
+    promotoresComM1 += 1;
+    producaoAnterior += p.producao;
+    comissaoAnterior += p.comissao;
+  }
+  const houveM1 = temM1 && promotoresComM1 > 0;
+
+  // ---- card PRODUÇÃO: recorta por dia quando a competência está aberta ----
+  // As duas pontas do recorte saem do MESMO `base.records` (daily), com o MESMO
+  // predicado de elegibilidade e o MESMO extractYearMonth — só o filtro de dia
+  // muda. Universo idêntico ao dos cards (idsVisiveis).
+  const agoraDelta = nowInFortaleza();
+  const ehCorrenteDelta =
+    latestPeriod.year === agoraDelta.year && latestPeriod.month === agoraDelta.month;
+  const janelaProducao = resolverJanela({
+    competencia: compAtualDelta,
+    modo: !base.closedSourceAtual && ehCorrenteDelta ? "ate-dia-N" : "mes-cheio",
+    dia: agoraDelta.day,
+  });
+
+  const universo = new Set(idsVisiveis);
+  function somaRecordsRecortado(comp: { year: number; month: number }, ateDia: number | null) {
+    let total = 0;
+    let linhas = 0;
+    for (const record of base.records) {
+      const pid = record.assigned_promoter_id || "";
+      if (!universo.has(pid)) continue;
+      if (!isEligibleProductionRecord(record)) continue;
+      const p = extractYearMonth(record);
+      if (!p || p.year !== comp.year || p.month !== comp.month) continue;
+      linhas += 1;
+      if (ateDia != null) {
+        const bruta = record.movement_date || record.contract_date || record.proposal_date;
+        const dia = Number(String(bruta ?? "").slice(8, 10));
+        if (!(dia >= 1 && dia <= ateDia)) continue;
+      }
+      total += toNumber(record.net_value);
+    }
+    return { total: Math.round(total * 100) / 100, linhas };
+  }
+
+  let deltaProducao;
+  if (janelaProducao.modo === "ate-dia-N") {
+    const at = somaRecordsRecortado(compAtualDelta, janelaProducao.diaCorteAtual);
+    const an = somaRecordsRecortado(
+      base.competenciaAnteriorPmr,
+      janelaProducao.diaCorteAnterior
+    );
+    if (at.linhas > 0 && an.linhas > 0) {
+      deltaProducao = calcularDelta({
+        competencia: compAtualDelta,
+        valorAtual: at.total,
+        valorAnterior: an.total,
+        janela: janelaProducao,
+        fonteAtual: "daily",
+        fonteAnterior: "daily",
+      });
+    } else {
+      // Sem daily nas duas pontas: cai para mês-cheio (PMR) e o card rotula.
+      deltaProducao = calcularDelta({
+        competencia: compAtualDelta,
+        valorAtual: summary.production + (selectedPromoterId ? 0 : unassignedProduction),
+        valorAnterior: houveM1 ? producaoAnterior : null,
+        janela: resolverJanela({
+          competencia: compAtualDelta,
+          modo: "ate-dia-N",
+          dia: agoraDelta.day,
+          recorteIndisponivel: true,
+        }),
+        fonteAtual: "daily-vivo",
+        fonteAnterior: base.previousClosedSource,
+      });
+    }
+  } else {
+    deltaProducao = calcularDelta({
+      competencia: compAtualDelta,
+      valorAtual: summary.production + (selectedPromoterId ? 0 : unassignedProduction),
+      valorAnterior: houveM1 ? producaoAnterior : null,
+      fonteAtual: base.closedSourceAtual ?? "daily-vivo",
+      fonteAnterior: base.previousClosedSource,
+    });
+  }
+
+  // ---- card COMISSÃO: sempre cheio-vs-cheio ----
+  // O PMR não tem data por linha, então não há dia para cortar no M-1. Em mês
+  // aberto o card rotula "mês cheio" em vez de fingir janela igual.
+  const deltaComissao = calcularDelta({
+    competencia: compAtualDelta,
+    valorAtual: summary.finalCommission,
+    valorAnterior: houveM1 ? comissaoAnterior : null,
+    janela: resolverJanela({
+      competencia: compAtualDelta,
+      modo: !base.closedSourceAtual && ehCorrenteDelta ? "ate-dia-N" : "mes-cheio",
+      dia: agoraDelta.day,
+      recorteIndisponivel: !base.closedSourceAtual && ehCorrenteDelta,
+    }),
+    fonteAtual: base.closedSourceAtual ?? "motor-vivo",
+    fonteAnterior: base.previousClosedSource,
+  });
+
   return {
     periods,
     selectedPeriod: latestPeriod,
     selectedPromoterId,
     selectedCompanyId: companyId,
+    // DELTA (Fase 3) — pronto, só para o <KpiBand delta=...> dos 2 cards de topo.
+    deltaProducao,
+    deltaComissao,
     summary: {
       promoters: summary.promoters,
       production: summary.production,
@@ -1354,6 +1542,8 @@ export async function buildPromoterAnalytics(
     closed?: boolean; // ver loadPromoterAnalyticsBase: aberto(false)=LIVE_BASE, fechado/indef=CALCULATED
     // VIRADA — fonte do mês fechado (consolida PMR por promotor). Ver loadPromoterAnalyticsBase.
     closedSource?: "cms" | "fechamento";
+    // DELTA (Fase 3) — regime da competência ANTERIOR. Ver loadPromoterAnalyticsBase.
+    previousClosedSource?: "cms" | "fechamento";
     // Aba Migração: quando o selecionado é is_master, proposalRows lista o balde
     // não atribuído (assigned_promoter_id NULL) p/ redistribuir. Default off =>
     // todos os demais chamadores ficam idênticos (match exato por promoter_id).
