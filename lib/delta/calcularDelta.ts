@@ -39,12 +39,52 @@
 // Modulo PURO: sem I/O, sem Supabase, sem React. Testavel isoladamente
 // (lib/__tests__/calcularDelta.test.ts) e reusavel no servidor e no cliente.
 //
-// FASE 1 = mes-cheio vs mes-cheio. O recorte por dia (comparar so os N
-// primeiros dias uteis dos dois meses, para o mes ABERTO nao aparecer como
-// queda falsa) e a Fase 2 -- ver TODO-FASE-2 no fim do arquivo.
+// JANELA (Fase 2): competencia FECHADA compara mes-cheio vs mes-cheio; ABERTA
+// recorta as duas pontas no mesmo dia-do-mes ("ate-dia-N"). Ver ModoJanela e
+// resolverJanela. Onde o dado nao tem data por linha nas duas pontas, o modo
+// cai para mes-cheio e a tela ROTULA -- nunca se inventa um recorte.
 // ============================================================================
 
 export type Competencia = { year: number; month: number };
+
+/**
+ * Janela de comparacao (Fase 2).
+ *
+ *   "mes-cheio"  -> competencia inteira dos dois lados. Correto quando a
+ *                   competencia atual esta FECHADA (as duas pontas sao totais
+ *                   finais), e e tambem o FALLBACK quando o recorte por dia nao
+ *                   e possivel (ver abaixo).
+ *   "ate-dia-N"  -> so os registros com dia-do-mes <= N, nos DOIS lados. E o
+ *                   modo do mes ABERTO: sem ele a ponta atual e parcial e a
+ *                   anterior e cheia, e o card mostra uma queda que nao existe.
+ *
+ * QUANDO O RECORTE NAO E POSSIVEL: exige dado com DATA POR LINHA nas duas
+ * pontas. Metrica cuja ponta anterior vive num agregado mensal (o fechamento
+ * por empresa, por exemplo) nao tem dia nenhum para cortar -- ai o modo cai
+ * para "mes-cheio" e a tela ROTULA isso. Nunca inventar um recorte que o dado
+ * nao sustenta.
+ */
+export type ModoJanela = "mes-cheio" | "ate-dia-N";
+
+export type Janela = {
+  modo: ModoJanela;
+  /** Dia de corte na competencia ATUAL. null em "mes-cheio". */
+  diaCorteAtual: number | null;
+  /**
+   * Dia de corte na competencia ANTERIOR. Pode ser MENOR que o atual: se hoje e
+   * 31 e o mes anterior tem 30 dias, cortar em 31 la nao existe -- o corte e
+   * clampado para 30, que e o mes anterior inteiro. null em "mes-cheio".
+   */
+  diaCorteAnterior: number | null;
+  /** true quando o clamp acima reduziu o N da ponta anterior. */
+  clampado: boolean;
+  /**
+   * true quando o recorte foi PEDIDO mas o dado nao sustentou e caiu para
+   * mes-cheio. A tela usa para rotular "mes cheio" e nao mentir que a janela
+   * e igual dos dois lados.
+   */
+  recorteIndisponivel: boolean;
+};
 
 /** up = subiu, down = caiu, flat = variacao despreziel (nao merece seta). */
 export type DirecaoDelta = "up" | "down" | "flat";
@@ -89,6 +129,8 @@ export type ResultadoDelta = {
   competenciaAnterior: Competencia;
   /** Nome do mes anterior por extenso, minusculo: "junho". Para "vs junho". */
   labelAnterior: string;
+  /** Janela usada nas duas pontas (Fase 2). Ver ModoJanela. */
+  janela: Janela;
   /** Rotulo da fonte de cada ponta (quando informado por quem chama). */
   fonteAtual: string | null;
   fonteAnterior: string | null;
@@ -157,6 +199,73 @@ export function mesmaCompetencia(a: Competencia, b: Competencia): boolean {
   return a.year === b.year && a.month === b.month;
 }
 
+/** Ultimo dia do mes (28/29/30/31), com ano bissexto correto. */
+export function ultimoDiaDoMes(comp: Competencia): number {
+  // day 0 do mes seguinte = ultimo dia deste mes.
+  return new Date(Date.UTC(comp.year, comp.month, 0)).getUTCDate();
+}
+
+export type ParametrosJanela = {
+  competencia: Competencia;
+  modo: ModoJanela;
+  /** Dia de hoje (1..31). Obrigatorio em "ate-dia-N". */
+  dia?: number | null;
+  /**
+   * true quando quem chama JA SABE que nao consegue recortar (falta dado com
+   * data por linha em alguma das pontas). Forca mes-cheio e marca o motivo.
+   */
+  recorteIndisponivel?: boolean;
+};
+
+/**
+ * Resolve a janela ANTES da consulta -- quem chama precisa dos dois N para
+ * montar os filtros. Aqui mora o CLAMP de fim de mes.
+ *
+ * O clamp e assimetrico de proposito: o N da ponta atual e o dia de hoje; o da
+ * ponta anterior e min(hoje, ultimo dia do mes anterior). Ex.: hoje 31/07 vs
+ * junho (30 dias) -> atual corta em 31, anterior corta em 30 = junho inteiro.
+ * Sem o clamp o filtro `dia <= 31` em junho simplesmente nunca casaria com o
+ * dia 31 (que nao existe) -- daria no mesmo por acidente, mas o campo
+ * `clampado` deixa explicito que a janela NAO e identica, e a tela pode dizer.
+ */
+export function resolverJanela(params: ParametrosJanela): Janela {
+  const { competencia, modo, dia, recorteIndisponivel } = params;
+
+  if (modo === "mes-cheio" || recorteIndisponivel) {
+    return {
+      modo: "mes-cheio",
+      diaCorteAtual: null,
+      diaCorteAnterior: null,
+      clampado: false,
+      recorteIndisponivel: recorteIndisponivel === true,
+    };
+  }
+
+  const anterior = competenciaAnterior(competencia);
+  const maxAtual = ultimoDiaDoMes(competencia);
+  const maxAnterior = ultimoDiaDoMes(anterior);
+
+  // dia de hoje, sanitizado para o intervalo valido do mes corrente.
+  const n = Math.min(Math.max(Math.trunc(dia ?? 0), 1), maxAtual);
+  const nAnterior = Math.min(n, maxAnterior);
+
+  return {
+    modo: "ate-dia-N",
+    diaCorteAtual: n,
+    diaCorteAnterior: nAnterior,
+    clampado: nAnterior < n,
+    recorteIndisponivel: false,
+  };
+}
+
+const JANELA_CHEIA: Janela = {
+  modo: "mes-cheio",
+  diaCorteAtual: null,
+  diaCorteAnterior: null,
+  clampado: false,
+  recorteIndisponivel: false,
+};
+
 function arredondar(n: number, casas: number): number {
   const f = 10 ** casas;
   return Math.round(n * f) / f;
@@ -183,6 +292,12 @@ export type ParametrosDelta = {
   /** Rotulo da fonte de cada ponta ("pmr", "daily", "fechamento", "cms"...). */
   fonteAtual?: string | null;
   fonteAnterior?: string | null;
+  /**
+   * Janela usada para produzir os dois valores (de resolverJanela). Omitir =
+   * mes-cheio. NAO recorta nada aqui: quem consulta o dado aplica o filtro; o
+   * helper so registra qual janela foi usada, para o badge poder rotular.
+   */
+  janela?: Janela;
 };
 
 /**
@@ -218,6 +333,7 @@ export function calcularDelta(params: ParametrosDelta): ResultadoDelta {
     competenciaAtual,
     competenciaAnterior: anterior,
     labelAnterior: nomeMesExtenso(anterior.month),
+    janela: params.janela ?? JANELA_CHEIA,
     fonteAtual,
     fonteAnterior,
     fontesDivergentes:
@@ -283,6 +399,11 @@ export type ParametrosDeltaSerie = {
   /** Competencia corrente (o ponto "atual" da serie). */
   competencia: Competencia;
   tipo?: TipoMetrica;
+  /**
+   * Janela com que a SERIE foi montada. Quem monta a serie ja aplicou o
+   * recorte nos dois pontos; aqui so viaja junto para o badge rotular.
+   */
+  janela?: Janela;
 };
 
 /**
@@ -297,7 +418,7 @@ export type ParametrosDeltaSerie = {
  * (dez/2025) nao existe no ledger PMR.
  */
 export function deltaDaSerie(params: ParametrosDeltaSerie): ResultadoDelta {
-  const { serie, competencia, tipo } = params;
+  const { serie, competencia, tipo, janela } = params;
   const anterior = competenciaAnterior(competencia);
 
   const achar = (c: Competencia) =>
@@ -311,6 +432,7 @@ export function deltaDaSerie(params: ParametrosDeltaSerie): ResultadoDelta {
     valorAtual: pAtual?.valor ?? null,
     valorAnterior: pAnterior?.valor ?? null,
     tipo,
+    janela,
     fonteAtual: pAtual?.fonte ?? null,
     fonteAnterior: pAnterior?.fonte ?? null,
   });
@@ -342,36 +464,50 @@ export function rotuloComparacao(r: ResultadoDelta): string {
   return `vs ${r.labelAnterior}`;
 }
 
+/**
+ * Rotulo curto da JANELA, para o card nao mentir sobre o que esta comparando.
+ * null = nao precisa dizer nada (competencia fechada comparando dois totais
+ * finais e o caso normal; anotar "mes cheio" ali so poluiria).
+ *
+ *   "1-26"      -> recorte igual dos dois lados
+ *   "1-26 x 30" -> clamp de fim de mes (o M-1 tinha menos dias)
+ *   "mes cheio" -> o recorte foi pedido mas o dado nao sustenta
+ */
+export function rotuloJanela(r: ResultadoDelta): string | null {
+  const j = r.janela;
+  if (j.recorteIndisponivel) return "mes cheio";
+  if (j.modo !== "ate-dia-N") return null;
+  if (j.clampado) return `1-${j.diaCorteAtual} x 1-${j.diaCorteAnterior}`;
+  return `1-${j.diaCorteAtual}`;
+}
+
 // ============================================================================
-// TODO-FASE-2 — RECORTE POR DIA (mes ABERTO)
+// NOTAS DA JANELA "ate-dia-N" — o que ela corrige e o que NAO corrige
 // ----------------------------------------------------------------------------
-// Na Fase 1 o delta e MES-CHEIO vs MES-CHEIO. Em competencia FECHADA isso ja e
-// 100% correto. Em competencia ABERTA a ponta atual e PARCIAL (producao ate
-// hoje) e a anterior e CHEIA -- entao o delta aparece artificialmente negativo,
-// e quanto mais cedo no mes, pior.
+// CORRIGE (o motivo da Fase 2): o parcial-vs-cheio. Sem recorte, a ponta atual
+// de um mes aberto e parcial e a anterior e cheia, e o card mostra uma queda
+// que nao existe -- pior quanto mais cedo no mes.
 //
-// A Fase 2 corrige comparando janelas iguais. ATENCAO ao desenho: comparar
-// "dia 1 a 25 de julho vs dia 1 a 25 de junho" (dia-do-mes CALENDARIO) NAO
-// resolve -- introduz um vies proprio. Medido nos dados reais de 2026:
+// NAO CORRIGE, e e bom saber:
 //
-//     2026-06: dia 25 = quinta   -> 19 dias uteis de 1 a 25
-//     2026-07: dia 25 = SABADO   -> 18 dias uteis de 1 a 25
+// 1) DIA-DO-MES NAO E DIA UTIL. O corte e por dia do calendario (decisao
+//    Diego). Meses comecam em dias da semana diferentes, entao 1..N de um mes
+//    pode ter mais dias uteis que 1..N do outro. Medido em 2026: 1..25 de junho
+//    tem 19 dias uteis e 1..25 de julho tem 18 (dia 25 caiu num sabado) -- um
+//    vies residual de ~5% na direcao do mes com menos dias uteis. Um recorte
+//    por INDICE DE DIA UTIL (reusando productionBusinessWindow/countBusinessDays
+//    de lib/trp/vigencia.ts, ja holiday-aware) eliminaria isso; fica anotado
+//    como opcao, nao como pendencia.
 //
-// Sao 18 dias de trabalho contra 19: vies embutido de -5,3%, na direcao errada.
-// Alem disso a competencia do sistema NAO e o mes calendario -- getProduction-
-// Window (lib/productionPeriod.ts) define a janela do ultimo dia util do mes
-// anterior ao ultimo dia util do mes corrente.
+// 2) ATRASO DE IMPORTACAO. O corte diz "ate o dia N"; o dado diz "ate o ultimo
+//    dia importado". Se a diaria do mes corrente esta 3 dias atrasada, a ponta
+//    atual cobre menos dias reais que a anterior mesmo com o mesmo N. Quem
+//    quiser janela de verdade igual precisa cortar pelo ultimo dia COM DADO do
+//    mes corrente, nao pelo dia de hoje.
 //
-// O recorte correto e por INDICE DE DIA UTIL DECORRIDO dentro da janela de
-// producao ("os N primeiros dias uteis de cada competencia"), reusando
-// productionBusinessWindow/countBusinessDays de lib/trp/vigencia.ts, que ja sao
-// holiday-aware.
-//
-// Pre-requisitos conhecidos da Fase 2:
-//   - daily_production_records so cobre abr/2026 em diante (jan/fev/mar/mai sem
-//     daily) -> onde nao houver daily nas DUAS pontas, o delta cai para
-//     mes-cheio e a tela precisa rotular qual regua usou.
-//   - o contador de dias uteis decorridos tem off-by-one conhecido (inclui o dia
-//     corrente nao-fechado no divisor); corrigir ANTES de usa-lo aqui, senao o
-//     vies entra nas duas pontas sem se cancelar (M-1 e passado e completo).
+// 3) O PRIMEIRO DIA DA JANELA DE COMPETENCIA. A competencia do sistema comeca
+//    no ultimo dia util do mes anterior (getProductionWindow), cujo dia-do-mes
+//    e alto (29, 30, 31). Com corte <= N (N tipicamente < 29) esse dia fica de
+//    fora -- nos DOIS lados, simetricamente. Por isso o recorte nao reconcilia
+//    com o total "mes cheio" do mesmo card, e nao deveria mesmo.
 // ============================================================================

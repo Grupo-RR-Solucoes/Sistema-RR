@@ -17,7 +17,10 @@ import {
   deltaDaSerie,
   formatarDelta,
   nomeMesExtenso,
+  resolverJanela,
   rotuloComparacao,
+  rotuloJanela,
+  ultimoDiaDoMes,
   type PontoSerie,
 } from "../delta/calcularDelta.ts";
 
@@ -213,4 +216,122 @@ test("20) nomeMesExtenso cobre os 12 meses", () => {
   assert.equal(nomeMesExtenso(1), "janeiro");
   assert.equal(nomeMesExtenso(6), "junho");
   assert.equal(nomeMesExtenso(12), "dezembro");
+});
+
+// ---------------------------------------------------------------------------
+// FASE 2 — janela e recorte por dia
+// ---------------------------------------------------------------------------
+
+test("21) ultimoDiaDoMes: 30, 31, fevereiro comum e bissexto", () => {
+  assert.equal(ultimoDiaDoMes({ year: 2026, month: 6 }), 30);
+  assert.equal(ultimoDiaDoMes({ year: 2026, month: 7 }), 31);
+  assert.equal(ultimoDiaDoMes({ year: 2026, month: 2 }), 28);
+  assert.equal(ultimoDiaDoMes({ year: 2028, month: 2 }), 29); // bissexto
+});
+
+test("22) mes FECHADO: janela mes-cheio, sem dias de corte", () => {
+  const j = resolverJanela({ competencia: JUL, modo: "mes-cheio" });
+  assert.equal(j.modo, "mes-cheio");
+  assert.equal(j.diaCorteAtual, null);
+  assert.equal(j.diaCorteAnterior, null);
+  assert.equal(j.clampado, false);
+  assert.equal(j.recorteIndisponivel, false);
+});
+
+test("23) mes ABERTO dia 26: corta 1-26 nos DOIS lados, sem clamp", () => {
+  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 26 });
+  assert.equal(j.modo, "ate-dia-N");
+  assert.equal(j.diaCorteAtual, 26);
+  assert.equal(j.diaCorteAnterior, 26); // junho tem 30 dias, 26 cabe
+  assert.equal(j.clampado, false);
+});
+
+test("24) CLAMP fim de mes: hoje 31/07 e junho tem 30 dias -> M-1 corta em 30", () => {
+  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 31 });
+  assert.equal(j.diaCorteAtual, 31);
+  assert.equal(j.diaCorteAnterior, 30); // junho inteiro
+  assert.equal(j.clampado, true);
+});
+
+test("25) CLAMP em fevereiro: hoje 31/03 -> M-1 (fev/2026) corta em 28", () => {
+  const j = resolverJanela({ competencia: { year: 2026, month: 3 }, modo: "ate-dia-N", dia: 31 });
+  assert.equal(j.diaCorteAtual, 31);
+  assert.equal(j.diaCorteAnterior, 28);
+  assert.equal(j.clampado, true);
+});
+
+test("26) CLAMP com virada de ano: hoje 31/01 -> M-1 (dez) tem 31, sem clamp", () => {
+  const j = resolverJanela({ competencia: { year: 2026, month: 1 }, modo: "ate-dia-N", dia: 31 });
+  assert.equal(j.diaCorteAtual, 31);
+  assert.equal(j.diaCorteAnterior, 31);
+  assert.equal(j.clampado, false);
+});
+
+test("27) dia fora do intervalo e sanitizado ao mes corrente", () => {
+  // 31 de junho nao existe: o proprio mes atual limita.
+  const j = resolverJanela({ competencia: { year: 2026, month: 6 }, modo: "ate-dia-N", dia: 99 });
+  assert.equal(j.diaCorteAtual, 30);
+  const j2 = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 0 });
+  assert.equal(j2.diaCorteAtual, 1);
+});
+
+test("28) recorteIndisponivel forca mes-cheio e marca o motivo", () => {
+  const j = resolverJanela({
+    competencia: JUL,
+    modo: "ate-dia-N",
+    dia: 26,
+    recorteIndisponivel: true,
+  });
+  assert.equal(j.modo, "mes-cheio");
+  assert.equal(j.diaCorteAtual, null);
+  assert.equal(j.recorteIndisponivel, true);
+});
+
+test("29) a janela viaja no resultado e vira rotulo", () => {
+  const jRecorte = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 26 });
+  const r = calcularDelta({
+    competencia: JUL,
+    valorAtual: 4_332_356.55,
+    valorAnterior: 4_846_718.35,
+    janela: jRecorte,
+  });
+  assert.equal(r.janela.modo, "ate-dia-N");
+  assert.equal(rotuloJanela(r), "1-26");
+  assert.equal(r.deltaPct, -10.6);
+  assert.equal(r.direcao, "down");
+});
+
+test("30) rotulo mostra as duas janelas quando houve clamp", () => {
+  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 31 });
+  const r = calcularDelta({ competencia: JUL, valorAtual: 110, valorAnterior: 100, janela: j });
+  assert.equal(rotuloJanela(r), "1-31 x 1-30");
+});
+
+test("31) rotulo avisa 'mes cheio' quando o recorte nao foi possivel", () => {
+  const j = resolverJanela({
+    competencia: JUL,
+    modo: "ate-dia-N",
+    dia: 26,
+    recorteIndisponivel: true,
+  });
+  const r = calcularDelta({ competencia: JUL, valorAtual: 110, valorAnterior: 100, janela: j });
+  assert.equal(rotuloJanela(r), "mes cheio");
+});
+
+test("32) mes FECHADO nao ganha rotulo de janela (nao poluir o card)", () => {
+  const r = calcularDelta({ competencia: JUL, valorAtual: 110, valorAnterior: 100 });
+  assert.equal(r.janela.modo, "mes-cheio");
+  assert.equal(rotuloJanela(r), null);
+});
+
+test("33) deltaDaSerie repassa a janela intacta", () => {
+  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 26 });
+  const serie: PontoSerie[] = [
+    { year: 2026, month: 6, valor: 4_846_718.35, fonte: "daily" },
+    { year: 2026, month: 7, valor: 4_332_356.55, fonte: "daily" },
+  ];
+  const r = deltaDaSerie({ serie, competencia: JUL, janela: j });
+  assert.equal(r.janela.diaCorteAtual, 26);
+  assert.equal(r.fontesDivergentes, false); // recorte le a MESMA fonte dos 2 lados
+  assert.equal(r.deltaPct, -10.6);
 });
