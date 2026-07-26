@@ -469,6 +469,22 @@ a {
   gap: 16px;
 }
 
+/* CLAMP DE LARGURA — nao remover.
+   Item de grid nasce com min-width:auto, ou seja, NAO encolhe abaixo do
+   min-content do proprio conteudo. Sem este 0, uma tabela larga (a de
+   /comissoes/editar pede 2280px) empurra o track do .rr-main-shell para
+   alem dos 1840px, e quem passa a rolar na horizontal e o DOCUMENTO: a
+   barra vai parar no rodape da pagina inteira e as colunas sticky perdem
+   o scrollport contra o qual grudavam.
+
+   Este clamp existia ate a Fase 2 da frente menu-topo como
+   `.rr-content { min-width: 0 }`. A Fase 3 tirou a .rr-content junto com o
+   grid de 2 colunas do shell e levou o clamp sem querer. Voltou aqui, que
+   e onde o unico grid remanescente do shell vive. */
+.rr-main-shell > * {
+  min-width: 0;
+}
+
 
 .rr-home-card:hover {
   border-color: #0d4de3;
@@ -557,8 +573,12 @@ a {
    Container vira janela fixa com scroll vertical interno; thead sticky
    gruda no topo do container; scrollbar horizontal fica no rodape do
    container, acessivel sem rolar a pagina. Calibre maxHeight via inline
-   style por tela quando houver elementos fixos (ex: BulkActionBar em
-   /comissoes/editar reserva 220px adicionais no rodape). */
+   style por tela quando houver elementos fixos — e o que o prop
+   `maxHeightOffset` do <Table> faz; hoje nenhuma tela do kit precisa.
+
+   NAO cite /comissoes/editar aqui: ela nunca usou o kit. E tabela crua
+   (<table className="dt">) com CSS proprio escopado em .rredit, dentro do
+   proprio page.js, e reserva o espaco da BulkActionBar por conta dela. */
 .rr-table-wrap--scrollable {
   overflow-y: auto;
   max-height: calc(100vh - var(--chrome-offset));

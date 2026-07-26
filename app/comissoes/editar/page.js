@@ -832,7 +832,11 @@ export default function EditarComissoesPage() {
             </span>
           </div>
 
-          <div className="tscroll">
+          <div
+            className={`tscroll${
+              !readOnly && selectedIds.size > 0 ? " bulk" : ""
+            }`}
+          >
             <table className="dt">
               <thead>
                 <tr>
@@ -1663,7 +1667,22 @@ const CSS = `
 .rredit .tcard-head .scrollhint{font-size:11px;color:var(--ink-3);display:inline-flex;align-items:center;gap:7px;}
 .rredit .tcard-head .scrollhint svg{color:var(--ink-3);}
 
-.rredit .tscroll{overflow-x:auto;overflow-y:visible;}
+/* JANELA VIEWPORT-BOUND (mesmo padrao do kit <Table scrollable> e do
+   /promotores). Antes era overflow-x:auto + overflow-y:visible SEM altura:
+   o scrollport tinha a altura da tabela inteira, entao (1) a barra
+   horizontal ficava no rodape das ~700 linhas — so alcancavel rolando a
+   pagina toda — e (2) o thead sticky grudava no topo de um scrollport bem
+   mais alto que a tela, ou seja, nunca aparecia grudado.
+   Com max-height a barra fica no rodape da JANELA e o thead gruda no topo
+   dela. As colunas congeladas (.stk) passam a ter contra o que grudar.
+   --chrome-offset e o mesmo token das 30 chamadas do kit (globals.css). */
+.rredit .tscroll{overflow:auto;max-height:calc(100vh - var(--chrome-offset));}
+/* Com selecao ativa a BulkActionBar (position:fixed;height:220;bottom:18)
+   cobre 238px do rodape. A janela encolhe o mesmo tanto para a barra
+   horizontal nao ficar embaixo dela. Sem selecao a barra nao existe e a
+   janela volta ao tamanho cheio — por isso o reserve e condicional, nao
+   um desconto fixo. */
+.rredit .tscroll.bulk{max-height:calc(100vh - var(--chrome-offset) - 238px);}
 .rredit table.dt{border-collapse:separate;border-spacing:0;min-width:2280px;width:100%;}
 .rredit table.dt thead th{position:sticky;top:0;z-index:5;background:#FAFBFC;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);text-align:left;padding:11px 14px;border-bottom:1px solid var(--bd);white-space:nowrap;vertical-align:bottom;}
 .rredit table.dt thead th.r{text-align:right;}
