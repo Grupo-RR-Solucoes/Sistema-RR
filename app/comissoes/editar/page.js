@@ -39,8 +39,12 @@ const FILTERABLE_COLUMNS = {
   },
   srcc_restriction: {
     label: "Restricao SRCC",
-    getValue: (row) => row.srcc_restriction || "Nao",
-    getDisplayLabel: (row) => row.srcc_restriction || "Nao",
+    // Filtra pelo texto JA traduzido (ver srccTexto): assim o codigo "2" e o
+    // texto "Não" viram UMA entrada so no filtro, em vez de duas opcoes que
+    // significam a mesma coisa. Funcao declarada (hoisted) — pode ser usada
+    // aqui, antes da definicao la embaixo.
+    getValue: (row) => srccTexto(row.srcc_restriction),
+    getDisplayLabel: (row) => srccTexto(row.srcc_restriction),
   },
   // % A VISTA: regra TRP/OPP pura Promotiva, lida de raw_payload via
   // getAVistaPercent (4.4-fix-1.E D1). Read-only.
@@ -864,7 +868,7 @@ export default function EditarComissoesPage() {
                     className="stk c-ct"
                     style={readOnly ? { left: 0 } : undefined}
                   >
-                    Contrato
+                    Proposta
                   </th>
                   <th className="r">Valor bruto</th>
                   <th className="r">Valor líquido</th>
@@ -1091,7 +1095,24 @@ export default function EditarComissoesPage() {
                           className="stk c-ct"
                           style={readOnly ? { left: 0 } : undefined}
                         >
-                          <span className="ct">{row.contract_number || "-"}</span>
+                          {/* PROPOSTA, nao contrato. O numero de contrato nao
+                              existe na planilha diaria (ela traz "Data
+                              Contrato", "Data Proposta" e "Numero Proposta",
+                              mas nenhuma coluna com o NUMERO do contrato),
+                              entao contract_number chega nulo em 99,6% das
+                              linhas — inclusive em competencia FECHADA, o que
+                              descarta a hipotese de "proposta ainda nao
+                              contratada". Medido em 26/07/2026: 0% em
+                              mar/abr/mai/jul e 2,3% em junho.
+                              O numero da proposta esta em 100% das linhas. */}
+                          <span className="ct">{row.proposal_number || "-"}</span>
+                          {/* Nos poucos casos com contrato, ele aparece embaixo
+                              em vez de sumir. */}
+                          {row.contract_number ? (
+                            <small className="ctsub">
+                              contrato {row.contract_number}
+                            </small>
+                          ) : null}
                         </td>
                         <td className="r">
                           {formatCurrency(row.gross_value || 0)}
@@ -1138,16 +1159,30 @@ export default function EditarComissoesPage() {
                           })()}
                         </td>
                         <td className="c">
-                          {srccRestricted(row.srcc_restriction) ? (
-                            <span className="badge red">
-                              <span className="d" />
-                              {row.srcc_restriction || "Nao"}
-                            </span>
-                          ) : (
-                            <span className="badge neu">
-                              {row.srcc_restriction || "Nao"}
-                            </span>
-                          )}
+                          {(() => {
+                            const estado = srccEstado(row.srcc_restriction);
+                            const texto = srccTexto(row.srcc_restriction);
+                            if (estado === "restrito") {
+                              return (
+                                <span className="badge red">
+                                  <span className="d" />
+                                  {texto}
+                                </span>
+                              );
+                            }
+                            if (estado === "indefinido") {
+                              return (
+                                <span
+                                  className="badge amb"
+                                  title="A consulta de restrição não foi feita: não se sabe se há restrição ou não. Estado indefinido, não é uma negativa."
+                                >
+                                  <span className="d" />
+                                  {texto}
+                                </span>
+                              );
+                            }
+                            return <span className="badge neu">{texto}</span>;
+                          })()}
                         </td>
                         <td className="r">
                           {Number(row.insurance_value || 0) > 0
@@ -1435,9 +1470,57 @@ function shareBadge(source, override, companyReceivedPercent) {
   return null;
 }
 
-// 4.4-fix-1.C: "Sim" -> vermelho de aviso; demais ("Nao", "Nao se aplica") -> neutro.
-function srccRestricted(label) {
-  return String(label || "").trim().toUpperCase() === "SIM";
+// ============================================================
+// RESTRICAO SRCC — tres estados, nao dois.
+//
+// Antes: `label === "SIM"` -> vermelho, TODO o resto -> cinza. Com isso
+// "Consulta nao realizada" era pintada igual a "Nao", ou seja, o sistema
+// mostrava "nao sei" com a mesma cara de "nao ha restricao". Sao 176 linhas
+// (mar-jul/2026) em que a informacao e AUSENTE, nao negativa.
+//
+// A coluna chega em dois formatos misturados: texto por extenso e CODIGO
+// NUMERICO cru. Mapeamento oficial da tabela BBTS (TRP38, secao 5.3):
+//   1 = SIM · 2 = NAO · 3 = CONSULTA NAO REALIZADA · 4 = NAO SE APLICA
+// Medido: 18 linhas com "2" e 1 com "4" chegavam sem traducao e apareciam
+// como numero solto na tela.
+//
+// As tres cores:
+//   VERMELHO  restricao CONFIRMADA (1 / "Sim")
+//   AMBAR     INDEFINIDO (3 / "Consulta nao realizada") — nao se sabe
+//   CINZA     negativa CONHECIDA (2 e 4 e seus textos)
+// ============================================================
+const SRCC_POR_CODIGO = {
+  1: "Sim",
+  2: "Não",
+  3: "Consulta não realizada",
+  4: "Não se aplica",
+};
+
+/** Texto a exibir: traduz o codigo numerico; devolve o texto como veio. */
+function srccTexto(valor) {
+  const cru = String(valor ?? "").trim();
+  if (!cru) return "Não";
+  const codigo = Number(cru);
+  if (Number.isInteger(codigo) && SRCC_POR_CODIGO[codigo]) {
+    return SRCC_POR_CODIGO[codigo];
+  }
+  return cru;
+}
+
+/**
+ * Estado da etiqueta: "restrito" | "indefinido" | "neutro".
+ * Compara sobre o texto JA traduzido, entao codigo e texto caem no mesmo
+ * ramo — e o proximo formato que aparecer so precisa entrar no mapa.
+ */
+function srccEstado(valor) {
+  const texto = srccTexto(valor)
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toUpperCase();
+  if (texto === "SIM") return "restrito";
+  if (texto.startsWith("CONSULTA NAO REALIZADA")) return "indefinido";
+  return "neutro";
 }
 
 // ============================================================
@@ -1709,7 +1792,9 @@ const CSS = `
 .rredit .th-f{display:inline-flex;align-items:center;gap:4px;}
 
 /* contract cell */
-.rredit .ct{font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;}
+.rredit .ct{font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;display:block;}
+/* numero do contrato, quando existe: segunda linha menor sob a proposta */
+.rredit .ctsub{display:block;font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums;margin-top:2px;}
 .rredit .chavej{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-2);letter-spacing:-.01em;}
 .rredit .prod{color:var(--ink);font-weight:500;}
 
@@ -1741,6 +1826,12 @@ const CSS = `
 .rredit .badge.red{color:var(--red);background:var(--red-bg);border-color:#F3C9C6;}
 .rredit .badge.red .d{width:5px;height:5px;border-radius:50%;background:var(--red);}
 .rredit .badge.neu{color:var(--ink-3);background:var(--neu);border-color:var(--bd);}
+/* AMBAR = estado indefinido (consulta nao realizada). Reusa a familia --warn
+   do sistema, nao inventa cor. Tem o mesmo ponto colorido do vermelho: a
+   distincao entre "ha restricao" e "nao se sabe" nao pode depender so do
+   matiz, senao some para quem nao distingue bem cor. O cinza nao tem ponto. */
+.rredit .badge.amb{color:var(--warn,#B07A12);background:var(--warn-bg,#FBF1DC);border-color:var(--warn-bd,#EAD7A6);cursor:help;}
+.rredit .badge.amb .d{width:5px;height:5px;border-radius:50%;background:var(--warn,#B07A12);}
 
 /* row actions */
 .rredit .racts{display:inline-flex;align-items:center;gap:7px;}
