@@ -1,7 +1,7 @@
 # HANDOFF — frente menu-topo (+ delta 3a/3b, UI 4a/4b)
 
-**Branch:** `feat/menu-topo` · **NÃO pushada** · último commit: `46e5100`
-**Base da retomada:** `2cfdf47` (fase 3b, o CHECKPOINT onde a sessão começou)
+**Branch:** `feat/menu-topo` · **não enviada ao repositório remoto** · último commit: `e658bf4`
+**Base da retomada:** `2cfdf47` (fase 3b, o ponto de conferência onde a sessão começou)
 **Data:** 26/07/2026
 
 `tsc --noEmit` = 0 erros em **todos** os commits abaixo, verificado um a um.
@@ -22,6 +22,11 @@
 | `5224d0b` | **4a** — tooltip com valor exato no ponto do gráfico |
 | `cf5b890` | **4b** — edição do promotor vira drawer lateral |
 | `46e5100` | mata o fóssil de comentário do `paidInsuranceShare` (só comentário) |
+| `87dca3a` | **sondas** — coluna Contrato vazia e causa do "SEM REGRA TRP" (leitura pura) |
+| `b1448e2` | **coluna Proposta** + três estados de SRCC em `/comissoes/editar` |
+| `dccc93f` | **motor** — exporta `calcularComissaoEmpresaRecortada` (adição pura, sem chamador) |
+| `ef46b09` | **sonda** — SRCC separado por gestora (RR/Promotiva e ADS/BBTS) |
+| `e658bf4` | **SRCC** — regra única na biblioteca, quarto estado e tratamento de mês fechado |
 
 ---
 
@@ -91,6 +96,38 @@ O painel não estava mal posicionado: era **coluna permanente para conteúdo eve
 
 Agora `.resumo-grid` é `1fr` e a edição é drawer pela direita. **Mecânica promovida do `AppShell`**, não nova: `fixed` + `translateX(100%)` + backdrop + Escape + trava de scroll. Diferenças deliberadas: entra pela **direita** (o menu entra pela esquerda — lados distintos separam navegação de detalhe); backdrop **`.32`** contra o `.42` do menu (o motivo de ser drawer é a linha continuar legível); **z-index 60/59**, a faixa dos drawers de tela do `globals.css`. Fechar não deseleciona a linha.
 
+### Coluna Proposta em `/comissoes/editar` (`b1448e2`)
+A coluna mostrava "-" em quase toda linha porque lia `contract_number`, e esse campo **nunca é preenchido**: a planilha diária não tem coluna com o *número* do contrato — traz `Data Contrato`, `Data Proposta` e `Número Proposta`, e o importador procura por `"Contrato"` / `"Numero Contrato"`, que não existem.
+
+Medido (`scripts/probe-contrato-vazio.cjs`): 0% preenchido em março, abril, maio e julho; 2,3% em junho. **Junho está fechada**, o que descarta a hipótese de "proposta ainda não contratada". O número da proposta está em 100% das linhas, em todas as competências.
+
+A coluna virou **Proposta**; nas 19 linhas que têm contrato, ele aparece como segunda linha menor.
+
+### SRCC — regra única, quatro estados (`b1448e2` + `e658bf4`)
+A regra é do Banco do Brasil e vale para as **duas gestoras**, mas estava duplicada e incompleta: `/comissoes/editar` classificava de um jeito e `PromotorView` de outro, este último cego aos códigos numéricos. A mesma linha da ADS aparecia como "Não" numa tela e "2" na outra.
+
+Agora mora em `lib/proposalDetailing.ts`, ao lado do `getSrccRestrictionLabel`, e as duas telas consomem de lá.
+
+**Formato por gestora** (medido, `scripts/probe-srcc-duas-gestoras.cjs`):
+
+| gestora | formato | linhas |
+|---|---|---|
+| RR (Promotiva) | texto por extenso | 2.121 |
+| ADS (BBTS) | **código numérico** (`2`, `4`) e **30 linhas sem coluna nenhuma** | 49 |
+
+Mapa oficial aplicado (TRP38, seção 5.3): `1=Sim`, `2=Não`, `3=Consulta não realizada`, `4=Não se aplica`.
+
+**Quatro estados:**
+- **vermelho** — restrição confirmada (1 / "Sim"). Não paga.
+- **âmbar** — indefinido (3). **Transitório**: pode virar Sim ou Não.
+- **cinza tracejado** — `Sem informação`. As 30 linhas da ADS sem coluna. O `getSrccRestrictionLabel` **fabricava "Não"** nesse caso — devolvia negativa a partir de ausência de dado. Corrigido.
+- **cinza liso** — negativa conhecida (2 e 4).
+
+**Mês fechado** muda o significado do âmbar: deixa de ser "aguardando" e passa a `Não resolvido`, com borda cheia. A tela usa o `readOnly`, que já marca competência fechada.
+
+### Função do motor exportada (`dccc93f`)
+`calcularComissaoEmpresaRecortada`, em `lib/promoterAnalytics.ts`. Recebe os dois parâmetros **separados**: `producaoMensalDoGrupo` (a faixa, sempre mês inteiro, nas duas competências) e `ateDia` (o recorte, que só decide quais linhas somam). É adição pura e **ainda não tem chamador** — ver a dívida no fim deste documento.
+
 ---
 
 ## FALTA — com o caminho já fechado
@@ -128,6 +165,41 @@ Existe série mensal em `lib/financialAnalytics.ts:143-152` (`FinanceCashTrendPo
 ### 3c-d · fora por decisão
 Comissões recebidas, Seguro recebido, Seguro repassado e Saldo de comissões ficam **sem delta**: existem só no summary, não na série. Construir série para eles é frente própria, não entra aqui.
 
+### FRENTE 2 · SRCC não resolvido pelo fechamento — mapeada, NÃO feita
+
+**O achado central:** nenhum dos dois caminhos de fechamento reescreve o SRCC.
+
+- `lib/monthlyClosingImport.ts` (fechamento RR, Excel Promotiva): **zero ocorrências** de `srcc_restriction` / `is_srcc_restricted`. Não lê, não escreve.
+- `lib/bbtsMonthly.ts` (fechamento ADS, PDFs BBTS): **só lê** `is_srcc_restricted` para excluir a linha do cálculo. Não escreve.
+- `app/api/import/daily/route.ts:570` é o **único** lugar do sistema que grava o campo.
+
+**O SRCC entra pela diária e nunca mais é revisto.** A transição que o negócio espera — âmbar virar vermelho ou cinza quando a consulta é resolvida — **não existe hoje, em nenhuma das duas gestoras**.
+
+**A prova acumulada:** 116 linhas presas em âmbar em competências **já fechadas** — 4 em 03/2026, 61 em 04/2026, 1 em 05/2026, 50 em 06/2026, **todas na RR**. Na ADS não aparece porque a BBTS nunca grava o código 3.
+
+**A solução provável não é investigação, é uma rotina de resolução retroativa.** O fechamento carrega a resposta implícita: proposta paga = não havia restrição; não paga = havia. O dado que resolve o âmbar chega todo mês e é descartado.
+
+**Suspeita de maior risco — NÃO VERIFICADA.** Uma linha que era SRCC restrito não é paga legitimamente, mas para a conferência (`conferenciaTrp` / `conferenciaBbts`) ela pode aparecer como **subpagamento recuperável**, porque a régua diz que era devida. Se isso ocorrer, é falso positivo da auditoria e o número de recuperável está inflado. É suspeita, não achado — ninguém conferiu.
+
+**Também sem resposta:** o que acontece com o dinheiro na transição. Se a comissão de uma linha já entrou no cálculo do mês aberto e ela depois vira "Sim", o valor some, é recalculado ou fica órfão — e se isso acontece em silêncio.
+
+### FRENTE 3 · As 166 linhas sem taxa à-vista — mapeada, NÃO feita
+
+O universo real é **166**, não 311: `Cancelado` (218 linhas) e `Em Aberto` (66) não devem ter taxa mesmo.
+
+| gestora | situação | linhas |
+|---|---|---|
+| RR (Promotiva) | Produção | **135** |
+| ADS (BBTS) | Produção | **31** |
+
+Proporção geral: RR perde taxa em 19,8% das linhas; **ADS em 63,3%** — três vezes mais, embora em números absolutos seja pouco.
+
+**A concentração:** produto **2882**, prazos **108 e 96** → **99 linhas, R$ 1,55 milhão**. Mesmo padrão do CDC Novo.
+
+**A investigar:** é **roteamento** (como foi o CDC Novo) ou **lacuna real de régua**? A TRP38 tem célula "Acima de 84" para INSS (3,34% F3) e Demais Públicos vai até 120 parcelas — **então deveria haver célula**, e a suspeita pende para roteamento. Se confirmar, é dinheiro não pago ao promotor e vira frente própria com prioridade.
+
+Faltam ainda: o convênio dessas 99 linhas; as 12 linhas da ADS com prazo 108 e **sem código de produto** (R$ 211.654,00), contra a tabela BBTS; e quanto de comissão isso representa se as células existirem e forem aplicadas.
+
 ### Fases 4, 5 e 6 do plano original do menu — NÃO feitas
 - **Fase 4:** remover a marca das 16 telas (hoje repetida no `HeaderNavy` de cada uma, redundante com a barra).
 - **Fase 5:** recalibrar `--chrome-offset` — hoje vale `240px`, herdado do mundo PRÉ-BARRA (topbar 40 + 200 de padding/header/folga). O comentário em `globals.css` avisa: **as ~30 chamadas de `<Table scrollable>` dependem deste valor**; trocar o termo da topbar por `var(--nav-h)` exige recalcular, senão as janelas ficam erradas em silêncio.
@@ -148,8 +220,20 @@ Implementação: passar ao `calcularDelta` **a competência que o card de fato m
 **Nada desta frente foi visto rodando.** A extensão do Chrome foi recusada na sessão, então não houve como dirigir o navegador. Tudo foi verificado por `tsc` e por leitura de código; o único check em runtime foi por HTTP, confirmando que o dev server compilou e serve a regra do clamp no `layout.css`.
 
 Falta olhar, com olho humano:
-1. `/comissoes/editar` — barra horizontal alcançável sem rolar a página toda, `thead` grudando no topo da janela, Contrato congelada na horizontal.
-2. `/promotores` aba wide em **1440** — validar que o clamp resolveu a quebra latente.
+1. `/comissoes/editar` — barra horizontal alcançável sem rolar a página toda, cabeçalho fixo no topo da janela, primeira coluna congelada na horizontal.
+2. `/promotores` aba wide em **1440** — validar que o limite de largura resolveu a quebra latente.
 3. A barra com 7 itens em **1366** — confirmar que a conta fecha na prática (a estimativa de largura de texto tem ±5%).
-4. O tooltip do gráfico do Dashboard.
-5. O drawer do 4b — abre ao clicar na linha, fecha por Escape/backdrop/X, linha visível atrás.
+4. A caixa de valor ao passar o mouse no ponto do gráfico do painel principal.
+5. O painel deslizante da edição do promotor — abre ao clicar na linha, fecha por Escape, pelo fundo escurecido e pelo X, com a linha visível atrás.
+6. A coluna **Proposta** em `/comissoes/editar`, com o contrato como segunda linha nas 19 que o têm.
+7. As **quatro etiquetas de SRCC** nas duas telas (`/comissoes/editar` e a carteira do promotor), incluindo o cinza tracejado "Sem informação" e o "Não resolvido" em competência fechada.
+
+---
+
+## DÍVIDA TÉCNICA ABERTA
+
+**`calcularComissaoEmpresaRecortada` existe e não tem chamador.** A função foi exportada em `dccc93f` com os dois parâmetros separados, mas a rota `app/api/dashboard/route.ts` ainda calcula a variação da comissão bruta em mês-cheio.
+
+Para ligar, a rota precisa carregar o registro completo (`raw_payload`, `company_received_percent`, datas, produto, prazo) das **duas** competências, mais a produção mensal cheia de cada uma e o provedor da TRP — a consulta `dailyRecorte` de hoje é enxuta demais para isso.
+
+O comentário no ponto do cálculo **já registra o estado real** (decisão revertida em 26/07, refinamento faixa-mensal + soma-recortada, função aguardando chamador), então o código não contradiz mais a decisão. Falta só a ligação — e, depois dela, medir julho 1..N contra junho 1..N e comparar com os −13,4% de mês-cheio de hoje.

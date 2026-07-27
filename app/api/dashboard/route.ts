@@ -739,29 +739,42 @@ export async function GET(req: Request) {
     // acima; a fonte de cada ponta viaja junto para a tela poder sinalizar
     // comparacao cross-source.
     //
-    // ================= DECISAO FECHADA — NAO REABRIR =================
-    // A comissao BRUTA da empresa fica em MES-CHEIO de proposito. Nao e falta
-    // de caminho: medimos e o caminho existe (o daily de junho tem 714 linhas
-    // elegiveis com data). Foi RECUSADO em 26/07/2026, por dois motivos:
+    // ============ MES-CHEIO AQUI E PROVISORIO — VAI RECORTAR ============
     //
-    //   1) NAO SERIA IDENTIDADE, seria aproximacao. 8% das linhas (58 em 714,
-    //      R$ 472 mil de net) nao trazem a taxa a vista propria e caem no
-    //      deriveCompanyReceivedRate, que acha a faixa da TRP pela producao
-    //      MENSAL do grupo. Recortar 1..N encolhe a producao e pode empurrar
-    //      essas linhas para uma faixa INFERIOR — o recorte mudaria a taxa,
-    //      nao so a janela.
+    // ATENCAO: este bloco ja disse "DECISAO FECHADA — NAO REABRIR", defendendo
+    // que a comissao BRUTA ficaria em mes-cheio para sempre. AQUELA DECISAO FOI
+    // REVERTIDA pelo Diego em 26/07/2026. O texto antigo esta morto; o que vale
+    // e o que esta escrito abaixo.
     //
-    //   2) CUSTARIA A ANCORA DE CONFERENCIA. Hoje o M-1 deste card e o numero
-    //      do fechamento (junho: R$ 196.837,68), que o Diego usa para conferir
-    //      contra o PDF. Com o recorte ele viraria motor-sobre-daily
-    //      (R$ 187.251,63 nas linhas com taxa propria) e deixaria de bater com
-    //      qualquer documento.
+    // POR QUE A RECUSA CAIU. Os dois motivos originais nao se sustentaram:
     //
-    // Trocar precisao de VALOR por precisao de JANELA nao compensa NESTE card.
-    // Mes-cheio com o aviso ja e honesto: o card diz o que esta comparando.
-    // O SEGURO e outro caso e foi implementado — la a comissao ja existe por
-    // registro, sem derive nenhum. Ver o bloco do seguro abaixo.
-    // =================================================================
+    //   1) A ancora de conferencia nao se perde. O valor do M-1 NAO APARECE na
+    //      tela — ele so entra na conta da variacao. A ancora que o Diego usa
+    //      para conferir contra o PDF continua no /fechamento e na DRE, que
+    //      nao mudam.
+    //
+    //   2) A aproximacao dos 8% tem conserto, e o conserto e simples: separar
+    //      a FAIXA do RECORTE. A faixa da TRP sai da producao do MES INTEIRO
+    //      nas duas competencias (faixa e conceito mensal — a TRP escalona por
+    //      volume do mes, nao por volume do pedaco olhado), e o recorte decide
+    //      apenas QUAIS LINHAS entram na soma. Assim a faixa fica estavel e a
+    //      soma fica exata, que era exatamente o que faltava.
+    //
+    // ESTADO ATUAL: a funcao ja existe e esta exportada —
+    // calcularComissaoEmpresaRecortada, em lib/promoterAnalytics.ts, com os
+    // dois parametros separados (producaoMensalDoGrupo e ateDia). Ela NAO TEM
+    // CHAMADOR ainda: falta ligar esta rota nela, o que exige carregar o
+    // registro completo (raw_payload, company_received_percent, datas, produto,
+    // prazo) das DUAS competencias, mais a producao mensal cheia de cada uma e
+    // o provedor da TRP. A consulta dailyRecorte de hoje e enxuta demais.
+    //
+    // Ate essa ligacao acontecer, o card segue em mes-cheio ROTULADO — que
+    // continua honesto (o card diz o que esta comparando), so nao e mais o
+    // destino final.
+    //
+    // O SEGURO ja recorta desde 26/07: la a comissao existe por registro, sem
+    // derive nenhum. Ver o bloco do seguro abaixo.
+    // ====================================================================
     const janelaSemRecorte = resolverJanela({
       competencia,
       modo: modoJanelaPedido,
