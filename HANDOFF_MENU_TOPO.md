@@ -183,7 +183,64 @@ Comissões recebidas, Seguro recebido, Seguro repassado e Saldo de comissões fi
 
 **Também sem resposta:** o que acontece com o dinheiro na transição. Se a comissão de uma linha já entrou no cálculo do mês aberto e ela depois vira "Sim", o valor some, é recalculado ou fica órfão — e se isso acontece em silêncio.
 
-### FRENTE 3 · As 166 linhas que dependem do derive — **premissa corrigida**
+### FRENTE 3 · **ENCERRADA — não há o que consertar**
+
+> **VEREDITO FINAL (26/07/2026).** Medido com o **motor real** —
+> `calcularOperacao` + `buildTrpCreditProvider`, `TRP_SOURCE=db`, os mesmos que
+> rodam em produção — e não com reescrita à mão.
+> Script: `scripts/medida-a-derive-zero.mts`.
+
+**173 linhas** caem no terceiro degrau. O derive **zera 100 delas (57,8%)**,
+R$ 452.589,43 de produção.
+
+| competência | gestora | 3º degrau | zeradas | % |
+|---|---|---|---|---|
+| 03/2026 | RR | 1 | 1 | 100% |
+| 04/2026 | RR | 44 | 30 | 68,2% |
+| 05/2026 | RR | 5 | 5 | 100% |
+| 06/2026 | RR | 40 | 35 | 87,5% |
+| 06/2026 | ADS | 20 | 2 | 10,0% |
+| 07/2026 | RR | 52 | 25 | 48,1% |
+| 07/2026 | ADS | 11 | 2 | 18,2% |
+
+**O número grande não importa — importa o que ele agrupa.** As zeradas são
+**todas de prazo curto**: 37, 25, 13, 36, 24, 19, 16, 12, 5, 4, 3, 2, 1.
+Estão **abaixo do piso de elegibilidade**, e zerar ali é o comportamento
+**CORRETO** — com precedente do Diego em 01/06 (proposta 209454643, prazo
+24 < 36 → 0%).
+
+**E o que NÃO aparece é tão decisivo quanto o que aparece: nenhuma linha de
+prazo 96, 97, 108 ou 109 está entre as zeradas.** As 35 linhas do INSS acima
+de 84 **recebem taxa normalmente**. A régua e o lookup estão certos —
+confirmado pelo motor, não por dedução.
+
+**Único resíduo, para olhar sem pressa:** 1 linha de prazo 121 (`prod 2881`,
+`conv 96801`), que estoura o teto de 120 de Demais Públicos e provavelmente
+também está correta.
+
+#### O ARCO — a lição que custou mais caro nesta frente
+
+A investigação produziu, em sequência:
+
+| rodada | número "devido" |
+|---|---|
+| 1ª | **R$ 1,55 milhão** (99 linhas) |
+| 2ª | **R$ 702.730,94** (67 linhas acima do piso) |
+| 3ª | **R$ 12.970,02** (35 linhas do INSS acima de 84) |
+| medição real | **R$ 0** |
+
+Os três primeiros nasceram de **aproximação escrita à mão em CommonJS** —
+critérios de "sem taxa" inventados fora do motor, roteamento replicado sem a
+normalização de convênio, leitura do `regra_json` por chaves adivinhadas. Cada
+um parecia sólido e cada um estava errado.
+
+**Só a medição com o motor real resolveu.** A lição prática: quando a pergunta
+for sobre dinheiro, rode o código que calcula o dinheiro. Reescrever a regra
+"só para medir" não é atalho — é como se fabricam os três números acima.
+
+---
+
+### Histórico da FRENTE 3 (como se chegou ao veredito)
 
 > **NÚMEROS INVALIDADOS.** Versões anteriores deste documento traziam
 > "R$ 1,55 milhão / 99 linhas", depois "R$ 702.730,94 / 67 linhas acima do
@@ -224,11 +281,10 @@ prazo 96 → 3,34%, prazo 72 e 61 → 2,44%, prazo 49 e 48 → 2,03%.
 **Não está estabelecido que essas linhas ficaram sem comissão.** É plausível
 que estejam todas recebendo a taxa derivada corretamente.
 
-**A pergunta certa que fica:** das linhas que caem no derive, **para quantas
-ele retorna zero?** Só isso separa caso pontual de frente de trabalho. Exige
-executar `deriveCompanyReceivedRate` de verdade — e não há executor de
-TypeScript instalado (`tsx` e `ts-node` ausentes), o mesmo obstáculo que trava
-a medição da comissão bruta recortada.
+**A pergunta que ficava** — das linhas que caem no derive, para quantas ele
+retorna zero? — **está RESPONDIDA no veredito acima**: 100 de 173, todas
+legítimas. O executor foi instalado (`tsx`, commit `82b5af5`) e a medição
+rodou.
 
 > **CUIDADO com o atalho da etiqueta "SEM REGRA TRP".** Ela parece medir o
 > problema real, mas **não mede**: `app/api/commissions/proposals/route.ts:316`
@@ -279,6 +335,41 @@ Falta olhar, com olho humano:
 5. O painel deslizante da edição do promotor — abre ao clicar na linha, fecha por Escape, pelo fundo escurecido e pelo X, com a linha visível atrás.
 6. A coluna **Proposta** em `/comissoes/editar`, com o contrato como segunda linha nas 19 que o têm.
 7. As **quatro etiquetas de SRCC** nas duas telas (`/comissoes/editar` e a carteira do promotor), incluindo o cinza tracejado "Sem informação" e o "Não resolvido" em competência fechada.
+
+---
+
+## MEDIDAS PENDENTES — sem obstáculo técnico, o executor já está instalado
+
+### MEDIDA B · A etiqueta "SEM REGRA TRP" é falso positivo?
+
+**Evidência de código já levantada:**
+- `app/api/commissions/proposals/route.ts:316` seleciona
+  `company_received_percent` **cru da tabela** e entrega à tela.
+- `app/comissoes/editar/page.js:1448` acende a etiqueta quando esse valor é
+  nulo ou zero — **sem passar pelo derive**.
+
+**O contraste que a Medida A produziu:** das 173 linhas do terceiro degrau,
+**73 recebem taxa**. Essas 73 muito provavelmente exibem "SEM REGRA TRP" na
+tela, afirmando que *"a Promotiva não comissionou esta proposta"* e chamando-as
+de *"candidata a auditoria recuperatória"* — o que seria **falso**, porque o
+motor as paga.
+
+**Falta:** cruzar as duas listas (quem exibe a etiqueta × quem o derive paga) e
+confirmar. **Conserto provável:** a tela passar a usar o mesmo caminho de três
+degraus do motor, ou a etiqueta mudar de critério.
+
+### MEDIDA C · Comissão bruta recortada (dívida do `dccc93f`)
+
+Ligar a rota do painel principal na `calcularComissaoEmpresaRecortada` e medir
+**julho 1..N contra junho 1..N**, comparando com os **−13,4%** de mês-cheio de
+hoje. Agora dá para rodar por script **antes** de mexer na rota, que é o
+caminho mais seguro.
+
+### Detalhe prático (custou uma execução)
+
+Script TypeScript com `await` no topo precisa da extensão **`.mts`**. Com `.ts`
+o `tsx` compila para CommonJS e falha com
+*"Top-level await is currently not supported with the cjs output format"*.
 
 ---
 
