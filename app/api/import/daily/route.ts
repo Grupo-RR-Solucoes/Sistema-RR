@@ -83,6 +83,44 @@ function parseNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+/**
+ * "% A VISTA" da planilha -> company_received_percent, em PERCENTUAL.
+ *
+ * USADO SO PARA ESTA COLUNA (um chamador, linha ~454).
+ *
+ * O QUE MUDOU EM 27/07/2026, E POR QUE
+ * ---------------------------------------------------------------------------
+ * Antes: `parsed > 1 ? parsed / 100 : parsed` — gravava FRACAO (5,80 -> 0.058).
+ * Isso punha a coluna em DUAS convencoes opostas, porque o outro escritor,
+ * /api/calculate/monthly:1372, grava PERCENTUAL (5.8). Entre a importacao da
+ * diaria e a rodada do calculo a mesma coluna significava coisas diferentes, e
+ * cada leitor tinha a propria adivinhacao para descobrir qual.
+ *
+ * Pior: a adivinhacao ERRA os valores legitimos abaixo de 1%. A TRP38 tem
+ * celulas de 0,78% a 1,02% (SIAPE 1,64-1,67%: F1=0,94 F2=0,95 F3=0,97 F4=1,02;
+ * Publico Geral: F1=0,78 F2=0,79 F3=0,81). Um "0,95" da planilha nao e > 1,
+ * entao passava intacto e virava 0.95 — indistinguivel de uma fracao, lido como
+ * 95% por quem le fracao. Medidas: 9 linhas assim em 2026.
+ *
+ * Agora: grava o PERCENTUAL como veio, com JANELA DE PLAUSIBILIDADE.
+ *
+ * A janela nao e enfeite. Sem piso, uma planilha que um dia mande 0,058 (fracao
+ * de 5,8%) seria gravada como 0,058% — um numero pequeno, plausivel a olho nu e
+ * 100x errado, que nenhuma guarda pegaria. Com o piso ele vira null, e a taxa
+ * passa a ser resolvida pelo DERIVE da TRP, que e a fonte certa quando o dado
+ * da gestora nao serve.
+ *
+ *   > 6,5%   implausivel: o teto do a-vista e 6%. -> null, cai no derive.
+ *   < 0,1%   abaixo de qualquer celula conhecida (a menor e 0,78%): ou e fracao
+ *            disfarcada, ou e lixo. -> null, cai no derive.
+ *
+ * NAO devolva a divisao por 100 aqui. Se uma fonte nova mandar fracao, o certo
+ * e detectar isso na fonte, nao readivinhar por magnitude — foi exatamente a
+ * adivinhacao por magnitude que produziu o defeito acima.
+ */
+const AVISTA_PCT_MAX = 6.5;
+const AVISTA_PCT_MIN = 0.1;
+
 function parsePercent(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
 
@@ -94,7 +132,9 @@ function parsePercent(value: unknown) {
 
   const parsed = Number(normalized);
   if (!Number.isFinite(parsed)) return null;
-  return parsed > 1 ? parsed / 100 : parsed;
+  if (parsed <= 0) return null;
+  if (parsed > AVISTA_PCT_MAX || parsed < AVISTA_PCT_MIN) return null;
+  return parsed;
 }
 
 function parseRate(value: unknown) {
