@@ -195,6 +195,13 @@ a {
 .rr-nav__nav {
   flex: 1 1 auto;
   min-width: 0;
+  /* REDE DE SEGURANCA — nao e decoracao.
+     Sem isto a lista (itens com white-space:nowrap) transborda o proprio
+     container e e PINTADA POR CIMA do bloco do usuario: foi exatamente o que
+     apareceu a ~890px de area util. Com overflow:hidden o pior caso vira
+     corte, nunca sobreposicao. Acima do ponto de quebra nada corta (ha folga
+     medida); isto so age se a medida errar — nome gigante, zoom, rotulo novo. */
+  overflow: hidden;
 }
 .rr-nav__list {
   display: flex;
@@ -292,6 +299,107 @@ a {
   font-weight: 700;
   color: var(--gold);
   letter-spacing: 0.04em;
+}
+
+/* ===================================================================
+   FASE 6 — COLAPSO DA BARRA EM LARGURA ESTREITA
+
+   O DEFEITO QUE ISTO FECHA: os itens tinham white-space:nowrap e o bloco
+   do usuario era flex:none. Quando o espaco apertava, a lista nao
+   encolhia nem sumia — transbordava e era desenhada POR CIMA do usuario.
+   A ~890px de area util, "Cadastros" e "Financeiro" ficavam debaixo do
+   "Rodrigues / Socio".
+
+   OS NUMEROS SAIRAM DE MEDIDA, NAO DE ESTIMATIVA.
+   scripts/medida-barra-breakpoint.cjs le o proprio .woff2 que o next/font
+   baixou (IBM Plex Sans, variable font — os advances sao instanciados no
+   eixo wght, senao tudo sairia no peso 400) e soma os advance widths.
+
+     item = 26 (padding) + 17 (icone) + 8 (gap) + texto medido a 13px/500
+
+     Receita & Simples   158,9px   <- o mais largo, e nao "Importacoes"
+     Atribuir consorcio  157,0px
+     Consorcio (10%)     149,9px
+     Minha Equipe        131,6px
+     Importacoes         127,2px
+     Promotores          120,9px
+     Dashboard           115,8px
+     Financeiro          113,6px
+     Atribuicao          112,5px
+     Cadastros           111,1px
+     Despesas            108,4px
+     Projecao            103,1px
+
+   Cromo fixo = 36 (padding) + 48 (3 gaps de 16) + 34 (hamburguer) + 40
+   (marca) + 264 (bloco do usuario: 30 avatar + 10 + nome travado no
+   max-width 180 + 10 + 34 sair) = 422px.
+
+   Largura exigida pela barra EXPANDIDA, por papel:
+
+     funcionario       7 itens   854,1 + 422 = 1276,1px   <- PIOR
+     socio             7 itens   816,2 + 422 = 1238,2px
+     gestor_consorcio  2 itens   308,9 + 372 =  680,9px
+     promotor          2 itens   226,0 + 372 =  598,0px
+     supervisor        1 item    131,6 + 372 =  503,6px
+
+   O pior papel NAO e o socio: e o funcionario. Ele nao tem Dashboard nem
+   Financeiro, entao a barra dele completa com "Receita & Simples" e
+   "Despesas" — e "Receita & Simples" e o rotulo mais largo do sistema.
+
+   REGRA DOS TRES PONTOS DE QUEBRA: exigido + 20px de folga (kerning nao
+   medido — e ele so encolhe —, arredondamento subpixel e zoom do
+   usuario), arredondado para cima na dezena.
+
+     barra cheia   1276,1 + 20 = 1296,1  ->  1300px
+     barra curta    680,9 + 20 =  700,9  ->   710px
+     nome+papel     406,0 + 20 =  426,0  ->   430px
+
+   Duas faixas de barra, e nao uma: colapsar a barra de 1 ou 2 itens do
+   promotor no mesmo 1300px seria esconder atras de hamburguer uma barra
+   que cabe folgada em 710px.
+
+   Gate: scripts/medida-barra-breakpoint.cjs varre 320..1920px x 6 papeis
+   (9.606 combinacoes) e confere que a soma dos elementos visiveis nunca
+   passa do viewport. Pior folga 23,9px, em 1300px no funcionario.
+   =================================================================== */
+
+/* Hamburguer dispensavel (todos os destinos do papel ja estao na barra):
+   invisivel enquanto a barra estiver expandida. As regras de colapso
+   abaixo o trazem de volta — sem isso o papel sem hamburguer perderia
+   TODA a navegacao ao colapsar. */
+.rr-nav[data-burger="colapsada"] .rr-nav__burger {
+  display: none;
+}
+
+/* --- BARRA CHEIA (3+ itens): colapsa abaixo de 1300px --- */
+@media (max-width: 1299.98px) {
+  .rr-nav[data-bar="cheia"] .rr-nav__nav {
+    display: none;
+  }
+  .rr-nav[data-bar="cheia"][data-burger="colapsada"] .rr-nav__burger {
+    display: grid;
+  }
+}
+
+/* --- BARRA CURTA (ate 2 itens): colapsa abaixo de 710px --- */
+@media (max-width: 709.98px) {
+  .rr-nav[data-bar="curta"] .rr-nav__nav {
+    display: none;
+  }
+  .rr-nav[data-bar="curta"][data-burger="colapsada"] .rr-nav__burger {
+    display: grid;
+  }
+}
+
+/* --- TELEFONE: o nome e o papel saem ---
+   Colapsada com nome+papel o cromo pede 406px no pior caso (nome no
+   max-width 180). Em 375px faltariam 31px e o bloco do usuario voltaria a
+   brigar com a marca. Sem o texto sobra avatar + sair = 216px, que cabe
+   com folga. O nome continua acessivel: o drawer identifica o usuario. */
+@media (max-width: 429.98px) {
+  .rr-nav__uinfo {
+    display: none;
+  }
 }
 
 /* ===================================================================

@@ -128,6 +128,15 @@ const navGroups: NavGroup[] = [
  *   1440       1018               8  (956px usados, folga 62)
  *   1920       1498               9  (1072px usados, folga 426)
  *
+ * ATUALIZACAO (Fase 6): a tabela acima era ESTIMADA a mao. A medida real —
+ * scripts/medida-barra-breakpoint.cjs, que le o proprio .woff2 do next/font —
+ * confirma o 7 mas corrige quem e o pior caso: a barra mais larga e a do
+ * FUNCIONARIO (854,1px de lista, 1276,1px de viewport), nao a do socio
+ * (816,2px / 1238,2px). O funcionario nao ve Dashboard nem Financeiro, entao
+ * a completagem abaixo o serve com "Receita & Simples" — o rotulo mais largo
+ * do sistema, 158,9px, mais largo que "Importacoes". E dai que sai o ponto de
+ * quebra de 1300px do globals.css.
+ *
  * 7 e o maior numero que cabe no MENOR viewport suportado. Nao fixamos em 8
  * ou 9 porque o corte teria de ser por media query, e esconder item por CSS
  * quebra em silencio o papel que tem exatamente 8 ou 9 destinos: esse papel

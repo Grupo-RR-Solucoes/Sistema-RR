@@ -87,7 +87,10 @@ export type TopNavItem = {
 export interface TopNavProps {
   /** Itens que aparecem na barra (ja filtrados por papel). */
   items: TopNavItem[];
-  /** Ha destino fora da barra? Se nao, o hamburguer nem aparece. */
+  /**
+   * Ha destino fora da barra? Se nao, o hamburguer some — mas SO enquanto a
+   * barra esta expandida. Ver o comentario do colapso, abaixo.
+   */
   showHamburger: boolean;
   drawerOpen: boolean;
   onToggleDrawer: () => void;
@@ -122,20 +125,41 @@ export default function TopNav({
   avatarInitial,
   logoutAction,
 }: TopNavProps) {
+  // COLAPSO (Fase 6) — quem decide e o CSS, nao o React.
+  //
+  // data-bar diz QUANTA barra ha para caber, e o globals.css tem um ponto de
+  // quebra medido para cada caso. Nao ha estado de largura no React de
+  // proposito: matchMedia/ResizeObserver dariam um primeiro render com a barra
+  // errada (o servidor nao sabe a largura da janela) e um pulo visivel na
+  // hidratacao. Media query nao pisca.
+  //
+  //   cheia  3+ itens  -> colapsa abaixo de 1300px
+  //   curta  ate 2     -> colapsa abaixo de  700px
+  //
+  // Duas faixas porque a barra do promotor (2 itens, 598px) nao tem por que
+  // virar hamburguer no mesmo ponto que a do funcionario (7 itens, 1276px).
+  const barSize = items.length > 2 ? "cheia" : "curta";
+
+  // O HAMBURGUER PASSA A SER OBRIGATORIO NO COLAPSO. Com a barra escondida,
+  // papel sem hamburguer (promotor, supervisor, gestor de consorcio — todos com
+  // showHamburger=false, porque hoje todos os destinos deles cabem na barra)
+  // ficaria com ZERO navegacao na tela estreita. Entao o botao esta SEMPRE no
+  // DOM e o CSS o esconde apenas quando ele e dispensavel E a barra esta
+  // expandida. Acima do ponto de quebra o layout fica identico ao de hoje.
+  const burgerMode = showHamburger ? "sempre" : "colapsada";
+
   return (
-    <header className="rr-nav">
-      {showHamburger ? (
-        <button
-          type="button"
-          className="rr-nav__burger"
-          onClick={onToggleDrawer}
-          aria-label={drawerOpen ? "Fechar menu" : "Abrir menu"}
-          aria-expanded={drawerOpen}
-          title="Menu completo"
-        >
-          <Glyph d={MENU_PATH} />
-        </button>
-      ) : null}
+    <header className="rr-nav" data-bar={barSize} data-burger={burgerMode}>
+      <button
+        type="button"
+        className="rr-nav__burger"
+        onClick={onToggleDrawer}
+        aria-label={drawerOpen ? "Fechar menu" : "Abrir menu"}
+        aria-expanded={drawerOpen}
+        title="Menu completo"
+      >
+        <Glyph d={MENU_PATH} />
+      </button>
 
       {/* LOGO COMPACTO (marca isolada), NAO o lockup completo — medido.
 
