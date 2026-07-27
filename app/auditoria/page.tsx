@@ -67,7 +67,7 @@ export default function AuditoriaPage() {
         <nav className="crumb"><Link href="/dashboard">Dashboard</Link><span className="sep">/</span><span>Auditoria</span></nav>
 
         <HeaderNavy
-          brand="GRUPO RR CRED"
+          eyebrow="GRUPO RR CRED"
           title="Auditoria de divergências"
           actions={
             <div className="comp">

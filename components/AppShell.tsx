@@ -1,109 +1,40 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import BrandLogo from "./BrandLogo";
+import TopNav, { Glyph, LOGOUT_PATH, NavIcon, type TopNavItem } from "./TopNav";
 import { useUser } from "../lib/auth/useUser";
 import type { UserRole } from "../lib/auth/types";
 
-// Icones Lucide (stroke 1.8) — paths verbatim do mock aprovado.
-const ICON_PATHS: Record<string, string> = {
-  grid: '<rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/>',
-  gauge: '<path d="m13 13 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
-  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/>',
-  lock: '<rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
-  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
-  trending: '<path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/>',
-  clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>',
-  wallet: '<path d="M3 6a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v2"/><path d="M3 6v12a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3"/><path d="M21 11h-5a2 2 0 0 0 0 4h5a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1z"/>',
-  percent: '<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
-  arrowdown: '<circle cx="12" cy="12" r="10"/><path d="M12 8v8"/><path d="m8 12 4 4 4-4"/>',
-  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
-  filechart: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><path d="M14 2v6h6"/><path d="M8 18v-3"/><path d="M12 18v-6"/><path d="M16 18v-2"/>',
-  usercog: '<circle cx="18" cy="15" r="3"/><circle cx="9" cy="7" r="4"/><path d="M10 15H6a4 4 0 0 0-4 4v2"/><path d="m21.7 16.4-.9-.3"/><path d="m15.2 13.9-.9-.3"/><path d="m16.6 18.7.3-.9"/><path d="m19.1 12.2.3-.9"/><path d="m19.6 18.7-.4-1"/><path d="m16.8 12.3-.4-1"/><path d="m14.3 16.6 1-.4"/><path d="m20.7 13.8 1-.4"/>',
-  network: '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>',
-  linechart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="m19 9-5 5-4-4-3 3"/>',
-};
-
-function NavIcon({ name }: { name: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      dangerouslySetInnerHTML={{ __html: ICON_PATHS[name] ?? "" }}
-    />
-  );
-}
-
-const CHEVRON: Record<"left" | "right", string> = {
-  left: '<path d="m15 18-6-6 6-6"/>',
-  right: '<path d="m9 18 6-6-6-6"/>',
-};
-
-function Chevron({ dir }: { dir: "left" | "right" }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      dangerouslySetInnerHTML={{ __html: CHEVRON[dir] }}
-    />
-  );
-}
-
-// Logout (Lucide log-out) + Menu (Lucide menu) — mesmo idioma dos ícones da nav.
-const LOGOUT_PATH =
-  '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>';
-function LogoutIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      dangerouslySetInnerHTML={{ __html: LOGOUT_PATH }}
-    />
-  );
-}
-
-const MENU_PATH = '<path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>';
-function MenuIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="18"
-      height="18"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      dangerouslySetInnerHTML={{ __html: MENU_PATH }}
-    />
-  );
-}
+// ============================================================================
+// SHELL — barra do topo (permanente) + drawer sob demanda + conteudo.
+//
+// A sidebar lateral fixa saiu: a marca vive agora SO na barra, sempre visivel,
+// e o menu completo mora num drawer. Ganho medido: +220px de largura util na
+// maioria dos viewports, por 15px de altura permanente a mais.
+//
+// O DRAWER NAO E NOVO. E a sidebar mobile de sempre (position:fixed,
+// translateX(-100%), backdrop, Escape, trava de scroll) PROMOVIDA para todos os
+// breakpoints. A mecanica ja estava escrita e rodando em producao; aqui ela
+// so deixou de ser exclusiva do <=1024px.
+// ============================================================================
 
 type NavItem = {
   href: string;
   label: string;
   icon: string;
   visibleTo: UserRole[];
+  /**
+   * Rotulo curto SO para a barra. O drawer continua mostrando o `label`
+   * inteiro, onde ha largura de sobra e o texto precisa ser autoexplicativo.
+   * Existe por causa de "Atribuicao de produtos": 195px de item contra 120px
+   * do encurtado — 75px, o custo de meio item de barra.
+   */
+  barLabel?: string;
 };
 
 type NavGroup = {
@@ -155,7 +86,7 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/admin/usuarios", label: "Usuários", icon: "usercog", visibleTo: ["socio", "funcionario"] },
       { href: "/admin/equipes", label: "Equipes", icon: "network", visibleTo: ["socio", "funcionario"] },
-      { href: "/produtos/atribuicao", label: "Atribuição de produtos", icon: "clipboard", visibleTo: ["socio", "funcionario"] },
+      { href: "/produtos/atribuicao", label: "Atribuição de produtos", icon: "clipboard", visibleTo: ["socio", "funcionario"], barLabel: "Atribuição" },
     ],
   },
   {
@@ -177,7 +108,65 @@ const navGroups: NavGroup[] = [
   },
 ];
 
-const SIDEBAR_STORAGE_KEY = "rr-shell-sidebar-collapsed";
+/**
+ * OS 7 DA BARRA — destinos frequentes. O resto vai para o drawer.
+ *
+ * Ordem = a da barra. O filtro por papel continua sendo o visibleTo de cada
+ * item; isto aqui so escolhe QUAIS dos visiveis sobem para a barra. Papel com
+ * poucos destinos (promotor 2, supervisor 1, gestor_consorcio 2) nao tem nada
+ * fora desta lista, entao nem ve hamburguer.
+ *
+ * POR QUE 7, E NAO 6 NEM 9 — medido, nao chutado.
+ *
+ * Largura de um item = 26 (padding 13x2) + 17 (icone) + 8 (gap) + rotulo.
+ * Cromo fixo da barra = 36 (padding) + 32 (2 gaps de 16) + 40 (logo compacto)
+ * + 50 (hamburguer 34 + gap 16) + ate 264 do bloco de usuario (avatar 30 +
+ * gap 10 + nome com max-width 180 + gap 10 + sair 34).
+ *
+ *   viewport   sobra p/ a lista   cabe
+ *   1366       944                7  (834px usados, folga 110)
+ *   1440       1018               8  (956px usados, folga 62)
+ *   1920       1498               9  (1072px usados, folga 426)
+ *
+ * ATUALIZACAO (Fase 6): a tabela acima era ESTIMADA a mao. A medida real —
+ * scripts/medida-barra-breakpoint.cjs, que le o proprio .woff2 do next/font —
+ * confirma o 7 mas corrige quem e o pior caso: a barra mais larga e a do
+ * FUNCIONARIO (854,1px de lista, 1276,1px de viewport), nao a do socio
+ * (816,2px / 1238,2px). O funcionario nao ve Dashboard nem Financeiro, entao
+ * a completagem abaixo o serve com "Receita & Simples" — o rotulo mais largo
+ * do sistema, 158,9px, mais largo que "Importacoes". E dai que sai o ponto de
+ * quebra de 1300px do globals.css.
+ *
+ * 7 e o maior numero que cabe no MENOR viewport suportado. Nao fixamos em 8
+ * ou 9 porque o corte teria de ser por media query, e esconder item por CSS
+ * quebra em silencio o papel que tem exatamente 8 ou 9 destinos: esse papel
+ * nao ganha hamburguer (visibleItems <= NAV_BARRA.length), entao o item
+ * escondido ficaria INALCANCAVEL. Hoje nenhum papel tem 8 ou 9 — mas o
+ * proximo pode ter, e a falha seria invisivel ate alguem reclamar.
+ *
+ * Ordem de prioridade dada pelo Diego: os 6 primeiros sao os que ele pediu;
+ * Financeiro entra como 7o. Fechamento e Auditoria (menos usados) ficam no
+ * drawer, que continua mostrando TUDO.
+ */
+const NAV_BARRA = [
+  "/dashboard",
+  "/promotores",
+  "/projecao",
+  "/importacoes",
+  "/cadastros",
+  "/produtos/atribuicao",
+  "/financeiro",
+] as const;
+
+/**
+ * Chave morta da sidebar retratil. A sidebar nao recolhe mais (drawer e
+ * aberto/fechado, nao expandido/recolhido), mas a chave esta gravada no browser
+ * de todo usuario que usou o sistema. Limpamos uma vez, no mount.
+ */
+const LEGACY_SIDEBAR_KEY = "rr-shell-sidebar-collapsed";
+
+/** Rotas publicas: renderizam SEM navegacao em volta. */
+const ROTAS_SEM_SHELL = ["/login", "/definir-senha"];
 
 const ROLE_LABEL: Record<string, string> = {
   socio: "Sócio",
@@ -188,77 +177,45 @@ const ROLE_LABEL: Record<string, string> = {
   gestor_consorcio: "Gestor de Consórcio",
 };
 
+const CLOSE_PATH = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>';
+
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { user } = useUser();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
-  function readStoredCollapsed() {
+  // Limpeza da chave legada da sidebar retratil (ver LEGACY_SIDEBAR_KEY).
+  useEffect(() => {
     try {
-      const v = window.localStorage.getItem(SIDEBAR_STORAGE_KEY);
-      if (v === "true") return true;
-      if (v === "false") return false;
+      window.localStorage.removeItem(LEGACY_SIDEBAR_KEY);
     } catch {
       /* ignore */
     }
-    return false;
-  }
-
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 1024px)");
-    const sync = () => {
-      setIsMobile(media.matches);
-      if (media.matches) {
-        setSidebarCollapsed(false);
-      } else {
-        setSidebarCollapsed(readStoredCollapsed());
-        setMobileOpen(false);
-      }
-    };
-    sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
   }, []);
 
+  // Trava o scroll do body enquanto o drawer esta aberto.
   useEffect(() => {
-    if (isMobile) return;
-    try {
-      window.localStorage.setItem(
-        SIDEBAR_STORAGE_KEY,
-        sidebarCollapsed ? "true" : "false"
-      );
-    } catch {
-      /* ignore */
-    }
-  }, [sidebarCollapsed, isMobile]);
-
-  useEffect(() => {
-    if (isMobile) {
-      document.body.style.overflow = mobileOpen ? "hidden" : "";
-      return () => {
-        document.body.style.overflow = "";
-      };
-    }
-    document.body.style.overflow = "";
-  }, [isMobile, mobileOpen]);
+    document.body.style.overflow = drawerOpen ? "hidden" : "";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [drawerOpen]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMobileOpen(false);
+      if (event.key === "Escape") setDrawerOpen(false);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Navegou => fecha o drawer.
   useEffect(() => {
-    if (isMobile) setMobileOpen(false);
-  }, [pathname, isMobile]);
+    setDrawerOpen(false);
+  }, [pathname]);
 
-  const isItemActive = (item: NavItem) => {
-    return pathname === item.href || pathname.startsWith(`${item.href}/`);
-  };
+  const isItemActive = (href: string) =>
+    pathname === href || pathname.startsWith(`${href}/`);
 
   // Filtro item-a-item por role. Durante loading (user?.role undefined) o
   // menu fica vazio para nao vazar visibilidade. Grupos sem itens visiveis
@@ -273,65 +230,115 @@ export default function AppShell({ children }: { children: ReactNode }) {
       .filter((group) => group.items.length > 0);
   }, [user?.role]);
 
-  function toggleSidebar() {
-    if (isMobile) {
-      setMobileOpen((c) => !c);
-      return;
-    }
-    setSidebarCollapsed((c) => !c);
-  }
+  const visibleItems = useMemo(
+    () => visibleNavGroups.flatMap((g) => g.items),
+    [visibleNavGroups]
+  );
 
-  // Login renderiza sem shell
-  if (pathname === "/login") {
+  /**
+   * O QUE VAI PARA A BARRA.
+   *
+   * NAV_BARRA e lista de PREFERENCIA, nao lista de permissao: ela so decide o
+   * corte quando o papel tem MAIS destinos do que cabem. Quem tem ate
+   * NAV_BARRA.length destinos ve TODOS na barra, e ai nao ha hamburguer.
+   *
+   * Sem essa distincao, papeis cujos destinos nao estao entre os 6 escolhidos
+   * (supervisor -> /equipe, gestor_consorcio -> /gestor-consorcio) ficariam com
+   * a BARRA VAZIA e o unico destino escondido atras do hamburguer — o pior
+   * resultado possivel justamente para quem tem menos a navegar.
+   */
+  const barItems: TopNavItem[] = useMemo(() => {
+    // Na barra vale o rotulo curto quando existe; o drawer fica com o inteiro.
+    const paraBarra = (i: NavItem): TopNavItem => ({
+      href: i.href,
+      icon: i.icon,
+      label: i.barLabel ?? i.label,
+    });
+    if (visibleItems.length <= NAV_BARRA.length)
+      return visibleItems.map(paraBarra);
+    const porHref = new Map(visibleItems.map((i) => [i.href, i]));
+    const preferidos = NAV_BARRA.map((href) => porHref.get(href)).filter(
+      (i): i is NavItem => i != null
+    );
+    // COMPLETA ATE 7 na ordem de declaracao dos grupos. Sem isso o funcionario
+    // (10 destinos, mas so 4 entre os preferidos — Dashboard, Financeiro,
+    // Fechamento e Auditoria sao socio-only) ficaria com a barra rala e o
+    // resto escondido, justamente o segundo papel mais ativo do sistema.
+    const naBarra = new Set(preferidos.map((i) => i.href));
+    const resto = visibleItems.filter((i) => !naBarra.has(i.href));
+    return [
+      ...preferidos,
+      ...resto.slice(0, NAV_BARRA.length - preferidos.length),
+    ].map(paraBarra);
+  }, [visibleItems]);
+
+  // Hamburguer CONDICIONAL: so quando ha destino que a barra nao mostra.
+  const showHamburger = useMemo(() => {
+    const naBarra = new Set(barItems.map((i) => i.href));
+    return visibleItems.some((i) => !naBarra.has(i.href));
+  }, [visibleItems, barItems]);
+
+  // Rotas publicas renderizam sem shell.
+  if (ROTAS_SEM_SHELL.includes(pathname)) {
     return <>{children}</>;
   }
 
-  const shellDataset = {
-    "data-sidebar-collapsed": sidebarCollapsed ? "true" : "false",
-    "data-mobile-open": mobileOpen ? "true" : "false",
-  } as const;
-
-  const collapsed = !isMobile && sidebarCollapsed;
   const avatarInitial =
     (user?.fullName ?? user?.email ?? "?").trim().charAt(0).toUpperCase();
 
+  const logoutAction = (
+    <form action="/api/auth/logout" method="post" className="rr-nav__logoutform">
+      <button
+        type="submit"
+        className="rr-nav__logout"
+        aria-label="Sair"
+        title="Sair"
+      >
+        <Glyph d={LOGOUT_PATH} size={16} />
+      </button>
+    </form>
+  );
+
   return (
-    <div className="rr-shell" {...shellDataset}>
+    <div className="rr-shell" data-drawer-open={drawerOpen ? "true" : "false"}>
+      <TopNav
+        items={barItems}
+        showHamburger={showHamburger}
+        drawerOpen={drawerOpen}
+        onToggleDrawer={() => setDrawerOpen((c) => !c)}
+        isActive={isItemActive}
+        userName={user ? user.fullName ?? user.email : null}
+        userRoleLabel={user ? ROLE_LABEL[user.role] ?? user.role : null}
+        avatarInitial={avatarInitial}
+        logoutAction={logoutAction}
+      />
+
       <button
         type="button"
         className="rr-sidebar-backdrop"
-        aria-label="Fechar menu lateral"
-        onClick={() => setMobileOpen(false)}
+        aria-label="Fechar menu"
+        tabIndex={drawerOpen ? 0 : -1}
+        onClick={() => setDrawerOpen(false)}
       />
 
-      <aside className="rr-sidebar">
-        {/* Header do sidebar: logo + toggle (fixos no topo) */}
+      {/* DRAWER — a sidebar de sempre, agora sob demanda em todo breakpoint.
+          Mostra o menu COMPLETO (inclusive os 6 que ja estao na barra), para
+          quem abre o menu nao ter de lembrar onde cada destino mora. */}
+      <aside
+        className="rr-sidebar"
+        aria-hidden={drawerOpen ? undefined : true}
+        aria-label="Menu completo"
+      >
         <div className="rr-sb-head">
-          {collapsed ? (
-            <BrandLogo size="sm" tone="dark" />
-          ) : (
-            <BrandLogo size="md" tone="dark" />
-          )}
+          <BrandLogo size="md" tone="dark" />
           <button
             type="button"
-            onClick={toggleSidebar}
+            onClick={() => setDrawerOpen(false)}
             className="rr-sb-toggle"
-            aria-label={
-              isMobile
-                ? "Fechar menu"
-                : sidebarCollapsed
-                ? "Expandir menu"
-                : "Recolher menu"
-            }
-            title={
-              isMobile
-                ? "Fechar menu"
-                : sidebarCollapsed
-                ? "Expandir menu"
-                : "Recolher menu"
-            }
+            aria-label="Fechar menu"
+            title="Fechar menu"
           >
-            <Chevron dir={collapsed ? "right" : "left"} />
+            <Glyph d={CLOSE_PATH} size={16} />
           </button>
         </div>
 
@@ -344,15 +351,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <div className="rr-sb-sect">{group.label}</div>
               <ul className="rr-sb-list">
                 {group.items.map((item) => {
-                  const active = isItemActive(item);
+                  const active = isItemActive(item.href);
                   return (
-                    <li key={item.href}>
+                    <li key={`${group.id}-${item.href}`}>
                       <Link
                         href={item.href}
                         className={`rr-sb-item${active ? " active" : ""}`}
-                        title={collapsed ? item.label : undefined}
                         aria-label={item.label}
                         aria-current={active ? "page" : undefined}
+                        tabIndex={drawerOpen ? 0 : -1}
                       >
                         <span className="rr-sb-ic">
                           <NavIcon name={item.icon} />
@@ -368,142 +375,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </nav>
       </aside>
 
-      <div className="rr-content">
-        <header className="rr-topbar" style={styles.topbar}>
-          <div style={styles.topbarLeft}>
-            {isMobile ? (
-              <button
-                type="button"
-                onClick={() => setMobileOpen((c) => !c)}
-                style={styles.mobileToggle}
-                aria-label="Abrir menu"
-              >
-                <MenuIcon />
-              </button>
-            ) : null}
-          </div>
-
-          <div style={styles.topbarRight}>
-            {user ? (
-              <>
-                <div style={styles.avatar} aria-hidden="true">
-                  {avatarInitial}
-                </div>
-                <div style={styles.userInfo}>
-                  <span style={styles.userName}>
-                    {user.fullName ?? user.email}
-                  </span>
-                  <span style={styles.userRole}>
-                    {ROLE_LABEL[user.role] ?? user.role}
-                  </span>
-                </div>
-                <form
-                  action="/api/auth/logout"
-                  method="post"
-                  style={styles.logoutForm}
-                >
-                  <button
-                    type="submit"
-                    style={styles.logoutBtn}
-                    aria-label="Sair"
-                    title="Sair"
-                  >
-                    <LogoutIcon />
-                  </button>
-                </form>
-              </>
-            ) : null}
-          </div>
-        </header>
-
-        <main className="rr-main">
-          <div className="rr-main-shell">{children}</div>
-        </main>
-      </div>
+      <main className="rr-main">
+        <div className="rr-main-shell">{children}</div>
+      </main>
     </div>
   );
 }
-
-const styles: Record<string, CSSProperties> = {
-  topbar: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingInline: 20,
-    height: 40,
-    gap: 16,
-  },
-  topbarLeft: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    minWidth: 0,
-  },
-  mobileToggle: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    border: "1px solid var(--rr-line)",
-    background: "#fff",
-    color: "var(--navy)",
-    fontSize: 18,
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  topbarRight: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    flexShrink: 0,
-  },
-  avatar: {
-    width: 30,
-    height: 30,
-    borderRadius: "50%",
-    background: "var(--navy)",
-    color: "var(--accent)",
-    fontSize: 13,
-    fontWeight: 700,
-    display: "grid",
-    placeItems: "center",
-  },
-  userInfo: {
-    display: "flex",
-    flexDirection: "column",
-    minWidth: 0,
-    lineHeight: 1.15,
-  },
-  userName: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: "var(--navy)",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    maxWidth: 200,
-  },
-  userRole: {
-    fontSize: 11,
-    fontWeight: 700,
-    color: "var(--gold)",
-    letterSpacing: "0.04em",
-  },
-  logoutForm: {
-    margin: 0,
-    display: "inline-flex",
-  },
-  logoutBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    border: "1px solid var(--rr-line)",
-    background: "#fff",
-    color: "var(--navy)",
-    fontSize: 14,
-    fontWeight: 700,
-    cursor: "pointer",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-};

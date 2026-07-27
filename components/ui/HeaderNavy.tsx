@@ -1,8 +1,14 @@
 import type { ReactNode } from "react";
 
 export interface HeaderNavyProps {
-  /** Eyebrow acima do título (ex.: "GRUPO RR CRED") — renderizado em var(--accent). */
-  brand?: ReactNode;
+  /**
+   * Eyebrow acima do título — renderizado em var(--accent).
+   *
+   * É rótulo de CONTEXTO, não marca: "SEGURIDADE", "AUDITORIA", "MONITOR PRT",
+   * "GESTOR CONSÓRCIO". A prop se chamava `brand` e o nome mentia — a marca do
+   * grupo passa a viver só na barra do topo, permanente, e sai daqui.
+   */
+  eyebrow?: ReactNode;
   /** Título principal (<h1>). */
   title: ReactNode;
   /** Lead/descrição opcional abaixo do título. */
@@ -19,12 +25,12 @@ export interface HeaderNavyProps {
 }
 
 /**
- * Bloco navy do topo das telas (marca + título + badge/ações + linha dourada),
+ * Bloco navy do topo das telas (eyebrow + título + badge/ações + linha dourada),
  * com os KPIs embutidos via children (<KpiBand>/<KpiHero>). Consolida o padrão
  * `.header` navy que hoje vive duplicado em cada página. Escopo `.rrui-hnavy`.
  */
 export default function HeaderNavy({
-  brand,
+  eyebrow,
   title,
   subtitle,
   badge,
@@ -40,7 +46,7 @@ export default function HeaderNavy({
     <section className={cls}>
       <div className="rrui-hnavy__top">
         <div className="rrui-hnavy__head">
-          {brand != null ? <p className="rrui-hnavy__brand">{brand}</p> : null}
+          {eyebrow != null ? <p className="rrui-hnavy__eyebrow">{eyebrow}</p> : null}
           <h1 className="rrui-hnavy__title">{title}</h1>
           {subtitle != null ? (
             <p className="rrui-hnavy__subtitle">{subtitle}</p>

@@ -424,6 +424,178 @@ function getPromoterViewCompanyRate(
   );
 }
 
+// ===========================================================================
+// COMISSAO-EMPRESA COM RECORTE POR DIA (variacao vs mes anterior)
+//
+// POR QUE ESTA FUNCAO EXISTE, E POR QUE ELA MORA AQUI
+// ---------------------------------------------------------------------------
+// A variacao do card de comissao bruta precisa comparar julho 1..N contra
+// junho 1..N. Somar isso do lado de fora exigiria reproduzir a regra de taxa
+// (raw_payload -> coluna guardada -> derive da TRP, com teto), e regra de
+// dinheiro reproduzida em dois lugares diverge no primeiro caso de borda.
+// Entao a soma recortada nasce AQUI, ao lado da regra, e nao na rota.
+//
+// OS DOIS PARAMETROS SAO SEPARADOS DE PROPOSITO — e este e o ponto todo:
+//
+//   producaoMensalDoGrupo  a FAIXA. Vem da producao do MES INTEIRO, sempre,
+//                          nas duas competencias. Faixa e conceito MENSAL: a
+//                          TRP escalona por volume do mes, nao por volume do
+//                          pedaco que estamos olhando.
+//   ateDia                 o RECORTE. Decide apenas QUAIS LINHAS entram na
+//                          soma.
+//
+// Sem essa separacao o recorte encolheria a producao usada para achar a
+// faixa e empurraria parte das operacoes para uma faixa inferior — o corte
+// mudaria a TAXA, nao so a janela, e a comparacao viraria aproximacao. Foi
+// exatamente por isso que o recorte da comissao bruta chegou a ser recusado
+// (26/07/2026) antes deste refinamento.
+//
+// Vale so para as linhas que caem no derive (~8%): as outras ~92% trazem a
+// propria taxa a vista no registro e sao exatas com ou sem faixa.
+// ===========================================================================
+export type ParametrosComissaoEmpresaRecortada = {
+  /** Registros ja carregados. A funcao NAO consulta o banco. */
+  records: ProductionRow[];
+  /** Competencia a somar. */
+  competencia: { year: number; month: number };
+  /**
+   * Producao do grupo no MES INTEIRO desta competencia — a base da faixa.
+   * NAO passe a producao recortada: ver o comentario acima.
+   */
+  producaoMensalDoGrupo: number;
+  /**
+   * Dia de corte (1..31). So limita QUAIS linhas somam. `null` = mes inteiro,
+   * que reproduz exatamente o total de hoje.
+   */
+  ateDia: number | null;
+  /** Ids de empresa do escopo. Omitir = todas. */
+  companyIds?: string[] | null;
+  trpProvider?: TrpRegraProvider;
+};
+
+/**
+ * A BASE DA FAIXA: producao do grupo numa competencia, MES INTEIRO.
+ *
+ * Existe exportada para que o chamador de calcularComissaoEmpresaRecortada NAO
+ * precise montar esta soma a mao. Ela parece trivial — Sigma net das linhas
+ * elegiveis — mas "elegivel" e "de qual competencia" sao as MESMAS definicoes
+ * que a soma da comissao usa (isEligibleProductionRecord + extractYearMonth).
+ * Se o chamador espelhasse isso, um dia as duas leituras discordariam e a faixa
+ * sairia de um conjunto diferente do que a soma percorre — divergencia
+ * silenciosa, do tipo que so aparece no centavo.
+ *
+ * Espelha buildPromoterAnalytics:794-805 (groupProductionValue): SEM recorte de
+ * dia e SEM filtro de empresa por padrao — o enquadramento Promotiva e por
+ * grupo empresarial, nao por CNPJ.
+ */
+export function calcularProducaoMensalDoGrupo(params: {
+  records: ProductionRow[];
+  competencia: { year: number; month: number };
+  companyIds?: string[] | null;
+}): { total: number; linhas: number } {
+  const { records, competencia, companyIds } = params;
+  let total = 0;
+  let linhas = 0;
+  for (const record of records) {
+    if (!record.company_id) continue;
+    if (companyIds && !companyIds.includes(record.company_id)) continue;
+    if (!isEligibleProductionRecord(record)) continue;
+    const periodo = extractYearMonth(record);
+    if (
+      !periodo ||
+      periodo.year !== competencia.year ||
+      periodo.month !== competencia.month
+    ) {
+      continue;
+    }
+    total += toNumber(record.net_value);
+    linhas += 1;
+  }
+  return { total: Math.round(total * 100) / 100, linhas };
+}
+
+export type ComissaoEmpresaRecortada = {
+  /** Σ (net × taxa) das linhas dentro do corte. */
+  total: number;
+  /** Linhas ELEGIVEIS na competencia, antes do corte de dia. */
+  linhasNaCompetencia: number;
+  /** Linhas que entraram na soma (dentro do corte). */
+  linhasSomadas: number;
+  /** Linhas somadas que dependeram do derive (faixa) para achar a taxa. */
+  linhasComDerive: number;
+};
+
+export function calcularComissaoEmpresaRecortada(
+  params: ParametrosComissaoEmpresaRecortada
+): ComissaoEmpresaRecortada {
+  const { records, competencia, producaoMensalDoGrupo, ateDia, companyIds, trpProvider } =
+    params;
+
+  let total = 0;
+  let linhasNaCompetencia = 0;
+  let linhasSomadas = 0;
+  let linhasComDerive = 0;
+
+  for (const record of records) {
+    if (companyIds && !companyIds.includes(record.company_id || "")) continue;
+    if (!isEligibleProductionRecord(record)) continue;
+    const periodo = extractYearMonth(record);
+    if (
+      !periodo ||
+      periodo.year !== competencia.year ||
+      periodo.month !== competencia.month
+    ) {
+      continue;
+    }
+    linhasNaCompetencia += 1;
+
+    if (ateDia != null) {
+      // Mesma cadeia de datas do resto do modulo (movement -> contract ->
+      // proposal), para o corte cair no mesmo dia que a producao ja usa.
+      const bruta = record.movement_date || record.contract_date || record.proposal_date;
+      const dia = Number(String(bruta ?? "").slice(8, 10));
+      if (!(dia >= 1 && dia <= ateDia)) continue;
+    }
+
+    // A FAIXA usa a producao do mes INTEIRO — o recorte nao entra aqui.
+    const taxa = getPromoterViewCompanyRate(record, producaoMensalDoGrupo, trpProvider);
+    if (temTaxaPropria(record)) {
+      // taxa exata, veio do proprio registro
+    } else {
+      linhasComDerive += 1;
+    }
+    total += toNumber(record.net_value) * taxa;
+    linhasSomadas += 1;
+  }
+
+  return {
+    total: Math.round(total * 100) / 100,
+    linhasNaCompetencia,
+    linhasSomadas,
+    linhasComDerive,
+  };
+}
+
+/**
+ * O registro traz a propria taxa a vista (bruto ou coluna guardada)? So serve
+ * para CONTAR quantas linhas dependeram da faixa — nao decide calculo nenhum.
+ * Espelha as duas primeiras guardas de getCompanyReceivedRate.
+ */
+function temTaxaPropria(record: ProductionRow) {
+  const doBruto = toPercentRate(
+    readRawPayloadValue(record.raw_payload, [
+      "% A VISTA",
+      "% À VISTA",
+      "% A VISTA EMPRESA",
+      "% AVISTA",
+      "Percentual A Vista",
+    ])
+  );
+  if (doBruto > 0 && doBruto <= 0.065) return true;
+  const guardada = toPercentRate(record.company_received_percent);
+  return guardada > 0 && guardada <= 0.065;
+}
+
 // FIX-3.SEGURO — getInsuranceCompanyRate e calculateCompanyInsuranceCommission
 // removidos. Migrados para insurance_slip_rules + calculateInsuranceCommissionFromRules
 // (fonte única com route.ts; ver linha company_insurance_commission_amount).

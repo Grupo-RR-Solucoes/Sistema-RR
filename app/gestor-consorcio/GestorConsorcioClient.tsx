@@ -87,7 +87,7 @@ export default function GestorConsorcioClient() {
       <UiStyles />
       <main style={{ maxWidth: 1000, margin: "0 auto", padding: 24, display: "flex", flexDirection: "column", gap: 22 }}>
         <HeaderNavy
-          brand="GESTOR CONSÓRCIO"
+          eyebrow="GESTOR CONSÓRCIO"
           title="Consórcio — visão do gestor"
           subtitle="Produção geral do consórcio + o seu repasse de 10%. Você não vê a comissão dos promotores."
         >

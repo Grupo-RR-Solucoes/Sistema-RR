@@ -308,7 +308,7 @@ export default function InadimplenciaSection() {
   return (
     <section className="inad">
       <HeaderNavy
-        brand="MONITOR PRT"
+        eyebrow="MONITOR PRT"
         title="Inadimplência — fila de cobrança"
         subtitle="Contratos que pararam antes de quitar → parcela vencida não paga → R$ a cobrar."
         actions={

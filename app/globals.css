@@ -25,9 +25,6 @@
   --rr-shadow: 0 8px 24px rgba(15, 31, 74, 0.08);
   --rr-shadow-soft: 0 4px 12px rgba(15, 31, 74, 0.05);
 
-  --rr-sidebar-width: 220px;
-  --rr-sidebar-collapsed-width: 64px;
-
   /* === Design System RR — tokens canônicos (Sistema_de_Design_RR) — Etapa 1 ===
      Aditivos. Os --rr-* acima e os tokens redeclarados nas páginas seguem
      intactos; dedup/migração para estes é a Etapa 3. */
@@ -52,6 +49,41 @@
   --r-btn: 8px;      --r-card: 12px;     --r-lg: 20px;   /* --r-lg: bloco navy (HeaderNavy) */
   --sh-1: 0 8px 24px rgba(15, 31, 74, 0.08);
   --sh-2: 0 4px 12px rgba(15, 31, 74, 0.05);
+
+  /* ===== NAVEGACAO — barra do topo (frente menu-topo) =====
+     A barra em si chega na Fase 3; os tokens nascem aqui porque o
+     --chrome-offset abaixo ja e consumido pelas tabelas nesta fase. */
+
+  /* Altura da barra do topo. */
+  --nav-h: 56px;
+
+  /* Camada da barra. Hierarquia do sistema:
+       1-4   celulas/thead sticky (dentro do proprio container de scroll)
+       20    A BARRA  <- aqui
+       30-40 backdrop + drawer do menu
+       50    overlays de modal (/admin/usuarios, /despesas)
+       60    drawers de /equipe e /projecao
+       100+  toasts
+     Acima do conteudo, abaixo de tudo que e sobreposicao. */
+  --nav-z: 20;
+
+  /* Fundo do item ATIVO da barra. Derivado do --navy real (#0F1F4A), um tom
+     acima — mancha perceptivel na periferia sem virar bloco chapado.
+     Medido: branco por cima = 11,67:1 (AAA, alvo era >= 7:1); separacao vs
+     --navy = 1,369:1; separacao vs o hover = 1,198:1. Nao reusa --navy-bar
+     (#1E3066) porque aquele fica a 1,111:1 do hover — ativo e hover
+     ficariam parecidos demais de relance. */
+  --nav-item-active: #20356F;
+
+  /* ALTURA DO CHROME acima da janela de rolagem das tabelas.
+     = barra/topbar + padding do main + header da tela + folga.
+     AS 30 CHAMADAS DE <Table scrollable> DEPENDEM DESTE VALOR.
+     Se mudar --nav-h, RECALCULE aqui — senao as tabelas ficam com a janela
+     errada em silencio (curta demais, ou passando do viewport).
+     Hoje (PRE-BARRA): topbar 40 + 200 de padding/header/folga = 240px, o
+     mesmo numero que estava espalhado em 5 lugares. A Fase 5 troca o termo
+     da topbar por var(--nav-h) e recalibra. */
+  --chrome-offset: 240px;
 }
 
 * {
@@ -90,26 +122,309 @@ a {
 
 .rr-shell {
   min-height: 100vh;
-  display: grid;
-  grid-template-columns: var(--rr-sidebar-width) minmax(0, 1fr);
-  transition: grid-template-columns 180ms ease;
 }
 
-.rr-shell[data-sidebar-collapsed="true"] {
-  grid-template-columns: var(--rr-sidebar-collapsed-width) minmax(0, 1fr);
-}
+/* ===================================================================
+   BARRA DO TOPO — navegacao principal, permanente.
 
-.rr-sidebar {
+   STICKY, nao fixed: com a sidebar fora do grid o documento voltou a ter
+   fluxo unico, entao sticky basta e evita padding-top compensatorio no
+   body + o bug de ancora escondida sob barra fixa.
+
+   BORDA + SOMBRA sao obrigatorias, nao decoracao: /comissoes/editar tem
+   header navy proprio e a barra encostaria em outro navy sem separacao.
+
+   CORES SO POR TOKEN — ver o comentario no topo de components/TopNav.tsx.
+   =================================================================== */
+.rr-nav {
   position: sticky;
   top: 0;
-  height: 100vh;
+  z-index: var(--nav-z);
+  height: var(--nav-h);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 18px;
+  background: var(--navy);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 6px 18px rgba(15, 31, 74, 0.28);
+}
+
+.rr-nav__burger,
+.rr-nav__logout {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.88);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.rr-nav__burger:hover,
+.rr-nav__logout:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.24);
+}
+.rr-nav__burger:focus-visible,
+.rr-nav__logout:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.rr-nav__logoutform {
+  margin: 0;
+  display: inline-flex;
+}
+
+.rr-nav__brand {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  border-radius: 8px;
+}
+.rr-nav__brand:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.rr-nav__nav {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* REDE DE SEGURANCA — nao e decoracao.
+     Sem isto a lista (itens com white-space:nowrap) transborda o proprio
+     container e e PINTADA POR CIMA do bloco do usuario: foi exatamente o que
+     apareceu a ~890px de area util. Com overflow:hidden o pior caso vira
+     corte, nunca sobreposicao. Acima do ponto de quebra nada corta (ha folga
+     medida); isto so age se a medida errar — nome gigante, zoom, rotulo novo. */
+  overflow: hidden;
+}
+.rr-nav__list {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+/* ---- ITEM: tres sinais independentes de estado ----
+   ativo = fundo + indicador amarelo + peso; hover = so fundo fraco.
+   O hover NUNCA usa o acento: amarelo significa "onde eu estou", e so. */
+.rr-nav__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 13px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.14s, color 0.14s;
+}
+.rr-nav__item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+.rr-nav__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.rr-nav__item.active {
+  background: var(--nav-item-active);
+  box-shadow: inset 0 -3px 0 var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.rr-nav__item.active:hover {
+  background: var(--nav-item-active);
+}
+.rr-nav__ic {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+.rr-nav__ic svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+.rr-nav__user {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* avatar invertido em relacao a topbar antiga: ali era navy sobre branco,
+   aqui e acento sobre navy — o mesmo par, na ordem que o fundo pede. */
+.rr-nav__avatar {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--navy);
+  font-size: 13px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+.rr-nav__uinfo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+.rr-nav__uname {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+.rr-nav__urole {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.04em;
+}
+
+/* ===================================================================
+   FASE 6 — COLAPSO DA BARRA EM LARGURA ESTREITA
+
+   O DEFEITO QUE ISTO FECHA: os itens tinham white-space:nowrap e o bloco
+   do usuario era flex:none. Quando o espaco apertava, a lista nao
+   encolhia nem sumia — transbordava e era desenhada POR CIMA do usuario.
+   A ~890px de area util, "Cadastros" e "Financeiro" ficavam debaixo do
+   "Rodrigues / Socio".
+
+   OS NUMEROS SAIRAM DE MEDIDA, NAO DE ESTIMATIVA.
+   scripts/medida-barra-breakpoint.cjs le o proprio .woff2 que o next/font
+   baixou (IBM Plex Sans, variable font — os advances sao instanciados no
+   eixo wght, senao tudo sairia no peso 400) e soma os advance widths.
+
+     item = 26 (padding) + 17 (icone) + 8 (gap) + texto medido a 13px/500
+
+     Receita & Simples   158,9px   <- o mais largo, e nao "Importacoes"
+     Atribuir consorcio  157,0px
+     Consorcio (10%)     149,9px
+     Minha Equipe        131,6px
+     Importacoes         127,2px
+     Promotores          120,9px
+     Dashboard           115,8px
+     Financeiro          113,6px
+     Atribuicao          112,5px
+     Cadastros           111,1px
+     Despesas            108,4px
+     Projecao            103,1px
+
+   Cromo fixo = 36 (padding) + 48 (3 gaps de 16) + 34 (hamburguer) + 40
+   (marca) + 264 (bloco do usuario: 30 avatar + 10 + nome travado no
+   max-width 180 + 10 + 34 sair) = 422px.
+
+   Largura exigida pela barra EXPANDIDA, por papel:
+
+     funcionario       7 itens   854,1 + 422 = 1276,1px   <- PIOR
+     socio             7 itens   816,2 + 422 = 1238,2px
+     gestor_consorcio  2 itens   308,9 + 372 =  680,9px
+     promotor          2 itens   226,0 + 372 =  598,0px
+     supervisor        1 item    131,6 + 372 =  503,6px
+
+   O pior papel NAO e o socio: e o funcionario. Ele nao tem Dashboard nem
+   Financeiro, entao a barra dele completa com "Receita & Simples" e
+   "Despesas" — e "Receita & Simples" e o rotulo mais largo do sistema.
+
+   REGRA DOS TRES PONTOS DE QUEBRA: exigido + 20px de folga (kerning nao
+   medido — e ele so encolhe —, arredondamento subpixel e zoom do
+   usuario), arredondado para cima na dezena.
+
+     barra cheia   1276,1 + 20 = 1296,1  ->  1300px
+     barra curta    680,9 + 20 =  700,9  ->   710px
+     nome+papel     406,0 + 20 =  426,0  ->   430px
+
+   Duas faixas de barra, e nao uma: colapsar a barra de 1 ou 2 itens do
+   promotor no mesmo 1300px seria esconder atras de hamburguer uma barra
+   que cabe folgada em 710px.
+
+   Gate: scripts/medida-barra-breakpoint.cjs varre 320..1920px x 6 papeis
+   (9.606 combinacoes) e confere que a soma dos elementos visiveis nunca
+   passa do viewport. Pior folga 23,9px, em 1300px no funcionario.
+   =================================================================== */
+
+/* Hamburguer dispensavel (todos os destinos do papel ja estao na barra):
+   invisivel enquanto a barra estiver expandida. As regras de colapso
+   abaixo o trazem de volta — sem isso o papel sem hamburguer perderia
+   TODA a navegacao ao colapsar. */
+.rr-nav[data-burger="colapsada"] .rr-nav__burger {
+  display: none;
+}
+
+/* --- BARRA CHEIA (3+ itens): colapsa abaixo de 1300px --- */
+@media (max-width: 1299.98px) {
+  .rr-nav[data-bar="cheia"] .rr-nav__nav {
+    display: none;
+  }
+  .rr-nav[data-bar="cheia"][data-burger="colapsada"] .rr-nav__burger {
+    display: grid;
+  }
+}
+
+/* --- BARRA CURTA (ate 2 itens): colapsa abaixo de 710px --- */
+@media (max-width: 709.98px) {
+  .rr-nav[data-bar="curta"] .rr-nav__nav {
+    display: none;
+  }
+  .rr-nav[data-bar="curta"][data-burger="colapsada"] .rr-nav__burger {
+    display: grid;
+  }
+}
+
+/* --- TELEFONE: o nome e o papel saem ---
+   Colapsada com nome+papel o cromo pede 406px no pior caso (nome no
+   max-width 180). Em 375px faltariam 31px e o bloco do usuario voltaria a
+   brigar com a marca. Sem o texto sobra avatar + sair = 216px, que cabe
+   com folga. O nome continua acessivel: o drawer identifica o usuario. */
+@media (max-width: 429.98px) {
+  .rr-nav__uinfo {
+    display: none;
+  }
+}
+
+/* ===================================================================
+   DRAWER — a sidebar de sempre, agora sob demanda em TODO breakpoint.
+   Antes estas regras viviam num @media (max-width:1024px); agora sao a
+   base. Nada aqui e mecanica nova.
+   =================================================================== */
+.rr-sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: min(86vw, 280px);
+  height: 100dvh;
+  transform: translateX(-100%);
+  transition: transform 180ms ease;
+  z-index: 40;
   overflow: hidden; /* header/divisor fixos; so a .rr-sb-nav rola */
   background: var(--navy);
-  transition: width 180ms ease;
   display: flex;
   flex-direction: column;
   padding: 16px 12px;
   color: rgba(255, 255, 255, 0.88);
+}
+
+.rr-shell[data-drawer-open="true"] .rr-sidebar {
+  transform: translateX(0);
 }
 
 /* ===== Sidebar redesign (mock Sidebar_Sistema_RR) ===== */
@@ -120,11 +435,6 @@ a {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 6px 0;
-}
-.rr-shell[data-sidebar-collapsed="true"] .rr-sb-head {
-  flex-direction: column;
-  gap: 12px;
-  padding: 8px 0 0;
 }
 .rr-sb-toggle {
   width: 28px;
@@ -150,9 +460,6 @@ a {
   height: 1px;
   background: rgba(255, 255, 255, 0.1);
   margin: 14px 6px 6px;
-}
-.rr-shell[data-sidebar-collapsed="true"] .rr-sb-divider {
-  margin: 14px 4px 6px;
 }
 
 /* area de navegacao — unica que rola */
@@ -201,16 +508,6 @@ a {
 }
 .rr-sb-group:first-child .rr-sb-sect {
   padding-top: 8px;
-}
-/* recolhido: rotulo de secao vira tracinho */
-.rr-shell[data-sidebar-collapsed="true"] .rr-sb-sect {
-  height: 1px;
-  font-size: 0;
-  padding: 0;
-  margin: 13px 10px 12px;
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-  letter-spacing: 0;
 }
 
 .rr-sb-item {
@@ -269,28 +566,6 @@ a {
   color: var(--navy);
 }
 
-/* recolhido: so o icone, centralizado */
-.rr-shell[data-sidebar-collapsed="true"] .rr-sb-item {
-  justify-content: center;
-  padding: 7px 0;
-  gap: 0;
-}
-.rr-shell[data-sidebar-collapsed="true"] .rr-sb-lbl {
-  opacity: 0;
-  width: 0;
-  overflow: hidden;
-}
-
-/* Tooltip do recolhido: usa o `title` nativo do item (ver AppShell). Um
-   tooltip CSS (::after) seria clipado pela .rr-sb-nav rolavel — por isso o
-   nome do item vem via atributo title, que o navegador renderiza por cima. */
-
-.rr-content {
-  min-width: 0;
-  display: grid;
-  grid-template-rows: 40px 1fr;
-}
-
 .rr-main {
   padding: 20px 24px 32px;
   background: var(--bg);
@@ -302,13 +577,20 @@ a {
   gap: 16px;
 }
 
-.rr-topbar {
-  position: sticky;
-  top: 0;
-  z-index: 12;
-  background: var(--paper);
-  border-bottom: 1px solid var(--rr-line);
-  height: 40px;
+/* CLAMP DE LARGURA — nao remover.
+   Item de grid nasce com min-width:auto, ou seja, NAO encolhe abaixo do
+   min-content do proprio conteudo. Sem este 0, uma tabela larga (a de
+   /comissoes/editar pede 2280px) empurra o track do .rr-main-shell para
+   alem dos 1840px, e quem passa a rolar na horizontal e o DOCUMENTO: a
+   barra vai parar no rodape da pagina inteira e as colunas sticky perdem
+   o scrollport contra o qual grudavam.
+
+   Este clamp existia ate a Fase 2 da frente menu-topo como
+   `.rr-content { min-width: 0 }`. A Fase 3 tirou a .rr-content junto com o
+   grid de 2 colunas do shell e levou o clamp sem querer. Voltou aqui, que
+   e onde o unico grid remanescente do shell vive. */
+.rr-main-shell > * {
+  min-width: 0;
 }
 
 
@@ -319,43 +601,20 @@ a {
 }
 
 .rr-sidebar-backdrop {
-  display: none;
+  position: fixed;
+  inset: 0;
+  border: 0;
+  display: block;
+  opacity: 0;
+  pointer-events: none;
+  background: rgba(15, 31, 74, 0.42);
+  transition: opacity 160ms ease;
+  z-index: 30;
 }
 
-@media (max-width: 1024px) {
-  .rr-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .rr-sidebar {
-    position: fixed;
-    inset: 0 auto 0 0;
-    width: min(86vw, 260px);
-    height: 100dvh;
-    transform: translateX(-100%);
-    z-index: 40;
-  }
-
-  .rr-shell[data-mobile-open="true"] .rr-sidebar {
-    transform: translateX(0);
-  }
-
-  .rr-sidebar-backdrop {
-    position: fixed;
-    inset: 0;
-    border: 0;
-    display: block;
-    opacity: 0;
-    pointer-events: none;
-    background: rgba(15, 31, 74, 0.42);
-    transition: opacity 160ms ease;
-    z-index: 30;
-  }
-
-  .rr-shell[data-mobile-open="true"] .rr-sidebar-backdrop {
-    opacity: 1;
-    pointer-events: auto;
-  }
+.rr-shell[data-drawer-open="true"] .rr-sidebar-backdrop {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 @media (max-width: 720px) {
@@ -422,11 +681,15 @@ a {
    Container vira janela fixa com scroll vertical interno; thead sticky
    gruda no topo do container; scrollbar horizontal fica no rodape do
    container, acessivel sem rolar a pagina. Calibre maxHeight via inline
-   style por tela quando houver elementos fixos (ex: BulkActionBar em
-   /comissoes/editar reserva 220px adicionais no rodape). */
+   style por tela quando houver elementos fixos — e o que o prop
+   `maxHeightOffset` do <Table> faz; hoje nenhuma tela do kit precisa.
+
+   NAO cite /comissoes/editar aqui: ela nunca usou o kit. E tabela crua
+   (<table className="dt">) com CSS proprio escopado em .rredit, dentro do
+   proprio page.js, e reserva o espaco da BulkActionBar por conta dela. */
 .rr-table-wrap--scrollable {
   overflow-y: auto;
-  max-height: calc(100vh - 240px);
+  max-height: calc(100vh - var(--chrome-offset));
 }
 
 .rr-table-wrap--scrollable thead {

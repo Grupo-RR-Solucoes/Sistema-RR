@@ -96,7 +96,7 @@ export default function ConsorcioSection() {
   return (
     <section className="consorcio-aud">
       <HeaderNavy
-        brand="MONITOR CONSÓRCIO"
+        eyebrow="MONITOR CONSÓRCIO"
         title="Consórcio — parcelas esperadas que não vieram"
         subtitle="A cada fechamento: parcelas recebidas × esperadas (TRP 210). A próxima parcela não veio → R$ previsto a recuperar."
         actions={

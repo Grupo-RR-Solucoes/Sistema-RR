@@ -139,10 +139,95 @@ export function getSrccRestrictionLabel(record: ProposalRecord): string {
     ]) || null;
 
   if (raw !== null && raw !== undefined && raw !== "") {
-    return String(raw);
+    return traduzirSrcc(String(raw));
   }
 
-  return record.is_srcc_restricted ? "Sim" : "Não";
+  // SEM COLUNA DE SRCC no registro. Antes isto devolvia "Não" quando o boolean
+  // era falso — fabricava uma NEGATIVA a partir de ausencia de dado. Sao 30
+  // linhas da ADS (medido 26/07/2026): a gestora BBTS simplesmente nao manda a
+  // coluna. "Nao sei" nao e "nao ha restricao".
+  if (record.is_srcc_restricted === true) return "Sim";
+  return SRCC_SEM_INFORMACAO;
+}
+
+/** Rotulo do 4o estado: registro que nao traz a coluna de SRCC. */
+export const SRCC_SEM_INFORMACAO = "Sem informação";
+
+/**
+ * CODIGOS OFICIAIS DA RESTRICAO SRCC — tabela BBTS (TRP38, secao 5.3).
+ *
+ * A regra e do Banco do Brasil e vale para as DUAS gestoras, mas cada uma
+ * grava num formato: a Promotiva (RR) manda o texto por extenso, a BBTS (ADS)
+ * manda o codigo cru. Sem esta traducao a mesma situacao aparece como "Não"
+ * numa tela e "2" na outra.
+ */
+export const SRCC_POR_CODIGO: Record<number, string> = {
+  1: "Sim",
+  2: "Não",
+  3: "Consulta não realizada",
+  4: "Não se aplica",
+};
+
+function traduzirSrcc(valor: string): string {
+  const cru = valor.trim();
+  const codigo = Number(cru);
+  if (Number.isInteger(codigo) && SRCC_POR_CODIGO[codigo]) {
+    return SRCC_POR_CODIGO[codigo];
+  }
+  return cru;
+}
+
+/**
+ * ESTADO da restricao SRCC — decide a COR da etiqueta, em qualquer tela.
+ *
+ *   "restrito"   restricao CONFIRMADA (codigo 1 / "Sim"). Nao paga.
+ *   "indefinido" codigo 3 / "Consulta nao realizada". TRANSITORIO: pode virar
+ *                "Sim" ou "Nao" quando a consulta for resolvida.
+ *   "sem-info"   o registro nao traz a coluna (as 30 linhas da ADS). Tambem e
+ *                ausencia de informacao, mas por motivo diferente do 3: ali a
+ *                consulta foi tentada e falhou; aqui a gestora nunca mandou.
+ *   "neutro"     negativa CONHECIDA (codigos 2 e 4 e seus textos). Paga.
+ *
+ * Decide sobre o texto JA traduzido, entao codigo e texto caem no mesmo ramo e
+ * o proximo formato so precisa entrar em SRCC_POR_CODIGO.
+ */
+export type EstadoSrcc = "restrito" | "indefinido" | "sem-info" | "neutro";
+
+/**
+ * TINGIMENTO DA LINHA INTEIRA — decisao do Diego (26/07): o destaque nao pode
+ * ser so a etiqueta; a linha toda da proposta muda de cor.
+ *
+ *   "risco"  vermelho suave — restricao CONFIRMADA. A proposta nao e paga.
+ *   "alerta" ambar suave    — INDEFINIDO. Pode virar paga ou nao paga.
+ *   null     sem tingimento — negativas conhecidas E "sem informacao".
+ *
+ * "sem-info" NAO tinge de proposito: a etiqueta tracejada ja diz que falta o
+ * dado, e tingir 30 linhas da ADS por ausencia de coluna da gestora poluiria a
+ * tela sem informar nada sobre a proposta em si.
+ *
+ * Devolve o CONCEITO, nao a cor: cada tela traduz para a sua classe. Assim a
+ * decisao de QUANDO tingir vive num lugar so, e o COMO fica com quem desenha.
+ */
+export type TingimentoSrcc = "risco" | "alerta" | null;
+
+export function getSrccRowTint(record: ProposalRecord): TingimentoSrcc {
+  const estado = getSrccEstado(record);
+  if (estado === "restrito") return "risco";
+  if (estado === "indefinido") return "alerta";
+  return null;
+}
+
+export function getSrccEstado(record: ProposalRecord): EstadoSrcc {
+  const texto = getSrccRestrictionLabel(record);
+  if (texto === SRCC_SEM_INFORMACAO) return "sem-info";
+  const normal = texto
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toUpperCase();
+  if (normal === "SIM") return "restrito";
+  if (normal.startsWith("CONSULTA NAO REALIZADA")) return "indefinido";
+  return "neutro";
 }
 
 /**

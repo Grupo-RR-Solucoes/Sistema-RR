@@ -266,7 +266,7 @@ const styles: Record<string, CSSProperties> = {
   },
   tableWrap: {
     overflow: "auto",
-    maxHeight: "calc(100vh - 240px)",
+    maxHeight: "calc(100vh - var(--chrome-offset))",
     border: "1px solid var(--rr-line)",
     borderRadius: "16px",
     background: "rgba(255,255,255,0.96)",

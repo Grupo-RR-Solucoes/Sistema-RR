@@ -155,7 +155,7 @@ export default function ConferenciaAvistaSection() {
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
 
       <HeaderNavy
-        brand="AUDITORIA"
+        eyebrow="AUDITORIA"
         title="Conferência mensal à vista"
         subtitle="Comissão à vista (6% no ato) × pago → subpagamento → R$ a cobrar."
         actions={

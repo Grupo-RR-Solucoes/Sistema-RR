@@ -199,7 +199,7 @@ export default function UsuariosList({
 
         {/* HEADER */}
         <HeaderNavy
-          brand="GRUPO RR CRED"
+          eyebrow="GRUPO RR CRED"
           title="Usuários"
           subtitle="Gestão de acesso · contas e papéis"
           actions={

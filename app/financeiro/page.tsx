@@ -253,7 +253,7 @@ export default function FinanceiroPage() {
         </nav>
 
         <HeaderNavy
-          brand="GRUPO RR CRED"
+          eyebrow="GRUPO RR CRED"
           title="Financeiro"
           actions={
             <div className="comp">

@@ -6,6 +6,11 @@ import ColumnFilter from "@/components/ColumnFilter";
 
 import BulkActionBar from "./BulkActionBar";
 import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+import {
+  getSrccRestrictionLabel,
+  getSrccEstado,
+  getSrccRowTint,
+} from "@/lib/proposalDetailing";
 
 // Dia 4.4 Etapa 4.4.2 — Filtros estilo Excel por coluna.
 // 4.4.3: estendido com commission_rule_source (Origem MANUAL/DEFAULT).
@@ -39,8 +44,12 @@ const FILTERABLE_COLUMNS = {
   },
   srcc_restriction: {
     label: "Restricao SRCC",
-    getValue: (row) => row.srcc_restriction || "Nao",
-    getDisplayLabel: (row) => row.srcc_restriction || "Nao",
+    // Filtra pelo texto JA traduzido (ver srccTexto): assim o codigo "2" e o
+    // texto "Não" viram UMA entrada so no filtro, em vez de duas opcoes que
+    // significam a mesma coisa. Funcao declarada (hoisted) — pode ser usada
+    // aqui, antes da definicao la embaixo.
+    getValue: (row) => srccTexto(row.srcc_restriction),
+    getDisplayLabel: (row) => srccTexto(row.srcc_restriction),
   },
   // % A VISTA: regra TRP/OPP pura Promotiva, lida de raw_payload via
   // getAVistaPercent (4.4-fix-1.E D1). Read-only.
@@ -832,7 +841,11 @@ export default function EditarComissoesPage() {
             </span>
           </div>
 
-          <div className="tscroll">
+          <div
+            className={`tscroll${
+              !readOnly && selectedIds.size > 0 ? " bulk" : ""
+            }`}
+          >
             <table className="dt">
               <thead>
                 <tr>
@@ -860,7 +873,7 @@ export default function EditarComissoesPage() {
                     className="stk c-ct"
                     style={readOnly ? { left: 0 } : undefined}
                   >
-                    Contrato
+                    Proposta
                   </th>
                   <th className="r">Valor bruto</th>
                   <th className="r">Valor líquido</th>
@@ -1070,7 +1083,20 @@ export default function EditarComissoesPage() {
                     const isSelected = selectedIds.has(row.id);
 
                     return (
-                      <tr key={row.id} className={isSelected ? "sel" : undefined}>
+                      <tr
+                        key={row.id}
+                        className={
+                          [
+                            isSelected ? "sel" : "",
+                            // Tingimento da linha inteira. A decisao de QUANDO
+                            // tingir vem da biblioteca (vale para as duas
+                            // telas); aqui so viramos classe.
+                            srccTinge(row.srcc_restriction),
+                          ]
+                            .filter(Boolean)
+                            .join(" ") || undefined
+                        }
+                      >
                         {!readOnly ? (
                           <td className="stk c-chk c">
                             <input
@@ -1087,7 +1113,24 @@ export default function EditarComissoesPage() {
                           className="stk c-ct"
                           style={readOnly ? { left: 0 } : undefined}
                         >
-                          <span className="ct">{row.contract_number || "-"}</span>
+                          {/* PROPOSTA, nao contrato. O numero de contrato nao
+                              existe na planilha diaria (ela traz "Data
+                              Contrato", "Data Proposta" e "Numero Proposta",
+                              mas nenhuma coluna com o NUMERO do contrato),
+                              entao contract_number chega nulo em 99,6% das
+                              linhas — inclusive em competencia FECHADA, o que
+                              descarta a hipotese de "proposta ainda nao
+                              contratada". Medido em 26/07/2026: 0% em
+                              mar/abr/mai/jul e 2,3% em junho.
+                              O numero da proposta esta em 100% das linhas. */}
+                          <span className="ct">{row.proposal_number || "-"}</span>
+                          {/* Nos poucos casos com contrato, ele aparece embaixo
+                              em vez de sumir. */}
+                          {row.contract_number ? (
+                            <small className="ctsub">
+                              contrato {row.contract_number}
+                            </small>
+                          ) : null}
                         </td>
                         <td className="r">
                           {formatCurrency(row.gross_value || 0)}
@@ -1134,16 +1177,56 @@ export default function EditarComissoesPage() {
                           })()}
                         </td>
                         <td className="c">
-                          {srccRestricted(row.srcc_restriction) ? (
-                            <span className="badge red">
-                              <span className="d" />
-                              {row.srcc_restriction || "Nao"}
-                            </span>
-                          ) : (
-                            <span className="badge neu">
-                              {row.srcc_restriction || "Nao"}
-                            </span>
-                          )}
+                          {(() => {
+                            const estado = srccEstado(row.srcc_restriction);
+                            const texto = srccTexto(row.srcc_restriction);
+                            if (estado === "restrito") {
+                              return (
+                                <span className="badge red">
+                                  <span className="d" />
+                                  {texto}
+                                </span>
+                              );
+                            }
+                            if (estado === "indefinido") {
+                              // MES FECHADO muda o SIGNIFICADO do ambar: aqui
+                              // ele nao e mais "aguardando a consulta", e sim
+                              // "o fechamento passou e ninguem resolveu".
+                              // Medido: 116 linhas assim em competencias ja
+                              // fechadas (03-06/2026), todas na RR.
+                              return readOnly ? (
+                                <span
+                                  className="badge amb naoresolv"
+                                  title="A competência já fechou e a consulta de restrição continua sem resposta. Não é mais um estado de espera: ficou sem resolução."
+                                >
+                                  <span className="d" />
+                                  Não resolvido
+                                </span>
+                              ) : (
+                                <span
+                                  className="badge amb"
+                                  title="A consulta de restrição não foi feita: não se sabe se há restrição ou não. Estado transitório — pode virar Sim ou Não quando a consulta for resolvida."
+                                >
+                                  <span className="d" />
+                                  {texto}
+                                </span>
+                              );
+                            }
+                            if (estado === "sem-info") {
+                              // A gestora nao mandou a coluna. Diferente do
+                              // indefinido: la a consulta foi tentada e
+                              // falhou; aqui ela nunca chegou ao sistema.
+                              return (
+                                <span
+                                  className="badge seminfo"
+                                  title="O registro não traz a informação de restrição SRCC. A gestora não enviou a coluna — não é uma negativa."
+                                >
+                                  {texto}
+                                </span>
+                              );
+                            }
+                            return <span className="badge neu">{texto}</span>;
+                          })()}
                         </td>
                         <td className="r">
                           {Number(row.insurance_value || 0) > 0
@@ -1431,9 +1514,41 @@ function shareBadge(source, override, companyReceivedPercent) {
   return null;
 }
 
-// 4.4-fix-1.C: "Sim" -> vermelho de aviso; demais ("Nao", "Nao se aplica") -> neutro.
-function srccRestricted(label) {
-  return String(label || "").trim().toUpperCase() === "SIM";
+// ============================================================
+// RESTRICAO SRCC — tres estados, nao dois.
+//
+// Antes: `label === "SIM"` -> vermelho, TODO o resto -> cinza. Com isso
+// "Consulta nao realizada" era pintada igual a "Nao", ou seja, o sistema
+// mostrava "nao sei" com a mesma cara de "nao ha restricao". Sao 176 linhas
+// (mar-jul/2026) em que a informacao e AUSENTE, nao negativa.
+//
+// A coluna chega em dois formatos misturados: texto por extenso e CODIGO
+// NUMERICO cru. Mapeamento oficial da tabela BBTS (TRP38, secao 5.3):
+//   1 = SIM · 2 = NAO · 3 = CONSULTA NAO REALIZADA · 4 = NAO SE APLICA
+// Medido: 18 linhas com "2" e 1 com "4" chegavam sem traducao e apareciam
+// como numero solto na tela.
+//
+// As tres cores:
+//   VERMELHO  restricao CONFIRMADA (1 / "Sim")
+//   AMBAR     INDEFINIDO (3 / "Consulta nao realizada") — nao se sabe
+//   CINZA     negativa CONHECIDA (2 e 4 e seus textos)
+// ============================================================
+// A REGRA MORA EM lib/proposalDetailing.ts, nao aqui. Ela vale para as DUAS
+// gestoras e para as duas telas que mostram SRCC (esta e a carteira do
+// promotor); duplicar aqui foi o que deixou a mesma linha da ADS aparecendo
+// como "Não" numa tela e "2" na outra.
+function srccTexto(valor) {
+  return getSrccRestrictionLabel({ raw_payload: { "Restricao SRCC": valor } });
+}
+
+function srccEstado(valor) {
+  return getSrccEstado({ raw_payload: { "Restricao SRCC": valor } });
+}
+
+/** Classe de tingimento da linha, ou "" quando a linha nao tinge. */
+function srccTinge(valor) {
+  const t = getSrccRowTint({ raw_payload: { "Restricao SRCC": valor } });
+  return t ? `lin-${t}` : "";
 }
 
 // ============================================================
@@ -1663,7 +1778,22 @@ const CSS = `
 .rredit .tcard-head .scrollhint{font-size:11px;color:var(--ink-3);display:inline-flex;align-items:center;gap:7px;}
 .rredit .tcard-head .scrollhint svg{color:var(--ink-3);}
 
-.rredit .tscroll{overflow-x:auto;overflow-y:visible;}
+/* JANELA VIEWPORT-BOUND (mesmo padrao do kit <Table scrollable> e do
+   /promotores). Antes era overflow-x:auto + overflow-y:visible SEM altura:
+   o scrollport tinha a altura da tabela inteira, entao (1) a barra
+   horizontal ficava no rodape das ~700 linhas — so alcancavel rolando a
+   pagina toda — e (2) o thead sticky grudava no topo de um scrollport bem
+   mais alto que a tela, ou seja, nunca aparecia grudado.
+   Com max-height a barra fica no rodape da JANELA e o thead gruda no topo
+   dela. As colunas congeladas (.stk) passam a ter contra o que grudar.
+   --chrome-offset e o mesmo token das 30 chamadas do kit (globals.css). */
+.rredit .tscroll{overflow:auto;max-height:calc(100vh - var(--chrome-offset));}
+/* Com selecao ativa a BulkActionBar (position:fixed;height:220;bottom:18)
+   cobre 238px do rodape. A janela encolhe o mesmo tanto para a barra
+   horizontal nao ficar embaixo dela. Sem selecao a barra nao existe e a
+   janela volta ao tamanho cheio — por isso o reserve e condicional, nao
+   um desconto fixo. */
+.rredit .tscroll.bulk{max-height:calc(100vh - var(--chrome-offset) - 238px);}
 .rredit table.dt{border-collapse:separate;border-spacing:0;min-width:2280px;width:100%;}
 .rredit table.dt thead th{position:sticky;top:0;z-index:5;background:#FAFBFC;font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);text-align:left;padding:11px 14px;border-bottom:1px solid var(--bd);white-space:nowrap;vertical-align:bottom;}
 .rredit table.dt thead th.r{text-align:right;}
@@ -1686,11 +1816,77 @@ const CSS = `
 .rredit table.dt tbody tr.sel td{background:#F2F6FF;}
 .rredit table.dt tbody tr.sel td.stk{background:#F2F6FF;}
 
+/* ===================================================================
+   TINGIMENTO DA LINHA POR SRCC — a linha INTEIRA, nao so a etiqueta.
+
+   AS CELULAS CONGELADAS ENTRAM JUNTO. .c-chk e .c-ct sao sticky e tem
+   fundo SOLIDO proprio (senao o conteudo das outras colunas apareceria
+   por baixo na rolagem horizontal). Tingir so o corpo cortaria a cor no
+   meio da linha: as duas primeiras colunas ficariam brancas e o resto
+   colorido. Por isso toda regra abaixo repete o par td / td.stk.
+
+   TONS: familia --risk-bg / --warn-bg (os FUNDOS da paleta, nao os
+   saturados). O texto da tabela e #4B5468 sobre estes fundos claros —
+   os numeros continuam legiveis, que era o requisito.
+
+   ORDEM DE PRECEDENCIA (a ordem das regras importa, todas com a mesma
+   especificidade):
+     1. tingimento normal
+     2. tingimento + mouse em cima
+     3. SELECIONADA — sempre por ultimo, para nunca ser encoberta.
+   =================================================================== */
+
+/* --- 1. normal --- */
+.rredit table.dt tbody tr.lin-risco td,
+.rredit table.dt tbody tr.lin-risco td.stk{background:var(--risk-bg,#FBEAE7);}
+.rredit table.dt tbody tr.lin-alerta td,
+.rredit table.dt tbody tr.lin-alerta td.stk{background:var(--warn-bg,#FBF1DC);}
+
+/* --- 2. ao passar o mouse: um passo mais escuro do MESMO tom ---
+   Nao volta para o cinza neutro do hover comum: perderia o tingimento
+   justamente no momento em que a pessoa esta olhando a linha. */
+.rredit table.dt tbody tr.lin-risco:hover td,
+.rredit table.dt tbody tr.lin-risco:hover td.stk{background:#F7DFDB;}
+.rredit table.dt tbody tr.lin-alerta:hover td,
+.rredit table.dt tbody tr.lin-alerta:hover td.stk{background:#F7E9CB;}
+
+/* --- 3. SELECIONADA sobre linha tingida ---
+   O azul da selecao (#F2F6FF) sobre um fundo quente vira um tom sujo e
+   ambiguo. Em vez de brigar por matiz, a selecao ganha DOIS sinais que
+   nao dependem da cor de fundo: o tom tingido escurece mais um passo e
+   entra uma BARRA NAVY de 3px na borda esquerda da linha. A barra e
+   independente do matiz, entao a selecao continua obvia tanto na linha
+   branca quanto na vermelha quanto na ambar.
+   (A caixa de selecao marcada e o terceiro sinal, ja existente.) */
+.rredit table.dt tbody tr.sel.lin-risco td,
+.rredit table.dt tbody tr.sel.lin-risco td.stk{background:#F3D4CF;}
+.rredit table.dt tbody tr.sel.lin-alerta td,
+.rredit table.dt tbody tr.sel.lin-alerta td.stk{background:#F3E0B8;}
+.rredit table.dt tbody tr.sel.lin-risco:hover td,
+.rredit table.dt tbody tr.sel.lin-risco:hover td.stk{background:#EFC9C3;}
+.rredit table.dt tbody tr.sel.lin-alerta:hover td,
+.rredit table.dt tbody tr.sel.lin-alerta:hover td.stk{background:#EFD8A6;}
+
+/* A barra da selecao entra na PRIMEIRA celula da linha. Com caixa de
+   selecao a primeira e .c-chk; em mes fechado (readOnly) nao ha caixa e
+   a primeira vira .c-ct — por isso as duas regras. inset para nao
+   deslocar o layout, e box-shadow em vez de border-left porque a celula
+   ja usa box-shadow para o filete de separacao. */
+.rredit table.dt tbody tr.sel td.c-chk{box-shadow:inset 3px 0 0 var(--navy);}
+.rredit table.dt tbody tr.sel td.c-ct{box-shadow:inset 3px 0 0 var(--navy),1px 0 0 var(--bd);}
+
+/* O texto da proposta acompanha o tom, como ja acontece na carteira do
+   promotor — reforca a leitura sem depender so do fundo. */
+.rredit table.dt tbody tr.lin-risco .ct{color:var(--red,#C0392B);}
+.rredit table.dt tbody tr.lin-alerta .ct{color:var(--warn,#B07A12);}
+
 /* header with filter button (.th-f wraps label + ColumnFilter button) */
 .rredit .th-f{display:inline-flex;align-items:center;gap:4px;}
 
 /* contract cell */
-.rredit .ct{font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;}
+.rredit .ct{font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;display:block;}
+/* numero do contrato, quando existe: segunda linha menor sob a proposta */
+.rredit .ctsub{display:block;font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums;margin-top:2px;}
 .rredit .chavej{font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--ink-2);letter-spacing:-.01em;}
 .rredit .prod{color:var(--ink);font-weight:500;}
 
@@ -1722,6 +1918,19 @@ const CSS = `
 .rredit .badge.red{color:var(--red);background:var(--red-bg);border-color:#F3C9C6;}
 .rredit .badge.red .d{width:5px;height:5px;border-radius:50%;background:var(--red);}
 .rredit .badge.neu{color:var(--ink-3);background:var(--neu);border-color:var(--bd);}
+/* AMBAR = estado indefinido (consulta nao realizada). Reusa a familia --warn
+   do sistema, nao inventa cor. Tem o mesmo ponto colorido do vermelho: a
+   distincao entre "ha restricao" e "nao se sabe" nao pode depender so do
+   matiz, senao some para quem nao distingue bem cor. O cinza nao tem ponto. */
+.rredit .badge.amb{color:var(--warn,#B07A12);background:var(--warn-bg,#FBF1DC);border-color:var(--warn-bd,#EAD7A6);cursor:help;}
+.rredit .badge.amb .d{width:5px;height:5px;border-radius:50%;background:var(--warn,#B07A12);}
+/* mes FECHADO: o mesmo ambar, com borda cheia, porque ali "indefinido" virou
+   "nao resolvido" — nao ha mais o que aguardar. */
+.rredit .badge.amb.naoresolv{border-style:solid;border-width:1.5px;font-weight:700;}
+/* SEM INFORMACAO: cinza TRACEJADO. Nao pode passar por negativa conhecida (o
+   cinza liso), mas tambem nao e o ambar do indefinido — a gestora nunca
+   mandou o dado. O tracejado diz "falta algo aqui" sem gritar. */
+.rredit .badge.seminfo{color:var(--ink-3);background:transparent;border:1px dashed var(--bd);font-style:italic;cursor:help;}
 
 /* row actions */
 .rredit .racts{display:inline-flex;align-items:center;gap:7px;}

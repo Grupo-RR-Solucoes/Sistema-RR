@@ -182,7 +182,7 @@ export default function ConferenciaBbtsSection() {
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
 
       <HeaderNavy
-        brand="AUDITORIA · ADS"
+        eyebrow="AUDITORIA · ADS"
         title="Conferência BBTS × realizado"
         subtitle="Tabela da BBTS × pago por competência → pagou menos que o acordo → R$ a cobrar."
         actions={
