@@ -473,6 +473,47 @@ export type ParametrosComissaoEmpresaRecortada = {
   trpProvider?: TrpRegraProvider;
 };
 
+/**
+ * A BASE DA FAIXA: producao do grupo numa competencia, MES INTEIRO.
+ *
+ * Existe exportada para que o chamador de calcularComissaoEmpresaRecortada NAO
+ * precise montar esta soma a mao. Ela parece trivial — Sigma net das linhas
+ * elegiveis — mas "elegivel" e "de qual competencia" sao as MESMAS definicoes
+ * que a soma da comissao usa (isEligibleProductionRecord + extractYearMonth).
+ * Se o chamador espelhasse isso, um dia as duas leituras discordariam e a faixa
+ * sairia de um conjunto diferente do que a soma percorre — divergencia
+ * silenciosa, do tipo que so aparece no centavo.
+ *
+ * Espelha buildPromoterAnalytics:794-805 (groupProductionValue): SEM recorte de
+ * dia e SEM filtro de empresa por padrao — o enquadramento Promotiva e por
+ * grupo empresarial, nao por CNPJ.
+ */
+export function calcularProducaoMensalDoGrupo(params: {
+  records: ProductionRow[];
+  competencia: { year: number; month: number };
+  companyIds?: string[] | null;
+}): { total: number; linhas: number } {
+  const { records, competencia, companyIds } = params;
+  let total = 0;
+  let linhas = 0;
+  for (const record of records) {
+    if (!record.company_id) continue;
+    if (companyIds && !companyIds.includes(record.company_id)) continue;
+    if (!isEligibleProductionRecord(record)) continue;
+    const periodo = extractYearMonth(record);
+    if (
+      !periodo ||
+      periodo.year !== competencia.year ||
+      periodo.month !== competencia.month
+    ) {
+      continue;
+    }
+    total += toNumber(record.net_value);
+    linhas += 1;
+  }
+  return { total: Math.round(total * 100) / 100, linhas };
+}
+
 export type ComissaoEmpresaRecortada = {
   /** Σ (net × taxa) das linhas dentro do corte. */
   total: number;

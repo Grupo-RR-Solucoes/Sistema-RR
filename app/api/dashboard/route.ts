@@ -14,8 +14,13 @@ import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { calcularRbt12 } from "@/lib/rbt12";
 import { buildProjecaoMetas, consolidarGrupo, consolidarGrupoEquipe } from "@/lib/projecaoMetas";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
-import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
+import {
+  buildPromoterAnalytics,
+  calcularComissaoEmpresaRecortada,
+  calcularProducaoMensalDoGrupo,
+} from "@/lib/promoterAnalytics";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
+import { buildTrpCreditProvider } from "@/lib/trp/creditTrpProvider";
 import { fetchAllRows } from "@/lib/queryHelpers";
 import {
   fetchInsuranceSlipRules,
@@ -94,7 +99,14 @@ type DailyUnassignedRow = {
 // igual a producao. Medido em 26/07/2026: junho mes-cheio pelo daily da
 // R$ 4.297,21 contra R$ 4.372,62 do fechamento_mensal_empresa.valor_seguro —
 // 98,3%, R$ 75,41 de diferenca.
+// MEDIDA C alargou esta linha. Ate aqui ela era o subconjunto enxuto que a
+// producao e o seguro precisavam (somas de coluna). A comissao BRUTA nao e soma
+// de coluna: a taxa a vista sai de raw_payload -> company_received_percent ->
+// derive da TRP, e o derive le valor bruto, seguro, juros, prazo e produto.
+// Sem esses campos calcularComissaoEmpresaRecortada devolveria taxa zero em
+// silencio para as ~9% de linhas que caem no derive.
 type DailyRecorteRow = {
+  id: string;
   company_id: string | null;
   status: string | null;
   is_srcc_restricted: boolean | null;
@@ -102,6 +114,18 @@ type DailyRecorteRow = {
   movement_date: string | null;
   cancellation_date: string | null;
   insurance_commission_amount: number | null;
+  // --- campos que o derive da taxa a vista consome ---
+  contract_date: string | null;
+  proposal_date: string | null;
+  gross_value: number | null;
+  insurance_value: number | null;
+  has_insurance: boolean | null;
+  interest_rate: number | null;
+  term_months: number | null;
+  installments: number | null;
+  product_description: string | null;
+  company_received_percent: number | null;
+  raw_payload: Record<string, unknown> | null;
 };
 
 // Mesma regra de validade/produção do motor (app/api/calculate/monthly/route.ts):
@@ -311,7 +335,7 @@ export async function GET(req: Request) {
           supabase
             .from("daily_production_records")
             .select(
-              "company_id, status, is_srcc_restricted, net_value, movement_date, cancellation_date, insurance_commission_amount"
+              "id, company_id, status, is_srcc_restricted, net_value, movement_date, cancellation_date, insurance_commission_amount, contract_date, proposal_date, gross_value, insurance_value, has_insurance, interest_rate, term_months, installments, product_description, company_received_percent, raw_payload"
             )
             .gte("movement_date", recorteRange.inicio)
             .lt("movement_date", recorteRange.fim)
@@ -739,42 +763,43 @@ export async function GET(req: Request) {
     // acima; a fonte de cada ponta viaja junto para a tela poder sinalizar
     // comparacao cross-source.
     //
-    // ============ MES-CHEIO AQUI E PROVISORIO — VAI RECORTAR ============
+    // ==================== MEDIDA C — A LIGACAO (27/07/2026) ====================
     //
-    // ATENCAO: este bloco ja disse "DECISAO FECHADA — NAO REABRIR", defendendo
-    // que a comissao BRUTA ficaria em mes-cheio para sempre. AQUELA DECISAO FOI
-    // REVERTIDA pelo Diego em 26/07/2026. O texto antigo esta morto; o que vale
-    // e o que esta escrito abaixo.
+    // Historico curto: este bloco ja disse "DECISAO FECHADA — NAO REABRIR",
+    // defendendo mes-cheio para sempre. Diego reverteu em 26/07; a funcao
+    // calcularComissaoEmpresaRecortada nasceu em 26/07 e ficou SEM CHAMADOR ate
+    // aqui. Agora tem.
     //
-    // POR QUE A RECUSA CAIU. Os dois motivos originais nao se sustentaram:
+    // OS DOIS PARAMETROS SAO SEPARADOS — e o ponto todo:
+    //   producaoMensalDoGrupo  vem do MES INTEIRO, nas DUAS competencias. Faixa
+    //                          e conceito MENSAL: a TRP escalona por volume do
+    //                          mes, nao por volume do pedaco olhado. Recortar a
+    //                          base empurraria operacoes para faixa inferior e o
+    //                          corte mudaria a TAXA, nao so a janela.
+    //   ateDia                 decide apenas QUAIS LINHAS somam.
     //
-    //   1) A ancora de conferencia nao se perde. O valor do M-1 NAO APARECE na
-    //      tela — ele so entra na conta da variacao. A ancora que o Diego usa
-    //      para conferir contra o PDF continua no /fechamento e na DRE, que
-    //      nao mudam.
+    // MEDIDO ANTES DE LIGAR (scripts/medida-c-comissao-recortada.mts, dado ate
+    // 24/07, TRP_SOURCE=db):
     //
-    //   2) A aproximacao dos 8% tem conserto, e o conserto e simples: separar
-    //      a FAIXA do RECORTE. A faixa da TRP sai da producao do MES INTEIRO
-    //      nas duas competencias (faixa e conceito mensal — a TRP escalona por
-    //      volume do mes, nao por volume do pedaco olhado), e o recorte decide
-    //      apenas QUAIS LINHAS entram na soma. Assim a faixa fica estavel e a
-    //      soma fica exata, que era exatamente o que faltava.
+    //   antes  jul CHEIO 179.842,54 (motor) x jun CHEIO 196.837,68 (fechamento)
+    //          = -8,6%   <- janelas desiguais E fontes diferentes
+    //   agora  jul 1-24   170.828,97          x jun 1-24   164.533,04
+    //          = +3,8%   <- mesma janela, mesma fonte
     //
-    // ESTADO ATUAL: a funcao ja existe e esta exportada —
-    // calcularComissaoEmpresaRecortada, em lib/promoterAnalytics.ts, com os
-    // dois parametros separados (producaoMensalDoGrupo e ateDia). Ela NAO TEM
-    // CHAMADOR ainda: falta ligar esta rota nela, o que exige carregar o
-    // registro completo (raw_payload, company_received_percent, datas, produto,
-    // prazo) das DUAS competencias, mais a producao mensal cheia de cada uma e
-    // o provedor da TRP. A consulta dailyRecorte de hoje e enxuta demais.
+    // O sinal INVERTE. Nao por desempenho: por janela. O mesmo erro que a Fase
+    // 2.1 matou na producao e a Fase 2.2 matou no seguro.
     //
-    // Ate essa ligacao acontecer, o card segue em mes-cheio ROTULADO — que
-    // continua honesto (o card diz o que esta comparando), so nao e mais o
-    // destino final.
+    // O QUE A LIGACAO CUSTA, E POR QUE VALE. Recortar obriga a ponta do M-1 a
+    // sair do MOTOR e nao do fechamento — o fechamento nao tem data por linha,
+    // entao nao ha onde cortar. Trocar a fonte foi medido no mes INTEIRO de
+    // junho, onde as duas existem: fechamento 196.837,68 x motor 197.864,39 =
+    // +0,5% (R$ 1.026,71). O motor reproduz o mes fechado dentro de meio ponto,
+    // entao a troca nao e o que move o numero — a janela e.
     //
-    // O SEGURO ja recorta desde 26/07: la a comissao existe por registro, sem
-    // derive nenhum. Ver o bloco do seguro abaixo.
-    // ====================================================================
+    // A ancora de conferencia nao se perde: o valor do M-1 NAO APARECE na tela,
+    // so entra na conta da variacao. O numero que o Diego confere contra o PDF
+    // continua no /fechamento e na DRE, intocados.
+    // ==========================================================================
     const janelaSemRecorte = resolverJanela({
       competencia,
       modo: modoJanelaPedido,
@@ -782,14 +807,78 @@ export async function GET(req: Request) {
       recorteIndisponivel: modoJanelaPedido === "ate-dia-N",
     });
 
-    const deltaComissaoEmpresa = calcularDelta({
+    // A base da FAIXA sai da lib, ao lado da regra — nao remontada aqui. Ver
+    // calcularProducaoMensalDoGrupo.
+    const producaoCheiaAtual = calcularProducaoMensalDoGrupo({
+      records: dailyRecorte || [],
       competencia,
-      valorAtual: comissaoBrutaEmpresa,
-      valorAnterior: comissaoEmpresaAnterior,
-      janela: janelaSemRecorte,
-      fonteAtual: regime === "open" ? "motor-vivo" : regime,
-      fonteAnterior: anteriorFechado ? regimeAnterior : null,
     });
+    const producaoCheiaAnterior = calcularProducaoMensalDoGrupo({
+      records: dailyRecorte || [],
+      competencia: compAnterior,
+    });
+
+    // Provider da TRP: preload async 1x das competencias dos contratos do
+    // recorte; o lookup dentro do derive segue sincrono. Com TRP_SOURCE=json
+    // volta undefined e o motor le o JSON embutido, como sempre.
+    const trpProviderRecorte = await buildTrpCreditProvider(
+      (dailyRecorte || []).map((r) => r.contract_date)
+    );
+
+    let deltaComissaoEmpresa;
+    if (janelaPedida.modo === "ate-dia-N") {
+      const brutaAtual = calcularComissaoEmpresaRecortada({
+        records: dailyRecorte || [],
+        competencia,
+        producaoMensalDoGrupo: producaoCheiaAtual.total,
+        ateDia: janelaPedida.diaCorteAtual,
+        trpProvider: trpProviderRecorte,
+      });
+      const brutaAnterior = calcularComissaoEmpresaRecortada({
+        records: dailyRecorte || [],
+        competencia: compAnterior,
+        producaoMensalDoGrupo: producaoCheiaAnterior.total,
+        ateDia: janelaPedida.diaCorteAnterior,
+        trpProvider: trpProviderRecorte,
+      });
+
+      // Exige linha nas DUAS pontas, igual a producao e ao seguro. Competencia
+      // sem daily (jan/fev/mar/mai de 2026) cai para mes-cheio ROTULADO em vez
+      // de comparar contra um zero inventado.
+      if (brutaAtual.linhasSomadas > 0 && brutaAnterior.linhasSomadas > 0) {
+        deltaComissaoEmpresa = calcularDelta({
+          competencia,
+          valorAtual: brutaAtual.total,
+          valorAnterior: brutaAnterior.total,
+          janela: janelaPedida,
+          // As duas pontas saem do MESMO motor sobre o MESMO daily — a
+          // comparacao deixa de ser cross-source. Por isso as duas fontes sao
+          // iguais aqui, e a tela nao sinaliza mais mistura neste card.
+          fonteAtual: "motor-recortado",
+          fonteAnterior: "motor-recortado",
+        });
+      } else {
+        deltaComissaoEmpresa = calcularDelta({
+          competencia,
+          valorAtual: comissaoBrutaEmpresa,
+          valorAnterior: comissaoEmpresaAnterior,
+          janela: janelaSemRecorte,
+          fonteAtual: regime === "open" ? "motor-vivo" : regime,
+          fonteAnterior: anteriorFechado ? regimeAnterior : null,
+        });
+      }
+    } else {
+      // Competencia FECHADA (ou navegacao para mes passado): os dois lados sao
+      // totais finais. Nada a recortar — caminho da Fase 1 inalterado.
+      deltaComissaoEmpresa = calcularDelta({
+        competencia,
+        valorAtual: comissaoBrutaEmpresa,
+        valorAnterior: comissaoEmpresaAnterior,
+        janela: janelaSemRecorte,
+        fonteAtual: regime === "open" ? "motor-vivo" : regime,
+        fonteAnterior: anteriorFechado ? regimeAnterior : null,
+      });
+    }
 
     // ---- SEGURO (Fase 2.2) — RECORTA por dia, como a producao ----
     // A comissao de seguro existe POR REGISTRO no daily, com movement_date.
