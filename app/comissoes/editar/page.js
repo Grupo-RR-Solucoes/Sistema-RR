@@ -9,6 +9,7 @@ import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
 import {
   getSrccRestrictionLabel,
   getSrccEstado,
+  getSrccRowTint,
 } from "@/lib/proposalDetailing";
 
 // Dia 4.4 Etapa 4.4.2 — Filtros estilo Excel por coluna.
@@ -1082,7 +1083,20 @@ export default function EditarComissoesPage() {
                     const isSelected = selectedIds.has(row.id);
 
                     return (
-                      <tr key={row.id} className={isSelected ? "sel" : undefined}>
+                      <tr
+                        key={row.id}
+                        className={
+                          [
+                            isSelected ? "sel" : "",
+                            // Tingimento da linha inteira. A decisao de QUANDO
+                            // tingir vem da biblioteca (vale para as duas
+                            // telas); aqui so viramos classe.
+                            srccTinge(row.srcc_restriction),
+                          ]
+                            .filter(Boolean)
+                            .join(" ") || undefined
+                        }
+                      >
                         {!readOnly ? (
                           <td className="stk c-chk c">
                             <input
@@ -1531,6 +1545,12 @@ function srccEstado(valor) {
   return getSrccEstado({ raw_payload: { "Restricao SRCC": valor } });
 }
 
+/** Classe de tingimento da linha, ou "" quando a linha nao tinge. */
+function srccTinge(valor) {
+  const t = getSrccRowTint({ raw_payload: { "Restricao SRCC": valor } });
+  return t ? `lin-${t}` : "";
+}
+
 // ============================================================
 // Icones inline (stroke currentColor — herdam cor do contexto).
 // ============================================================
@@ -1795,6 +1815,70 @@ const CSS = `
 .rredit table.dt tbody tr:hover td.stk{background:#FBFCFD;}
 .rredit table.dt tbody tr.sel td{background:#F2F6FF;}
 .rredit table.dt tbody tr.sel td.stk{background:#F2F6FF;}
+
+/* ===================================================================
+   TINGIMENTO DA LINHA POR SRCC — a linha INTEIRA, nao so a etiqueta.
+
+   AS CELULAS CONGELADAS ENTRAM JUNTO. .c-chk e .c-ct sao sticky e tem
+   fundo SOLIDO proprio (senao o conteudo das outras colunas apareceria
+   por baixo na rolagem horizontal). Tingir so o corpo cortaria a cor no
+   meio da linha: as duas primeiras colunas ficariam brancas e o resto
+   colorido. Por isso toda regra abaixo repete o par td / td.stk.
+
+   TONS: familia --risk-bg / --warn-bg (os FUNDOS da paleta, nao os
+   saturados). O texto da tabela e #4B5468 sobre estes fundos claros —
+   os numeros continuam legiveis, que era o requisito.
+
+   ORDEM DE PRECEDENCIA (a ordem das regras importa, todas com a mesma
+   especificidade):
+     1. tingimento normal
+     2. tingimento + mouse em cima
+     3. SELECIONADA — sempre por ultimo, para nunca ser encoberta.
+   =================================================================== */
+
+/* --- 1. normal --- */
+.rredit table.dt tbody tr.lin-risco td,
+.rredit table.dt tbody tr.lin-risco td.stk{background:var(--risk-bg,#FBEAE7);}
+.rredit table.dt tbody tr.lin-alerta td,
+.rredit table.dt tbody tr.lin-alerta td.stk{background:var(--warn-bg,#FBF1DC);}
+
+/* --- 2. ao passar o mouse: um passo mais escuro do MESMO tom ---
+   Nao volta para o cinza neutro do hover comum: perderia o tingimento
+   justamente no momento em que a pessoa esta olhando a linha. */
+.rredit table.dt tbody tr.lin-risco:hover td,
+.rredit table.dt tbody tr.lin-risco:hover td.stk{background:#F7DFDB;}
+.rredit table.dt tbody tr.lin-alerta:hover td,
+.rredit table.dt tbody tr.lin-alerta:hover td.stk{background:#F7E9CB;}
+
+/* --- 3. SELECIONADA sobre linha tingida ---
+   O azul da selecao (#F2F6FF) sobre um fundo quente vira um tom sujo e
+   ambiguo. Em vez de brigar por matiz, a selecao ganha DOIS sinais que
+   nao dependem da cor de fundo: o tom tingido escurece mais um passo e
+   entra uma BARRA NAVY de 3px na borda esquerda da linha. A barra e
+   independente do matiz, entao a selecao continua obvia tanto na linha
+   branca quanto na vermelha quanto na ambar.
+   (A caixa de selecao marcada e o terceiro sinal, ja existente.) */
+.rredit table.dt tbody tr.sel.lin-risco td,
+.rredit table.dt tbody tr.sel.lin-risco td.stk{background:#F3D4CF;}
+.rredit table.dt tbody tr.sel.lin-alerta td,
+.rredit table.dt tbody tr.sel.lin-alerta td.stk{background:#F3E0B8;}
+.rredit table.dt tbody tr.sel.lin-risco:hover td,
+.rredit table.dt tbody tr.sel.lin-risco:hover td.stk{background:#EFC9C3;}
+.rredit table.dt tbody tr.sel.lin-alerta:hover td,
+.rredit table.dt tbody tr.sel.lin-alerta:hover td.stk{background:#EFD8A6;}
+
+/* A barra da selecao entra na PRIMEIRA celula da linha. Com caixa de
+   selecao a primeira e .c-chk; em mes fechado (readOnly) nao ha caixa e
+   a primeira vira .c-ct — por isso as duas regras. inset para nao
+   deslocar o layout, e box-shadow em vez de border-left porque a celula
+   ja usa box-shadow para o filete de separacao. */
+.rredit table.dt tbody tr.sel td.c-chk{box-shadow:inset 3px 0 0 var(--navy);}
+.rredit table.dt tbody tr.sel td.c-ct{box-shadow:inset 3px 0 0 var(--navy),1px 0 0 var(--bd);}
+
+/* O texto da proposta acompanha o tom, como ja acontece na carteira do
+   promotor — reforca a leitura sem depender so do fundo. */
+.rredit table.dt tbody tr.lin-risco .ct{color:var(--red,#C0392B);}
+.rredit table.dt tbody tr.lin-alerta .ct{color:var(--warn,#B07A12);}
 
 /* header with filter button (.th-f wraps label + ColumnFilter button) */
 .rredit .th-f{display:inline-flex;align-items:center;gap:4px;}

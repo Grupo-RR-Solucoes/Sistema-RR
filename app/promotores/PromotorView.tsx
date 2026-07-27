@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { getSrccEstado } from "@/lib/proposalDetailing";
+import { getSrccEstado, getSrccRowTint } from "@/lib/proposalDetailing";
 
 type PeriodOption = {
   key: string;
@@ -359,8 +359,15 @@ export default function PromotorView() {
                     const pf = Number(row.promoter_commission_amount ?? 0);
                     const seg = Number(row.insurance_commission_amount ?? 0);
                     const total = pf + seg;
+                    // QUANDO tingir vem da biblioteca (mesma decisao de
+                    // /comissoes/editar); COMO tingir fica com esta tela, que
+                    // ja tinha as classes r-red / r-orange pintando a linha
+                    // inteira, celula congelada inclusive.
+                    const tinge = getSrccRowTint({
+                      raw_payload: { "Restricao SRCC": row.srcc_restriction },
+                    });
                     const rowClass =
-                      state === "red" ? "r-red" : state === "orange" ? "r-orange" : "";
+                      tinge === "risco" ? "r-red" : tinge === "alerta" ? "r-orange" : "";
                     return (
                       <tr key={row.id} className={rowClass}>
                         <td className="l sticky ctr" data-l="Contrato">

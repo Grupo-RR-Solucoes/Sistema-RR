@@ -193,6 +193,30 @@ function traduzirSrcc(valor: string): string {
  */
 export type EstadoSrcc = "restrito" | "indefinido" | "sem-info" | "neutro";
 
+/**
+ * TINGIMENTO DA LINHA INTEIRA — decisao do Diego (26/07): o destaque nao pode
+ * ser so a etiqueta; a linha toda da proposta muda de cor.
+ *
+ *   "risco"  vermelho suave — restricao CONFIRMADA. A proposta nao e paga.
+ *   "alerta" ambar suave    — INDEFINIDO. Pode virar paga ou nao paga.
+ *   null     sem tingimento — negativas conhecidas E "sem informacao".
+ *
+ * "sem-info" NAO tinge de proposito: a etiqueta tracejada ja diz que falta o
+ * dado, e tingir 30 linhas da ADS por ausencia de coluna da gestora poluiria a
+ * tela sem informar nada sobre a proposta em si.
+ *
+ * Devolve o CONCEITO, nao a cor: cada tela traduz para a sua classe. Assim a
+ * decisao de QUANDO tingir vive num lugar so, e o COMO fica com quem desenha.
+ */
+export type TingimentoSrcc = "risco" | "alerta" | null;
+
+export function getSrccRowTint(record: ProposalRecord): TingimentoSrcc {
+  const estado = getSrccEstado(record);
+  if (estado === "restrito") return "risco";
+  if (estado === "indefinido") return "alerta";
+  return null;
+}
+
 export function getSrccEstado(record: ProposalRecord): EstadoSrcc {
   const texto = getSrccRestrictionLabel(record);
   if (texto === SRCC_SEM_INFORMACAO) return "sem-info";
