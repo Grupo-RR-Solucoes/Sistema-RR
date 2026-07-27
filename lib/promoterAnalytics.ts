@@ -387,31 +387,66 @@ function deriveCompanyReceivedRate(
   return avistaEmpresa / netValue;
 }
 
+/** Aliases da taxa a vista no raw_payload. Constante porque o PRIMEIRO degrau
+ *  e consultado em mais de um ponto, e listas de alias copiadas divergem. */
+const ALIASES_AVISTA_BRUTO = [
+  "% A VISTA",
+  "% À VISTA",
+  "% A VISTA EMPRESA",
+  "% AVISTA",
+  "Percentual A Vista",
+];
+
+/**
+ * De qual dos TRES DEGRAUS a taxa a vista veio.
+ *
+ *   bruto   veio do raw_payload da planilha (a fonte original)
+ *   coluna  veio de company_received_percent (o que o importador guardou)
+ *   derive  nenhum dos dois serviu; a taxa foi DERIVADA da TRP pelo motor
+ *
+ * "derive" NAO significa "sem comissao" — significa que a resposta veio da
+ * regua em vez de vir pronta no registro. A confusao entre as duas coisas e
+ * exatamente o defeito que a etiqueta "SEM REGRA TRP" cometia.
+ */
+export type DegrauTaxaAvista = "bruto" | "coluna" | "derive";
+
+/**
+ * Resolve a taxa E diz de onde ela veio, numa passada so.
+ *
+ * Existe para que ninguem precise perguntar "esta linha tem taxa propria?"
+ * por fora, espelhando as guardas — havia um espelho desses aqui mesmo
+ * (temTaxaPropria) e havia outro, pior, na tela: a etiqueta lia a coluna crua
+ * e concluia "a Promotiva nao comissionou", pulando o terceiro degrau.
+ */
+function resolverTaxaComOrigem(
+  record: ProductionRow,
+  companyProductionValue: number,
+  trpProvider?: TrpRegraProvider,
+): { taxa: number; degrau: DegrauTaxaAvista } {
+  const rawRate = toPercentRate(
+    readRawPayloadValue(record.raw_payload, ALIASES_AVISTA_BRUTO)
+  );
+  if (rawRate > 0 && rawRate <= 0.065) {
+    return { taxa: rawRate, degrau: "bruto" };
+  }
+
+  const storedRate = toPercentRate(record.company_received_percent);
+  if (storedRate > 0 && storedRate <= 0.065) {
+    return { taxa: storedRate, degrau: "coluna" };
+  }
+
+  return {
+    taxa: deriveCompanyReceivedRate(record, companyProductionValue, trpProvider),
+    degrau: "derive",
+  };
+}
+
 function getCompanyReceivedRate(
   record: ProductionRow,
   companyProductionValue: number,
   trpProvider?: TrpRegraProvider,
 ) {
-  const rawRate = toPercentRate(
-    readRawPayloadValue(record.raw_payload, [
-      "% A VISTA",
-      "% À VISTA",
-      "% A VISTA EMPRESA",
-      "% AVISTA",
-      "Percentual A Vista",
-    ])
-  );
-
-  if (rawRate > 0 && rawRate <= 0.065) {
-    return rawRate;
-  }
-
-  const storedRate = toPercentRate(record.company_received_percent);
-  if (storedRate > 0 && storedRate <= 0.065) {
-    return storedRate;
-  }
-
-  return deriveCompanyReceivedRate(record, companyProductionValue, trpProvider);
+  return resolverTaxaComOrigem(record, companyProductionValue, trpProvider).taxa;
 }
 
 function getPromoterViewCompanyRate(
@@ -422,6 +457,54 @@ function getPromoterViewCompanyRate(
   return capPromoterViewRate(
     getCompanyReceivedRate(record, companyProductionValue, trpProvider)
   );
+}
+
+export type TaxaAvistaEfetiva = {
+  /** Taxa em FRACAO (0,058 = 5,80%), ja com o teto da visao do promotor. */
+  taxa: number;
+  /** Degrau que respondeu. Ver DegrauTaxaAvista. */
+  degrau: DegrauTaxaAvista;
+  /**
+   * A Promotiva de fato NAO comissiona esta proposta.
+   *
+   * So e true quando os TRES degraus falharam — inclusive o derive, que
+   * consulta a TRP. E a unica leitura que autoriza dizer "sem regra TRP".
+   */
+  semRegra: boolean;
+};
+
+/**
+ * A TAXA A VISTA EFETIVA de um registro — a mesma que o motor usa para pagar.
+ *
+ * POR QUE ESTA FUNCAO E EXPORTADA. Quem precisa saber se uma proposta foi
+ * comissionada estava olhando `company_received_percent` cru, que e o SEGUNDO
+ * degrau de tres. Um registro sem a coluna preenchida pode perfeitamente ter
+ * taxa — ela vem do raw_payload (1o) ou da TRP pelo derive (3o). Ler so a
+ * coluna e concluir "nao comissionou" e afirmacao falsa sobre dinheiro.
+ *
+ * NAO REIMPLEMENTE ESTA CASCATA no chamador. Foi reimplementando regra de
+ * dinheiro "so para medir" que a FRENTE 3 produziu tres numeros invalidados
+ * em sequencia (R$ 1,55 mi -> R$ 702 mil -> R$ 12,9 mil -> R$ 0 na medicao
+ * real). Se precisar da taxa, chame aqui.
+ *
+ * @param producaoMensalDoGrupo producao do grupo no MES INTEIRO da
+ *   competencia do registro — e a base da FAIXA da TRP, usada so pelo derive.
+ *   Ver calcularProducaoMensalDoGrupo. Passar a producao recortada ou zero
+ *   muda a faixa e portanto a taxa.
+ */
+export function resolverTaxaAvistaEfetiva(params: {
+  record: ProductionRow;
+  producaoMensalDoGrupo: number;
+  trpProvider?: TrpRegraProvider;
+}): TaxaAvistaEfetiva {
+  const { record, producaoMensalDoGrupo, trpProvider } = params;
+  const { taxa, degrau } = resolverTaxaComOrigem(
+    record,
+    producaoMensalDoGrupo,
+    trpProvider
+  );
+  const comTeto = capPromoterViewRate(taxa);
+  return { taxa: comTeto, degrau, semRegra: !(comTeto > 0) };
 }
 
 // ===========================================================================
@@ -558,12 +641,17 @@ export function calcularComissaoEmpresaRecortada(
     }
 
     // A FAIXA usa a producao do mes INTEIRO — o recorte nao entra aqui.
-    const taxa = getPromoterViewCompanyRate(record, producaoMensalDoGrupo, trpProvider);
-    if (temTaxaPropria(record)) {
-      // taxa exata, veio do proprio registro
-    } else {
-      linhasComDerive += 1;
-    }
+    // Uma passada so devolve a taxa E o degrau: antes isto chamava a cascata
+    // duas vezes (getPromoterViewCompanyRate + temTaxaPropria, que espelhava
+    // as duas primeiras guardas), rodando o derive a toa e mantendo um espelho
+    // que podia divergir da regra que ele dizia espelhar.
+    const { taxa: taxaBruta, degrau } = resolverTaxaComOrigem(
+      record,
+      producaoMensalDoGrupo,
+      trpProvider
+    );
+    const taxa = capPromoterViewRate(taxaBruta);
+    if (degrau === "derive") linhasComDerive += 1;
     total += toNumber(record.net_value) * taxa;
     linhasSomadas += 1;
   }
@@ -574,26 +662,6 @@ export function calcularComissaoEmpresaRecortada(
     linhasSomadas,
     linhasComDerive,
   };
-}
-
-/**
- * O registro traz a propria taxa a vista (bruto ou coluna guardada)? So serve
- * para CONTAR quantas linhas dependeram da faixa — nao decide calculo nenhum.
- * Espelha as duas primeiras guardas de getCompanyReceivedRate.
- */
-function temTaxaPropria(record: ProductionRow) {
-  const doBruto = toPercentRate(
-    readRawPayloadValue(record.raw_payload, [
-      "% A VISTA",
-      "% À VISTA",
-      "% A VISTA EMPRESA",
-      "% AVISTA",
-      "Percentual A Vista",
-    ])
-  );
-  if (doBruto > 0 && doBruto <= 0.065) return true;
-  const guardada = toPercentRate(record.company_received_percent);
-  return guardada > 0 && guardada <= 0.065;
 }
 
 // FIX-3.SEGURO — getInsuranceCompanyRate e calculateCompanyInsuranceCommission
