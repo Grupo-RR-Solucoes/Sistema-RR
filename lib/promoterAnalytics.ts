@@ -418,6 +418,43 @@ export type DegrauTaxaAvista = "bruto" | "coluna" | "derive";
  * (temTaxaPropria) e havia outro, pior, na tela: a etiqueta lia a coluna crua
  * e concluia "a Promotiva nao comissionou", pulando o terceiro degrau.
  */
+/**
+ * TETO DE PLAUSIBILIDADE da taxa a vista, em fracao. 6,5% — folga sobre o teto
+ * de negocio de 6%. Acima disto o valor nao e taxa a vista: e outra escala, ou
+ * lixo. A guarda existe desde sempre; o que faltava era dizer o que ela faz.
+ */
+const AVISTA_TETO_PLAUSIVEL = 0.065;
+
+/**
+ * O DERIVE E PREFERIDO QUANDO O VALOR DO REGISTRO NAO SERVE — e isso e uma
+ * decisao, nao um acidente. Documentado em 27/07/2026, depois de a guarda ter
+ * salvado o calculo por acaso em 9 linhas e ninguem saber por que.
+ *
+ * A coluna e o raw_payload trazem o que a GESTORA mandou. O derive resolve pela
+ * REGUA VIGENTE, com a faixa que a producao do grupo determina. Quando os dois
+ * discordam, o derive e a fonte melhor — e ha prova:
+ *
+ *   A APURACAO DA FAIXA E NO GRUPO, nao por CNPJ. Medido sobre 1.741 linhas
+ *   (scripts/medida-b-faixa-cnpj-ou-grupo.mts): 1.394 batem so com a faixa do
+ *   GRUPO contra 47 so com a do CNPJ. Nenhum CNPJ isolado chega a F3 (R$ 3 mi);
+ *   o grupo chega em todas as competencias medidas.
+ *
+ *   AS 47 SAO LINHAS COM A FAIXA ERRADA. A coluna nelas traz exatamente o pct
+ *   da faixa do CNPJ isolado — F1 para RR Alagoas 1 e 2, F2 para Alagoas 3 e
+ *   Pernambuco. Nao e ruido: e assinatura, em 4 CNPJs e 3 competencias.
+ *
+ * Celulas da TRP38 que aparecem nesses casos (o derive as reproduz):
+ *
+ *   SIAPE, juros 1,64-1,67%     F1=0,94  F2=0,95  F3=0,97  F4=1,02  F5=1,03
+ *   Publico Geral               F1=0,78  F2=0,79  F3=0,81  F4=0,85  F5=0,86
+ *
+ * Repare que os valores da coluna medidos (0,78 / 0,79 / 0,95) sao F1 e F2, e o
+ * derive devolve F3 — a faixa que a producao do grupo justifica.
+ *
+ * POR ISSO A GUARDA NAO DEVE SER AFROUXADA para "aceitar qualquer valor da
+ * coluna". Aceitar 0,95 como 0,95% pareceria consertar uma escala e na verdade
+ * gravaria a faixa errada, desalinhando a tela da regua vigente.
+ */
 function resolverTaxaComOrigem(
   record: ProductionRow,
   companyProductionValue: number,
@@ -426,12 +463,12 @@ function resolverTaxaComOrigem(
   const rawRate = toPercentRate(
     readRawPayloadValue(record.raw_payload, ALIASES_AVISTA_BRUTO)
   );
-  if (rawRate > 0 && rawRate <= 0.065) {
+  if (rawRate > 0 && rawRate <= AVISTA_TETO_PLAUSIVEL) {
     return { taxa: rawRate, degrau: "bruto" };
   }
 
   const storedRate = toPercentRate(record.company_received_percent);
-  if (storedRate > 0 && storedRate <= 0.065) {
+  if (storedRate > 0 && storedRate <= AVISTA_TETO_PLAUSIVEL) {
     return { taxa: storedRate, degrau: "coluna" };
   }
 
