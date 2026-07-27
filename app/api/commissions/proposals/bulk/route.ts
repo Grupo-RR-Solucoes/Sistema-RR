@@ -8,6 +8,7 @@ import {
 } from "@/lib/auth/guards";
 import { canManageCommissionRule } from "@/lib/auth/permissions";
 import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
+import { carregarContextoTaxaAvista } from "@/lib/promoterAnalytics";
 import { recalculateSingleProposal } from "@/lib/proposalDetailing";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -425,9 +426,37 @@ export async function POST(req: Request) {
     // Dia 4.5 Etapa B: recalcula promoter_commission_amount em
     // daily_production_records para cada record afetado. Sequencial
     // (mantemos previsibilidade; carga tipica < 50 records por bulk).
+    // MEDIDA B — a cascata COMPLETA vai como parametro do recalculo.
+    //
+    // O contexto (producao do grupo no mes + provider da TRP) e caro, entao vai
+    // em CACHE POR COMPETENCIA e nao por registro. Um lote pode atravessar mais
+    // de uma competencia aberta — por isso o cache, e nao um contexto so: usar
+    // a competencia errada como base da faixa daria taxa de outra faixa, um
+    // numero plausivel e errado.
     let recalcFailures = 0;
+    const { data: datasDosAfetados } = await supabase
+      .from("daily_production_records")
+      .select("id, movement_date")
+      .in("id", [...affectedProductionRecordIds]);
+    const compPorId = new Map<string, string>();
+    for (const r of datasDosAfetados ?? []) {
+      if (r.movement_date) compPorId.set(String(r.id), String(r.movement_date).slice(0, 7));
+    }
+    const ctxPorComp = new Map<string, Awaited<ReturnType<typeof carregarContextoTaxaAvista>>>();
     for (const dprId of affectedProductionRecordIds) {
-      const res = await recalculateSingleProposal(supabase, dprId);
+      const comp = compPorId.get(dprId);
+      if (!comp) {
+        recalcFailures += 1;
+        console.error(`[recalculateSingleProposal] sem movement_date para ${dprId}; recalculo pulado`);
+        continue;
+      }
+      let ctx = ctxPorComp.get(comp);
+      if (!ctx) {
+        const [y, m] = comp.split("-").map(Number);
+        ctx = await carregarContextoTaxaAvista(supabase, { year: y, month: m });
+        ctxPorComp.set(comp, ctx);
+      }
+      const res = await recalculateSingleProposal(supabase, dprId, ctx.percentDe);
       if (!res.ok) {
         recalcFailures += 1;
         console.error(

@@ -1274,7 +1274,7 @@ export default function EditarComissoesPage() {
                                 const badge = shareBadge(
                                   row.share_percent_source,
                                   row.share_percent_override,
-                                  row.company_received_percent
+                                  row.sem_regra_trp
                                 );
                                 return badge ? (
                                   <span
@@ -1444,23 +1444,37 @@ function mesAbrev(m) {
 // estado e "default sem destaque" — UX mais limpa para o caso comum.
 // (Mesma logica/precedencia do original; agora devolve {label, cls, title}
 //  em vez de estilos inline.)
-function shareBadge(source, override, companyReceivedPercent) {
-  // FIX-1.E.3: proposta com Status=Producao mas sem regra TRP vigente
-  // (taxa/prazo fora das faixas Promotiva). Promotor vendeu mas
-  // Promotiva nao comissiona. Candidata a auditoria recuperatoria.
-  // Tem precedencia sobre badges de perfil/override porque sinaliza
-  // que o calculo de share nao se aplica (nao ha base PF).
-  if (
-    companyReceivedPercent === null ||
-    companyReceivedPercent === undefined ||
-    Number(companyReceivedPercent) === 0
-  ) {
+function shareBadge(source, override, semRegraTrp) {
+  // MEDIDA B (27/07/2026) — O CRITERIO MUDOU, E O TEXTO TAMBEM.
+  //
+  // ANTES: acendia quando company_received_percent era nulo ou zero. Esse campo
+  // e o SEGUNDO de TRES degraus (raw_payload -> coluna -> derive da TRP). Linha
+  // sem a coluna preenchida pode perfeitamente ter taxa, vinda do derive.
+  // Medido: das 49 linhas que exibiam a etiqueta, 22 (44,9%, R$ 203.401,21
+  // financiados) tinham taxa; o motor pagava R$ 7.633,85 de comissao-empresa
+  // que a tela anunciava como nao comissionada.
+  //
+  // AGORA: le sem_regra_trp, que a rota resolve com a cascata completa do motor
+  // (resolverTaxaAvistaEfetiva). NAO reinferir isto de percentual aqui — foi
+  // exatamente assim que o defeito nasceu.
+  //
+  // O TEXTO DESCREVE O QUE FOI MEDIDO, e nao manda fazer nada. O anterior dizia
+  // "Promotiva nao comissionou esta proposta" e "candidata a auditoria mensal":
+  // afirmacao sobre dinheiro alheio mais uma ordem de servico que nenhum
+  // processo executa — a auditoria a vista nem olha este campo, ela parte do
+  // fechamento (monthly_closing_entries CASH). Rotulo impreciso vira conclusao
+  // errada e depois decisao errada; e a licao do arco da FRENTE 3.
+  //
+  // Precedencia sobre perfil/override preservada: sem base PF nao ha share a
+  // exibir.
+  if (semRegraTrp === true) {
     return {
       label: "SEM REGRA TRP",
       cls: "semregra",
       title:
-        "Promotiva nao comissionou esta proposta (taxa/prazo fora das " +
-        "faixas TRP vigente). Candidata a auditoria mensal.",
+        "Os tres degraus falharam: sem taxa a vista aplicavel (nem no arquivo " +
+        "da gestora, nem gravada, nem derivada da TRP vigente para esta " +
+        "taxa/prazo). Sem base de calculo para o repasse.",
     };
   }
 

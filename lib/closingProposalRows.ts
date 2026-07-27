@@ -193,6 +193,25 @@ export async function buildClosingProposalRows(
       contract_date: r.contract_date ?? null,
       interest_rate: toNumber(r.interest_rate),
       installment_count: toNumber(r.installments || r.term_months),
+      // ZERO FIXO, POR CONSTRUCAO — nao e "nao houve comissao".
+      //
+      // O fechamento BBTS chega em CREDITO TOTAL por promotor, sem quebra por
+      // proposta: nao ha percentual a vista por linha para preencher aqui. O
+      // repasse do promotor logo abaixo e RATEADO pelo gross, e esse sim tem
+      // valor. Ou seja: a linha e paga, e este campo diz 0.
+      //
+      // POR QUE ISTO ESTA REGISTRADO E NAO CONSERTADO (MEDIDA B, 27/07/2026).
+      // A etiqueta "SEM REGRA TRP" acendia lendo percentual cru. Se ela algum
+      // dia passar a ser renderizada em mes fechado, TODA linha da ADS acenderia
+      // — dizendo "a Promotiva nao comissionou" numa linha cuja gestora nem e a
+      // Promotiva, e que foi paga pela BBTS. Hoje nao acontece por dois motivos
+      // independentes: mes fechado e read-only (page.js:1252 troca a celula por
+      // um traco) e a etiqueta agora le sem_regra_trp, que esta rota nem envia.
+      //
+      // O conserto de verdade nao e trocar este 0 por outro numero: e a BBTS
+      // mandar percentual por proposta, ou o rateio expor a taxa efetiva que ele
+      // implica. Inventar um percentual aqui a partir do rateio seria fabricar
+      // precisao que o documento da gestora nao tem.
       company_received_percent: 0,
       company_commission_amount: 0,
       srcc_restriction: "Não",

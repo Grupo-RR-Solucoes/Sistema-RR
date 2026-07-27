@@ -597,6 +597,89 @@ export function calcularProducaoMensalDoGrupo(params: {
   return { total: Math.round(total * 100) / 100, linhas };
 }
 
+/**
+ * CONTEXTO PARA RESOLVER A TAXA A VISTA DE VARIOS REGISTROS.
+ *
+ * O terceiro degrau (o derive) precisa de duas coisas caras que NAO dependem do
+ * registro: a producao do grupo no mes (base da FAIXA) e o provider da TRP
+ * (preload async). Resolver registro a registro faria uma consulta por linha —
+ * e o recalculo em lote chama isso dentro de um laco.
+ *
+ * Entao carrega-se UMA vez por competencia e passa-se adiante.
+ */
+export type ContextoTaxaAvista = {
+  /** Producao do grupo no MES INTEIRO da competencia. Base da faixa. */
+  producaoMensalDoGrupo: number;
+  trpProvider?: TrpRegraProvider;
+  /** Taxa efetiva em PERCENTUAL (0..100, a escala da UI). 0 = sem regra. */
+  percentDe(record: ProductionRow): number;
+  /** Os TRES degraus falharam? Unica leitura que autoriza dizer "sem regra". */
+  semRegraDe(record: ProductionRow): boolean;
+};
+
+/**
+ * Monta o ContextoTaxaAvista de uma competencia.
+ *
+ * A JANELA E ALARGADA DE PROPOSITO. A competencia comeca no ultimo dia UTIL do
+ * mes anterior, entao o mes-calendario cortaria o dia-cabeca. Como a base da
+ * faixa e uma SOMA, cortar linha nao da erro visivel: da uma faixa mais baixa,
+ * uma taxa menor e um numero plausivel e errado.
+ *
+ * A consulta NAO leva filtro de promotor nem de empresa: o enquadramento
+ * Promotiva e por GRUPO empresarial. Filtrar aqui pelo escopo da tela seria o
+ * mesmo erro de outra forma.
+ */
+export async function carregarContextoTaxaAvista(
+  supabase: SupabaseClient,
+  competencia: { year: number; month: number }
+): Promise<ContextoTaxaAvista> {
+  const anterior = competenciaAnterior(competencia);
+  const seguinte = {
+    year: competencia.month === 12 ? competencia.year + 1 : competencia.year,
+    month: competencia.month === 12 ? 1 : competencia.month + 1,
+  };
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  const inicio = `${anterior.year}-${p2(anterior.month)}-15`;
+  const fim = `${seguinte.year}-${p2(seguinte.month)}-15`;
+
+  const doGrupo = await fetchAllRows<ProductionRow>(() =>
+    supabase
+      .from("daily_production_records")
+      .select(
+        "id, company_id, status, is_srcc_restricted, net_value, movement_date, contract_date, proposal_date"
+      )
+      .gte("movement_date", inicio)
+      .lt("movement_date", fim)
+  );
+
+  const producaoMensalDoGrupo = calcularProducaoMensalDoGrupo({
+    records: doGrupo,
+    competencia,
+  }).total;
+
+  const trpProvider = await buildTrpCreditProvider(
+    doGrupo.map((r) => r.contract_date)
+  );
+
+  return {
+    producaoMensalDoGrupo,
+    trpProvider,
+    percentDe(record) {
+      return (
+        resolverTaxaAvistaEfetiva({ record, producaoMensalDoGrupo, trpProvider })
+          .taxa * 100
+      );
+    },
+    semRegraDe(record) {
+      return resolverTaxaAvistaEfetiva({
+        record,
+        producaoMensalDoGrupo,
+        trpProvider,
+      }).semRegra;
+    },
+  };
+}
+
 export type ComissaoEmpresaRecortada = {
   /** Σ (net × taxa) das linhas dentro do corte. */
   total: number;
