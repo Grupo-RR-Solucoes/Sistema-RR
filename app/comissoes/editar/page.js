@@ -6,6 +6,10 @@ import ColumnFilter from "@/components/ColumnFilter";
 
 import BulkActionBar from "./BulkActionBar";
 import { UiStyles, HeaderNavy, KpiBand } from "@/components/ui";
+import {
+  getSrccRestrictionLabel,
+  getSrccEstado,
+} from "@/lib/proposalDetailing";
 
 // Dia 4.4 Etapa 4.4.2 — Filtros estilo Excel por coluna.
 // 4.4.3: estendido com commission_rule_source (Origem MANUAL/DEFAULT).
@@ -1171,12 +1175,38 @@ export default function EditarComissoesPage() {
                               );
                             }
                             if (estado === "indefinido") {
-                              return (
+                              // MES FECHADO muda o SIGNIFICADO do ambar: aqui
+                              // ele nao e mais "aguardando a consulta", e sim
+                              // "o fechamento passou e ninguem resolveu".
+                              // Medido: 116 linhas assim em competencias ja
+                              // fechadas (03-06/2026), todas na RR.
+                              return readOnly ? (
                                 <span
-                                  className="badge amb"
-                                  title="A consulta de restrição não foi feita: não se sabe se há restrição ou não. Estado indefinido, não é uma negativa."
+                                  className="badge amb naoresolv"
+                                  title="A competência já fechou e a consulta de restrição continua sem resposta. Não é mais um estado de espera: ficou sem resolução."
                                 >
                                   <span className="d" />
+                                  Não resolvido
+                                </span>
+                              ) : (
+                                <span
+                                  className="badge amb"
+                                  title="A consulta de restrição não foi feita: não se sabe se há restrição ou não. Estado transitório — pode virar Sim ou Não quando a consulta for resolvida."
+                                >
+                                  <span className="d" />
+                                  {texto}
+                                </span>
+                              );
+                            }
+                            if (estado === "sem-info") {
+                              // A gestora nao mandou a coluna. Diferente do
+                              // indefinido: la a consulta foi tentada e
+                              // falhou; aqui ela nunca chegou ao sistema.
+                              return (
+                                <span
+                                  className="badge seminfo"
+                                  title="O registro não traz a informação de restrição SRCC. A gestora não enviou a coluna — não é uma negativa."
+                                >
                                   {texto}
                                 </span>
                               );
@@ -1489,38 +1519,16 @@ function shareBadge(source, override, companyReceivedPercent) {
 //   AMBAR     INDEFINIDO (3 / "Consulta nao realizada") — nao se sabe
 //   CINZA     negativa CONHECIDA (2 e 4 e seus textos)
 // ============================================================
-const SRCC_POR_CODIGO = {
-  1: "Sim",
-  2: "Não",
-  3: "Consulta não realizada",
-  4: "Não se aplica",
-};
-
-/** Texto a exibir: traduz o codigo numerico; devolve o texto como veio. */
+// A REGRA MORA EM lib/proposalDetailing.ts, nao aqui. Ela vale para as DUAS
+// gestoras e para as duas telas que mostram SRCC (esta e a carteira do
+// promotor); duplicar aqui foi o que deixou a mesma linha da ADS aparecendo
+// como "Não" numa tela e "2" na outra.
 function srccTexto(valor) {
-  const cru = String(valor ?? "").trim();
-  if (!cru) return "Não";
-  const codigo = Number(cru);
-  if (Number.isInteger(codigo) && SRCC_POR_CODIGO[codigo]) {
-    return SRCC_POR_CODIGO[codigo];
-  }
-  return cru;
+  return getSrccRestrictionLabel({ raw_payload: { "Restricao SRCC": valor } });
 }
 
-/**
- * Estado da etiqueta: "restrito" | "indefinido" | "neutro".
- * Compara sobre o texto JA traduzido, entao codigo e texto caem no mesmo
- * ramo — e o proximo formato que aparecer so precisa entrar no mapa.
- */
 function srccEstado(valor) {
-  const texto = srccTexto(valor)
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .trim()
-    .toUpperCase();
-  if (texto === "SIM") return "restrito";
-  if (texto.startsWith("CONSULTA NAO REALIZADA")) return "indefinido";
-  return "neutro";
+  return getSrccEstado({ raw_payload: { "Restricao SRCC": valor } });
 }
 
 // ============================================================
@@ -1832,6 +1840,13 @@ const CSS = `
    matiz, senao some para quem nao distingue bem cor. O cinza nao tem ponto. */
 .rredit .badge.amb{color:var(--warn,#B07A12);background:var(--warn-bg,#FBF1DC);border-color:var(--warn-bd,#EAD7A6);cursor:help;}
 .rredit .badge.amb .d{width:5px;height:5px;border-radius:50%;background:var(--warn,#B07A12);}
+/* mes FECHADO: o mesmo ambar, com borda cheia, porque ali "indefinido" virou
+   "nao resolvido" — nao ha mais o que aguardar. */
+.rredit .badge.amb.naoresolv{border-style:solid;border-width:1.5px;font-weight:700;}
+/* SEM INFORMACAO: cinza TRACEJADO. Nao pode passar por negativa conhecida (o
+   cinza liso), mas tambem nao e o ambar do indefinido — a gestora nunca
+   mandou o dado. O tracejado diz "falta algo aqui" sem gritar. */
+.rredit .badge.seminfo{color:var(--ink-3);background:transparent;border:1px dashed var(--bd);font-style:italic;cursor:help;}
 
 /* row actions */
 .rredit .racts{display:inline-flex;align-items:center;gap:7px;}

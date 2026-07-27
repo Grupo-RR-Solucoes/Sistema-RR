@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { getSrccEstado } from "@/lib/proposalDetailing";
+
 type PeriodOption = {
   key: string;
   label: string;
@@ -111,13 +113,28 @@ function norm(value: string | null | undefined) {
 //   orange = SRCC pendente ("Consulta nao realizada por problemas tecnicos")
 //            -> pode cair em restricao depois e vir sem pagamento.
 //   normal = paga normalmente.
-type SrccState = "red" | "orange" | "normal";
+//   dashed = a gestora nao mandou a coluna de SRCC (as 30 linhas da ADS).
+//            Ausencia de informacao, nao negativa.
+type SrccState = "red" | "orange" | "dashed" | "normal";
+
+/**
+ * Delega a lib/proposalDetailing, que e a casa da regra e atende as DUAS
+ * gestoras. Esta tela tinha a sua propria classificacao por texto, que nao
+ * conhecia os CODIGOS NUMERICOS da BBTS — a mesma linha da ADS saia "2" aqui e
+ * "Não" em /comissoes/editar.
+ *
+ * As duas guardas antigas por texto ("RESTRITO", "COM RESTRICAO") ficam como
+ * rede: sao variantes que a lib nao mapeia e que podem existir em dado velho.
+ */
 function classifySrcc(row: ProposalRow): SrccState {
+  const estado = getSrccEstado({
+    raw_payload: { "Restricao SRCC": row.srcc_restriction },
+  });
+  if (estado === "restrito") return "red";
+  if (estado === "indefinido") return "orange";
+  if (estado === "sem-info") return "dashed";
   const s = norm(row.srcc_restriction);
-  if (s === "SIM" || s === "RESTRITO" || s === "COM RESTRICAO") return "red";
-  if (s.includes("NAO REALIZADA") || s.includes("PROBLEMAS TECNICOS") || s.includes("PROBLEMA TECNICO")) {
-    return "orange";
-  }
+  if (s === "RESTRITO" || s === "COM RESTRICAO") return "red";
   return "normal";
 }
 
@@ -352,6 +369,15 @@ export default function PromotorView() {
                             <span className="tag">sem comissão</span>
                           ) : state === "orange" ? (
                             <span className="tag">SRCC pendente</span>
+                          ) : state === "dashed" ? (
+                            // A gestora nao mandou a coluna de SRCC. Nao e
+                            // negativa: e dado que nunca chegou.
+                            <span
+                              className="tag semsrcc"
+                              title="A gestora não enviou a informação de restrição SRCC desta proposta."
+                            >
+                              sem SRCC
+                            </span>
                           ) : null}
                         </td>
                         <td className="l" data-l="Produto">
@@ -606,6 +632,9 @@ const CSS = `
 .rrcart .ctr{font-weight:600;}
 .rrcart .pay{font-weight:600;}
 .rrcart .tag{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:7px;vertical-align:middle;}
+/* "sem SRCC" — tracejado, para nao passar por negativa conhecida nem gritar
+   como o pendente. Mesmo tratamento visual da etiqueta em /comissoes/editar. */
+.rrcart .tag.semsrcc{background:transparent;border:1px dashed var(--bd,#E4E7EC);color:var(--ink-3,#838B9C);font-style:italic;font-weight:500;cursor:help;}
 
 .rrcart tr.r-red td{background:var(--red-line);}
 .rrcart tr.r-red td.sticky{background:var(--red-line);}
