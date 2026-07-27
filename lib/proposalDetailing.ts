@@ -915,16 +915,55 @@ export function computeComissaoPromotor(
  * para que a cascata pegue o profile do novo promotor (ex: master ->
  * Luciana -> 66,66%).
  */
+/**
+ * Resolve a taxa a vista EFETIVA de um registro, em percentual (0..100).
+ *
+ * OBRIGATORIO, e de proposito. Esta funcao GRAVA promoter_commission_amount na
+ * daily_production_records; ate 27/07/2026 ela resolvia a taxa com
+ * getAVistaPercent, que tem so DOIS degraus (raw_payload -> coluna) e ignora o
+ * derive da TRP. Nas linhas que dependem do derive isso gravava ZERO — e o mes
+ * aberto de /promotores soma justamente esta coluna quando ainda nao ha PMR.
+ *
+ * Nao ha default: quem chama TEM de passar a cascata completa. Se fosse
+ * opcional, esquecer o parametro devolveria silenciosamente o comportamento
+ * antigo, que e o defeito. Use carregarContextoTaxaAvista (promoterAnalytics) e
+ * passe ctx.percentDe — o contexto e carregado UMA vez por competencia, nao por
+ * registro.
+ *
+ * O parametro e uma FUNCAO, e nao o modulo, porque promoterAnalytics ja importa
+ * este arquivo; importar de volta fecharia um ciclo.
+ */
+export type ResolvedorTaxaAvista = (record: {
+  id: string;
+  raw_payload?: Record<string, unknown> | null;
+  company_received_percent?: number | null;
+  net_value?: number | null;
+  gross_value?: number | null;
+  insurance_value?: number | null;
+  has_insurance?: boolean | null;
+  interest_rate?: number | null;
+  term_months?: number | null;
+  installments?: number | null;
+  product_description?: string | null;
+  contract_date?: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  [k: string]: any;
+}) => number;
+
 export async function recalculateSingleProposal(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
-  recordId: string
+  recordId: string,
+  resolverTaxaAvista: ResolvedorTaxaAvista
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const { data: record, error: fetchErr } = await supabase
       .from("daily_production_records")
       .select(
-        "id, assigned_promoter_id, net_value, raw_payload, company_received_percent, movement_date, company_id, convenio_code, product_description"
+        // Alargado com o que o DERIVE consome (bruto, seguro, juros, prazo).
+        // Sem estes campos a cascata completa cairia no derive e ele
+        // devolveria zero por falta de dado — o mesmo zero, por outra porta.
+        "id, assigned_promoter_id, net_value, raw_payload, company_received_percent, movement_date, company_id, convenio_code, product_description, gross_value, insurance_value, has_insurance, interest_rate, term_months, installments, contract_date, proposal_date, status, is_srcc_restricted"
       )
       .eq("id", recordId)
       .maybeSingle();
@@ -969,9 +1008,9 @@ export async function recalculateSingleProposal(
       .eq("id", promoterId)
       .maybeSingle();
 
-    const aVista = getAVistaPercent(
-      record as { raw_payload: Record<string, unknown> | null }
-    );
+    // CASCATA COMPLETA (tres degraus). getAVistaPercent, que vinha aqui, para
+    // no segundo — ver o comentario de ResolvedorTaxaAvista.
+    const aVista = resolverTaxaAvista(record);
     const aVistaClamped = capAvistaRRPercent(Number(aVista ?? 0), { year, month });
 
     // FRENTE C — mesma fonte única do motor e da tela de edição.

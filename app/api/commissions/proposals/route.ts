@@ -20,6 +20,7 @@ import {
   recalculateSingleProposal,
   resolvePromoterShareSync,
 } from "@/lib/proposalDetailing";
+import { carregarContextoTaxaAvista } from "@/lib/promoterAnalytics";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 // MOV 2 completo neste arquivo: o booleano detectClosedMonth saiu de vez. GET usa o
 // enum para escolher a FONTE (3 estados); PUT/DELETE usam para a pergunta binaria
@@ -449,6 +450,23 @@ export async function GET(req: Request) {
       frenteCProductionMap,
     } = await fetchPromoterShareData(supabase, promoterIds, year, month);
 
+    // MEDIDA B — a taxa a vista EFETIVA, pela cascata de tres degraus do motor.
+    //
+    // Ate 27/07/2026 esta rota entregava a coluna company_received_percent CRUA
+    // e a tela concluia dela duas coisas erradas de uma vez: acendia
+    // "SEM REGRA TRP" ("a Promotiva nao comissionou esta proposta") e mostrava
+    // R$ 0,00 em COMISSAO PROMOTOR. A coluna e o SEGUNDO de tres degraus; o
+    // terceiro, o derive, consulta a TRP e paga.
+    //
+    // Medido em 27/07/2026 (scripts/medida-b-etiqueta-sem-regra.mts): das 49
+    // linhas que exibiam a etiqueta, 22 (44,9%, R$ 203.401,21 financiados)
+    // tinham taxa — todas vindas do derive. R$ 7.633,85 de comissao-empresa
+    // que o motor de fato paga, anunciados na tela como nao comissionados.
+    //
+    // O contexto e carregado UMA vez por competencia (a producao do grupo do
+    // mes, base da faixa, mais o provider da TRP), nao por linha.
+    const ctxTaxa = await carregarContextoTaxaAvista(supabase, { year, month });
+
     const rows = records.map((record) => {
       const promoter = promoters.find((p) => p.id === record.assigned_promoter_id);
       const manual = manualRules.find(
@@ -470,7 +488,10 @@ export async function GET(req: Request) {
         penetrationMap.get(penetrationKey) ?? null;
 
       // Dia 4.5 Etapa B: cascata nova de share_percent.
-      const aVistaPercent = getAVistaPercent(record);
+      // A taxa a vista sai da cascata COMPLETA (ver ctxTaxa, acima).
+      // getAVistaPercent, que vinha aqui, para no segundo degrau.
+      const aVistaPercent = ctxTaxa.percentDe(record);
+      const semRegraTrp = ctxTaxa.semRegraDe(record);
       const overrideValue = manual?.share_percent_override ?? null;
       // FRENTE C — monta o input da fonte única (mesma do calculate/monthly):
       // produção VÁLIDA, metas, Aldalene INSS, faixa 5,80%.
@@ -512,6 +533,12 @@ export async function GET(req: Request) {
         company_commission_amount: getCompanyCommissionAmount(record),
         // 4.4-fix-1.E (D1+D2)
         a_vista_percent: aVistaPercent,
+        // MEDIDA B — o unico sinal que autoriza dizer "sem regra TRP": os TRES
+        // degraus falharam. A tela NAO deve reinferir isso de percentual cru.
+        // Ausente nas linhas de mes fechado (elas vem do cms/fechamento e a
+        // celula da etiqueta nem e renderizada) — de proposito: melhor sem
+        // sinal do que com sinal inventado.
+        sem_regra_trp: semRegraTrp,
         insurance_penetration_percent: insurancePenetrationPercent,
         // Dia 4.5 Etapa B: novos campos de cascata.
         // share_percent_effective vem em DECIMAL (0..1). UI multiplica
@@ -644,6 +671,11 @@ export async function POST(req: Request) {
       );
     }
 
+    // Competencia da proposta, para montar o contexto da taxa a vista do
+    // recalculo la embaixo. Sai daqui e nao de outra consulta: a trava de
+    // regime abaixo ja carregou o movement_date.
+    let compEdicao: { year: number; month: number } | null = null;
+
     // Trava de servidor (defesa em profundidade): mês FECHADO por cms é
     // ground truth da Promotiva — não editável. Bloqueia mesmo que a UI
     // (que esconde os controles em read-only) seja burlada.
@@ -660,6 +692,7 @@ export async function POST(req: Request) {
         );
       }
       const d = new Date(rec.movement_date);
+      compEdicao = { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
       // MOV 2: enum canonico. A pergunta e binaria — "da pra editar?" — e a resposta
       // e "so em mes ABERTO". Mes 'cms' e mes 'fechamento' bloqueiam igual, por isso
       // `!== 'open'`. Usar `=== 'fechamento'` aqui liberaria a edicao de jan-mai.
@@ -742,9 +775,22 @@ export async function POST(req: Request) {
     // Dia 4.5 Etapa B: recalcula promoter_commission_amount em
     // daily_production_records usando a cascata nova. Fail-safe: erro
     // de recalc nao desfaz o upsert (ja gravado).
+    // A cascata COMPLETA vai como parametro: sem ela o recalculo gravaria
+    // zero nas linhas que dependem do derive. Ver ResolvedorTaxaAvista.
+    // compEdicao foi preenchido pela trava de regime acima; sem movement_date
+    // aquele bloco ja teria devolvido 404. O guard existe para o compilador e
+    // para nao adivinhar competencia se o fluxo mudar.
+    if (!compEdicao) {
+      return NextResponse.json(
+        { error: "Competencia da proposta nao resolvida." },
+        { status: 500 }
+      );
+    }
+    const ctxRecalc = await carregarContextoTaxaAvista(supabase, compEdicao);
     const recalc = await recalculateSingleProposal(
       supabase,
-      dailyProductionRecordId
+      dailyProductionRecordId,
+      ctxRecalc.percentDe
     );
     if (!recalc.ok) {
       console.error(
@@ -783,6 +829,11 @@ export async function DELETE(req: Request) {
       );
     }
 
+    // Competencia da proposta, para montar o contexto da taxa a vista do
+    // recalculo la embaixo. Sai daqui e nao de outra consulta: a trava de
+    // regime abaixo ja carregou o movement_date.
+    let compEdicao: { year: number; month: number } | null = null;
+
     // Trava de servidor: mês FECHADO por cms não é editável (idem POST).
     {
       const { data: rec } = await supabase
@@ -797,6 +848,7 @@ export async function DELETE(req: Request) {
         );
       }
       const d = new Date(rec.movement_date);
+      compEdicao = { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
       // MOV 2: enum canonico. A pergunta e binaria — "da pra editar?" — e a resposta
       // e "so em mes ABERTO". Mes 'cms' e mes 'fechamento' bloqueiam igual, por isso
       // `!== 'open'`. Usar `=== 'fechamento'` aqui liberaria a edicao de jan-mai.
@@ -849,9 +901,22 @@ export async function DELETE(req: Request) {
 
     // Dia 4.5 Etapa B: recalc apos DELETE (override removido -> cascata
     // cai no profile do promotor).
+    // A cascata COMPLETA vai como parametro: sem ela o recalculo gravaria
+    // zero nas linhas que dependem do derive. Ver ResolvedorTaxaAvista.
+    // compEdicao foi preenchido pela trava de regime acima; sem movement_date
+    // aquele bloco ja teria devolvido 404. O guard existe para o compilador e
+    // para nao adivinhar competencia se o fluxo mudar.
+    if (!compEdicao) {
+      return NextResponse.json(
+        { error: "Competencia da proposta nao resolvida." },
+        { status: 500 }
+      );
+    }
+    const ctxRecalc = await carregarContextoTaxaAvista(supabase, compEdicao);
     const recalc = await recalculateSingleProposal(
       supabase,
-      dailyProductionRecordId
+      dailyProductionRecordId,
+      ctxRecalc.percentDe
     );
     if (!recalc.ok) {
       console.error(
