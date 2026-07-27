@@ -183,22 +183,74 @@ Comissões recebidas, Seguro recebido, Seguro repassado e Saldo de comissões fi
 
 **Também sem resposta:** o que acontece com o dinheiro na transição. Se a comissão de uma linha já entrou no cálculo do mês aberto e ela depois vira "Sim", o valor some, é recalculado ou fica órfão — e se isso acontece em silêncio.
 
-### FRENTE 3 · As 166 linhas sem taxa à-vista — mapeada, NÃO feita
+### FRENTE 3 · As 166 linhas que dependem do derive — **premissa corrigida**
 
-O universo real é **166**, não 311: `Cancelado` (218 linhas) e `Em Aberto` (66) não devem ter taxa mesmo.
+> **NÚMEROS INVALIDADOS.** Versões anteriores deste documento traziam
+> "R$ 1,55 milhão / 99 linhas", depois "R$ 702.730,94 / 67 linhas acima do
+> piso" e "R$ 12.970,02 de comissão devida". **Nenhum deles vale.** Todos
+> partiam de uma premissa que se provou falsa. Ficam registrados só para quem
+> os encontrar em anotações antigas saber que foram descartados.
 
-| gestora | situação | linhas |
-|---|---|---|
-| RR (Promotiva) | Produção | **135** |
-| ADS (BBTS) | Produção | **31** |
+**O que se pensava:** 166 linhas "sem taxa à-vista", possível dinheiro não pago
+ao promotor.
 
-Proporção geral: RR perde taxa em 19,8% das linhas; **ADS em 63,3%** — três vezes mais, embora em números absolutos seja pouco.
+**O que é de fato:** 166 linhas que chegam ao **terceiro degrau** de
+`getCompanyReceivedRate`. Os degraus são: `% A VISTA` do bruto → coluna
+`company_received_percent` → **`deriveCompanyReceivedRate`**, que é justamente
+quem consulta a TRP. Essas linhas apenas não têm os dois primeiros. Dependerem
+do derive **não** significa ficarem sem comissão.
 
-**A concentração:** produto **2882**, prazos **108 e 96** → **99 linhas, R$ 1,55 milhão**. Mesmo padrão do CDC Novo.
+**E o derive funciona.** Verificado com a forma real da régua
+(`scripts/probe-lookup-inss-real.cjs`), nas competências 04, 06 e 07/2026:
 
-**A investigar:** é **roteamento** (como foi o CDC Novo) ou **lacuna real de régua**? A TRP38 tem célula "Acima de 84" para INSS (3,34% F3) e Demais Públicos vai até 120 parcelas — **então deveria haver célula**, e a suspeita pende para roteamento. Se confirmar, é dinheiro não pago ao promotor e vira frente própria com prioridade.
+| faixa de prazo | Faixa 1 | Faixa 2 | Faixa 3 | Faixa 4 | Faixa 5 |
+|---|---|---|---|---|---|
+| 48–60 | 1,96% | 1,97% | 2,03% | 2,12% | 2,15% |
+| 61–84 | 2,35% | 2,37% | 2,44% | 2,55% | 2,58% |
+| 85–999 | 3,21% | 3,23% | **3,34%** | 3,48% | 3,52% |
 
-Faltam ainda: o convênio dessas 99 linhas; as 12 linhas da ADS com prazo 108 e **sem código de produto** (R$ 211.654,00), contra a tabela BBTS; e quanto de comissão isso representa se as células existirem e forem aplicadas.
+O lookup **acha célula em todos os casos testados** — prazo 108 → 3,34%,
+prazo 96 → 3,34%, prazo 72 e 61 → 2,44%, prazo 49 e 48 → 2,03%.
+
+**As três suspeitas foram todas refutadas com evidência:**
+1. *Taxa de juros fora da faixa* — as 26 linhas de INSS_NOVO estão com juros
+   exatamente 1,85%, e as células de prazo do INSS **não filtram por taxa**
+   (`tx_min`/`tx_max` ausentes).
+2. *Um `prazo_max` de 84 aplicado indevidamente* — a categoria não tem
+   `prazo_max` nenhum, e a última célula vai até 999.
+3. *Lacuna de parse* — `INSS_NOVO` e `INSS_RENOV` existem nas três
+   competências, com 3 células cada. Nada faltando.
+
+**Não está estabelecido que essas linhas ficaram sem comissão.** É plausível
+que estejam todas recebendo a taxa derivada corretamente.
+
+**A pergunta certa que fica:** das linhas que caem no derive, **para quantas
+ele retorna zero?** Só isso separa caso pontual de frente de trabalho. Exige
+executar `deriveCompanyReceivedRate` de verdade — e não há executor de
+TypeScript instalado (`tsx` e `ts-node` ausentes), o mesmo obstáculo que trava
+a medição da comissão bruta recortada.
+
+> **CUIDADO com o atalho da etiqueta "SEM REGRA TRP".** Ela parece medir o
+> problema real, mas **não mede**: `app/api/commissions/proposals/route.ts:316`
+> seleciona `company_received_percent` **cru da tabela** e o entrega à tela,
+> que dispara a etiqueta em `page.js:1448` quando o valor é nulo ou zero.
+> **Não há derive nesse caminho.** A etiqueta é praticamente o mesmo critério
+> do "sem taxa" — ou seja, ela pode estar acusando "a Promotiva não
+> comissionou" em propostas que o motor paga normalmente. Isso é um defeito
+> em si, ainda não confirmado, e precisa ser checado antes de qualquer
+> contagem baseada nela.
+
+#### LIÇÃO DE DEFINIÇÃO — para não repetir
+
+"Depende do derive" virou "sem taxa" virou "dinheiro não pago" em três
+rodadas, **sem que nenhum dos dois saltos fosse provado**. Cada renomeação
+parecia inofensiva e cada uma embutiu uma conclusão.
+
+É a mesma classe do fóssil do `paidInsuranceShare`: um rótulo impreciso hoje
+vira uma conclusão errada — e uma decisão errada — depois. Quando nomear um
+conjunto de linhas, **nomeie pelo que foi medido**, não pelo que se suspeita
+que ele signifique. "166 linhas onde `% A VISTA` e `company_received_percent`
+estão vazios" é feio e é o nome certo.
 
 ### Fases 4, 5 e 6 do plano original do menu — NÃO feitas
 - **Fase 4:** remover a marca das 16 telas (hoje repetida no `HeaderNavy` de cada uma, redundante com a barra).
