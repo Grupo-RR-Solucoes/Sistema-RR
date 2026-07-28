@@ -512,7 +512,6 @@ export default function CadastrosPage() {
 
         {/* HEADER */}
         <HeaderNavy
-          eyebrow="GRUPO RR CRED"
           title="Cadastros"
           subtitle="Base mestra · inclusão manual"
           actions={

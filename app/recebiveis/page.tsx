@@ -194,7 +194,7 @@ export default function RecebiveisPage() {
           <span>Recebíveis</span>
         </nav>
 
-        <HeaderNavy eyebrow="GRUPO RR CRED" title="Recebíveis" subtitle="Previsão — direito contratado vs realizado">
+        <HeaderNavy title="Recebíveis" subtitle="Previsão — direito contratado vs realizado">
           {ag && kpis ? (
             <KpiBand
               valueSize={26}

@@ -279,7 +279,6 @@ export default function RelatoriosPage() {
 
         {/* HEADER navy (kit) — sem KPI (wizard); só marca + título + lead */}
         <HeaderNavy
-          eyebrow="GRUPO RR CRED"
           title="Relatórios"
           subtitle="Central de geração. Monte o relatório, confira o que vai sair e baixe o arquivo certo."
         />

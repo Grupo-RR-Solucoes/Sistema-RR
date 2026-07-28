@@ -21,6 +21,12 @@ export const UI_CSS = `
 .rrui-hnavy{background:var(--navy);border-radius:var(--r-lg);padding:30px 34px 34px;color:#fff;position:relative;overflow:hidden;}
 .rrui-hnavy::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),transparent);opacity:.55;}
 .rrui-hnavy--noline::after{display:none;}
+/* FASE 4: sem eyebrow o titulo e o primeiro elemento e sobe ~21px. O 30 do
+   topo foi calibrado com o eyebrow no lugar; sem ele sobra menos ar em cima
+   (30) do que embaixo (34). Reequilibra em 34/34 — o bloco ainda encolhe
+   17px, so nao fica apertado. Depende de vir DEPOIS da regra base: mesma
+   especificidade, quem vence e a ordem. */
+.rrui-hnavy--sem-eyebrow{padding-top:34px;}
 .rrui-hnavy__top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
 .rrui-hnavy__eyebrow{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--accent);margin:0 0 7px;}
 .rrui-hnavy__title{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}

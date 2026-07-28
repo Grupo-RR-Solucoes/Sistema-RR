@@ -258,7 +258,6 @@ export default function PromotorView() {
         <header className="header">
           <div className="header-top">
             <div>
-              <p className="brand">GRUPO RR CRED</p>
               <h1>{summary?.promoter_name || "Minha carteira"}</h1>
               <p className="role">Minha carteira</p>
             </div>
@@ -590,7 +589,6 @@ const CSS = `
 .rrcart .header{background:var(--navy);border-radius:var(--r-lg);padding:28px 32px 30px;color:#fff;position:relative;overflow:hidden;}
 .rrcart .header::after{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--gold),rgba(214,161,63,0));opacity:.55;}
 .rrcart .header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;}
-.rrcart .brand{font-size:11.5px;font-weight:600;letter-spacing:.18em;color:var(--yellow);margin:0 0 7px;}
 .rrcart .header h1{font-size:25px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
 .rrcart .header .role{font-size:12.5px;color:#9DA9C6;margin:6px 0 0;}
 .rrcart .comp{position:relative;}
