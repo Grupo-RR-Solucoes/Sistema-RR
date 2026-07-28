@@ -55,6 +55,13 @@ const GATES = [
       "monta um Supabase falso em memoria e roda as funcoes reais do repo; sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/no_brand_hardcoded_gate.cjs",
+    nome: "marca institucional so na barra (FASE 4)",
+    modo: "self-contained",
+    motivo:
+      "le os .ts/.tsx/.js de app, components e lib do proprio repo; sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/paridade_avista_trp_gate.cjs",
     nome: "paridade a-vista TRP (previsto x motor)",
     modo: "needs-db",
