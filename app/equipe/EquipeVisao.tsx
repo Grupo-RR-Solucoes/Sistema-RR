@@ -408,7 +408,6 @@ export default function EquipeVisao({ role, email, fullName }: Props) {
         </nav>
 
         <HeaderNavy
-          eyebrow="GRUPO RR CRED"
           title="Minha Equipe"
           subtitle={
             isGerente

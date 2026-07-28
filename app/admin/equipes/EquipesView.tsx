@@ -117,7 +117,6 @@ export default function EquipesView({
         </nav>
 
         <HeaderNavy
-          eyebrow="GRUPO RR CRED"
           title="Equipes"
           subtitle="Hierarquia de gestão · gerente · supervisor · promotor"
           actions={

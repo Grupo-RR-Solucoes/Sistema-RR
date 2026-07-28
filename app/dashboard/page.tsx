@@ -197,7 +197,6 @@ function Header({
 
   return (
     <HeaderNavy
-      eyebrow="GRUPO RR CRED"
       title="Dashboard"
       badge={
         <span className="badge">

@@ -586,7 +586,6 @@ export default function EditarComissoesPage() {
             fixos como children. Os 2 KPIs de seguro (condicionais) ficam num bloco
             navy à parte, logo abaixo. */}
         <HeaderNavy
-          brand="GRUPO RR CRED"
           title="Editar comissões"
           subtitle="Exceção manual por proposta"
           actions={

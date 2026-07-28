@@ -598,7 +598,6 @@ function ProjecaoContent() {
         <>
         {/* HEADER navy (kit) — badge semáforo no slot badge, pills no slot actions */}
         <HeaderNavy
-          eyebrow="GRUPO RR CRED"
           title={isPromotor ? (prom?.promoter_name ?? "Minha projeção") : "Projeção da equipe"}
           subtitle={
             isPromotor

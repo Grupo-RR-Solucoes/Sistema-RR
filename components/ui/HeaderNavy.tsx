@@ -39,7 +39,23 @@ export default function HeaderNavy({
   children,
   className,
 }: HeaderNavyProps) {
-  const cls = ["rrui-hnavy", goldLine ? "" : "rrui-hnavy--noline", className]
+  // FASE 4 — sem eyebrow, o titulo vira o primeiro elemento do bloco e sobe
+  // ~21px (11,5px de fonte a line-height normal + 7px de margem). O padding de
+  // 30px no topo foi calibrado para um bloco que comecava com o eyebrow: com o
+  // titulo de 27px encostando nele, sobra menos ar em cima (30px) do que
+  // embaixo (34px), e o bloco fica visualmente desequilibrado.
+  //
+  // O modificador reequilibra em 34/34. NAO devolve os 21px — o bloco ainda
+  // encolhe 17px, que e o ganho da fase; so tira o aperto.
+  //
+  // As 8 telas que mantem eyebrow SEMANTICO (SEGURIDADE, AUDITORIA, MONITOR
+  // PRT, ...) nao recebem a classe e ficam exatamente como estavam.
+  const cls = [
+    "rrui-hnavy",
+    goldLine ? "" : "rrui-hnavy--noline",
+    eyebrow == null ? "rrui-hnavy--sem-eyebrow" : "",
+    className,
+  ]
     .filter(Boolean)
     .join(" ");
   return (
