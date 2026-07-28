@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { resolverSrccDoFechamento } from "@/lib/srccResolucao";
 import { reconsolidarCompetenciaFechada } from "@/lib/reconsolidarCompetencia";
 
 type CompanyRow = {
@@ -1721,6 +1722,39 @@ async function runImportPipeline(ctx: ImportContext) {
     }`
   );
 
+  // ============================================================
+  // RESOLUCAO DO SRCC — o fechamento responde o que a diaria deixou em aberto.
+  //
+  // DEPOIS da consolidacao, de proposito. O PMR fechado nao le o SRCC da diaria
+  // do RR (o unico ponto que le esta atras de .eq(company_id, BBTS) no
+  // bbtsOrchestrator), entao a ordem e indiferente para o numero — e rodar
+  // depois torna isso DEMONSTRAVEL: o PMR acima foi construido do mesmo estado
+  // de antes desta mudanca.
+  //
+  // BEST-EFFORT: falha aqui NAO derruba o import. O fechamento ja esta gravado
+  // e o PMR ja esta consolidado; perder a resolucao do SRCC e um sintoma de
+  // tela, e a proxima importacao tenta de novo (o passo e idempotente).
+  let srccResolucao: Awaited<ReturnType<typeof resolverSrccDoFechamento>> | null = null;
+  let srccResolucaoAviso: string | null = null;
+  try {
+    srccResolucao = await resolverSrccDoFechamento(supabaseAdmin, {
+      year: targetYear,
+      month: targetMonth,
+      companyId: company.id,
+    });
+    console.log(
+      `[import ${importId}] SRCC resolvido: ${srccResolucao.resolvidas}/${srccResolucao.candidatas} ` +
+        `(SIM=${srccResolucao.porValor.SIM}, NAO=${srccResolucao.porValor.NAO}, ` +
+        `NAO_SE_APLICA=${srccResolucao.porValor.NAO_SE_APLICA}); sem resposta: ` +
+        `ausentes=${srccResolucao.semResposta.ausenteDoFechamento}, ` +
+        `sem coluna=${srccResolucao.semResposta.semColuna}, ` +
+        `desconhecido=${srccResolucao.semResposta.valorDesconhecido}`
+    );
+  } catch (e: any) {
+    srccResolucaoAviso = `Falha ao resolver o SRCC pelo fechamento: ${e?.message || e}`;
+    console.error(`[import ${importId}] ${srccResolucaoAviso}`);
+  }
+
   await markImportCompleted(supabaseAdmin, importId);
 
   return {
@@ -1742,6 +1776,10 @@ async function runImportPipeline(ctx: ImportContext) {
     productIncrement: increment,
     warning: resomaWarning,
     debitosAuto,
+    // REPORTADO, nao silenciado: quantas o fechamento resolveu, para cada valor,
+    // e quantas ficaram sem resposta. O silencio era o defeito.
+    srccResolucao,
+    srccResolucaoAviso,
   };
 }
 
