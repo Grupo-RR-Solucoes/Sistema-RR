@@ -21,6 +21,12 @@ import {
 export type ProposalRecord = {
   raw_payload?: Record<string, unknown> | null;
   is_srcc_restricted?: boolean | null;
+  /**
+   * CONCLUSAO derivada do fechamento: "SIM" | "NAO" | "NAO_SE_APLICA".
+   * null/ausente = nao resolvido. Ver a ordem de precedencia em
+   * getSrccRestrictionLabel.
+   */
+  srcc_resolucao?: string | null;
   installments?: number | null;
   term_months?: number | null;
   gross_value?: number | null;
@@ -129,7 +135,34 @@ export function getAgencyCode(record: ProposalRecord): string {
  * raw_payload (que pode ter detalhes); fallback para "Sim"/"Nao"
  * derivado do boolean is_srcc_restricted.
  */
+/** Mapa da CONCLUSAO gravada -> rotulo exibido. Ver srcc_resolucao. */
+const SRCC_RESOLUCAO_LABEL: Record<string, string> = {
+  SIM: "Sim",
+  NAO: "Não",
+  NAO_SE_APLICA: "Não se aplica",
+};
+
+/**
+ * ORDEM DE PRECEDENCIA — tres fontes, da mais recente para a mais antiga:
+ *
+ *   1. srcc_resolucao   a CONCLUSAO do fechamento. Vence porque e a resposta
+ *                       MAIS NOVA: a diaria disse "consulta nao realizada" no
+ *                       dia da venda, e o fechamento, semanas depois, disse o
+ *                       que a consulta deu. Preferir o raw_payload aqui seria
+ *                       preferir a duvida a resposta.
+ *   2. raw_payload      o que a GESTORA mandou na diaria. Copia fiel, intocada.
+ *   3. is_srcc_restricted  o booleano, so quando nao ha coluna nenhuma (ADS).
+ *
+ * QUEM NAO TEM RESOLUCAO NAO MUDA NADA. srcc_resolucao nasce NULL em 100% da
+ * tabela e so e preenchida pelo passo do import de fechamento; enquanto for
+ * null, esta funcao se comporta exatamente como antes desta mudanca.
+ */
 export function getSrccRestrictionLabel(record: ProposalRecord): string {
+  const resolvido = String(record.srcc_resolucao ?? "").trim().toUpperCase();
+  if (resolvido && SRCC_RESOLUCAO_LABEL[resolvido]) {
+    return SRCC_RESOLUCAO_LABEL[resolvido];
+  }
+
   const raw =
     readRawPayloadValue(record.raw_payload, [
       "Indicador Restricao SRCC",
