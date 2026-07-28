@@ -1,6 +1,10 @@
-# SRCC não resolvido pelo fechamento — MAPA (read-only)
+# SRCC não resolvido pelo fechamento — MAPA + IMPLEMENTAÇÃO
 
-Ramificada de `main` em `2760c98`. 27/07/2026. **Nada implementado.**
+Ramificada de `main` em `2760c98`. 27/07/2026.
+
+> **Status: IMPLEMENTADO e aplicado.** Migration `20260727_000001` rodada no
+> Studio; backfill de 03–06/2026 executado. O mapa abaixo é o levantamento que
+> precedeu a decisão; o resultado está em **IMPLEMENTAÇÃO**, no fim.
 
 Medições: `scripts/mapa-srcc-resolucao.mts` (somente leitura, funções reais do repo).
 
@@ -225,3 +229,140 @@ tela já sabe mostrar âmbar, e "não sei" é a informação correta sobre elas.
 - **A tela que soma diária em mês fechado.** O item 3 mostra que a produção de
   R$ 80.000,00 da 213615547 ainda conta. A resolução retroativa corrige o sintoma;
   a causa (ler diária em mês fechado) é outra frente.
+
+
+---
+
+# IMPLEMENTAÇÃO (28/07/2026)
+
+## O desenho: coluna separada, não campo reaproveitado
+
+O passo grava em **`srcc_resolucao`** — coluna nova — e não no `raw_payload`.
+
+O motivo é o mesmo que a frente anterior pagou caro para aprender: o que
+gravamos **não é o dado da gestora, é uma conclusão nossa** derivada do
+fechamento. Misturar as duas coisas no mesmo campo foi o que criou a ambiguidade
+da `company_received_percent`, que custou duas rodadas de investigação (0,95
+querendo dizer 0,95% e sendo lido como 95%). Três donos, três campos:
+
+| campo | dono |
+|---|---|
+| `raw_payload["Indicador Restrição SRCC"]` | cópia **fiel** do arquivo da gestora, intocada |
+| `is_srcc_restricted` | o booleano que o **cálculo** consulta (`isValidRecord`) |
+| `srcc_resolucao` | a **conclusão** derivada do fechamento (+ fonte + data) |
+
+**Descoberta que forçou a coluna:** gravar só o booleano **não resolveria nada**.
+`getSrccRestrictionLabel` lê o `raw_payload` antes do booleano, então a linha
+continuaria com rótulo "Consulta não realizada" — âmbar para sempre — e
+continuaria "indefinida", sendo recandidatada a cada rodada sem forma de saber
+que já tinha sido resolvida. Medido antes de escolher o desenho.
+
+A precedência do rótulo passou a ser, da resposta **mais nova** para a mais
+antiga: `srcc_resolucao` → `raw_payload` → booleano. Quem não tem resolução se
+comporta exatamente como antes (conferido caso a caso).
+
+## Resultado do backfill (03–06/2026)
+
+```
+candidatas (indefinidas) ....... 114
+  resolvidas para NAO ..........  97
+  resolvidas para SIM ..........   1
+  resolvidas p/ NAO_SE_APLICA ..   0
+SEM RESPOSTA ...................  16
+  ausentes do fechamento .......  16
+  achada mas sem a coluna ......   0
+  valor desconhecido ...........   0
+```
+
+03 e 05 não têm candidatas (não têm diária). As 98 resolvidas se distribuem por
+4 CNPJs, com fonte `fechamento_rr` e carimbo de data.
+
+**Zero linhas achadas sem a coluna e zero valores desconhecidos** — quando a
+linha existe no fechamento, a coluna sempre existe e sempre traz valor
+reconhecido. Confirma no dado o que o mapa dizia: a resposta é explícita, nunca
+precisou ser inferida por pagamento.
+
+## O efeito medido: a tela converge com o pagamento
+
+A proposta **213615547** (junho, Thaynara, R$ 80.000,00) era o caso central. O
+fechamento diz `RESTRIÇÃO SRCC = "Sim"`.
+
+```
+srcc_resolucao      (null)  ->  SIM
+is_srcc_restricted  false   ->  true
+rótulo   "Consulta não realizada por problemas técnicos"  ->  "Sim" (vermelho)
+```
+
+Produção exibida da promotora em 06/2026, pelo predicado de
+`isEligibleProductionRecord`:
+
+```
+ANTES:   23 linhas   R$ 474.317,20
+DEPOIS:  22 linhas   R$ 394.317,20   (−R$ 80.000,00)
+```
+
+**R$ 394.317,20 é exatamente o `production_value` do PMR dela em junho**, medido
+na fase de mapeamento e vindo do fechamento. Antes, a tela mostrava R$ 474.317,20
+e o PMR pagava sobre R$ 394.317,20 — R$ 80.000,00 de divergência entre o que se
+vê e o que se paga. Agora os dois dizem o mesmo número, e não por ajuste: a
+diária chega nele sozinha ao parar de contar a proposta que o banco restringiu.
+
+Confirmação independente do desenho — nenhum dos dois lados foi calibrado para o
+outro.
+
+## Idempotência: provada, não presumida
+
+Segunda execução com `--gravar`:
+
+```
+candidatas 16 · resolvidas 0 · produção delta R$ 0,00
+98 linhas com srcc_resolucao, mesmos carimbos de data, 98/98 coerentes
+```
+
+As 98 resolvidas **saem** do universo "indefinido" porque `srcc_resolucao` vence
+no rótulo. Restam as 16 sem resposta — que continuam candidatas **de propósito**:
+elas são genuinamente indefinidas, e reavaliá-las a cada rodada é o certo. Se um
+fechamento futuro (reimportação, correção) passar a incluí-las, serão resolvidas
+sozinhas. O que importa para idempotência é que **nada é escrito** na segunda
+passada.
+
+## As 16 sem resposta: ficam indefinidas, e agora com razão explícita
+
+Não é falha do casamento — **a proposta não entrou no arquivo de fechamento**.
+Estão em Produção na diária e simplesmente não aparecem entre as linhas CASH da
+competência. Verificado: as 16 seguem com `srcc_resolucao` NULL e
+`is_srcc_restricted` false, sem terem sido tocadas.
+
+Em competência fechada a etiqueta delas diz **"Não resolvido"**, com o texto de
+ajuda "a competência já fechou e a consulta de restrição continua sem resposta".
+Isso **passa a ser literal**: antes descrevia um efeito colateral (o fechamento
+não reescrevia nada, então tudo ficava sem resolver); agora descreve o fato
+específico daquela linha — o fechamento resolveu 98 e não tinha o que dizer sobre
+estas 16.
+
+Por que uma proposta em Produção não entra no fechamento continua **sem
+investigação**. Pode ser timing (contratada na competência seguinte), pode ser
+outra coisa.
+
+## Daqui para frente: sem backfill
+
+O passo roda **dentro do import de fechamento RR** (`monthlyClosingImport`),
+depois da consolidação. Cada fechamento novo resolve o que a diária daquela
+competência deixou em aberto, sozinho, e reporta no resultado da importação:
+quantas resolveu, para cada valor, e quantas ficaram sem resposta separadas por
+motivo.
+
+**O backfill foi um evento único** para 03–06/2026. Não precisa rodar de novo — e
+se rodar, não faz nada.
+
+O passo é best-effort: falha nele não derruba o import (o fechamento já está
+gravado e o PMR consolidado). Como é idempotente, a próxima importação tenta de
+novo.
+
+## O que continua em aberto
+
+- **As 16 ausentes** — por que uma proposta em Produção não entra no fechamento.
+- **O colapso `2/3/4 → false` no lado ADS** (`bbtsClosingImport.ts:263`): um
+  código 3 da BBTS vira "não restrito" em vez de preservar a dúvida.
+- **A tela que soma diária em mês fechado.** O backfill corrigiu o sintoma nas
+  linhas restritas; a causa (ler diária em competência fechada) é outra frente.
