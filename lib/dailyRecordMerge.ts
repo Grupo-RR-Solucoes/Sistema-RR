@@ -59,6 +59,14 @@ export const CREDIT_COLUMNS = [
   "movement_date",
   "contract_date",
   "cancellation_date",
+  // RISCO REGISTRADO (28/07/2026): este campo é do CRÉDITO, então uma reimportação
+  // da diária SOBRESCREVE o que o fechamento concluiu — na ADS, o fechamento entra
+  // como FULL com o código do PDF e a diária como CREDIT com `false` (o arquivo da
+  // BBTS não tem coluna de SRCC). Hoje é inócuo, porque a BBTS nunca mandou cd=1;
+  // no dia em que mandar, reimportar a diária apagaria a restrição em silêncio.
+  // É o mesmo padrão que os NESTED_TRACE_KEYS já tiveram de corrigir uma vez.
+  // Por isso a RESPOSTA durável mora em `srcc_resolucao`, que NÃO está em nenhum
+  // dos dois conjuntos de dono e portanto nenhum importador parcial alcança.
   "is_srcc_restricted",
   "promoter_commission_percent",
   "promoter_commission_amount",

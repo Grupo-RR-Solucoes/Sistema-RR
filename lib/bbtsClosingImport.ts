@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { mergeDailyProductionRecords } from "./dailyRecordMerge.ts";
+import {
+  FONTE_FECHAMENTO_ADS,
+  traduzirValorFechamento,
+  type ValorResolucao as ValorResolucaoSrcc,
+} from "./srccResolucao.ts";
 
 // ============================================================================
 // bbtsClosingImport — CARGA do FECHAMENTO BBTS (junho/2026) em
@@ -20,6 +25,12 @@ import { mergeDailyProductionRecords } from "./dailyRecordMerge.ts";
 // NÃO entra na produção — é débito do promotor (frente promoter_monthly_debits
 // futura), devolvido em result.debitos. Seguro 'calculo' SEM crédito no mês vira
 // linha de produção só-seguro (chave JJ552710 -> balde).
+//
+// SRCC: o PDF traz o código oficial (1=restrição, 2=não, 3=consulta não realizada,
+// 4=n/a). O booleano is_srcc_restricted continua saindo SÓ do cd=1 — é o que o
+// cálculo consulta. A RESPOSTA (inclusive as negativas) vai para a coluna
+// srcc_resolucao, que é o que a tela lê e o que sobrevive a uma reimportação da
+// diária. O cd=3 não grava nada: fica indefinido (âmbar), esperando resposta.
 //
 // NÃO calcula comissão — só carrega a produção (crédito recalcula pela TRP e
 // seguro pela régua BBTS no consolidador BBTS-2c). READ das refs + WRITE só em
@@ -113,6 +124,14 @@ export type BbtsClosingResult = {
   individual: number;
   canceladas: number;
   srcc_restritas: number;
+  /**
+   * A RESPOSTA do fechamento sobre o SRCC, gravada em srcc_resolucao. Separado
+   * de srcc_restritas de propósito: aquele conta só o cd=1 (o que tira a linha
+   * da conta); este conta o que a BBTS RESPONDEU, inclusive as negativas.
+   * `indefinidas` = cd=3 (consulta não realizada) + linhas sem o código: não
+   * gravam resolução e continuam em âmbar, que é a informação correta sobre elas.
+   */
+  srcc_resolucoes: Record<ValorResolucaoSrcc, number> & { indefinidas: number };
   com_seguro: number; // linhas de produção que receberam insurance_value
   seguro_only_lines: number; // linhas de produção criadas só p/ seguro órfão (sem crédito)
   debitos: Array<{ contrato: string; valor_seguro: number; tipo: string | null }>; // fora da produção
@@ -219,6 +238,7 @@ export async function importBbtsClosing(
     individual: 0,
     canceladas: 0,
     srcc_restritas: 0,
+    srcc_resolucoes: { SIM: 0, NAO: 0, NAO_SE_APLICA: 0, indefinidas: 0 },
     com_seguro: 0,
     seguro_only_lines: 0,
     debitos: seguroDebito.map((s) => ({ contrato: String(s.contrato).trim(), valor_seguro: Number(s.valor_seguro) || 0, tipo: s.tipo ?? null })),
@@ -236,6 +256,9 @@ export async function importBbtsClosing(
   // p/ contract_date/proposal_date (preserva o histórico). extractYearMonth usa
   // movement_date primeiro, então todas as 18 caem na competência do fechamento.
   const compMovementDate = `${year}-${String(month).padStart(2, "0")}-15`;
+  // Carimbo ÚNICO da carga: todas as linhas resolvidas nesta importação dizem
+  // "desde quando o sistema sabe disto" com o mesmo instante.
+  const resolucaoEm = new Date().toISOString();
 
   const records: Record<string, unknown>[] = [];
   for (const r of credito) {
@@ -260,8 +283,34 @@ export async function importBbtsClosing(
     const cancelado = Boolean(r.cancelamento);
     if (cancelado) result.canceladas += 1;
     const srccCd = r.srcc_cd == null ? null : Math.trunc(Number(r.srcc_cd));
+    // SÓ o cd=1 tira a linha da conta. Continua sendo a ÚNICA fonte de `true`:
+    // "consulta não realizada" (3) NÃO é restrição, e o cálculo tem de contar a
+    // produção normalmente. Todos os consumidores testam `=== true`/`!== true`
+    // (isValidRecord, closingAnalytics, bbtsOrchestrator, projecaoMetas...), então
+    // false e null são indistinguíveis para o dinheiro — a dúvida não cabe aqui.
     const isSrccRestricted = srccCd === 1;
     if (isSrccRestricted) result.srcc_restritas += 1;
+
+    // A RESPOSTA da BBTS, em COLUNA — não só no booleano, não só no raw_payload.
+    //
+    // POR QUE COLUNA. O código vinha sendo gravado em raw_payload (`srcc_cd`) e em
+    // __bbts_meta, e os dois são APAGÁVEIS por uma reimportação da diária: o
+    // fechamento entra como owner FULL e a diária como CREDIT, e o mergeRawPayload
+    // mescla __bbts_meta campo a campo — um `srcc_cd: null` da diária sobrescreve
+    // o `srcc_cd: 2` do fechamento. É o mesmo padrão de apagamento silencioso que
+    // o __bbts_meta já teve de corrigir uma vez (o "pago" da BBTS). A coluna
+    // srcc_resolucao é IMUNE: não está em CREDIT_COLUMNS nem em INSURANCE_COLUMNS,
+    // e ownedColumnsFor só deixa o dono escrever as colunas do seu conjunto — a
+    // diária não alcança esta coluna nem por engano.
+    //
+    // O QUE O 3 FAZ AQUI: nada. traduzirValorFechamento devolve null para ele, os
+    // três campos ficam FORA do registro, e a linha permanece indefinida (âmbar) —
+    // o dono FULL só escreve as chaves que o registro traz (ownedColumnsFor:145),
+    // então omitir é literalmente "não tocar", inclusive numa reimportação.
+    const srccResolucao: ValorResolucaoSrcc | null =
+      srccCd == null ? null : traduzirValorFechamento(String(srccCd));
+    if (srccResolucao) result.srcc_resolucoes[srccResolucao] += 1;
+    else result.srcc_resolucoes.indefinidas += 1;
 
     const seg = seguroByContrato.get(contrato);
     const seguroBase = seg ? Number(seg.valor_total_credito) || 0 : 0;
@@ -305,6 +354,15 @@ export async function importBbtsClosing(
       movement_date: compMovementDate, // competência do fechamento (Opção B)
       contract_date: dateIso, // data real de venda (preserva histórico)
       is_srcc_restricted: isSrccRestricted,
+      // Os três campos entram JUNTOS ou não entram: uma conclusão sem procedência
+      // não se confere. cd=3 (e ausência de código) não gera nenhum deles.
+      ...(srccResolucao
+        ? {
+            srcc_resolucao: srccResolucao,
+            srcc_resolucao_fonte: FONTE_FECHAMENTO_ADS,
+            srcc_resolucao_em: resolucaoEm,
+          }
+        : {}),
       promoter_commission_amount: null,
       promoter_commission_percent: null,
       insurance_commission_amount: null,
@@ -389,6 +447,12 @@ export async function importBbtsClosing(
       proposal_date: compMovementDate,
       movement_date: compMovementDate,
       contract_date: compMovementDate,
+      // ATENÇÃO ao ler este `false`: ele diz "NÃO HÁ DADO DE SRCC nesta linha",
+      // não "não há restrição". A linha só-seguro não tem crédito, então não tem
+      // código de SRCC no relatório — é ausência de dado, não conclusão. Por isso
+      // aqui NÃO se grava srcc_resolucao: não há o que concluir. O booleano fica
+      // false porque é o que o cálculo precisa (a linha conta na produção) e
+      // porque todos os consumidores testam `=== true`.
       is_srcc_restricted: false,
       promoter_commission_amount: null,
       promoter_commission_percent: null,

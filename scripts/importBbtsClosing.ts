@@ -65,6 +65,13 @@ const brl = (n: number) => Number(n).toLocaleString("pt-BR", { minimumFractionDi
   L("individual (AUTO_J_KEY)", res.individual);
   L("canceladas", res.canceladas);
   L("SRCC restritas (cd=1)", res.srcc_restritas);
+  // A resposta da BBTS, não só a restrição: sem isto, um mês inteiro de "Não"
+  // ficaria invisível no relatório da carga — que foi exatamente o defeito.
+  L(
+    "SRCC resolvidas (coluna)",
+    `SIM ${res.srcc_resolucoes.SIM} · NÃO ${res.srcc_resolucoes.NAO} · N/A ${res.srcc_resolucoes.NAO_SE_APLICA}` +
+      ` · indefinidas ${res.srcc_resolucoes.indefinidas}`
+  );
   L("com seguro (produção)", res.com_seguro);
   L("linhas só-seguro (órfão)", res.seguro_only_lines);
   if (res.debitos.length) {

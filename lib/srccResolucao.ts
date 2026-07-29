@@ -36,6 +36,16 @@ import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 /** De onde veio a resolucao. Grava em srcc_resolucao_fonte. */
 export const FONTE_FECHAMENTO_RR = "fechamento_rr";
 
+/**
+ * A mesma conclusao, vinda do fechamento da BBTS (ADS). Fonte SEPARADA da do RR
+ * porque o caminho e outro: no RR a resposta vem do metadata do
+ * monthly_closing_entries, num passo que roda DEPOIS do import; na ADS ela vem
+ * dentro do proprio PDF do fechamento, no mesmo momento da carga
+ * (bbtsClosingImport). Distinguir as duas e o que permite auditar "de onde e
+ * desde quando o sistema sabe disto" sem reprocessar nada.
+ */
+export const FONTE_FECHAMENTO_ADS = "fechamento_ads";
+
 export type ValorResolucao = "SIM" | "NAO" | "NAO_SE_APLICA";
 
 export type ResultadoResolucaoSrcc = {
@@ -91,6 +101,15 @@ function lerMetadata(metadata: unknown, chaves: string[]): string | null {
  * Traduz o texto do fechamento para o dominio da coluna. Devolve null quando o
  * valor nao e reconhecido — e null NAO grava. Aceitar um valor estranho seria
  * inventar resposta sobre restricao bancaria.
+ *
+ * SERVE AS DUAS GESTORAS. O RR manda o texto por extenso ("Nao se aplica"), a
+ * BBTS manda o CODIGO cru (1/2/4) — os dois caem aqui e saem no mesmo dominio.
+ *
+ * O CODIGO 3 ("consulta nao realizada") NAO TEM PAR, e isso e proposital: o
+ * dominio de tres valores da coluna nao tem como dizer "ainda nao se sabe", e
+ * nao deve ter. Devolver null aqui e o que mantem a linha INDEFINIDA (ambar),
+ * candidata a ser resolvida quando a resposta existir. E o mesmo desenho do RR:
+ * a duvida nao vira negativa; ela espera.
  */
 export function traduzirValorFechamento(bruto: string): ValorResolucao | null {
   const n = norm(bruto);
