@@ -362,7 +362,11 @@ novo.
 ## O que continua em aberto
 
 - **As 16 ausentes** — por que uma proposta em Produção não entra no fechamento.
-- **O colapso `2/3/4 → false` no lado ADS** (`bbtsClosingImport.ts:263`): um
-  código 3 da BBTS vira "não restrito" em vez de preservar a dúvida.
+- ~~**O colapso `2/3/4 → false` no lado ADS** (`bbtsClosingImport.ts:263`)~~ —
+  **FECHADO em 28/07/2026**, ver `HANDOFF_SRCC_ADS.md`. E a ressalva registrada
+  acima estava certa pela metade: o código 3 **nunca apareceu** na ADS (a diária
+  da BBTS não manda coluna de SRCC nenhuma), mas as 19 linhas em que a gestora
+  **respondeu** mostravam "Sem informação" na tela — o rótulo não conhecia a
+  chave `srcc_cd`. Não era a dúvida que sumia; era a certeza.
 - **A tela que soma diária em mês fechado.** O backfill corrigiu o sintoma nas
   linhas restritas; a causa (ler diária em competência fechada) é outra frente.
