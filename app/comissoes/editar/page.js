@@ -1139,7 +1139,12 @@ export default function EditarComissoesPage() {
                         <td>{row.agency_code || "-"}</td>
                         <td className="chavej">{row.j_key || "-"}</td>
                         <td>{row.promoter_name || "-"}</td>
-                        <td>{formatDateBR(row.contract_date)}</td>
+                        {/* MESMO fallback de /promotores (contract_date -> movement_date,
+                            lado leitura). Sem efeito visivel hoje — as linhas desta tela
+                            sao RR, e o RR traz contract_date em 599/599 de julho/2026 —
+                            mas e o MESMO defeito e a MESMA fonte: fica igual para nao
+                            divergir quando uma fonte sem contratacao chegar aqui. */}
+                        <td>{formatDateBR(row.contract_date || row.movement_date)}</td>
                         <td className="r">{formatPercentSuffix(row.interest_rate)}</td>
                         <td className="prod">{row.product_description || "-"}</td>
                         <td className="r">

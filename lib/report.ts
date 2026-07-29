@@ -1016,7 +1016,9 @@ function buildPromoterWorkbook(
         Agencia: row.agency_code,
         ChaveJ: row.j_key,
         Promotor: row.promoter_name,
-        DataContratacao: row.contract_date || "",
+        // Fallback igual ao do PDF (linhas 696 e 1453), que ja tinham; so o XLSX
+        // ficou de fora. Sem ele a coluna sai vazia nas linhas da ADS.
+        DataContratacao: row.contract_date || row.movement_date || "",
         TxJuros: row.interest_rate,
         DescricaoProduto: row.product_description,
         PercentualAVista: row.company_received_percent,
