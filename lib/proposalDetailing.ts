@@ -165,10 +165,21 @@ export function getSrccRestrictionLabel(record: ProposalRecord): string {
 
   const raw =
     readRawPayloadValue(record.raw_payload, [
+      // Promotiva (RR) — texto por extenso.
       "Indicador Restricao SRCC",
       "Indicador Restrição SRCC",
       "Restricao SRCC",
       "Restrição SRCC",
+      // BBTS (ADS) — CODIGO cru. Sem estes aliases a resposta da gestora existia
+      // no banco e nao chegava na tela: 19 linhas de junho/2026 mostravam "Sem
+      // informacao" com srcc_cd=2/4 gravado ao lado (medido 28/07/2026). O
+      // tradutor de codigos ja existia (SRCC_POR_CODIGO); faltava a CHAVE.
+      // `srcc_cd` e o que o fechamento grava; os outros dois sao os nomes que o
+      // bbtsDailyImport procura, para o dia em que a BBTS mandar a coluna na
+      // diaria (hoje o arquivo dela nao tem NENHUMA coluna de SRCC).
+      "srcc_cd",
+      "cd_restricao_srcc",
+      "Cd. Restrição SRCC",
     ]) || null;
 
   if (raw !== null && raw !== undefined && raw !== "") {

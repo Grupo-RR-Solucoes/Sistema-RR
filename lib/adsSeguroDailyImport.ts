@@ -210,6 +210,13 @@ export async function importAdsSeguroDaily(
       proposal_date: movimento,
       movement_date: movimento,
       contract_date: movimento,
+      // ATENÇÃO ao ler este `false`: significa "NÃO HÁ DADO DE SRCC nesta linha",
+      // não "não há restrição". O arquivo Prestamista é de SEGURO e não traz
+      // código de SRCC — é ausência de dado, não conclusão. Não vira
+      // srcc_resolucao por isso mesmo: não há resposta para gravar.
+      // Atenuante: este importador entra como owner INSURANCE e is_srcc_restricted
+      // não está em INSURANCE_COLUMNS, então o valor só vale no INSERT (default de
+      // nascimento da linha) e NUNCA sobrescreve o que outro importador concluiu.
       is_srcc_restricted: false,
       installments: parcelas,
       term_months: parcelas,
