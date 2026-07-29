@@ -528,6 +528,14 @@ export async function POST(req: Request) {
           ])
         );
 
+        // Valor CRU da coluna de SRCC — hoisted para o payload poder distinguir
+        // "a planilha disse Nao" de "a planilha nao trouxe a coluna". Ver a
+        // guarda em is_srcc_restricted, abaixo.
+        const srccRawImport = getField(lookup, [
+          "Indicador Restricao SRCC",
+          "Indicador Restrição SRCC",
+        ]);
+
         const payload: any = {
           daily_import_id: importLog.id,
           company_id: company.company_id,
@@ -590,11 +598,24 @@ export async function POST(req: Request) {
           term_months: term || null,
           installments: term || null,
           company_received_percent: companyReceivedPercent,
-          // FIX-1.E.6.B.2: comissao do seguro nao vem mais do XLSX. Fica
-          // NULL aqui e e preenchida em /api/calculate/monthly via lookup
-          // em insurance_slip_rules (TRP35 §188).
-          insurance_commission_percent: null,
-          insurance_commission_amount: null,
+          // COMISSAO DE SEGURO NAO ENTRA AQUI — nem como null.
+          //
+          // FIX-1.E.6.B.2 tirou o numero do XLSX (ele nao vem de la; quem calcula
+          // e /api/calculate/monthly via insurance_slip_rules, TRP35 §188). Mas
+          // deixou as chaves no payload com `null`, e isso NAO e inocente: este
+          // import entra como owner FULL, e FULL escreve TODA chave presente.
+          // O `null` viajava ate o UPDATE e APAGAVA a comissao ja calculada.
+          //
+          // ACONTECEU EM PRODUCAO: o import dd3450f1 (29/07/2026 13:51) reescreveu
+          // as 739 linhas do RR de julho e zerou o seguro em 645/645 elegiveis. O
+          // Dashboard caiu de ~R$ 4,3 mil para R$ 27,08 (-99,4%, exibido "-100%")
+          // com 152 propostas de premio (R$ 260 mil) vendidas no mes.
+          //
+          // REGRA: campo que este import NAO calcula nao entra no payload. Gravar
+          // o que nao se calcula e apagamento silencioso. A rede de seguranca
+          // (DERIVED_NEVER_UPDATED em lib/dailyRecordMerge.ts) tambem barra estas
+          // colunas — as duas defesas sao de proposito: a de la vale para QUALQUER
+          // importador, esta aqui diz a intencao no lugar onde o dado nasce.
           status: getField(lookup, ["Status"]),
           proposal_date: parseDate(getField(lookup, ["Data Proposta"])),
           movement_date: parseDate(getField(lookup, ["Data Movimento"])),
@@ -607,12 +628,24 @@ export async function POST(req: Request) {
             ])
           ),
           cancellation_date: parseDate(getField(lookup, ["Data Cancelamento"])),
-          is_srcc_restricted: parseSrccRestricted(
-            getField(lookup, [
-              "Indicador Restricao SRCC",
-              "Indicador Restrição SRCC",
-            ])
-          ),
+          // is_srcc_restricted SO ENTRA quando a planilha REALMENTE trouxe a
+          // coluna. O RR traz esse dado de verdade (por isso o campo continua
+          // aqui, ao contrario da comissao) — mas `parseSrccRestricted` devolve
+          // `false` tambem quando a coluna esta AUSENTE ou VAZIA (:153-159), e
+          // esse `false` e fabricado: e "nao sei" disfarcado de "nao ha
+          // restricao". Como o import e owner FULL, ele sobrescrevia com essa
+          // negativa inventada a CONCLUSAO que o fechamento gravou (frentes #147
+          // e #148: is_srcc_restricted passou a ser conclusao, e a resposta
+          // duravel mora em srcc_resolucao justamente por isso).
+          //
+          // Com a guarda, ausencia de coluna = nao mexe: a linha nova cai no
+          // DEFAULT false do schema (`not null default false`) e a linha
+          // existente PRESERVA o que o fechamento concluiu.
+          ...(srccRawImport !== null &&
+          srccRawImport !== undefined &&
+          String(srccRawImport).trim() !== ""
+            ? { is_srcc_restricted: parseSrccRestricted(srccRawImport) }
+            : {}),
           raw_payload: row,
         };
 

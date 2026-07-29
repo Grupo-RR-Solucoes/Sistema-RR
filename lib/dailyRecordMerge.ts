@@ -96,6 +96,48 @@ const PROMOTER_COLUMNS = new Set([
 const CONTROL_KEYS = new Set(["__createIfMissing"]);
 
 /**
+ * COLUNAS DE CONCLUSAO CALCULADA — NENHUM importador as sobrescreve num UPDATE.
+ *
+ * O DEFEITO QUE ISTO CORRIGE (aconteceu em PRODUCAO, 29/07/2026). O import da
+ * diaria do RR entra como owner FULL e traz no payload
+ * `insurance_commission_percent: null` e `insurance_commission_amount: null`
+ * (app/api/import/daily/route.ts:596-597 — de proposito: o XLSX nao tem esse
+ * numero, quem calcula e /api/calculate/monthly). Mas FULL escreve TODA chave
+ * presente no registro, entao o `null` APAGAVA a comissao ja calculada.
+ *
+ * Medido: o import dd3450f1 (29/07 13:51) reescreveu as 739 linhas do RR de
+ * julho e zerou o seguro em 645/645 elegiveis. O Dashboard, que no mes ABERTO
+ * soma essa coluna crua, caiu de ~R$ 4,3 mil para R$ 27,08 — uma variacao de
+ * -99,4% exibida como "-100%", com 152 linhas de premio (R$ 260 mil) vendidas.
+ * O credito sobreviveu no mesmo import por ACIDENTE: `promoter_commission_*`
+ * nao esta no payload dele. A assimetria (credito 568/645, seguro 0/645) foi o
+ * que denunciou o mecanismo.
+ *
+ * POR QUE AQUI E NAO EM CADA IMPORTADOR. Sao TRES escritores com o mesmo
+ * padrao — import/daily (FULL), bbtsClosingImport (FULL, grava null nas quatro)
+ * e bbtsDailyImport (CREDIT, grava null nas de credito). Consertar um deixaria
+ * os outros dois armados. E o mesmo remedio que `srcc_resolucao` usou: a
+ * conclusao nao mora ao alcance de quem so traz o dado bruto.
+ *
+ * SEGURO PORQUE OS ESCRITORES LEGITIMOS NAO PASSAM POR AQUI: quem calcula grava
+ * DIRETO — /api/calculate/monthly:1483 (`.upsert`) e
+ * lib/proposalDetailing.ts:1093 (`.update`). Nenhum deles usa este merge.
+ *
+ * VALE SO NO UPDATE. No INSERT o registro entra inteiro (linha nova, nao ha
+ * conclusao anterior a proteger) — comportamento inalterado.
+ *
+ * RESIDUO CONHECIDO: se o premio de uma proposta cair para zero num reimport, a
+ * comissao antiga sobrevive ate o proximo recalculo. E menos grave que apagar
+ * todas, mas nao e nulo — esta nomeado no handoff.
+ */
+export const DERIVED_NEVER_UPDATED = new Set([
+  "promoter_commission_percent",
+  "promoter_commission_amount",
+  "insurance_commission_percent",
+  "insurance_commission_amount",
+]);
+
+/**
  * Blocos ANINHADOS do raw_payload que NUNCA podem ser perdidos num merge.
  *
  * BUG QUE ISTO CORRIGE (perda silenciosa): o merge do raw_payload era SHALLOW
@@ -148,13 +190,16 @@ export type DailyMergeResult = {
   skipped: number; // ausentes com __createIfMissing=false
 };
 
-function ownedColumnsFor(owner: MergeOwner, record: DailyMergeRecord): string[] {
-  if (owner === "FULL") {
-    return Object.keys(record).filter((k) => !CONTROL_KEYS.has(k) && k !== "raw_payload");
-  }
-  const set = owner === "CREDIT" ? CREDIT_COLUMNS : INSURANCE_COLUMNS;
-  // só as colunas do dono que o registro de fato trouxe
-  return (set as readonly string[]).filter((k) => k in record);
+export function ownedColumnsFor(owner: MergeOwner, record: DailyMergeRecord): string[] {
+  const cols =
+    owner === "FULL"
+      ? Object.keys(record).filter((k) => !CONTROL_KEYS.has(k) && k !== "raw_payload")
+      : // só as colunas do dono que o registro de fato trouxe
+        ((owner === "CREDIT" ? CREDIT_COLUMNS : INSURANCE_COLUMNS) as readonly string[]).filter(
+          (k) => k in record
+        );
+  // Conclusão calculada nunca é sobrescrita por importador. Ver DERIVED_NEVER_UPDATED.
+  return cols.filter((k) => !DERIVED_NEVER_UPDATED.has(k));
 }
 
 /**
