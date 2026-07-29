@@ -2225,7 +2225,16 @@ function PromotoresFullPage() {
                             {row.promoter_name || "-"}
                           </td>
                           <td className="l" data-l="Data contratação">
-                            {formatDate(row.contract_date)}
+                            {/* FALLBACK contract_date -> movement_date, LADO LEITURA.
+                                A diaria viva da ADS grava movement_date e deixa
+                                contract_date NULO (bbtsDailyImport:285-286): o arquivo
+                                da BBTS nao tem coluna de contratacao. Sem o fallback a
+                                coluna saia "-" em 34/34 linhas de julho/2026 com a data
+                                de movimento preenchida ao lado.
+                                NAO se conserta preenchendo contract_date na gravacao:
+                                a semantica ("data real de venda") e reservada e nao ha
+                                fonte — mesma decisao de conferenciaBbts:373-374. */}
+                            {formatDate(row.contract_date || row.movement_date)}
                           </td>
                           <td className="num" data-l="Tx juros">
                             {row.interest_rate ? row.interest_rate.toFixed(2).replace(".", ",") : "-"}
