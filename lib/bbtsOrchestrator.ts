@@ -247,5 +247,25 @@ export async function consolidateMonthlyGroup(
     },
     rr_gravadas: rrRes.gravadas ?? 0,
     ads_gravadas: adsRes.gravadas ?? 0,
+    // DETALHE POR PROPOSTA DA ADS — aditivo, nao muda nada do que ja existia.
+    //
+    // POR QUE SAI DAQUI E NAO E RECALCULADO PELO CHAMADOR. A /promotores precisa
+    // exibir a comissao do promotor POR LINHA na ADS, e no mes ABERTO nao ha de
+    // onde ler: a coluna do diario nunca e escrita (calculate/monthly exclui a ADS
+    // pela trava semAds) e o PMR e ignorado no aberto (promoterAnalytics:1079).
+    // Reproduzir a regra na tela seria reimplementar dinheiro — o erro que esta
+    // base ja pagou caro. Entao o detalhe vem da MESMA passada que produz o PMR.
+    //
+    // A IDENTIDADE QUE TORNA ISTO EXATO: em bbtsMonthly:336 o repasse e
+    // `comPromotorCredito = comEmpAvista * acordo`, com o `acordo` UNIFORME por
+    // promotor. Logo, por linha, `comEmpresa_linha * acordo` e exato — nao e
+    // rateio aproximado, e a decomposicao da propria soma. Somar as linhas de um
+    // promotor devolve, ao centavo, o `comissao_promotor_credito` do PMR.
+    ads_detalhe: {
+      // uma entrada por proposta: { contrato, comEmpresa, promoter_id, ... }
+      propostas: adsRes.propostas ?? [],
+      // uma entrada por promotor, com o `acordo` (share) que fecha a identidade
+      table: adsRes.table ?? [],
+    },
   };
 }

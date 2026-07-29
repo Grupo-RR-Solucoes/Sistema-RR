@@ -32,6 +32,10 @@ import {
 } from "@/lib/insurancePenetration";
 import { resolveBbtsRegraDb } from "@/lib/bbts/resolveBbtsRegra";
 import { seguroRateFromRegra } from "@/lib/bbts/seguroBbts";
+// CREDITO DA ADS POR LINHA no mes ABERTO: o numero sai da MESMA passada que
+// produz o PMR (dry-run, nao grava). Ver o bloco adsCreditoPorContrato.
+import { consolidateMonthlyGroup } from "@/lib/bbtsOrchestrator";
+import { withMemoryCache } from "@/lib/memoryCache";
 // Resolução de escopo (individual/grupo) extraída p/ módulo compartilhado — o
 // recálculo (/api/calculate/monthly) reusa o MESMO resolvedor. Re-exporta os
 // sentinelas p/ não quebrar quem importa daqui.
@@ -289,6 +293,33 @@ function toPercentRate(value: unknown) {
   const parsed = toNumber(value);
   if (!parsed) return 0;
   return Math.abs(parsed) > 1 ? parsed / 100 : parsed;
+}
+
+/** Mapa contrato -> comissao-empresa de credito + acordo do promotor (ADS). */
+export type AdsCreditoPorContrato = Map<string, { comEmpresa: number; acordo: number }>;
+
+/**
+ * Comissao de CREDITO do promotor para UMA linha da ADS: `comEmpresa * acordo`,
+ * com o acordo UNIFORME por promotor (bbtsMonthly:336) — decomposicao exata da
+ * soma que vira o PMR, nao rateio aproximado.
+ *
+ * Mora no modulo (e nao dentro de cada funcao) porque os DOIS consumidores usam
+ * a mesma conta: o card, em loadPromoterAnalyticsBase/summaryRows, e a linha, em
+ * selectPromoterView/proposalRows. Duas copias divergiriam no primeiro ajuste —
+ * que e precisamente o defeito que esta frente esta consertando.
+ *
+ * Mapa vazio (mes fechado, ADS fora do escopo, ou falha ja logada) => 0, que e o
+ * comportamento anterior a esta frente.
+ */
+function creditoAdsDaLinha(
+  mapa: AdsCreditoPorContrato | undefined,
+  record: { proposal_number?: string | null; gross_value?: unknown; net_value?: unknown }
+): { valor: number; percent: number } {
+  const d = mapa?.get(String(record.proposal_number ?? ""));
+  if (!d) return { valor: 0, percent: 0 };
+  const valor = d.comEmpresa * d.acordo;
+  const base = toNumber(record.gross_value) || toNumber(record.net_value);
+  return { valor, percent: base > 0 ? (valor / base) * 100 : 0 };
 }
 
 // Teto RR 5,80% da VISÃO do promotor. Valor da fonte única versionada.
@@ -1017,6 +1048,96 @@ export async function loadPromoterAnalyticsBase(
     recordsForPeriod.map((record) => record.contract_date)
   );
 
+  // ==========================================================================
+  // CREDITO DA ADS POR LINHA — mes ABERTO.
+  //
+  // O BURACO QUE ISTO FECHA. No mes aberto a ADS nao tinha onde morar:
+  //   1. a coluna do diario (promoter_commission_amount) NUNCA e escrita para a
+  //      ADS — /api/calculate/monthly a exclui de todas as queries pela trava
+  //      semAds (route.ts:655-658) e devolve 400 se o escopo for so ADS;
+  //   2. o PMR com source='bbts' existe, mas o mes ABERTO ignora o PMR de
+  //      proposito (summaryRows abaixo: `filters.closed === false` ->
+  //      result=undefined, ramo LIVE_BASE) — e os leitores do mes aberto ainda
+  //      filtram source='daily' (/api/metas:62-63);
+  //   3. o PMR com source='daily' que sobrou e lixo do motor errado (medido em
+  //      julho/2026: R$ 4.622,92 contra R$ 9.955,36 da regua certa).
+  // Resultado: 35/35 linhas da ADS exibiam 0,00% e R$ 0,00 em julho/2026 — nos
+  // CARDS e na LISTA, porque no mes aberto os dois somam a MESMA coluna crua.
+  // Por isso este mapa nasce ANTES de summaryRows: os dois consumidores dependem
+  // dele, e consertar so a lista deixaria o card mentindo com outra cara.
+  //
+  // NO MES FECHADO NADA DISTO ACONTECE: a rota desvia para
+  // buildClosingProposalRows (app/api/promotores/route.ts:253) e o filtro passa a
+  // aceitar 'bbts'. Junho/2026 ja estava correto (19 linhas, R$ 5.153,53) e
+  // continua intocado — este mapa so nasce com `filters.closed === false`.
+  //
+  // POR QUE VEM DO ORQUESTRADOR E NAO E CALCULADO AQUI. Seria uma regra de
+  // dinheiro reimplementada no consumidor: %TRP por linha, teto 5,80% e a cascata
+  // do acordo (que depende de meta e volume CONSOLIDADOS RR+ADS, nao ADS-isolados
+  // — ver bbtsMonthly:300-314). Reimplementar isso e exatamente o erro que a
+  // MEDIDA B pagou caro. Entao o numero sai da MESMA passada que produz o PMR,
+  // em DRY-RUN (nao grava nada, `dryRun: true` explicito).
+  //
+  // EXATIDAO, nao aproximacao: `comPromotorCredito = comEmpAvista * acordo` com
+  // acordo UNIFORME por promotor (bbtsMonthly:336), entao por linha e
+  // `comEmpresa_linha * acordo`. Somar as linhas de um promotor devolve ao
+  // centavo o que o PMR traria — e o gate desta frente prova isso.
+  //
+  // CUSTO, MEDIDO: a consolidacao dry-run leva ~6,5-7 s. E caro para uma
+  // requisicao de tela, entao e memoizada (com dedupe de inflight) e so roda
+  // quando a ADS esta no escopo E ha linha ADS no periodo — fora disso e no-op.
+  //
+  // O PREFIXO DA CHAVE NAO E DECORATIVO. Todo invalidador do sistema limpa por
+  // PREFIXO — clearMemoryCache("promoters:") — e e chamado por /api/import/daily
+  // (:650-654), /api/import/closing/ads (:65-67), /api/calculate/monthly
+  // (:700-703, :1469-1472) e /api/pmr/reconsolidar (:41-44). Uma chave fora
+  // desses prefixos NUNCA seria invalidada: subir a diaria da ADS nao mudaria a
+  // tela ate o TTL vencer. Por isso a chave nasce sob "promoters:", e so por
+  // isso o TTL pode ser de 5 min em vez de segundos.
+  //
+  // LEITURA COM SERVICE_ROLE pelo mesmo motivo do bbtsRegraSeguro mais abaixo: o
+  // consolidador le bbts_rule_versions (RLS default-deny). Com o JWT do usuario a
+  // regua vem negada e o credito da ADS voltaria a zero — em silencio.
+  const adsCreditoPorContrato = await (async () => {
+    const vazio = new Map<string, { comEmpresa: number; acordo: number }>();
+    if (filters?.closed !== false) return vazio; // so mes ABERTO
+    if (scope.companyIds && !scope.companyIds.includes(BBTS_COMPANY_ID)) return vazio;
+    if (!recordsForPeriod.some((r) => r.company_id === BBTS_COMPANY_ID)) return vazio;
+
+    const chave = `promoters:ads-credito:${latestPeriod.year}-${latestPeriod.month}`;
+    try {
+      return await withMemoryCache(chave, 5 * 60_000, async () => {
+        const res: any = await consolidateMonthlyGroup(
+          (hasSupabaseEnv() ? getSupabaseAdmin() : supabase) as any,
+          {
+            year: latestPeriod.year,
+            month: latestPeriod.month,
+            dryRun: true, // EXPLICITO: esta leitura NUNCA grava no PMR
+          }
+        );
+        const acordoByPid = new Map<string, number>(
+          (res?.ads_detalhe?.table ?? []).map((t: any) => [t.promoter_id, Number(t.acordo) || 0])
+        );
+        const mapa = new Map<string, { comEmpresa: number; acordo: number }>();
+        for (const p of res?.ads_detalhe?.propostas ?? []) {
+          mapa.set(String(p.contrato), {
+            comEmpresa: Number(p.comEmpresa) || 0,
+            acordo: acordoByPid.get(p.promoter_id) ?? 0,
+          });
+        }
+        return mapa;
+      });
+    } catch (e) {
+      // NUNCA silencioso — sem o mapa a ADS volta a exibir 0,00 e isso tem de
+      // aparecer no log, nao passar por "nao houve comissao".
+      console.error(
+        "[promoterAnalytics] credito da ADS por linha NAO carregado — as linhas da ADS vao aparecer ZERADAS no mes aberto. Causa:",
+        e instanceof Error ? e.message : e
+      );
+      return vazio;
+    }
+  })();
+
   const companyProductionMap = new Map<string, number>();
   // CORREÇÃO A — Produção CONSOLIDADA do grupo no periodo selecionado.
   // O enquadramento Promotiva é por grupo empresarial, nao por CNPJ.
@@ -1109,9 +1230,21 @@ export async function loadPromoterAnalyticsBase(
       .filter((row) => toNumber(row.insurance_value) > 0 || row.has_insurance)
       .reduce((sum, row) => sum + toNumber(row.gross_value), 0);
 
+    // Mes ABERTO (result undefined) soma a coluna do diario — que para a ADS
+    // NUNCA e escrita (trava semAds). Sem o desvio abaixo o CARD do promotor da
+    // ADS mostrava R$ 0,00 mesmo com a lista ja corrigida. Fora da ADS, nada
+    // muda: `creditoAdsDaLinha` so responde para contrato presente no mapa, e o
+    // mapa so tem linha da ADS (e so no mes aberto).
     const productionCommissionValue = result
       ? toNumber(result.production_commission_value)
-      : validRecords.reduce((sum, row) => sum + toNumber(row.promoter_commission_amount), 0);
+      : validRecords.reduce(
+          (sum, row) =>
+            sum +
+            (row.company_id === BBTS_COMPANY_ID
+              ? creditoAdsDaLinha(adsCreditoPorContrato, row).valor
+              : toNumber(row.promoter_commission_amount)),
+          0
+        );
     const insuranceCommissionValue = result
       ? toNumber(result.insurance_commission_value)
       : validRecords.reduce((sum, row) => sum + toNumber(row.insurance_commission_amount), 0);
@@ -1475,6 +1608,7 @@ export async function loadPromoterAnalyticsBase(
     insuranceSlipRules,
     bbtsRegraSeguro,
     seguroShareByPromoter,
+    adsCreditoPorContrato,
   };
 }
 
@@ -1507,6 +1641,7 @@ export function selectPromoterView(
     insuranceSlipRules,
     bbtsRegraSeguro,
     seguroShareByPromoter,
+    adsCreditoPorContrato,
   } = base;
 
   // Taxa da regua BBTS para UM registro da ADS (0 quando nao resolve — NAO
@@ -1664,8 +1799,18 @@ export function selectPromoterView(
             company_insurance_commission_amount: seguroEmpresaDoRegistro(record),
             insurance_penetration_percent:
               toNumber(selectedPromoterSummary?.insurance_penetration_percent) / 100,
-            promoter_commission_percent: toNumber(record.promoter_commission_percent),
-            promoter_commission_amount: toNumber(record.promoter_commission_amount),
+            // ADS: a coluna crua NUNCA e escrita (trava semAds em
+            // /api/calculate/monthly) — o valor sai do caminho BBTS, igual ao que
+            // a coluna de seguro logo abaixo ja fazia. Demais empresas continuam
+            // lendo o persistido, sem recalculo: NADA muda fora da ADS.
+            promoter_commission_percent:
+              record.company_id === BBTS_COMPANY_ID
+                ? creditoAdsDaLinha(adsCreditoPorContrato, record).percent
+                : toNumber(record.promoter_commission_percent),
+            promoter_commission_amount:
+              record.company_id === BBTS_COMPANY_ID
+                ? creditoAdsDaLinha(adsCreditoPorContrato, record).valor
+                : toNumber(record.promoter_commission_amount),
             // Estas duas saem CRUAS de daily_production_records — valor que o
             // motor mensal do RR persistiu. Para a ADS esse valor persistido e
             // LIXO da regua errada: foi gravado por app/api/calculate/monthly

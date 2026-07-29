@@ -652,6 +652,29 @@ export async function POST(req: Request) {
     // Mes fechado ja consolida ADS pelo caminho certo (reconsolidarCompetencia-
     // Fechada, que chama o orquestrador RR+ADS). Aqui, mes ABERTO, a ADS fica
     // de fora e so o BBTS-2d escreve a linha dela.
+    //
+    // =========================================================================
+    // NAO REMOVA ESTA TRAVA ACHANDO QUE E SOBRA. (Decisao do Diego, 29/07/2026,
+    // depois da auditoria de cobertura.)
+    //
+    // Ela NAO e residuo de migracao: e SEPARACAO DELIBERADA. A ADS nasceu como
+    // pipeline PROPRIO e paralelo ao RR, de ponta a ponta —
+    //     diaria BBTS ......... lib/bbtsDailyImport.ts
+    //     fechamento .......... 2 PDFs, lib/bbtsPdfExtract + bbtsClosingImport
+    //     regua ............... bbts_rule_versions (NAO insurance_slip_rules)
+    //     consolidacao ........ consolidateMonthlyFromBbts (BBTS-2d)
+    // Este arquivo e o motor da PROMOTIVA. A trava existe para ele nao calcular
+    // sobre dado que nao e dele — remove-la nao "conserta" a ADS, reintroduz o
+    // estrago mudo e triplo descrito acima.
+    //
+    // O QUE FALTAVA NUNCA FOI REMOVER A TRAVA: era o caminho ADS ter o
+    // equivalente do que o RR tem. Onde isso doia de verdade era a EXIBICAO —
+    // a /promotores lia a coluna promoter_commission_amount, que para a ADS
+    // ninguem escreve (justamente por causa desta trava), e mostrava 0,00% em
+    // 41/41 linhas de julho/2026. O conserto foi dar a ela a fonte equivalente,
+    // do lado da LEITURA: ver `adsCreditoPorContrato` em lib/promoterAnalytics.ts,
+    // que pega o numero da MESMA passada que produz o PMR, em dry-run.
+    // =========================================================================
     const semAds = <T extends { in: any; neq: any }>(query: T, col: string): T =>
       scopeIds
         ? query.in(col, scopeIds.filter((id: string) => id !== BBTS_COMPANY_ID))
