@@ -76,14 +76,41 @@
   --nav-item-active: #20356F;
 
   /* ALTURA DO CHROME acima da janela de rolagem das tabelas.
-     = barra/topbar + padding do main + header da tela + folga.
+     = barra + padding do main + header da tela + folga.
      AS 30 CHAMADAS DE <Table scrollable> DEPENDEM DESTE VALOR.
-     Se mudar --nav-h, RECALCULE aqui — senao as tabelas ficam com a janela
-     errada em silencio (curta demais, ou passando do viewport).
-     Hoje (PRE-BARRA): topbar 40 + 200 de padding/header/folga = 240px, o
-     mesmo numero que estava espalhado em 5 lugares. A Fase 5 troca o termo
-     da topbar por var(--nav-h) e recalibra. */
-  --chrome-offset: 240px;
+
+     O TERMO DA BARRA E LIVE: --nav-h entra por referencia, nao copiado. Mudar
+     a altura da barra recalibra as ~30 tabelas sozinho. O 183px e o resto do
+     chrome, que nao depende da barra.
+
+     A CONTA (Fase 5), partindo dos 240px pre-barra:
+
+       240px  legado = topbar 40 + 200 de padding/header/folga
+       - 40px  sai a topbar  (.rr-topbar height:40px, box-sizing:border-box
+               => a borda de 1px ficava DENTRO dos 40; medido em 728bd84^)
+       + 56px  entra a barra (var(--nav-h), aplicada em .rr-nav mais abaixo;
+               a borda de 1px tambem fica dentro)
+       - 17px  o HeaderNavy encolheu ao perder o eyebrow da marca (Fase 4):
+                 -21px  o bloco do eyebrow (11,5px de fonte a line-height
+                        normal + 7px de margem) — .rrui-hnavy__eyebrow,
+                        components/ui/uiCss.ts:31
+                 + 4px  devolvidos pelo modificador --sem-eyebrow, que
+                        reequilibra o padding-top de 30 para 34
+                        (uiCss.ts:21 e :29; ver HeaderNavy.tsx:42-49)
+       = 239px = var(--nav-h) + 183px
+
+     O +16 da barra quase cancela o -17 do header: a Fase 5 e um ajuste de 1px,
+     nao de dezenas. Registrado porque o resultado contraria a expectativa.
+
+     RESSALVA — 183px e CALIBRAGEM, nao medida de uma tela. O header nao tem
+     altura fixa: varia com subtitle, KpiBand e o que cada tela empilha entre o
+     header e a tabela. O numero herda a calibragem legada dos 200px com a unica
+     mudanca medida (-17) aplicada. Vale para as 16 telas que perderam o
+     eyebrow; as 8 que mantem eyebrow SEMANTICO (SEGURIDADE, AUDITORIA, MONITOR
+     PRT, ...) nao encolheram e ficam com 17px de folga a mais — folga sobrando
+     e inofensiva (a tabela so termina antes do rodape), folga faltando cortaria
+     o rodape. Por isso o arredondamento e para cima, nao para baixo. */
+  --chrome-offset: calc(var(--nav-h) + 183px);
 }
 
 * {
