@@ -366,6 +366,89 @@ Total histórico da auditoria, recomputado sobre as 41 competências disponívei
 
 ---
 
+## 5.3 O bug: o que exatamente vira 2,35 no lugar de 2,44
+
+Não há transformação, arredondamento nem leitura de campo errado. **2,44 e 2,35
+são duas células diferentes da mesma TRP**, e o derive escolhe a errada porque
+recebe a base errada:
+
+```
+   2026-06 RR ALAGOAS 1   grupo R$ 5.527.522,23 FAIXA_3  ->  2,44
+                          cnpj  R$   562.796,94 FAIXA_1  ->  2,35
+```
+
+O percentual não é "reduzido"; é **buscado na linha errada da matriz**. Por isso
+a diferença não tem padrão decimal fixo — ela varia com a distância entre a
+faixa do grupo e a do CNPJ.
+
+E essa é a única coisa que as linhas afetadas têm em comum. Em **todas** as 9
+combinações empresa × competência, o grupo cai em FAIXA_3 e o CNPJ em FAIXA_1
+ou FAIXA_2:
+
+```
+   2026-04 RR ALAGOAS 1    grupo R$ 4.192.842,41 FAIXA_3  x  cnpj R$   828.726,12 FAIXA_1
+   2026-04 RR ALAGOAS 2    grupo R$ 4.192.842,41 FAIXA_3  x  cnpj R$   702.767,08 FAIXA_1
+   2026-04 RR ALAGOAS 3    grupo R$ 4.192.842,41 FAIXA_3  x  cnpj R$ 1.374.149,43 FAIXA_2
+   2026-04 RR PERNAMBUCO   grupo R$ 4.192.842,41 FAIXA_3  x  cnpj R$ 1.287.199,78 FAIXA_2
+   2026-06 RR ALAGOAS 1    grupo R$ 5.527.522,23 FAIXA_3  x  cnpj R$   562.796,94 FAIXA_1
+   2026-06 RR ALAGOAS 2    grupo R$ 5.527.522,23 FAIXA_3  x  cnpj R$ 1.488.632,74 FAIXA_2
+   2026-06 RR ALAGOAS 3    grupo R$ 5.527.522,23 FAIXA_3  x  cnpj R$ 2.000.450,48 FAIXA_2
+   2026-06 RR PERNAMBUCO   grupo R$ 5.527.522,23 FAIXA_3  x  cnpj R$ 1.204.431,23 FAIXA_2
+   2026-07 ADS Consultoria grupo R$ 6.307.001,81 FAIXA_3  x  cnpj R$   519.798,35 FAIXA_1
+```
+
+Produto e convênio estão espalhados (16x 2882, 6x 2996, 5x 2991, 5x 2992...;
+12x conv 1078, 11x conv 0...) — **não são discriminantes**. O discriminante é
+CNPJ pequeno dentro de grupo grande.
+
+---
+
+## 5.4 O bug ALCANÇA o pagamento do promotor — R$ 105,81 de dívida interna
+
+Esta é a pergunta que separa "erro de exibição" de "dinheiro". A comissão do
+promotor é calculada **proporcionalmente à coluna**, em
+`app/api/calculate/monthly/route.ts:1248-1283`:
+
+```ts
+          if (effectiveCompanyReceivedPercent > 0) {
+            const aVistaClamped = Math.min(
+              effectiveCompanyReceivedPercent,
+              5.8
+            );
+            ...
+              commissionPercent = aVistaClamped * resolution.sharePercent;
+```
+
+e `effectiveCompanyReceivedPercent` é o valor derivado (`:1193`). **Coluna menor
+⇒ comissão do promotor menor.**
+
+Mas isso só vira pagamento onde o PMR nasce da diária. Em competência fechada o
+PMR é consolidado do **fechamento**, e a coluna não participa. Medido:
+
+```
+comp     linhas  fontes do PMR                        delta repasse (58,33%)
+2026-04      32  fechamento, (sem PMR)               R$     203,48  (PMR do fechamento: nao alcanca)
+2026-06       8  fechamento, (sem PMR)               R$      69,07  (PMR do fechamento: nao alcanca)
+2026-07       4  daily, (sem PMR)                    R$     105,81  <- PMR da DIARIA: alcanca pagamento
+
+  delta em competencia cujo PMR vem da DIARIA ....... R$ 105,81   <- divida interna REAL
+  delta em competencia cujo PMR vem do FECHAMENTO ... R$ 272,55   (sem efeito no pago)
+```
+
+**Conclusão em duas partes:**
+
+1. **R$ 272,55** (04 e 06/2026) é divergência de exibição. O promotor foi pago
+   pelo fechamento; a coluna errada não alcançou o bolso dele.
+2. **R$ 105,81** (07/2026) é **dívida interna real** — julho ainda está aberto e
+   o PMR vem da diária, então o repasse será calculado sobre o percentual menor
+   se nada mudar. **Corrigir antes de fechar julho elimina a dívida**, em vez de
+   criar um acerto retroativo.
+
+Os R$ 648,65 de comissão-empresa são a **medida da divergência interna**, não
+dinheiro a receber de ninguém.
+
+---
+
 ## 6. Ressalvas — o que este documento NÃO prova
 
 1. **Os números se movem.** Uma medição anterior desta mesma frente registrou
@@ -400,4 +483,5 @@ npx tsx scripts/diag-bloco2-completo.mts     # payload cru + numeros por compete
 npx tsx scripts/diag-bloco2-auditoria.mts    # alias, cobertura, auditoria historica, grupo x CNPJ
 npx tsx scripts/diag-bloco2-fechamento.mts   # cobertura temporal + as 7 contra toda a TRP
 npx tsx scripts/diag-bloco2-origem244.mts    # varredura de 2,44 e 1,96 na regua
+npx tsx scripts/diag-faixa-cnpj-bug.mts      # o bug: alcanca pagamento? (R$ 105,81)
 ```
