@@ -104,6 +104,82 @@ Observações relevantes:
 
 ---
 
+## 2.1 Não é recusa informada — é ausência silenciosa
+
+Verificação exaustiva feita depois da curadoria, para remover o contra-argumento
+"a operação tinha restrição / foi estornada / foi renovada".
+
+**Escopo:** 2026 inteiro, todas as empresas, todos os meses, todas as abas —
+**68.316 linhas varridas**.
+
+```
+abas x tipos existentes no fechamento de 2026:
+   A Vista  / CASH                    3999
+   A Vista  / INSURANCE               1137
+   CONSORCIO / CONSORCIO              37
+   Crédito / CREDIT                   16
+   Débito / DEBIT                     16
+   PRT / PRT                          60972
+   Seguro / INSURANCE                 2139
+```
+
+A busca foi em três níveis: (1) o número da proposta em `operation_number` e
+`contract_number`; (2) o número como **valor de qualquer chave** de qualquer
+`metadata`; (3) inventário das chaves, atrás de campo de status/recusa.
+
+```
+  NENHUMA MENCAO. Nenhuma das 16 aparece em nenhum campo de
+  identificacao nem como valor de nenhuma chave de metadata, em
+  nenhuma aba, de nenhum fechamento de 2026, de nenhuma empresa.
+```
+
+### A hipótese da renovação está descartada, e o teste foi direto
+
+A aba **Seguro** tem o campo que materializa exatamente essa hipótese:
+
+```
+  Seguro / INSURANCE
+      COMISSÃO  |  VALOR_SEGURO  | DATA_CANCELAMENTO | DATA_OPERACAÇÃO | MCI |
+      NUMERO_SEGURO | NUMERO_SEGURO CANCELADO | OPERAÇÃO | OPERAÇÃO RENOVADA  |
+      RAZÃO SOCIAL | STATUS | VALOR BRUTO | VALOR LIQUIDO
+```
+
+O nível 2 compara o número contra o valor de **toda** chave de **todo**
+metadata, então `OPERAÇÃO RENOVADA` foi coberto. Zero ocorrências.
+
+### A gestora tinha três formas de dizer "não pago, e eis o porquê"
+
+```
+  A Vista  / CASH
+     >>> candidatas a motivo: STATUS COMISSÃO PF | STATUS_CONTRATO
+  Seguro / INSURANCE
+     >>> candidatas a motivo: DATA_CANCELAMENTO | NUMERO_SEGURO CANCELADO | STATUS
+```
+
+E a aba **Débito** referencia proposta em texto livre — a busca pegaria:
+
+```
+  RR ALAGOAS 1 2026-05   metadata: {"VALOR":-95.76,"PRODUTO":"CRÉDITO PF",
+     "DESCRIÇÃO":"Deb.Liquidação 209913450 - 04/2026", ...}
+  RR PERNAMBUCO 2026-05  metadata: {"VALOR":-179.2,
+     "DESCRIÇÃO":"Déb.Cancelamento 202095278 - 04/2026", ...}
+```
+
+Os estornos existem, citam número de proposta, e **nenhum dos 16 números aparece
+em nenhum deles**.
+
+**Conclusão: não há posição da gestora a contestar — há ausência de posição.**
+A proposta não entrou no arquivo, sem status, sem estorno, sem cancelamento e
+sem referência cruzada.
+
+> **Ressalva de escopo.** A varredura de `metadata` cobre 2026; 2025 e anteriores
+> não entram (122.998 linhas estouram o statement timeout). A hipótese da
+> renovação aponta para **depois** da proposta, e as 16 são de 04 e 06/2026,
+> então a janela cobre o caso — mas não é varredura universal. A busca pelos
+> campos de identificação, essa sim, cobriu 2022–2026.
+
+---
+
 ## 3. O subconjunto sem explicação
 
 ```
@@ -128,7 +204,7 @@ produção válida que a diária tem e o fechamento não.
 
 ---
 
-## 4. RR × ADS — não há caso de ADS aqui
+## 4. RR × ADS — não há caso de ADS, e não haveria mesmo
 
 ```
 empresas: RR ALAGOAS 1 · RR ALAGOAS 2 · RR ALAGOAS 3 · RR PERNAMBUCO
@@ -137,6 +213,35 @@ da ADS: 0   do RR: 16
 
 **As 16 são todas do RR, cuja gestora é a Promotiva.** Nenhuma é da ADS. Não há
 segunda cobrança contra a BBTS decorrente deste achado.
+
+### E as linhas da ADS não são achado — são competência ainda aberta
+
+Medido, para fechar a dúvida de uma vez:
+
+```
+linhas da ADS na diaria: 62
+   2026-06: 19 linhas   net R$ 271.210,84
+   2026-07: 43 linhas   net R$ 519.798,35
+
+PMR da ADS por competencia (de onde veio a comissao?):
+   2026-02: 1 promotores  producao R$       0,00  comissao R$     0,00  source=cms
+   2026-06: 9 promotores  producao R$ 271.210,84  comissao R$ 5.153,53  source=bbts
+   2026-07: 8 promotores  producao R$ 258.499,01  comissao R$ 4.622,92  source=daily
+```
+
+**06/2026 já está fechada** (`source=bbts` — o fechamento da BBTS foi
+processado e pagou R$ 5.153,53). **07/2026 ainda está aberta** (`source=daily`,
+ou seja, o PMR ainda vem da diária, não do fechamento).
+
+O fechamento da ADS **não vive em `monthly_closing_entries`** — a ADS tem 0
+linhas lá e 0 registros em `monthly_closing_imports`. O caminho dela é o
+`bbtsClosingImport`, que materializa o resultado na própria diária. Por isso o
+cruzamento diária × `monthly_closing_entries` **não se aplica à ADS**: ele
+acusaria 100% de ausência em qualquer competência, inclusive nas pagas.
+
+**Consequência: qualquer linha da ADS de 07/2026 está "ainda não fechada", não
+"não paga".** O fechamento de julho da BBTS sai em agosto. Não há achado de ADS
+neste documento, e nenhuma frente de cobrança contra a BBTS nasce daqui.
 
 O lado ADS é estruturalmente diferente e já foi fechado em outra frente: o
 fechamento da BBTS resolve o SRCC no próprio PDF (`lib/bbtsClosingImport.ts:307`),
@@ -164,6 +269,68 @@ motivo legítimo de não-pagamento do crédito.
 
 **Consequência: o cruzamento por `entry_type = "CASH"` produz falso positivo.**
 Qualquer contagem futura precisa casar contra a aba, não contra o tipo derivado.
+
+---
+
+## 4.1 Comissão esperada ZERO — risco real, mas a causa não é o convênio
+
+Levantou-se a hipótese de que uma proposta com comissão esperada R$ 0,00 estaria
+saindo da conta porque o **convênio não está mapeado na régua**. Investigado:
+
+**O convênio não é o discriminador.** O 96801 tem 4 linhas na diária, todas RR
+PERNAMBUCO, e **duas delas pagam 6% cheio**:
+
+```
+   206249535    2026-04 net=R$    22.500,00 -> avista_empresa=R$       0,00  pct=0.0000  prod=2881 taxa=1.72 prazo=120
+   213588492    2026-06 net=R$    12.900,00 -> avista_empresa=R$       0,00  pct=0.0000  prod=2881 taxa=1.72 prazo=121
+   212558612    2026-06 net=R$     2.500,00 -> avista_empresa=R$     150,00  pct=6.0000  prod=2882 taxa=2.4  prazo=120
+   205046814    2026-04 net=R$     8.300,00 -> avista_empresa=R$     498,00  pct=6.0000  prod=2882 taxa=2.4  prazo=120
+```
+
+Mesmo convênio, resultados opostos. O zero acompanha **produto 2881 (REFIN) +
+taxa 1,72 + prazo 120/121**, não o convênio.
+
+E "o convênio não está na TRP" não significa nada: a TRP não indexa por
+convênio. Ela tem 12 categorias e nenhuma enumera código de convênio —
+
+```
+TRP 2026-04: 12 categorias
+   FGTS, SIAPE, _meta, INSS_NOVO, INSS_RENOV, CONSIG_SP_MG, CONSIG_PRIVADO,
+   CONSIG_PUBLICO, NAO_CONSIGNADO, PORTAB_PRIVADO, PORTAB_PUBLICO, ADIANTAMENTO_13
+   categorias que citam "96801": NENHUMA
+```
+
+o mesmo vale para **todos** os convênios.
+
+### Mas o fenômeno existe, e é maior que uma proposta
+
+```
+linhas em PRODUCAO (nao restritas) ......... 1977
+  dessas, com avista_empresa = 0 .......... 111
+  producao liquida nessas linhas .......... R$ 524.205,91
+
+por competencia:
+   2026-04:   34 de  531   net R$ 144.952,00
+   2026-06:   43 de  723   net R$ 232.178,37
+   2026-07:   34 de  723   net R$ 147.075,54
+```
+
+O padrão dominante é **prazo**, não convênio:
+
+```
+por prazo:  17x prazo 37 · 16x prazo 25 · 4x prazo 24 · 4x prazo 16 · 6x prazo 4
+            8x prazo 13 · 1x prazo 120 · 1x prazo 121 · 6x prazo 36
+```
+
+**5,6% das linhas em produção não geram comissão-empresa, carregando
+R$ 524.205,91.** Parte disso é legítima — duas das 16 foram verificadas e a
+régua realmente não remunera (uma com prazo 5, abaixo do piso). Mas **não foi
+determinado, caso a caso, quanto é piso legítimo e quanto é lacuna da régua.**
+É a frente seguinte, e ela é maior que este documento.
+
+> A proposta **220147900** (R$ 289.000, convênio 96801) foi procurada e **não
+> existe em `daily_production_records`** — nem ela nem a 219880201. Não há como
+> investigá-las neste banco.
 
 ---
 
@@ -204,4 +371,7 @@ npx tsx scripts/diag-16-parte2.mts        # cruzamento sem filtro de competencia
 npx tsx scripts/diag-16-veredito.mts      # o veredito uma a uma (este documento)
 npx tsx scripts/diag-16-probe-abas.mts    # abas/tipos do fechamento e as 5 INSURANCE
 npx tsx scripts/diag-bloco1-completo.mts  # o universo real das 43, nos dois sentidos
+npx tsx scripts/diag-16-mencao-total.mts   # busca exaustiva de mencao em 2026 (68.316 linhas)
+npx tsx scripts/diag-220147900-e-ads.mts   # convenio 96801 e as linhas da ADS
+npx tsx scripts/diag-comissao-zero.mts     # as 111 linhas com comissao-empresa zero
 ```
