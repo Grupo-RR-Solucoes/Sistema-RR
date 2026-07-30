@@ -992,6 +992,35 @@ export async function POST(req: Request) {
       });
     }
 
+    // ===== A FAIXA E DO GRUPO, NAO DO CNPJ =====
+    //
+    // A TRP escalona por VOLUME MENSAL DA GESTORA. A Promotiva apura no grupo e
+    // carimba isso no proprio fechamento: o metadata de cada linha CASH traz
+    // "TABELA" (ex.: "FAIXA 3") e "% A VISTA". Medido em 30/07/2026, nas linhas
+    // em que as duas bases dariam resultados diferentes:
+    //     o % da Promotiva bate com a faixa do GRUPO ... 996
+    //     bate com a faixa do CNPJ ..................... 0
+    //
+    // O derive abaixo recebia companyExpectedMap.get(record.company_id) — a
+    // producao de UM CNPJ. Com 4 CNPJs de porte parecido, cada um caia em
+    // FAIXA_1/FAIXA_2 enquanto o grupo estava em FAIXA_3/FAIXA_4, e o
+    // percentual saia da linha errada da matriz. Nao era arredondamento: eram
+    // duas celulas diferentes da mesma TRP.
+    //
+    // NAO reaproveite este total no monthly_expected_closings acima: LA o valor
+    // por CNPJ e o certo (e o esperado daquela empresa). O que e do grupo e a
+    // FAIXA, nao a producao esperada.
+    //
+    // ESCOPO: `companies` ja vem filtrada por semAds (:696-701), entao a soma e
+    // dos CNPJs da PROMOTIVA. A ADS tem consolidador proprio e nao passa aqui.
+    //
+    // MES FECHADO NAO CHEGA AQUI: a rota desvia em :715-716 quando
+    // regime !== "open". Abril e junho ficam como estao — fechados e pagos.
+    const groupNetValidProduction = Array.from(companyExpectedMap.values()).reduce(
+      (soma, expected) => soma + toNumber(expected?.netValidProduction),
+      0
+    );
+
     if (expectedClosingsUpserts.length > 0) {
       const { error } = await supabase
         .from("monthly_expected_closings")
@@ -1178,7 +1207,8 @@ export async function POST(req: Request) {
         let insuranceCommissionPercent = 0;
         let productionRuleSource = "MONTHLY_DEFAULT";
         let insuranceRuleSource = "MONTHLY_DEFAULT";
-        const companyExpected = companyExpectedMap.get(record.company_id) || null;
+        // A base da faixa e a producao do GRUPO — ver o bloco de comentario em
+        // groupNetValidProduction. Antes entrava a producao do CNPJ isolado.
         const persistedCompanyReceivedPercent =
           getPersistedCompanyReceivedPercent(
             record,
@@ -1186,7 +1216,7 @@ export async function POST(req: Request) {
           ) ||
           deriveCompanyReceivedPercentFromMotor(
             record,
-            toNumber(companyExpected?.netValidProduction),
+            groupNetValidProduction,
             trpProvider
           );
 
