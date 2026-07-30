@@ -328,9 +328,112 @@ régua realmente não remunera (uma com prazo 5, abaixo do piso). Mas **não foi
 determinado, caso a caso, quanto é piso legítimo e quanto é lacuna da régua.**
 É a frente seguinte, e ela é maior que este documento.
 
-> A proposta **220147900** (R$ 289.000, convênio 96801) foi procurada e **não
-> existe em `daily_production_records`** — nem ela nem a 219880201. Não há como
-> investigá-las neste banco.
+### O caso 220147900 / convênio 96801, registrado como é
+
+**A proposta 220147900 não existe em `daily_production_records`** — nem ela nem a
+219880201. Não há como investigá-la neste banco, e **nenhum valor estimado deve
+ser somado** por ela. Isso não muda com o que vem abaixo.
+
+Sobre o convênio 96801 (Governo de Goiás), a hipótese levantada foi: "não existe
+na régua — a TRP38 lista só MG e SP no Grupamento, e Goiás não está em nenhuma
+tabela; a comissão calcula zero por falta de célula". **Metade disso confere, e a
+metade que decide não.**
+
+**Confere:** existe mesmo uma lista geográfica explícita no código, e Goiás não
+está nela — `lib/motor.ts:85` define `SP_MG_CONVENIOS` como um `Set` de códigos
+enumerados, e `motor.ts:423-425` só devolve `SP_MG` para quem está no conjunto.
+
+**Não confere:** o roteamento **tem catch-all**, então nenhum convênio fica sem
+tabela. `lib/motor.ts:427`:
+
+```ts
+  return privateConvenio ? "PRIVADO" : "PUBLICO_GERAL";
+```
+
+O 96801 cai em `PUBLICO_GERAL`, que é categoria real com células. E a prova está
+no dinheiro — **a régua reproduz a Promotiva ao centavo** em duas das quatro
+linhas do convênio:
+
+```
+   206249535 2026-04 tableKey=PUBLICO_GERAL  avista=R$   0,00 | fechamento: AUSENTE
+   213588492 2026-06 tableKey=PUBLICO_GERAL  avista=R$   0,00 | fechamento: com=R$ 0,00
+   212558612 2026-06 tableKey=PUBLICO_GERAL  avista=R$ 150,00 | fechamento: com=R$ 150,00
+   205046814 2026-04 tableKey=PUBLICO_GERAL  avista=R$ 498,00 | fechamento: com=R$ 498,00
+```
+
+Duas linhas batem exatamente (R$ 150,00 e R$ 498,00); numa terceira os dois
+lados dizem zero — **concordam**. Se o convênio estivesse fora da régua, nenhuma
+das quatro calcularia.
+
+**Conclusão registrada:** o zero das outras duas (produto 2881, taxa 1,72, prazo
+120/121) é falha de **lookup de célula** para aquela combinação de taxa e prazo
+dentro de `CONSIG_PUBLICO`, não ausência do convênio. A distinção importa porque
+muda o conserto: não é cadastrar Goiás, é entender por que a matriz não cobre
+taxa 1,72 em prazo 120.
+
+---
+
+## 4.2 FRENTE PRÓPRIA — comissão zero em silêncio: escala medida
+
+O caso acima levantou a pergunta certa: *quantas propostas passam com comissão
+esperada zero sem ninguém ver?* Medido antes de fechar.
+
+```
+linhas em PRODUCAO (nao restritas) .... 1977
+convenios DISTINTOS na producao ....... 173
+convenios com ao menos 1 linha zerada . 28
+convenios com TODAS as linhas zeradas . 9
+```
+
+**Nenhum convênio está "não mapeado".** Todos os 173 roteiam para uma tableKey
+(`INSS_NOVO`, `INSS_RENOVACAO`, `SIAPE`, `PUBLICO_GERAL`, `PRIVADO`,
+`ADIANTAMENTO_13`, `AUTOMATICO_SALARIO_BENEFICIO`), por causa do catch-all. E o
+zero não acompanha convênio obscuro — o **1640**, o mais bem mapeado de todos,
+tem 49 linhas zeradas em 1.023:
+
+```
+convenio      linhas  zeros   net zerado      tableKeys                 pagas  com.paga
+000001640       1023     49  R$   224.460,00  INSS_RENOVACAO,INSS_NOVO      0 R$     0,00
+000092059         55      7  R$    43.373,78  PUBLICO_GERAL                 2 R$ 1.200,00
+000096801          4      2  R$    35.400,00  PUBLICO_GERAL                 0 R$     0,00
+000001701         22      1  R$    31.536,66  PUBLICO_GERAL                 1 R$ 1.892,20
+000143382         14      3  R$    29.042,17  PUBLICO_GERAL                 0 R$     0,00
+000101898          9      3  R$    23.643,07  PUBLICO_GERAL                 0 R$     0,00
+```
+
+### A pergunta que decide: essas propostas foram pagas?
+
+```
+  linhas com avista_empresa = 0 .................... 111   R$ 524.205,91
+     PAGAS no fechamento (comissao > 0) ........... 3   a Promotiva pagou R$ 3.092,20
+     NAO pagas (achadas com comissao 0, ou ausentes) 74   producao R$ 325.593,71
+     de 07/2026, sem fechamento importado .......... 34   (indeterminado)
+
+POR COMPETENCIA
+   2026-04:   34 zeradas de  531   net R$ 144.952,00   pagas pela Promotiva:  2  R$ 1.200,00
+   2026-06:   43 zeradas de  723   net R$ 232.178,37   pagas pela Promotiva:  1  R$ 1.892,20
+```
+
+**Em 74 das 111 a nossa régua e a Promotiva concordam: ambas dizem zero.** Isso
+inverte a leitura pessimista — o zero não é, na maioria, dinheiro perdido em
+silêncio; é acordo entre as duas pontas.
+
+**A divergência real são 3 linhas, R$ 3.092,20** — casos em que a Promotiva
+**pagou** e o nosso cálculo não reproduz. Isso é **divergência de conferência,
+não de caixa**: o dinheiro entrou, só não sabemos recalculá-lo. Não gera
+cobrança; gera correção da régua ou do roteamento.
+
+**As 34 de 07/2026 ficam indeterminadas** até o fechamento de julho ser
+importado. Não devem ser contadas em nenhuma direção.
+
+### Por que isto vira frente própria
+
+O risco que o caso 96801 expôs é real, mas não é o que se supôs. Não é "convênio
+fora da régua"; é que **uma linha com comissão esperada zero não emite sinal
+nenhum** — não há etiqueta, alerta ou contagem na tela. Foram 111 linhas e
+R$ 524.205,91 de produção que só apareceram porque alguém foi olhar. O trabalho
+seguinte é: (a) classificar as 111 entre piso legítimo e lacuna de matriz, e
+(b) fazer o zero ser visível quando acontecer.
 
 ---
 
@@ -374,4 +477,5 @@ npx tsx scripts/diag-bloco1-completo.mts  # o universo real das 43, nos dois sen
 npx tsx scripts/diag-16-mencao-total.mts   # busca exaustiva de mencao em 2026 (68.316 linhas)
 npx tsx scripts/diag-220147900-e-ads.mts   # convenio 96801 e as linhas da ADS
 npx tsx scripts/diag-comissao-zero.mts     # as 111 linhas com comissao-empresa zero
+npx tsx scripts/diag-convenios-nao-mapeados.mts  # 173 convenios x comissao zero x pagamento
 ```
