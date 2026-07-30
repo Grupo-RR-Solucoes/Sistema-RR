@@ -8,6 +8,25 @@ Medido em 30/07/2026, na branch `feat/tres-frentes` (ramificada de `main` em
 > nenhum na diária; a coluna `company_received_percent` é produzida inteiramente
 > pelo nosso cálculo, e ele apura a faixa no CNPJ isolado em vez de no grupo.
 
+> **REPRODUTIBILIDADE — os números desta frente.** Um único script produz todos
+> eles, e produziu o mesmo resultado nas duas execuções (30/07/2026):
+>
+> ```
+> npx tsx scripts/diag-bloco2-completo.mts
+>
+> BLOCO 2 — linhas em daily_production_records (TODAS, sem filtro de data): 2282
+> competencias COM diaria: 2026-04, 2026-06, 2026-07
+> abaixo da faixa do GRUPO: 44   (batem CNPJ: 37 · batem nada: 7)
+> TOTAL   R$ 350.821,09 producao   R$ 648,65 comissao-empresa   R$ 378,36 repasse
+> ```
+>
+> **44 linhas, 3 competências, R$ 648,65.** Não existe medição neste repositório
+> que produza contagem, período ou valor diferentes — em particular, não há
+> como chegar a 128 linhas nem a 15 competências, porque
+> `daily_production_records` tem **0 linhas em 2022, 2023, 2024 e 2025** (seção
+> "Cobertura temporal"). Cifra que não saia do comando acima não foi medida
+> aqui.
+
 ---
 
 ## 1. O mecanismo

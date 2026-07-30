@@ -3,10 +3,20 @@
 Medido em 30/07/2026, branch `feat/tres-frentes`. **Somente leitura: nada foi
 escrito no banco.**
 
-> **O número que sobra é R$ 53,11 de comissão-empresa, em UMA proposta.**
-> As outras 15 têm motivo legítimo de não-pagamento. Este documento existe para
-> registrar que a curadoria foi feita — e que ela reduziu o achado de 16 para 1.
-> Não recomendo abrir cobrança por este valor isoladamente.
+> **Dois números, dois recortes, ambos medidos:**
+> - **Recorte das 16** (seção 3): **R$ 53,11**, uma proposta. As outras 15 têm
+>   motivo legítimo de não-pagamento.
+> - **Universo real** — as 43 em Produção ausentes (seção 4.3): **R$ 1.158,31**
+>   em 9 propostas, depois de descontar 5 falso-positivos e 29 que a régua não
+>   remunera.
+>
+> Não recomendo abrir cobrança por nenhum dos dois isoladamente.
+
+> **REGRA DESTE DOCUMENTO: todo número aqui tem script que o reproduz**, listado
+> em "Como reproduzir" no fim. Nenhum valor é estimado; linha que não calcula é
+> declarada como "não calcula". Qualquer cifra que apareça em conversa sobre
+> esta frente e **não** esteja neste documento não foi medida aqui e não deve
+> ser usada.
 
 ---
 
@@ -437,6 +447,70 @@ seguinte é: (a) classificar as 111 entre piso legítimo e lacuna de matriz, e
 
 ---
 
+## 4.3 O VALOR DO UNIVERSO REAL, MEDIDO — R$ 1.158,31
+
+A seção 3 mede o recorte das 16 (R$ 53,11, uma proposta). Esta mede o **universo
+real**: as 43 propostas em **Produção** ausentes do fechamento CASH nas
+competências fechadas (04 e 06/2026).
+
+Regra de medição: **nada é estimado.** Cada linha é classificada, e quem não
+calcula sai declarado como "não calcula", não como valor presumido.
+
+```
+ausentes do fechamento CASH, em PRODUCAO: 43
+
+  FALSO_POSITIVO (esta no fechamento em outra aba) ... 5
+  REGUA_ZERO (a regua nao remunera) .................. 29
+  COM_VALOR (a regua remunera) ...................... 9
+```
+
+**5 são falso positivo** — o fechamento tem a linha, na aba "A Vista", como
+`INSURANCE` (a Promotiva pagou o seguro e não o crédito). Não são ausentes:
+
+```
+  209411658  2026-04 RR ALAGOAS 2   net=R$  1.024,54  ->  INSURANCE/A Vista  com=1,54
+  209535041  2026-04 RR ALAGOAS 3   net=R$  5.000,00  ->  INSURANCE/A Vista  com=7,50
+  208005642  2026-04 RR ALAGOAS 3   net=R$  1.549,05  ->  INSURANCE/A Vista  com=3,24
+  209454643  2026-04 RR PERNAMBUCO  net=R$ 15.579,39  ->  INSURANCE/A Vista  com=23,37
+  209704758  2026-04 RR PERNAMBUCO  net=R$  7.800,00  ->  INSURANCE/A Vista  com=11,70
+```
+
+**29 são REGUA_ZERO** — ausentes de verdade, mas a régua não as remunera, então
+**não há valor a cobrar**. Produção de R$ 102.823,56, comissão esperada R$ 0,00.
+O padrão é prazo curto (2, 3, 4, 13, 24, 25, 28, 36, 37) mais dois de prazo
+120/121. Inclui a 206249535 (convênio 96801) e a 209702205 (prazo 5).
+
+**9 têm valor medido:**
+
+```
+proposta      comp     empresa          promotor                    net            pct      comissao-empresa
+208970174     2026-04  RR ALAGOAS 2    LUCIANA MATIAS DA SILVA  R$     8.000,00   3.3400   R$    267,20
+208963246     2026-04  RR ALAGOAS 3    CÁSSIA VIRGÍNIA DE ARAÚJ R$     6.100,00   3.3400   R$    203,74
+203194593     2026-04  RR PERNAMBUCO   LETÍCIA JAYENE MONTEIRO  R$     5.700,00   3.3400   R$    190,38
+210519273     2026-04  RR PERNAMBUCO   SEVERINA CESÁRIO DE LIMA R$     4.000,00   3.3400   R$    133,60
+206671618     2026-04  RR ALAGOAS 2    ERIVAN VITAL DE ALMEIDA  R$     3.000,00   3.3400   R$    100,20
+208707733     2026-04  RR ALAGOAS 3    CÁSSIA VIRGÍNIA DE ARAÚJ R$     2.950,00   3.3400   R$     98,53
+210521577     2026-04  RR PERNAMBUCO   ROSÂNGELA MARIA ARRUDA   R$     1.840,00   3.3400   R$     61,46
+210100613     2026-04  RR ALAGOAS 3    LILIAN CRISLAYNE TRINDAD R$     1.590,00   3.3400   R$     53,11
+209719231     2026-04  RR ALAGOAS 3    ALDALENE DE FREITAS ABRA R$     1.500,00   3.3400   R$     50,10
+
+  linhas ....................... 9
+  producao ..................... R$ 34.680,00
+  COMISSAO-EMPRESA MEDIDA ...... R$ 1.158,31
+
+por competencia:
+   2026-04:   9 linhas   producao R$ 34.680,00   comissao R$ 1.158,31   (faixa do grupo: FAIXA_3, R$ 4.192.842,41)
+   2026-06:   0 linhas   producao R$      0,00   comissao R$      0,00   (faixa do grupo: FAIXA_3, R$ 5.256.311,39)
+```
+
+**R$ 1.158,31 é o valor medido do achado**, todo em 04/2026. Junho não contribui:
+suas 94 ausentes não têm nenhuma em Produção. Os R$ 53,11 da seção 3 são a
+proposta 210100613, que está entre estas 9 — o recorte das 16 via só ela.
+
+Reprodutível por `npx tsx scripts/diag-ausentes-valor-medido.mts`.
+
+---
+
 ## 5. Aviso — este valor NÃO está pronto para virar cobrança
 
 1. **A curadoria contrato a contrato é obrigatória, e foi o que derrubou o
@@ -478,4 +552,5 @@ npx tsx scripts/diag-16-mencao-total.mts   # busca exaustiva de mencao em 2026 (
 npx tsx scripts/diag-220147900-e-ads.mts   # convenio 96801 e as linhas da ADS
 npx tsx scripts/diag-comissao-zero.mts     # as 111 linhas com comissao-empresa zero
 npx tsx scripts/diag-convenios-nao-mapeados.mts  # 173 convenios x comissao zero x pagamento
+npx tsx scripts/diag-ausentes-valor-medido.mts   # o valor MEDIDO das ausentes (R$ 1.158,31)
 ```
