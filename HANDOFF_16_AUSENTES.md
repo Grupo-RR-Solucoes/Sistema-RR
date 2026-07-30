@@ -3,10 +3,20 @@
 Medido em 30/07/2026, branch `feat/tres-frentes`. **Somente leitura: nada foi
 escrito no banco.**
 
-> **O número que sobra é R$ 53,11 de comissão-empresa, em UMA proposta.**
-> As outras 15 têm motivo legítimo de não-pagamento. Este documento existe para
-> registrar que a curadoria foi feita — e que ela reduziu o achado de 16 para 1.
-> Não recomendo abrir cobrança por este valor isoladamente.
+> **Dois números, dois recortes, ambos medidos:**
+> - **Recorte das 16** (seção 3): **R$ 53,11**, uma proposta. As outras 15 têm
+>   motivo legítimo de não-pagamento.
+> - **Universo real** — as 43 em Produção ausentes (seção 4.3): **R$ 1.158,31**
+>   em 9 propostas, depois de descontar 5 falso-positivos e 29 que a régua não
+>   remunera.
+>
+> Não recomendo abrir cobrança por nenhum dos dois isoladamente.
+
+> **REGRA DESTE DOCUMENTO: todo número aqui tem script que o reproduz**, listado
+> em "Como reproduzir" no fim. Nenhum valor é estimado; linha que não calcula é
+> declarada como "não calcula". Qualquer cifra que apareça em conversa sobre
+> esta frente e **não** esteja neste documento não foi medida aqui e não deve
+> ser usada.
 
 ---
 
@@ -104,6 +114,82 @@ Observações relevantes:
 
 ---
 
+## 2.1 Não é recusa informada — é ausência silenciosa
+
+Verificação exaustiva feita depois da curadoria, para remover o contra-argumento
+"a operação tinha restrição / foi estornada / foi renovada".
+
+**Escopo:** 2026 inteiro, todas as empresas, todos os meses, todas as abas —
+**68.316 linhas varridas**.
+
+```
+abas x tipos existentes no fechamento de 2026:
+   A Vista  / CASH                    3999
+   A Vista  / INSURANCE               1137
+   CONSORCIO / CONSORCIO              37
+   Crédito / CREDIT                   16
+   Débito / DEBIT                     16
+   PRT / PRT                          60972
+   Seguro / INSURANCE                 2139
+```
+
+A busca foi em três níveis: (1) o número da proposta em `operation_number` e
+`contract_number`; (2) o número como **valor de qualquer chave** de qualquer
+`metadata`; (3) inventário das chaves, atrás de campo de status/recusa.
+
+```
+  NENHUMA MENCAO. Nenhuma das 16 aparece em nenhum campo de
+  identificacao nem como valor de nenhuma chave de metadata, em
+  nenhuma aba, de nenhum fechamento de 2026, de nenhuma empresa.
+```
+
+### A hipótese da renovação está descartada, e o teste foi direto
+
+A aba **Seguro** tem o campo que materializa exatamente essa hipótese:
+
+```
+  Seguro / INSURANCE
+      COMISSÃO  |  VALOR_SEGURO  | DATA_CANCELAMENTO | DATA_OPERACAÇÃO | MCI |
+      NUMERO_SEGURO | NUMERO_SEGURO CANCELADO | OPERAÇÃO | OPERAÇÃO RENOVADA  |
+      RAZÃO SOCIAL | STATUS | VALOR BRUTO | VALOR LIQUIDO
+```
+
+O nível 2 compara o número contra o valor de **toda** chave de **todo**
+metadata, então `OPERAÇÃO RENOVADA` foi coberto. Zero ocorrências.
+
+### A gestora tinha três formas de dizer "não pago, e eis o porquê"
+
+```
+  A Vista  / CASH
+     >>> candidatas a motivo: STATUS COMISSÃO PF | STATUS_CONTRATO
+  Seguro / INSURANCE
+     >>> candidatas a motivo: DATA_CANCELAMENTO | NUMERO_SEGURO CANCELADO | STATUS
+```
+
+E a aba **Débito** referencia proposta em texto livre — a busca pegaria:
+
+```
+  RR ALAGOAS 1 2026-05   metadata: {"VALOR":-95.76,"PRODUTO":"CRÉDITO PF",
+     "DESCRIÇÃO":"Deb.Liquidação 209913450 - 04/2026", ...}
+  RR PERNAMBUCO 2026-05  metadata: {"VALOR":-179.2,
+     "DESCRIÇÃO":"Déb.Cancelamento 202095278 - 04/2026", ...}
+```
+
+Os estornos existem, citam número de proposta, e **nenhum dos 16 números aparece
+em nenhum deles**.
+
+**Conclusão: não há posição da gestora a contestar — há ausência de posição.**
+A proposta não entrou no arquivo, sem status, sem estorno, sem cancelamento e
+sem referência cruzada.
+
+> **Ressalva de escopo.** A varredura de `metadata` cobre 2026; 2025 e anteriores
+> não entram (122.998 linhas estouram o statement timeout). A hipótese da
+> renovação aponta para **depois** da proposta, e as 16 são de 04 e 06/2026,
+> então a janela cobre o caso — mas não é varredura universal. A busca pelos
+> campos de identificação, essa sim, cobriu 2022–2026.
+
+---
+
 ## 3. O subconjunto sem explicação
 
 ```
@@ -128,7 +214,7 @@ produção válida que a diária tem e o fechamento não.
 
 ---
 
-## 4. RR × ADS — não há caso de ADS aqui
+## 4. RR × ADS — não há caso de ADS, e não haveria mesmo
 
 ```
 empresas: RR ALAGOAS 1 · RR ALAGOAS 2 · RR ALAGOAS 3 · RR PERNAMBUCO
@@ -137,6 +223,35 @@ da ADS: 0   do RR: 16
 
 **As 16 são todas do RR, cuja gestora é a Promotiva.** Nenhuma é da ADS. Não há
 segunda cobrança contra a BBTS decorrente deste achado.
+
+### E as linhas da ADS não são achado — são competência ainda aberta
+
+Medido, para fechar a dúvida de uma vez:
+
+```
+linhas da ADS na diaria: 62
+   2026-06: 19 linhas   net R$ 271.210,84
+   2026-07: 43 linhas   net R$ 519.798,35
+
+PMR da ADS por competencia (de onde veio a comissao?):
+   2026-02: 1 promotores  producao R$       0,00  comissao R$     0,00  source=cms
+   2026-06: 9 promotores  producao R$ 271.210,84  comissao R$ 5.153,53  source=bbts
+   2026-07: 8 promotores  producao R$ 258.499,01  comissao R$ 4.622,92  source=daily
+```
+
+**06/2026 já está fechada** (`source=bbts` — o fechamento da BBTS foi
+processado e pagou R$ 5.153,53). **07/2026 ainda está aberta** (`source=daily`,
+ou seja, o PMR ainda vem da diária, não do fechamento).
+
+O fechamento da ADS **não vive em `monthly_closing_entries`** — a ADS tem 0
+linhas lá e 0 registros em `monthly_closing_imports`. O caminho dela é o
+`bbtsClosingImport`, que materializa o resultado na própria diária. Por isso o
+cruzamento diária × `monthly_closing_entries` **não se aplica à ADS**: ele
+acusaria 100% de ausência em qualquer competência, inclusive nas pagas.
+
+**Consequência: qualquer linha da ADS de 07/2026 está "ainda não fechada", não
+"não paga".** O fechamento de julho da BBTS sai em agosto. Não há achado de ADS
+neste documento, e nenhuma frente de cobrança contra a BBTS nasce daqui.
 
 O lado ADS é estruturalmente diferente e já foi fechado em outra frente: o
 fechamento da BBTS resolve o SRCC no próprio PDF (`lib/bbtsClosingImport.ts:307`),
@@ -164,6 +279,235 @@ motivo legítimo de não-pagamento do crédito.
 
 **Consequência: o cruzamento por `entry_type = "CASH"` produz falso positivo.**
 Qualquer contagem futura precisa casar contra a aba, não contra o tipo derivado.
+
+---
+
+## 4.1 Comissão esperada ZERO — risco real, mas a causa não é o convênio
+
+Levantou-se a hipótese de que uma proposta com comissão esperada R$ 0,00 estaria
+saindo da conta porque o **convênio não está mapeado na régua**. Investigado:
+
+**O convênio não é o discriminador.** O 96801 tem 4 linhas na diária, todas RR
+PERNAMBUCO, e **duas delas pagam 6% cheio**:
+
+```
+   206249535    2026-04 net=R$    22.500,00 -> avista_empresa=R$       0,00  pct=0.0000  prod=2881 taxa=1.72 prazo=120
+   213588492    2026-06 net=R$    12.900,00 -> avista_empresa=R$       0,00  pct=0.0000  prod=2881 taxa=1.72 prazo=121
+   212558612    2026-06 net=R$     2.500,00 -> avista_empresa=R$     150,00  pct=6.0000  prod=2882 taxa=2.4  prazo=120
+   205046814    2026-04 net=R$     8.300,00 -> avista_empresa=R$     498,00  pct=6.0000  prod=2882 taxa=2.4  prazo=120
+```
+
+Mesmo convênio, resultados opostos. O zero acompanha **produto 2881 (REFIN) +
+taxa 1,72 + prazo 120/121**, não o convênio.
+
+E "o convênio não está na TRP" não significa nada: a TRP não indexa por
+convênio. Ela tem 12 categorias e nenhuma enumera código de convênio —
+
+```
+TRP 2026-04: 12 categorias
+   FGTS, SIAPE, _meta, INSS_NOVO, INSS_RENOV, CONSIG_SP_MG, CONSIG_PRIVADO,
+   CONSIG_PUBLICO, NAO_CONSIGNADO, PORTAB_PRIVADO, PORTAB_PUBLICO, ADIANTAMENTO_13
+   categorias que citam "96801": NENHUMA
+```
+
+o mesmo vale para **todos** os convênios.
+
+### Mas o fenômeno existe, e é maior que uma proposta
+
+```
+linhas em PRODUCAO (nao restritas) ......... 1977
+  dessas, com avista_empresa = 0 .......... 111
+  producao liquida nessas linhas .......... R$ 524.205,91
+
+por competencia:
+   2026-04:   34 de  531   net R$ 144.952,00
+   2026-06:   43 de  723   net R$ 232.178,37
+   2026-07:   34 de  723   net R$ 147.075,54
+```
+
+O padrão dominante é **prazo**, não convênio:
+
+```
+por prazo:  17x prazo 37 · 16x prazo 25 · 4x prazo 24 · 4x prazo 16 · 6x prazo 4
+            8x prazo 13 · 1x prazo 120 · 1x prazo 121 · 6x prazo 36
+```
+
+**5,6% das linhas em produção não geram comissão-empresa, carregando
+R$ 524.205,91.** Parte disso é legítima — duas das 16 foram verificadas e a
+régua realmente não remunera (uma com prazo 5, abaixo do piso). Mas **não foi
+determinado, caso a caso, quanto é piso legítimo e quanto é lacuna da régua.**
+É a frente seguinte, e ela é maior que este documento.
+
+### O caso 220147900 / convênio 96801, registrado como é
+
+**A proposta 220147900 não existe em `daily_production_records`** — nem ela nem a
+219880201. Não há como investigá-la neste banco, e **nenhum valor estimado deve
+ser somado** por ela. Isso não muda com o que vem abaixo.
+
+Sobre o convênio 96801 (Governo de Goiás), a hipótese levantada foi: "não existe
+na régua — a TRP38 lista só MG e SP no Grupamento, e Goiás não está em nenhuma
+tabela; a comissão calcula zero por falta de célula". **Metade disso confere, e a
+metade que decide não.**
+
+**Confere:** existe mesmo uma lista geográfica explícita no código, e Goiás não
+está nela — `lib/motor.ts:85` define `SP_MG_CONVENIOS` como um `Set` de códigos
+enumerados, e `motor.ts:423-425` só devolve `SP_MG` para quem está no conjunto.
+
+**Não confere:** o roteamento **tem catch-all**, então nenhum convênio fica sem
+tabela. `lib/motor.ts:427`:
+
+```ts
+  return privateConvenio ? "PRIVADO" : "PUBLICO_GERAL";
+```
+
+O 96801 cai em `PUBLICO_GERAL`, que é categoria real com células. E a prova está
+no dinheiro — **a régua reproduz a Promotiva ao centavo** em duas das quatro
+linhas do convênio:
+
+```
+   206249535 2026-04 tableKey=PUBLICO_GERAL  avista=R$   0,00 | fechamento: AUSENTE
+   213588492 2026-06 tableKey=PUBLICO_GERAL  avista=R$   0,00 | fechamento: com=R$ 0,00
+   212558612 2026-06 tableKey=PUBLICO_GERAL  avista=R$ 150,00 | fechamento: com=R$ 150,00
+   205046814 2026-04 tableKey=PUBLICO_GERAL  avista=R$ 498,00 | fechamento: com=R$ 498,00
+```
+
+Duas linhas batem exatamente (R$ 150,00 e R$ 498,00); numa terceira os dois
+lados dizem zero — **concordam**. Se o convênio estivesse fora da régua, nenhuma
+das quatro calcularia.
+
+**Conclusão registrada:** o zero das outras duas (produto 2881, taxa 1,72, prazo
+120/121) é falha de **lookup de célula** para aquela combinação de taxa e prazo
+dentro de `CONSIG_PUBLICO`, não ausência do convênio. A distinção importa porque
+muda o conserto: não é cadastrar Goiás, é entender por que a matriz não cobre
+taxa 1,72 em prazo 120.
+
+---
+
+## 4.2 FRENTE PRÓPRIA — comissão zero em silêncio: escala medida
+
+O caso acima levantou a pergunta certa: *quantas propostas passam com comissão
+esperada zero sem ninguém ver?* Medido antes de fechar.
+
+```
+linhas em PRODUCAO (nao restritas) .... 1977
+convenios DISTINTOS na producao ....... 173
+convenios com ao menos 1 linha zerada . 28
+convenios com TODAS as linhas zeradas . 9
+```
+
+**Nenhum convênio está "não mapeado".** Todos os 173 roteiam para uma tableKey
+(`INSS_NOVO`, `INSS_RENOVACAO`, `SIAPE`, `PUBLICO_GERAL`, `PRIVADO`,
+`ADIANTAMENTO_13`, `AUTOMATICO_SALARIO_BENEFICIO`), por causa do catch-all. E o
+zero não acompanha convênio obscuro — o **1640**, o mais bem mapeado de todos,
+tem 49 linhas zeradas em 1.023:
+
+```
+convenio      linhas  zeros   net zerado      tableKeys                 pagas  com.paga
+000001640       1023     49  R$   224.460,00  INSS_RENOVACAO,INSS_NOVO      0 R$     0,00
+000092059         55      7  R$    43.373,78  PUBLICO_GERAL                 2 R$ 1.200,00
+000096801          4      2  R$    35.400,00  PUBLICO_GERAL                 0 R$     0,00
+000001701         22      1  R$    31.536,66  PUBLICO_GERAL                 1 R$ 1.892,20
+000143382         14      3  R$    29.042,17  PUBLICO_GERAL                 0 R$     0,00
+000101898          9      3  R$    23.643,07  PUBLICO_GERAL                 0 R$     0,00
+```
+
+### A pergunta que decide: essas propostas foram pagas?
+
+```
+  linhas com avista_empresa = 0 .................... 111   R$ 524.205,91
+     PAGAS no fechamento (comissao > 0) ........... 3   a Promotiva pagou R$ 3.092,20
+     NAO pagas (achadas com comissao 0, ou ausentes) 74   producao R$ 325.593,71
+     de 07/2026, sem fechamento importado .......... 34   (indeterminado)
+
+POR COMPETENCIA
+   2026-04:   34 zeradas de  531   net R$ 144.952,00   pagas pela Promotiva:  2  R$ 1.200,00
+   2026-06:   43 zeradas de  723   net R$ 232.178,37   pagas pela Promotiva:  1  R$ 1.892,20
+```
+
+**Em 74 das 111 a nossa régua e a Promotiva concordam: ambas dizem zero.** Isso
+inverte a leitura pessimista — o zero não é, na maioria, dinheiro perdido em
+silêncio; é acordo entre as duas pontas.
+
+**A divergência real são 3 linhas, R$ 3.092,20** — casos em que a Promotiva
+**pagou** e o nosso cálculo não reproduz. Isso é **divergência de conferência,
+não de caixa**: o dinheiro entrou, só não sabemos recalculá-lo. Não gera
+cobrança; gera correção da régua ou do roteamento.
+
+**As 34 de 07/2026 ficam indeterminadas** até o fechamento de julho ser
+importado. Não devem ser contadas em nenhuma direção.
+
+### Por que isto vira frente própria
+
+O risco que o caso 96801 expôs é real, mas não é o que se supôs. Não é "convênio
+fora da régua"; é que **uma linha com comissão esperada zero não emite sinal
+nenhum** — não há etiqueta, alerta ou contagem na tela. Foram 111 linhas e
+R$ 524.205,91 de produção que só apareceram porque alguém foi olhar. O trabalho
+seguinte é: (a) classificar as 111 entre piso legítimo e lacuna de matriz, e
+(b) fazer o zero ser visível quando acontecer.
+
+---
+
+## 4.3 O VALOR DO UNIVERSO REAL, MEDIDO — R$ 1.158,31
+
+A seção 3 mede o recorte das 16 (R$ 53,11, uma proposta). Esta mede o **universo
+real**: as 43 propostas em **Produção** ausentes do fechamento CASH nas
+competências fechadas (04 e 06/2026).
+
+Regra de medição: **nada é estimado.** Cada linha é classificada, e quem não
+calcula sai declarado como "não calcula", não como valor presumido.
+
+```
+ausentes do fechamento CASH, em PRODUCAO: 43
+
+  FALSO_POSITIVO (esta no fechamento em outra aba) ... 5
+  REGUA_ZERO (a regua nao remunera) .................. 29
+  COM_VALOR (a regua remunera) ...................... 9
+```
+
+**5 são falso positivo** — o fechamento tem a linha, na aba "A Vista", como
+`INSURANCE` (a Promotiva pagou o seguro e não o crédito). Não são ausentes:
+
+```
+  209411658  2026-04 RR ALAGOAS 2   net=R$  1.024,54  ->  INSURANCE/A Vista  com=1,54
+  209535041  2026-04 RR ALAGOAS 3   net=R$  5.000,00  ->  INSURANCE/A Vista  com=7,50
+  208005642  2026-04 RR ALAGOAS 3   net=R$  1.549,05  ->  INSURANCE/A Vista  com=3,24
+  209454643  2026-04 RR PERNAMBUCO  net=R$ 15.579,39  ->  INSURANCE/A Vista  com=23,37
+  209704758  2026-04 RR PERNAMBUCO  net=R$  7.800,00  ->  INSURANCE/A Vista  com=11,70
+```
+
+**29 são REGUA_ZERO** — ausentes de verdade, mas a régua não as remunera, então
+**não há valor a cobrar**. Produção de R$ 102.823,56, comissão esperada R$ 0,00.
+O padrão é prazo curto (2, 3, 4, 13, 24, 25, 28, 36, 37) mais dois de prazo
+120/121. Inclui a 206249535 (convênio 96801) e a 209702205 (prazo 5).
+
+**9 têm valor medido:**
+
+```
+proposta      comp     empresa          promotor                    net            pct      comissao-empresa
+208970174     2026-04  RR ALAGOAS 2    LUCIANA MATIAS DA SILVA  R$     8.000,00   3.3400   R$    267,20
+208963246     2026-04  RR ALAGOAS 3    CÁSSIA VIRGÍNIA DE ARAÚJ R$     6.100,00   3.3400   R$    203,74
+203194593     2026-04  RR PERNAMBUCO   LETÍCIA JAYENE MONTEIRO  R$     5.700,00   3.3400   R$    190,38
+210519273     2026-04  RR PERNAMBUCO   SEVERINA CESÁRIO DE LIMA R$     4.000,00   3.3400   R$    133,60
+206671618     2026-04  RR ALAGOAS 2    ERIVAN VITAL DE ALMEIDA  R$     3.000,00   3.3400   R$    100,20
+208707733     2026-04  RR ALAGOAS 3    CÁSSIA VIRGÍNIA DE ARAÚJ R$     2.950,00   3.3400   R$     98,53
+210521577     2026-04  RR PERNAMBUCO   ROSÂNGELA MARIA ARRUDA   R$     1.840,00   3.3400   R$     61,46
+210100613     2026-04  RR ALAGOAS 3    LILIAN CRISLAYNE TRINDAD R$     1.590,00   3.3400   R$     53,11
+209719231     2026-04  RR ALAGOAS 3    ALDALENE DE FREITAS ABRA R$     1.500,00   3.3400   R$     50,10
+
+  linhas ....................... 9
+  producao ..................... R$ 34.680,00
+  COMISSAO-EMPRESA MEDIDA ...... R$ 1.158,31
+
+por competencia:
+   2026-04:   9 linhas   producao R$ 34.680,00   comissao R$ 1.158,31   (faixa do grupo: FAIXA_3, R$ 4.192.842,41)
+   2026-06:   0 linhas   producao R$      0,00   comissao R$      0,00   (faixa do grupo: FAIXA_3, R$ 5.256.311,39)
+```
+
+**R$ 1.158,31 é o valor medido do achado**, todo em 04/2026. Junho não contribui:
+suas 94 ausentes não têm nenhuma em Produção. Os R$ 53,11 da seção 3 são a
+proposta 210100613, que está entre estas 9 — o recorte das 16 via só ela.
+
+Reprodutível por `npx tsx scripts/diag-ausentes-valor-medido.mts`.
 
 ---
 
@@ -204,4 +548,9 @@ npx tsx scripts/diag-16-parte2.mts        # cruzamento sem filtro de competencia
 npx tsx scripts/diag-16-veredito.mts      # o veredito uma a uma (este documento)
 npx tsx scripts/diag-16-probe-abas.mts    # abas/tipos do fechamento e as 5 INSURANCE
 npx tsx scripts/diag-bloco1-completo.mts  # o universo real das 43, nos dois sentidos
+npx tsx scripts/diag-16-mencao-total.mts   # busca exaustiva de mencao em 2026 (68.316 linhas)
+npx tsx scripts/diag-220147900-e-ads.mts   # convenio 96801 e as linhas da ADS
+npx tsx scripts/diag-comissao-zero.mts     # as 111 linhas com comissao-empresa zero
+npx tsx scripts/diag-convenios-nao-mapeados.mts  # 173 convenios x comissao zero x pagamento
+npx tsx scripts/diag-ausentes-valor-medido.mts   # o valor MEDIDO das ausentes (R$ 1.158,31)
 ```
