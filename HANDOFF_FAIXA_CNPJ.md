@@ -449,6 +449,105 @@ dinheiro a receber de ninguém.
 
 ---
 
+## 5.5 PROVA FINAL pela declaração da própria Promotiva — FRENTE ENCERRADA
+
+A diária não traz percentual (0 de 2.282). Mas o **fechamento** traz, no
+`metadata` de cada linha CASH, a declaração da gestora:
+
+```
+"% A VISTA"        o percentual que ela aplicou
+"COMISSÃO PF "     o valor que ela pagou naquela linha
+"TABELA"           a faixa que ela diz ter usado
+```
+
+Comparando as 44 linhas afetadas contra essa declaração:
+
+```
+proposta      comp     empresa         nossa   PROMOTIVA     COMISSAO PF   TABELA    grupo   cnpj   quem a Promotiva seguiu
+212571965     2026-06  RR ALAGOAS 1     2.35      2.4400   R$    224,48   FAIXA 3    2.44   2.35   = FAIXA DO GRUPO
+210202870     2026-04  RR ALAGOAS 3     5.53      5.7000   R$  2.109,00   FAIXA 3    5.70   5.53   = FAIXA DO GRUPO
+212155287     2026-06  RR PERNAMBUCO    4.34      4.4800   R$  1.344,00   FAIXA 3    4.48   4.34   = FAIXA DO GRUPO
+213823980     2026-06  RR ALAGOAS 3     2.37      2.4400   R$  1.098,00   FAIXA 3    2.44   2.37   = FAIXA DO GRUPO
+...
+
+  achadas no fechamento .......... 40
+  ausentes do fechamento ......... 4      (as 4 da ADS, 07/2026, mes aberto)
+
+  o % da Promotiva bate com:
+     a NOSSA COLUNA .............. 0
+     a FAIXA DO GRUPO ............ 35
+     a FAIXA DO CNPJ ............. 0
+     nenhuma das tres ............ 5
+
+  COMISSAO PF somada (o que a Promotiva pagou nessas linhas): R$ 11.734,95
+```
+
+**35 de 35 conclusivas: a Promotiva aplicou a FAIXA DO GRUPO.** Ela própria
+carimba `TABELA = "FAIXA 3"` no metadata — a faixa do grupo, não a do CNPJ.
+Zero linhas batem com a nossa coluna, zero batem com a faixa do CNPJ.
+
+As 5 de "nenhuma das três" são o teto: a Promotiva declara 6,00% e a nossa
+célula do grupo dá 5,80% — é o teto da visão do promotor (`capPromoterViewRate`),
+não divergência de faixa.
+
+### O que isto encerra
+
+1. **A empresa recebeu o devido.** A gestora pagou pela faixa do grupo,
+   R$ 11.734,95 nessas linhas. Não há subpagamento, não há cobrança, e nunca
+   houve — a hipótese está agora refutada pela declaração dela mesma, não só
+   pela ausência de campo na diária.
+2. **A nossa coluna é a única errada da história.** Ela guarda a faixa do CNPJ
+   enquanto gestora e régua concordam na faixa do grupo.
+3. **A única consequência era o repasse ao promotor** (seção 5.4), e ela está
+   fora do escopo desta frente.
+
+**FRENTE ENCERRADA POR ESCOPO.** O que sobra vive em duas outras: o repasse de
+07/2026 (R$ 105,81, julho ainda aberto) e a correção do derive.
+
+---
+
+## 5.6 OBSERVAÇÃO, sem abrir frente: a referência direta está sendo ignorada
+
+O fechamento traz, por linha, `% A VISTA`, `COMISSÃO PF ` e `TABELA` — **o que a
+gestora aplicou, quanto pagou e por qual faixa**. É a referência mais direta que
+existe para conferir a nossa própria conta.
+
+Hoje `company_received_percent` **nunca é reconciliada contra esses campos**. O
+derive calcula do zero a partir da produção, e o resultado nunca é confrontado
+com o que a gestora declarou na linha correspondente — embora o dado esteja no
+banco, na mesma competência, casável pelo número da proposta.
+
+Este documento é a primeira vez que essa comparação foi feita, e ela resolveu
+em uma rodada uma dúvida que consumiu várias. Vale considerar quando a auditoria
+for revista. **Não é frente aberta aqui** — é anotação para quem for mexer nela.
+
+> Ressalva de nomenclatura: os campos são `% A VISTA`, `COMISSÃO PF ` e `TABELA`,
+> no `metadata` do `monthly_closing_entries`. Não existem no banco campos
+> chamados `pct_pgto`, `vlr_pgto`, `lista_srcc` ou `cd_srcc` — verificado no
+> inventário completo das 107 chaves de payload da diária e por grep no código.
+
+---
+
+## 5.7 Histórico deste documento — para ninguém herdar versão desatualizada
+
+Todas as versões são de 30/07/2026, na branch `feat/tres-frentes`:
+
+| commit | o que dizia |
+|---|---|
+| `0a9eefd` | primeira versão. Já concluía "o defeito é NOSSO, não da Promotiva; não vira cobrança", com base na ausência de percentual na diária (0 de 2.282). |
+| `7c1abf1` | acrescenta o carimbo de reprodutibilidade (44 linhas, 3 competências, R$ 648,65). |
+| `b82dc3a` | caracteriza o bug (duas células da mesma TRP) e mede que ele alcança o repasse: R$ 105,81 vivos, R$ 272,55 sem efeito. |
+| este | prova pela declaração da Promotiva (`% A VISTA` = faixa do grupo em 35/35) e **encerra a frente por escopo**. |
+
+**Nenhuma versão afirmou subpagamento da Promotiva.** A conclusão nunca inverteu;
+o que mudou foi a força da prova — de "ela não mandou o campo" para "ela declarou
+a faixa do grupo e pagou por ela".
+
+Números que circularam em conversa e **nunca** estiveram neste documento, por não
+serem reproduzíveis: R$ 4.912,89, 128 linhas, 15 competências, R$ 2.865,49.
+
+---
+
 ## 6. Ressalvas — o que este documento NÃO prova
 
 1. **Os números se movem.** Uma medição anterior desta mesma frente registrou
@@ -484,4 +583,6 @@ npx tsx scripts/diag-bloco2-auditoria.mts    # alias, cobertura, auditoria histo
 npx tsx scripts/diag-bloco2-fechamento.mts   # cobertura temporal + as 7 contra toda a TRP
 npx tsx scripts/diag-bloco2-origem244.mts    # varredura de 2,44 e 1,96 na regua
 npx tsx scripts/diag-faixa-cnpj-bug.mts      # o bug: alcanca pagamento? (R$ 105,81)
+npx tsx scripts/diag-degrau-taxa.mts         # qual dos 3 degraus pega, e inventario de chaves
+npx tsx scripts/diag-pct-promotiva-vs-coluna.mts  # a declaracao da Promotiva x a nossa coluna
 ```
