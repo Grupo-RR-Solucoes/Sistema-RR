@@ -37,7 +37,8 @@ type Promotor = {
   company_name: string;
   company_cnpj: string;
   producao_acumulada: number;
-  dias_uteis_decorridos: number;
+  dias_uteis_decorridos: number; // EXIBIDO: dias uteis vencidos, hoje INCLUIDO
+  dias_uteis_ritmo: number; // DIVISOR da projecao: decorridos menos o dia corrente
   dias_uteis_totais: number;
   projecao: number;
   meta: number;

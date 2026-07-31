@@ -2,15 +2,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { todayInFortaleza } from "@/lib/dateFortaleza";
-// Primitivas de projeção — MESMA fonte que lib/projecaoMetas importa (o motor da
-// Projeção por Estado). Reusadas aqui para computar a projeção IDÊNTICA sem
-// reimplementar a fórmula: acumulado ÷ dias_úteis_decorridos × dias_úteis_totais,
-// janela RR (productionBusinessWindow) e "hoje não conta no divisor quando aberto".
-import {
-  countBusinessDays,
-  productionBusinessWindow,
-  ymd,
-} from "@/lib/trp/vigencia";
+// Projeção — helper CANÔNICO, o MESMO que lib/projecaoMetas usa (o motor da
+// Projeção por Estado). Antes esta tela repetia a fórmula inteira aqui e a cópia
+// divergiu; agora a janela RR + a aritmética de dias úteis + o ritmo linear vêm
+// todos de um lugar só.
+import { resolverJanelaRitmo, projetarPorRitmo } from "@/lib/janelaRitmo";
 // Série mensal HÍBRIDA (mês corrente=daily, fechados=PMR) — helper comum com a
 // /projecao. Corrige os buracos jan/fev/mar/mai (daily só tem abr+/2026).
 import {
@@ -318,20 +314,22 @@ export function assembleTeamProduction(
     };
 
   // ---- projeção do mês SELECIONADO: MESMA fórmula do motor da Projeção ----
-  // (não reimplementa nada; usa as primitivas de projecaoMetas/trp.vigencia).
-  const { start, end, total, holidays } = productionBusinessWindow(period.year, period.month);
-  const elapsedEnd = refDate < start ? null : refDate > end ? end : refDate;
-  const periodoCompleto = refDate >= end;
-  let diasDecorridos = elapsedEnd ? countBusinessDays(start, elapsedEnd, holidays) : 0;
-  const hojeEhDiaUtil = countBusinessDays(refDate, refDate, holidays) === 1;
-  // O dia corrente (não fechado) NÃO conta no divisor: a produção de hoje só
-  // entra amanhã — idêntico ao Dashboard/Projeção; sem isso o divisor conta 1 a
-  // mais e a projeção vem subestimada.
-  if (!periodoCompleto && hojeEhDiaUtil) {
-    diasDecorridos = Math.max(0, diasDecorridos - 1);
-  }
-  const projetar = (acum: number) =>
-    periodoCompleto ? acum : diasDecorridos > 0 ? (acum / diasDecorridos) * total : 0;
+  // Uma linha, um lugar: resolverJanelaRitmo é o helper que a /projecao usa. A
+  // cópia que existia aqui tinha DIVERGIDO em dois pontos:
+  //   1. "refDate >= end" dava competência COMPLETA já no ÚLTIMO dia da janela
+  //      (30/07) — a /equipe parava de extrapolar um dia antes da /projecao;
+  //   2. o decremento do dia corrente era aplicado ao PRÓPRIO contador de dias
+  //      decorridos, colapsando "o que se exibe" com "por quanto se divide".
+  // A janela expõe os dois separados: `diasDecorridos` (exibido, HOJE INCLUÍDO)
+  // e `diasParaRitmo` (o divisor, sem o dia corrente, porque a produção de hoje
+  // só entra amanhã). O `projetar` abaixo divide SEMPRE por diasParaRitmo.
+  // `closed` vem do REGIME (não só da data), como na /projecao: mês fechado é
+  // completo mesmo que a data de referência ainda esteja dentro da janela.
+  const janela = resolverJanelaRitmo(period.year, period.month, {
+    closed: regime !== "open",
+    referenceDate: refDate,
+  });
+  const projetar = (acum: number) => projetarPorRitmo(janela, acum);
 
   // ---- produção do PERÍODO selecionado, por promotor ----
   //

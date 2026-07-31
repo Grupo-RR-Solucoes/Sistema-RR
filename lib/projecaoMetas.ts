@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { detectMonthRegime, analyticsRegimeArgs, type MonthRegime } from "@/lib/cmsMonthly";
-import { todayInFortaleza } from "@/lib/dateFortaleza";
+import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
 import {
   fetchInsuranceSlipTiers,
   lookupInsuranceShareFromPenetration,
@@ -23,7 +23,9 @@ import { fetchAllRows } from "@/lib/queryHelpers";
 // Periodo de producao (REGRA RR): do ULTIMO DIA UTIL do mes anterior ao
 // PENULTIMO DIA UTIL do mes vigente. Dias uteis descontam fins de semana E
 // feriados nacionais (fixos + moveis via Pascoa). Projecao = ritmo linear:
-// acumulado / dias_uteis_decorridos * dias_uteis_totais.
+// acumulado / dias_uteis_ritmo * dias_uteis_totais. ATENCAO: o DIVISOR e
+// dias_uteis_ritmo (decorridos MENOS o dia corrente, que ainda nao entrou no
+// sistema), NAO dias_uteis_decorridos — este e so o numero EXIBIDO na tela.
 // ============================================================
 
 // ---------- Feriados nacionais / janela de produção ----------
@@ -31,11 +33,9 @@ import { fetchAllRows } from "@/lib/queryHelpers";
 // para lib/trp/vigencia.ts para ser reusável fora do painel (Fase 2 TRP
 // self-service: resolvedor DB + seed). Aqui só re-importamos e re-exportamos —
 // MESMA função, um único lugar. Comportamento inalterado.
-import {
-  countBusinessDays,
-  productionBusinessWindow,
-  ymd,
-} from "@/lib/trp/vigencia";
+// A aritmética de dias úteis (decorridos EXIBIDO × divisor do ritmo) saiu daqui
+// para lib/janelaRitmo.ts pelo mesmo motivo: a /equipe tinha uma segunda cópia.
+import { ymd } from "@/lib/trp/vigencia";
 
 // Re-export da API pública que outros módulos importam de "@/lib/projecaoMetas".
 export {
@@ -96,7 +96,11 @@ export type ProjecaoPromotor = {
   // Aponta para app_users.id (role supervisor OU sócio-como-gestor).
   supervisor_user_id: string | null;
   producao_acumulada: number;
+  // EXIBIDO na tela: dias uteis vencidos com HOJE INCLUIDO ("23/23" no dia 30/07).
   dias_uteis_decorridos: number;
+  // DIVISOR do ritmo: dias_uteis_decorridos menos o dia corrente (competencia
+  // aberta + hoje dia util), porque a producao de hoje so entra amanha.
+  dias_uteis_ritmo: number;
   dias_uteis_totais: number;
   projecao: number;
   meta: number;
@@ -143,7 +147,8 @@ export type ProjecaoResultado = {
     inicio: string;
     fim: string;
     dias_uteis_totais: number;
-    dias_uteis_decorridos: number;
+    dias_uteis_decorridos: number; // exibido ("23/23")
+    dias_uteis_ritmo: number; // divisor da projecao
   };
   promotores: ProjecaoPromotor[];
   naoAtribuido: NaoAtribuido;
@@ -171,13 +176,6 @@ export async function buildProjecaoMetas(
   input: { year: number; month: number; companyId?: string; referenceDate?: Date }
 ): Promise<ProjecaoResultado> {
   const { year, month } = input;
-  // "Hoje" (refDate) no fuso America/Fortaleza por padrão, NÃO UTC: driva refKey
-  // (recorte do acumulado) e diasDecorridos (a contagem "N/total"). Em UTC, às
-  // 21h BRT o dia já virava o seguinte e contava 1 dia útil a mais. Chamador
-  // pode sobrescrever via input.referenceDate (mantido).
-  const refDate = input.referenceDate
-    ? new Date(Date.UTC(input.referenceDate.getUTCFullYear(), input.referenceDate.getUTCMonth(), input.referenceDate.getUTCDate()))
-    : todayInFortaleza();
 
   // Regime ANTES do analytics: decide closedSource (consolida RR+ADS no mes
   // fechado, via consolidatedSummaryRows) e o booleano `closed` da serie hibrida.
@@ -190,6 +188,15 @@ export async function buildProjecaoMetas(
     () => "open" as MonthRegime,
   );
   const closed = regime !== "open";
+
+  // Janela de produção + aritmética de dias úteis: fonte ÚNICA em lib/janelaRitmo
+  // (a /equipe consome a MESMA função — antes eram duas cópias que divergiram).
+  // "Hoje" (refDate) sai de lá no fuso America/Fortaleza por padrão, NÃO UTC: driva
+  // refKey (recorte do acumulado) e a contagem "N/total". Em UTC, às 21h BRT o dia
+  // já virava o seguinte e contava 1 dia útil a mais. Chamador pode sobrescrever
+  // via input.referenceDate (mantido).
+  const { start, end, total, refDate, diasDecorridos, diasParaRitmo, periodoCompleto } =
+    resolverJanelaRitmo(year, month, { closed, referenceDate: input.referenceDate });
 
   const [base, allPmr, shareTiers, gestores] = await Promise.all([
     loadPromoterAnalyticsBase(supabase, {
@@ -212,23 +219,8 @@ export async function buildProjecaoMetas(
     ).catch(() => [] as ProjecaoGestor[]),
   ]);
 
-  const { start, end, total, holidays } = productionBusinessWindow(year, month);
   const refKey = ymd(refDate);
   const startKey = ymd(start);
-  const elapsedEnd = refDate < start ? null : refDate > end ? end : refDate;
-  const periodoCompleto = closed || refDate >= end;
-  // Dias uteis DECORRIDOS = dias COMPLETOS. O dia corrente (nao-fechado) NAO conta
-  // no divisor: a producao de hoje so entra amanha (mesmo principio do Dashboard;
-  // sem isso o divisor conta 1 a mais e a projecao vem subestimada). Subtrai SO com
-  // o periodo ABERTO e hoje sendo dia util (fim de semana/feriado ja nao contam).
-  // countBusinessDays e inclusivo nas duas pontas; reusa a fn (== 1) para "hoje e
-  // dia util" em vez de exportar um isBusinessDay novo. NAO toca o numerador
-  // (acumPorPromotor), preservando a paridade com a "Producao do grupo" do Dashboard.
-  let diasDecorridos = elapsedEnd ? countBusinessDays(start, elapsedEnd, holidays) : 0;
-  const hojeEhDiaUtil = countBusinessDays(refDate, refDate, holidays) === 1;
-  if (!periodoCompleto && hojeEhDiaUtil) {
-    diasDecorridos = Math.max(0, diasDecorridos - 1);
-  }
 
   // Media dos 3 meses anteriores (production_value do PMR).
   const priors = [1, 2, 3].map((k) => {
@@ -296,7 +288,7 @@ export async function buildProjecaoMetas(
 
   // Projeção do master pela MESMA regra de ritmo linear dos promotores.
   const projetarMaster = (acum: number) =>
-    periodoCompleto ? acum : diasDecorridos > 0 ? (acum / diasDecorridos) * total : 0;
+    periodoCompleto ? acum : diasParaRitmo > 0 ? (acum / diasParaRitmo) * total : 0;
 
   const companyInfo = new Map<string, { name: string; cnpj: string }>(
     ((base.companies as any[]) || []).map((c) => [c.id, { name: c.name, cnpj: c.cnpj }])
@@ -345,8 +337,8 @@ export async function buildProjecaoMetas(
 
     const projecao = periodoCompleto
       ? acumulada
-      : diasDecorridos > 0
-        ? (acumulada / diasDecorridos) * total
+      : diasParaRitmo > 0
+        ? (acumulada / diasParaRitmo) * total
         : 0;
 
     // Penetracao ATUAL (fracao 0-1), NAO projetada. insurance_penetration_percent
@@ -363,8 +355,8 @@ export async function buildProjecaoMetas(
     const seguroEmpresaAcum = toNumber(acumSeguroPorPromotor.get(row.promoter_id));
     const seguroEmpresaProj = periodoCompleto
       ? seguroEmpresaAcum
-      : diasDecorridos > 0
-        ? (seguroEmpresaAcum / diasDecorridos) * total
+      : diasParaRitmo > 0
+        ? (seguroEmpresaAcum / diasParaRitmo) * total
         : 0;
 
     // SHARE do promotor (repasse): fechado=PMR (share gravado); aberto=empresa(§188)
@@ -374,8 +366,8 @@ export async function buildProjecaoMetas(
       : seguroEmpresaAcum * lookupInsuranceShareFromPenetration(shareTiers, seguroPenetracao ?? 0);
     const seguroShareProj = periodoCompleto
       ? seguroShareAcum
-      : diasDecorridos > 0
-        ? (seguroShareAcum / diasDecorridos) * total
+      : diasParaRitmo > 0
+        ? (seguroShareAcum / diasParaRitmo) * total
         : 0;
 
     const meta = toNumber(row.target_value);
@@ -402,6 +394,7 @@ export async function buildProjecaoMetas(
       supervisor_user_id: supByPromoter.get(row.promoter_id) ?? null,
       producao_acumulada: acumulada,
       dias_uteis_decorridos: diasDecorridos,
+      dias_uteis_ritmo: diasParaRitmo,
       dias_uteis_totais: total,
       projecao,
       meta,
@@ -441,6 +434,7 @@ export async function buildProjecaoMetas(
       fim: ymd(end),
       dias_uteis_totais: total,
       dias_uteis_decorridos: diasDecorridos,
+      dias_uteis_ritmo: diasParaRitmo,
     },
     promotores,
     naoAtribuido,
