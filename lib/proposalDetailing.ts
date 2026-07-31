@@ -17,6 +17,10 @@ import {
   isFaixaTetoAvistaRRPercent,
   type CompetenciaTeto,
 } from "./tetoAvistaRR.ts";
+// JANELA DE PRODUCAO (regra RR) — helper canonico, a MESMA primitiva sobre a qual
+// getProductionPeriodFromValue classifica cada linha. Ver o bloco "3. Volume
+// mensal por promotor" para o porque de nao ser mais mes de calendario.
+import { getProductionWindow } from "./productionPeriod.ts";
 
 export type ProposalRecord = {
   raw_payload?: Record<string, unknown> | null;
@@ -655,6 +659,11 @@ export function resolvePromoterShareSync(args: {
  * Busca o volume mensal total (sum de net_value) de um promotor
  * em (year, month). Usado por recalculateSingleProposal quando nao
  * temos o batch carregado.
+ *
+ * MESMO recorte do batch (fetchPromoterShareData): JANELA DE PRODUCAO, nao mes
+ * de calendario. As duas fontes tem que concordar — se divergirem, o mesmo
+ * promotor cai em degraus diferentes conforme o caminho de calculo. Ver a TRAVA
+ * no bloco "3. Volume mensal por promotor" antes de reprocessar mes fechado.
  */
 export async function getPromoterMonthlyVolume(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -663,11 +672,7 @@ export async function getPromoterMonthlyVolume(
   year: number,
   month: number
 ): Promise<number> {
-  const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
-  const endDate =
-    month === 12
-      ? `${year + 1}-01-01`
-      : `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  const { start: startDate, endExclusive: endDate } = getProductionWindow(year, month);
 
   const { data, error } = await supabase
     .from("daily_production_records")
@@ -822,11 +827,29 @@ export async function fetchPromoterShareData(
   }
 
   // 3. Volume mensal por promotor (1 aggregation query).
-  const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
-  const endDate =
-    month === 12
-      ? `${year + 1}-01-01`
-      : `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  //
+  // ============================ TRAVA — LEIA ============================
+  // O recorte e a JANELA DE PRODUCAO (regra RR: ultimo dia util do mes anterior
+  // ate o penultimo dia util do mes vigente), confirmada por Diego em
+  // 31/07/2026. ANTES era MES DE CALENDARIO (`${year}-${mm}-01` ate o dia 1 do
+  // mes seguinte) — o que colocava o ULTIMO DIA UTIL do mes no balde errado.
+  //
+  // REPROCESSAR COMPETENCIA FECHADA COM ESTE CODIGO PODE MUDAR VALOR JA PAGO.
+  // Caso conhecido e medido: ERIKA LILIAM, jun/2026. A proposta 214159027
+  // (R$ 9.290,00, movement_date 2026-06-30) pertence a janela de JULHO, mas o
+  // calendario a contava em junho. Com ela, producao 225.634,94 >= meta_1
+  // (220.000,00) -> META_1 -> pct 0,6355. Sem ela, 216.344,94 -> META -> pct
+  // 0,6250. Reconsolidar jun/2026 muda o repasse dela em -82,29.
+  // Nada recalcula sozinho (nenhum cron, nenhuma trigger — medido); o risco so
+  // se materializa se alguem reprocessar o mes fechado de proposito.
+  // Ver a memoria do projeto "trava-competencia-janela-volume".
+  // =====================================================================
+  //
+  // Os DOIS mapas abaixo nascem desta query e por isso compartilham o recorte:
+  //   monthlyVolumesMap    -> degrau da escala ENTRANTE (resolvePromoterShareSync)
+  //   frenteCProductionMap -> producao da Frente C (resolveFrenteCShare) e, via
+  //                           bbtsOrchestrator, o target_status gravado no PMR.
+  const { start: startDate, endExclusive: endDate } = getProductionWindow(year, month);
 
   let volumeQuery = supabase
     .from("daily_production_records")
