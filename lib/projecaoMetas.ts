@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { detectMonthRegime, analyticsRegimeArgs, type MonthRegime } from "@/lib/cmsMonthly";
-import { todayInFortaleza } from "@/lib/dateFortaleza";
+import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
 import {
   fetchInsuranceSlipTiers,
   lookupInsuranceShareFromPenetration,
@@ -33,11 +33,9 @@ import { fetchAllRows } from "@/lib/queryHelpers";
 // para lib/trp/vigencia.ts para ser reusável fora do painel (Fase 2 TRP
 // self-service: resolvedor DB + seed). Aqui só re-importamos e re-exportamos —
 // MESMA função, um único lugar. Comportamento inalterado.
-import {
-  countBusinessDays,
-  productionBusinessWindow,
-  ymd,
-} from "@/lib/trp/vigencia";
+// A aritmética de dias úteis (decorridos EXIBIDO × divisor do ritmo) saiu daqui
+// para lib/janelaRitmo.ts pelo mesmo motivo: a /equipe tinha uma segunda cópia.
+import { ymd } from "@/lib/trp/vigencia";
 
 // Re-export da API pública que outros módulos importam de "@/lib/projecaoMetas".
 export {
@@ -178,13 +176,6 @@ export async function buildProjecaoMetas(
   input: { year: number; month: number; companyId?: string; referenceDate?: Date }
 ): Promise<ProjecaoResultado> {
   const { year, month } = input;
-  // "Hoje" (refDate) no fuso America/Fortaleza por padrão, NÃO UTC: driva refKey
-  // (recorte do acumulado) e diasDecorridos (a contagem "N/total"). Em UTC, às
-  // 21h BRT o dia já virava o seguinte e contava 1 dia útil a mais. Chamador
-  // pode sobrescrever via input.referenceDate (mantido).
-  const refDate = input.referenceDate
-    ? new Date(Date.UTC(input.referenceDate.getUTCFullYear(), input.referenceDate.getUTCMonth(), input.referenceDate.getUTCDate()))
-    : todayInFortaleza();
 
   // Regime ANTES do analytics: decide closedSource (consolida RR+ADS no mes
   // fechado, via consolidatedSummaryRows) e o booleano `closed` da serie hibrida.
@@ -197,6 +188,15 @@ export async function buildProjecaoMetas(
     () => "open" as MonthRegime,
   );
   const closed = regime !== "open";
+
+  // Janela de produção + aritmética de dias úteis: fonte ÚNICA em lib/janelaRitmo
+  // (a /equipe consome a MESMA função — antes eram duas cópias que divergiram).
+  // "Hoje" (refDate) sai de lá no fuso America/Fortaleza por padrão, NÃO UTC: driva
+  // refKey (recorte do acumulado) e a contagem "N/total". Em UTC, às 21h BRT o dia
+  // já virava o seguinte e contava 1 dia útil a mais. Chamador pode sobrescrever
+  // via input.referenceDate (mantido).
+  const { start, end, total, refDate, diasDecorridos, diasParaRitmo, periodoCompleto } =
+    resolverJanelaRitmo(year, month, { closed, referenceDate: input.referenceDate });
 
   const [base, allPmr, shareTiers, gestores] = await Promise.all([
     loadPromoterAnalyticsBase(supabase, {
@@ -219,32 +219,8 @@ export async function buildProjecaoMetas(
     ).catch(() => [] as ProjecaoGestor[]),
   ]);
 
-  const { start, end, total, holidays } = productionBusinessWindow(year, month);
   const refKey = ymd(refDate);
   const startKey = ymd(start);
-  const elapsedEnd = refDate < start ? null : refDate > end ? end : refDate;
-  // COMPLETA so quando a data de referencia PASSA do fim da janela. Em refDate ==
-  // end (ultimo dia da janela) a competencia AINDA esta aberta e ainda extrapola:
-  // a producao daquele dia so entra no sistema no dia seguinte.
-  const periodoCompleto = closed || refDate > end;
-  // DOIS conceitos distintos, nao os confunda:
-  //
-  // (1) diasDecorridos = dias uteis da janela ja VENCIDOS, HOJE INCLUIDO. E o que a
-  //     tela exibe ("23/23" no dia 30/07). Resultado puro de countBusinessDays,
-  //     NUNCA decrementado.
-  // (2) diasParaRitmo = o DIVISOR da projecao = diasDecorridos MENOS o dia corrente,
-  //     quando a competencia esta ABERTA e hoje e dia util. Motivo: a producao de
-  //     hoje so entra no sistema amanha, entao o dia corrente esta no denominador
-  //     sem estar no numerador — sem tirar, o divisor conta 1 a mais e a projecao
-  //     vem subestimada. Fim de semana/feriado ja nao contam (nada a subtrair).
-  //
-  // countBusinessDays e inclusivo nas duas pontas; reusa a fn (== 1) para "hoje e
-  // dia util" em vez de exportar um isBusinessDay novo. NAO toca o numerador
-  // (acumPorPromotor), preservando a paridade com a "Producao do grupo" do Dashboard.
-  const diasDecorridos = elapsedEnd ? countBusinessDays(start, elapsedEnd, holidays) : 0;
-  const hojeEhDiaUtil = countBusinessDays(refDate, refDate, holidays) === 1;
-  const diasParaRitmo =
-    !periodoCompleto && hojeEhDiaUtil ? Math.max(0, diasDecorridos - 1) : diasDecorridos;
 
   // Media dos 3 meses anteriores (production_value do PMR).
   const priors = [1, 2, 3].map((k) => {
