@@ -97,8 +97,28 @@ const p2 = (n: number) => String(n).padStart(2, "0");
 const D = "=".repeat(112);
 const L = "-".repeat(112);
 
-/** Tolerancia: meio centesimo de ponto percentual. */
-const EPS_PCT = 0.005;
+/**
+ * TOLERANCIA — 0,01 ponto percentual.
+ *
+ * POR QUE EXISTE. Os dois lados chegam ao percentual por caminhos diferentes: a
+ * Promotiva CARIMBA um numero ja arredondado no metadata do fechamento, e a
+ * nossa coluna sai da celula da TRP passando por divisao e multiplicacao em
+ * ponto flutuante. Uma diferenca na terceira casa (2,5199 x 2,52) e
+ * ARREDONDAMENTO DE CASAS DECIMAIS, nao divergencia de faixa — e portao que
+ * acusa arredondamento vira ruido e se aprende a ignorar.
+ *
+ * POR QUE 0,01 E SEGURO, medido em 31/07/2026: a MENOR diferenca real entre as
+ * 35 divergencias de faixa de 2026 e 0,0200 pp (0,79 x 0,81, quatro linhas).
+ * A tolerancia fica com margem de 2x abaixo do menor sinal verdadeiro.
+ *
+ * EFEITO NA BASE DE HOJE: NENHUM. Antes (0,005) e depois (0,01) o portao acha
+ * as mesmas 35 linhas de FAIXA. E guarda para o futuro, nao conserto de agora.
+ *
+ * Duas faixas de distancia entre celulas vizinhas da TRP servem de referencia:
+ * 0,79 -> 0,81 (0,02) e 2,35 -> 2,44 (0,09). Se um dia a TRP tiver celulas a
+ * menos de 0,02 pp de distancia, esta tolerancia precisa cair junto.
+ */
+const EPS_PCT = 0.01;
 
 async function paginar<T>(f: () => any): Promise<T[]> {
   let de = 0;
