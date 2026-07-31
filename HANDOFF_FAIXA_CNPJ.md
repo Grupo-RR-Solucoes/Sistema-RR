@@ -548,6 +548,71 @@ serem reproduzíveis: R$ 4.912,89, 128 linhas, 15 competências, R$ 2.865,49.
 
 ---
 
+## 5.8 O CONSERTO — aplicado em 30/07/2026, vale daqui pra frente
+
+`app/api/calculate/monthly/route.ts`. Duas mudanças funcionais:
+
+```ts
+    const groupNetValidProduction = Array.from(companyExpectedMap.values()).reduce(
+      (soma, expected) => soma + toNumber(expected?.netValidProduction),
+      0
+    );
+```
+
+e, no derive:
+
+```ts
+-        const companyExpected = companyExpectedMap.get(record.company_id) || null;
+-            toNumber(companyExpected?.netValidProduction),
++            groupNetValidProduction,
+```
+
+`monthly_expected_closings` **não muda** — lá o valor por CNPJ é o certo. O que é
+do grupo é a **faixa**, não a produção esperada.
+
+### O que o conserto alcança, medido antes de aplicar
+
+```
+comp     regime          linhas  derive MUDA  delta comissao-empresa  | coluna JA gravada  coluna VAZIA
+2026-04  fechamento         531          417  R$     3.998,97   |             417              0
+2026-06  fechamento         704          585  R$     4.875,65   |             584              1
+2026-07  open               680          572  R$    11.889,52   |               0            572
+```
+
+**Só julho é alcançado: 572 linhas, R$ 11.889,52** de comissão-empresa exibida.
+Em julho o grupo está em R$ 7.145.612,29 (**FAIXA_4**) enquanto cada CNPJ isolado
+está em FAIXA_1/FAIXA_2 — o salto é de 2 a 3 faixas, e por isso o efeito é grande.
+
+Abril e junho **não se movem**, por proteção dupla:
+
+1. `route.ts:715-716` desvia quando `regime !== "open"` — mês fechado nunca chega
+   ao derive. Regime medido: `2026-04: fechamento`, `2026-06: fechamento`,
+   `2026-07: open`.
+2. `getPersistedCompanyReceivedPercent` (`:118-121`) devolve a coluna já gravada
+   antes de chamar o derive.
+
+Os 417 e 585 de abril/junho na tabela acima são **hipotéticos** — o que
+aconteceria se o código rodasse, e ele não roda.
+
+### DECISÃO DE ESCOPO — o que NÃO será feito, e por quê
+
+Registrado por decisão do Diego, 30/07/2026:
+
+- **Abril e junho ficam como estão.** São competências FECHADAS e PAGAS; o `cms`
+  é a fonte de verdade do mês fechado. Não se reescreve PMR de mês pago para
+  corrigir exibição.
+- **Os R$ 105,81 de repasse ao promotor não serão repostos.** Repasse está fora
+  do escopo da régua do Diego: o que importa é o que a **empresa** não recebeu ou
+  recebeu a menor — e a empresa recebeu certo, porque a Promotiva pagou pela
+  FAIXA 3 (§5.5, 35 de 35 conclusivas).
+- **Não se mexe no curto-circuito** de `getPersistedCompanyReceivedPercent`.
+  Mudar precedência de dado já gravado é risco sem retorno aqui; hoje ele é
+  justamente o que protege o mês fechado.
+
+**O conserto vale daqui pra frente.** Julho fecha na faixa certa.
+
+---
+
 ## 6. Ressalvas — o que este documento NÃO prova
 
 1. **Os números se movem.** Uma medição anterior desta mesma frente registrou
