@@ -180,3 +180,74 @@ test("colunas que NAO sao conclusao seguem sobrescritas normalmente", () => {
   assert.ok(owned.includes("is_srcc_restricted"));
   assert.ok(owned.includes("status"));
 });
+
+// ---------------------------------------------------------------------------
+// O CENARIO DA ADS, ponta a ponta (Bloco 4a das pendencias, 31/07/2026).
+//
+// bbtsClosingImport.ts:368-369 e :459-460 gravam `insurance_commission_amount:
+// null` e `insurance_commission_percent: null` EXPLICITAMENTE. A pergunta:
+// depois de o fechamento da ADS gravar um VALOR, uma diaria que chegue com
+// esses nulls apaga o valor?
+//
+// Cobre os DOIS donos, porque o caminho da ADS usa os dois:
+//   FULL   o fechamento (bbtsClosingImport:495-497)
+//   CREDIT a diaria da ADS (bbtsDailyImport)
+// ---------------------------------------------------------------------------
+
+/** Linha da ADS como fica DEPOIS de o fechamento gravar a comissao de seguro. */
+const ADS_JA_COM_VALOR = {
+  id: "ads-1",
+  company_id: "ads",
+  proposal_number: "999",
+  insurance_commission_amount: 12.34,
+  insurance_commission_percent: 0.1,
+  promoter_commission_amount: 55.5,
+  net_value: 5000,
+};
+
+/** Payload que carrega os nulls explicitos, como bbtsClosingImport monta. */
+const PAYLOAD_COM_NULL_DE_SEGURO = {
+  company_id: "ads",
+  proposal_number: "999",
+  net_value: 5100,
+  gross_value: 5200,
+  insurance_commission_amount: null,
+  insurance_commission_percent: null,
+};
+
+for (const owner of ["FULL", "CREDIT"] as const) {
+  test(`ADS ${owner}: o null explicito NAO apaga a comissao de seguro ja gravada`, async () => {
+    const { client, upserts } = stubSupabase([ADS_JA_COM_VALOR]);
+    await mergeDailyProductionRecords(client, {
+      records: [PAYLOAD_COM_NULL_DE_SEGURO as any],
+      owner,
+    });
+    assert.equal(upserts.length, 1);
+    const upd = upserts[0].rows[0];
+    // A prova: a chave nem chega no UPDATE, entao o valor no banco fica intacto.
+    assert.ok(
+      !("insurance_commission_amount" in upd),
+      `${owner}: insurance_commission_amount NAO pode ir no UPDATE`
+    );
+    assert.ok(
+      !("insurance_commission_percent" in upd),
+      `${owner}: insurance_commission_percent NAO pode ir no UPDATE`
+    );
+    // E o que o dono de fato possui continua sendo escrito.
+    assert.equal(upd.net_value, 5100, `${owner}: net_value deve ser atualizado`);
+  });
+}
+
+test("ADS: linha NOVA nasce COM os nulls (o insert nao filtra) — nada e apagado porque nada existia", async () => {
+  const { client, upserts } = stubSupabase([]); // nao existe ainda
+  await mergeDailyProductionRecords(client, {
+    records: [{ ...PAYLOAD_COM_NULL_DE_SEGURO, __createIfMissing: true } as any],
+    owner: "FULL",
+  });
+  const ins = upserts[0]?.rows?.[0];
+  assert.ok(ins, "deve inserir a linha nova");
+  // Documenta o comportamento REAL: no insert o null entra. Nao e perda de dado
+  // (nao havia valor anterior), mas a assimetria com o UPDATE fica registrada.
+  assert.equal(ins.insurance_commission_amount, null);
+  assert.equal(ins.net_value, 5100);
+});
