@@ -283,8 +283,70 @@ if (!sujeitos.some((s) => s.cargo === "gerente_regional")) {
   );
 }
 
+// -------------------------------------------------------------------------
+// 3) COBERTURA DA BASE ADS — bbts_pag_avista nao pode estar nulo em linha
+// elegivel de competencia FECHADA. Falha com o numero; nao assume.
+//
+// A ADS nao entra em monthly_closing_entries (medido: as 4 empresas de lá sao
+// RR AL1/AL2/AL3/PE). O lado PAGO dela vive em colunas do diario:
+// bbts_pag_avista (o que a BBTS pagou a vista) e bbts_seguro_pago.
+//
+// COMPETENCIA ABERTA NAO CONTA: o "pago" so existe depois do fechamento BBTS
+// ser importado. Medido em 01/08/2026: jun/2026 (fechada) tem 19/19; jul/2026
+// tem 0/43 porque o fechamento de julho nao foi importado — as chaves de
+// __bbts_meta de julho sao todas da diaria (situacao/transacao/base_credito),
+// sem pag_avista_relatorio. Cobrar cobertura de mes aberto seria falhar por
+// algo que ainda nem deveria existir.
+// -------------------------------------------------------------------------
 linha();
-console.log("3) TRAVA DE COMPETENCIA CONGELADA");
+console.log("3) COBERTURA DA BASE ADS (competencia FECHADA)");
+linha();
+{
+  const ADS = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
+  const norm = (s: unknown) =>
+    String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
+  const elegivelAds = (r: any) => {
+    const s = norm(r.status);
+    return (s === "PRODUCAO" || s === "PRODUCTION") && r.is_srcc_restricted !== true;
+  };
+
+  const ads = await todas<any>((de, ate) =>
+    admin
+      .from("daily_production_records")
+      .select("id, status, is_srcc_restricted, net_value, bbts_pag_avista, bbts_seguro_pago, movement_date, contract_date, proposal_date")
+      .eq("company_id", ADS)
+      .order("id")
+      .range(de, ate),
+  );
+
+  const daComp = ads.filter((r) => {
+    const d = String(r.movement_date || r.contract_date || r.proposal_date || "");
+    return d.slice(0, 7) === COMP;
+  });
+  const elegiveis = daComp.filter(elegivelAds);
+  const semPago = elegiveis.filter((r) => r.bbts_pag_avista == null);
+
+  if (elegiveis.length === 0) {
+    pula(
+      `cobertura ADS em ${COMP}`,
+      "nenhuma linha elegivel da ADS nesta competencia — nada a cobrir",
+    );
+  } else {
+    const soma = elegiveis.reduce((s, r) => s + Number(r.bbts_pag_avista || 0), 0);
+    const liq = elegiveis.reduce((s, r) => s + Number(r.net_value || 0), 0);
+    assere(
+      semPago.length === 0,
+      `bbts_pag_avista preenchido em TODA linha elegivel da ADS (${COMP})`,
+      semPago.length === 0
+        ? `${elegiveis.length}/${elegiveis.length} preenchidas | pag_avista ${brl(soma)} sobre liquido ${brl(liq)} = ${pct(liq ? soma / liq : 0)}`
+        : `${semPago.length} de ${elegiveis.length} SEM bbts_pag_avista. ` +
+          `Se a competencia esta fechada, o fechamento BBTS nao foi importado — a base ADS ficaria incompleta.`,
+    );
+  }
+}
+
+linha();
+console.log("4) TRAVA DE COMPETENCIA CONGELADA");
 linha();
 {
   const fechadas = ["2026-06", "2026-07"];
