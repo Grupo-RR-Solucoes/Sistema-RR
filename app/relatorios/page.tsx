@@ -654,4 +654,10 @@ const CSS = `
   .rrrel .fld{min-width:0;width:100%;}
   .rrrel .dl{flex:1;justify-content:center;}
 }
+
+/* TELEFONE — os cartoes de tipo de relatorio param de dividir a linha. */
+@media (max-width:560px){
+  .rrrel .types,
+  .rrrel .types.few{grid-template-columns:1fr;}
+}
 `;

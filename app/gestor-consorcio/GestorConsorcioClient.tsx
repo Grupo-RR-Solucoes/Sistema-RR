@@ -53,6 +53,13 @@ function brl2(v?: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v || 0));
 }
 
+// Layout do container. Em folha, e nao em style inline, para que o telefone
+// alcance o padding lateral (ver o comentario na marcacao).
+const GESTOR_CSS = `
+.gcwrap{max-width:1000px;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:22px;}
+@media (max-width:430px){ .gcwrap{padding:16px 12px 36px;gap:16px;} }
+`;
+
 export default function GestorConsorcioClient() {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState("");
@@ -85,7 +92,11 @@ export default function GestorConsorcioClient() {
   return (
     <div>
       <UiStyles />
-      <main style={{ maxWidth: 1000, margin: "0 auto", padding: 24, display: "flex", flexDirection: "column", gap: 22 }}>
+      {/* O padding saiu do style inline para a folha abaixo: como PROPRIEDADE
+          inline nenhuma media query o alcancava, e a 384px os 24px de cada lado
+          comem 48 dos 356 uteis. Mesmo motivo do --tbl-min no kit. */}
+      <style dangerouslySetInnerHTML={{ __html: GESTOR_CSS }} />
+      <main className="gcwrap">
         <HeaderNavy
           eyebrow="GESTOR CONSÓRCIO"
           title="Consórcio — visão do gestor"

@@ -57,6 +57,10 @@ const CSS = `
 .rratr .rowsel:disabled{background:var(--neu);color:var(--ink-3)}
 .rratr tr.gestaorow td{background:rgba(198,157,74,.10)}
 .rratr .hintline{font-size:12.5px;color:var(--ink-3);margin:2px 0 12px}
+
+/* TELEFONE ESTREITO — o .wrap nao tinha media query nenhuma e ficava com 20px
+   de cada lado a 384px. */
+@media (max-width:430px){ .rratr .wrap{padding:16px 12px 36px;gap:16px} }
 `;
 
 function brl0(v: number) {

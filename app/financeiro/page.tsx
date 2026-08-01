@@ -667,4 +667,13 @@ const CSS = `
   .rrfin .dr.total{grid-template-columns:1fr 1fr;}
   .rrfin .dr.total .emp{grid-column:1 / -1;}
 }
+
+/* TELEFONE — a linha do DRE para de dividir em duas colunas. Em 760px cada
+   .dcell ja e um par rotulo/valor empilhado; a 356px uteis duas dessas colunas
+   dao ~160px cada, e o valor monetario com tabular-nums nao cabe sem apertar o
+   rotulo. Uma coluna por vez. */
+@media (max-width:560px){
+  .rrfin .dr,
+  .rrfin .dr.total{grid-template-columns:1fr;}
+}
 `;

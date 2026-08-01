@@ -215,4 +215,10 @@ const CSS = `
   .rrfech .xrow{gap:8px;}
   .rrfech .barcol .bval{font-size:10.5px;}
 }
+
+/* TELEFONE — a linha do fechamento sai de 2 colunas para 1. Mesmo motivo do
+   DRE: em 356px uteis, duas colunas de ~160px nao acomodam rotulo + valor. */
+@media (max-width:560px){
+  .rrfech .trow{grid-template-columns:1fr;}
+}
 `;

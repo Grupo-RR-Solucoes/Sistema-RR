@@ -626,4 +626,11 @@ const CSS = `
   .rrdash .card{padding:20px 18px;}
   .rrdash .shortcuts{grid-template-columns:repeat(2,1fr);}
 }
+
+/* TELEFONE — os atalhos viram lista de uma coluna. Cada cartao tem icone,
+   nome e descricao; a 356px uteis, dois por linha deixam ~170px e a descricao
+   quebra em tres linhas. */
+@media (max-width:560px){
+  .rrdash .shortcuts{grid-template-columns:1fr;}
+}
 `;
