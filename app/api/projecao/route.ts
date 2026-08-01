@@ -5,7 +5,10 @@ import { nowInFortaleza } from "@/lib/dateFortaleza";
 import { buildTeamProduction } from "@/lib/equipe/teamProduction";
 import { construirBaseLideranca } from "@/lib/lideranca/baseLideranca";
 import { montarPayloadGestor } from "@/lib/projecao/gestorAdapter";
-import { remuneracaoLideranca } from "@/lib/remuneracaoLideranca";
+import {
+  calcularRemuneracaoLideranca,
+  resolverReguaLideranca,
+} from "@/lib/remuneracaoLideranca";
 import {
   agruparPorEstado,
   agruparPorSupervisor,
@@ -69,18 +72,25 @@ export async function GET(req: Request) {
         typeof x === "string" ? x : String((x as { current_user_team_promoter_ids?: string })?.current_user_team_promoter_ids ?? x),
       );
 
+      const competencia = `${team.period.year}-${String(team.period.month).padStart(2, "0")}`;
+      // A REGUA VEM ANTES DA BASE: o base_calculo decide se a ADS entra no mes
+      // aberto (ver ArgsBase.baseCalculo). Montar a base primeiro obrigaria a
+      // adivinhar isso.
+      //
+      // ADMIN e nao `db`: leadership_rule_versions e RLS default-deny (nenhuma
+      // policy, ver 20260801_000001). O client anon devolveria ZERO linhas e o
+      // resolvedor lancaria. A regua e regra publica do sistema, nao dado do
+      // usuario — resolver por service_role nao amplia escopo de ninguem.
+      const regua = await resolverReguaLideranca(admin, role, competencia);
+
       const base = await construirBaseLideranca(admin, {
         promoterIds,
         year: team.period.year,
         month: team.period.month,
         fechado: team.fechado,
+        baseCalculo: regua.base_calculo,
       });
-      const competencia = `${team.period.year}-${String(team.period.month).padStart(2, "0")}`;
-      // ADMIN e nao `db`: leadership_rule_versions e RLS default-deny (nenhuma
-      // policy, ver 20260801_000001). O client anon devolveria ZERO linhas e o
-      // resolvedor lancaria. A regua e regra publica do sistema, nao dado do
-      // usuario — resolver por service_role nao amplia escopo de ninguem.
-      const resultado = await remuneracaoLideranca(admin, role, competencia, base);
+      const resultado = calcularRemuneracaoLideranca(regua, base, competencia);
 
       // O payload e montado no adaptador, NAO aqui: e a mesma funcao que o
       // scripts/gate_projecao_gestor.mts exercita. Inline, o gate testaria copia.

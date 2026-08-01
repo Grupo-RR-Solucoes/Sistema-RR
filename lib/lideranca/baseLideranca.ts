@@ -5,6 +5,7 @@ import { calcularOperacao } from "@/lib/motor";
 import {
   entraNaComissaoDaBase,
   entraNaProducaoLiquidaDaBase,
+  type BaseCalculo,
   type BaseLideranca,
 } from "@/lib/remuneracaoLideranca";
 
@@ -205,6 +206,18 @@ export type ArgsBase = {
   month: number;
   /** FALSE => mes aberto => fonte 'motor', parcial. */
   fechado: boolean;
+  /**
+   * A REGUA DECIDE O QUE A BASE SIGNIFICA, entao ela e resolvida ANTES da base.
+   *
+   * So importa para a ADS no mes ABERTO:
+   *   AVISTA_CREDITO_PF -> a ADS sai dos DOIS recortes. A aliquota multiplica a
+   *     COMISSAO e ha PISO sobre o liquido; deixar producao sem comissao apurada
+   *     no denominador faria o piso olhar uma base que a aliquota nao ve.
+   *   PRODUCAO_LIQUIDA  -> a ADS FICA nos dois, como sempre esteve. A aliquota
+   *     multiplica o LIQUIDO e nao ha piso nem termo de comissao: nao existe
+   *     assimetria a corrigir, e excluir so subtrairia producao que conta.
+   */
+  baseCalculo: BaseCalculo;
 };
 
 /**
@@ -222,6 +235,10 @@ export async function construirBaseLideranca(
   if (ids.size === 0) {
     return baseVazia(args.fechado);
   }
+  // Ver ArgsBase.baseCalculo: a exclusao da ADS no aberto e EXCLUSIVA da regua
+  // nova. Julho esta sob a regua antiga por decisao explicita, e aplicar a
+  // exclusao la derrubava o valor exibido em -15,3% (Carla) e -10,0% (Izabela).
+  const excluirAdsNoAberto = args.baseCalculo === "AVISTA_CREDITO_PF";
 
   // DUAS consultas ESCOPADAS, nunca a tabela inteira. Varrer
   // daily_production_records por completo a cada chamada derruba a rota do
@@ -406,8 +423,23 @@ export async function construirBaseLideranca(
     // A assimetria e EXCLUSIVA do aberto: no fechado a ADS entra nos dois, via
     // bbts_pag_avista + bbts_seguro_pago (cobertura 19/19 em jun/2026).
     for (const d of ads) {
+      // A LACUNA e reportada nos DOIS casos: o credito ADS nao esta apurado no
+      // aberto, independentemente de qual regua vigora.
       adsProducaoSemComissao += num(d.net_value);
       adsLinhasSemComissao += 1;
+
+      if (excluirAdsNoAberto) continue;
+
+      // PRODUCAO_LIQUIDA: a ADS entra nos dois, como sempre esteve.
+      liquido += num(d.net_value);
+      adsLiquido += num(d.net_value);
+      linhasLiquido += 1;
+      const segApurado = num(d.insurance_commission_amount);
+      if (segApurado > 0) {
+        comissao += segApurado;
+        adsComissao += segApurado;
+        linhasComissao += 1;
+      }
     }
   }
 

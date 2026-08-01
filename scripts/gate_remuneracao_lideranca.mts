@@ -281,10 +281,11 @@ linha();
 for (const s of sujeitos) {
   // MESMO construtor da secao 5. Antes havia uma funcao local aqui que ignorava
   // a ADS, e as duas secoes discordavam da mesma rede.
+  const antiga = await resolverReguaLideranca(admin as any, s.cargo, COMP);
   const base = await construirBaseLideranca(admin as any, {
     promoterIds: s.ids, year: YEAR, month: MONTH, fechado: true,
+    baseCalculo: antiga.base_calculo,
   });
-  const antiga = await resolverReguaLideranca(admin as any, s.cargo, COMP);
   const rAntiga = calcularRemuneracaoLideranca(antiga, base, COMP);
   // O valor que o modulo REMOVIDO (lib/comissaoGestao) produzia: 0,001 sobre a
   // producao liquida. Escrito literal AQUI, e so aqui, para o gate continuar
@@ -307,8 +308,10 @@ console.log(`2) REGUA NOVA aplicada a ${COMP} — o que passaria a pagar`);
 linha();
 
 for (const s of sujeitos) {
+  const nova0 = await resolverReguaLideranca(admin as any, s.cargo, "2026-08");
   const base = await construirBaseLideranca(admin as any, {
     promoterIds: s.ids, year: YEAR, month: MONTH, fechado: true,
+    baseCalculo: nova0.base_calculo,
   });
   // A regua NOVA vive na vigencia 2026-08+; resolvo por ela e aplico a base de
   // junho, que e a comparacao que o entregavel pede.
@@ -511,14 +514,16 @@ for (const s of sujeitos) {
     const mes = regime === "fechado" ? MONTH : ABERTO.month;
     const compR = `${ano}-${String(mes).padStart(2, "0")}`;
 
-    // Lado MOTOR: base + regua, direto.
+    // A REGUA VEM ANTES DA BASE, como na rota.
+    const reguaR = await resolverReguaLideranca(admin as any, s.cargo, compR);
     const baseMotor = await construirBaseLideranca(admin as any, {
       promoterIds: s.ids,
       year: ano,
       month: mes,
       fechado: regime === "fechado",
+      baseCalculo: reguaR.base_calculo,
     });
-    const motor = await remuneracaoLideranca(admin as any, s.cargo, compR, baseMotor);
+    const motor = calcularRemuneracaoLideranca(reguaR, baseMotor, compR);
 
     // Lado TELA: o payload que a rota serve, montado pela MESMA funcao.
     const team = await buildTeamProduction(shimDb(rowsDaRede(s.ids), targetsDaRede(s.ids)), admin as any, {
@@ -533,8 +538,9 @@ for (const s of sujeitos) {
       year: team.period.year,
       month: team.period.month,
       fechado: team.fechado,
+      baseCalculo: reguaR.base_calculo,
     });
-    const resTela = await remuneracaoLideranca(admin as any, s.cargo, compR, baseTela);
+    const resTela = calcularRemuneracaoLideranca(reguaR, baseTela, compR);
     const payload = montarPayloadGestor(team, { resultado: resTela, base: baseTela });
 
     console.log(`\n  ${nome(s.g)} — ${compR} (${regime})`);
@@ -554,28 +560,41 @@ for (const s of sujeitos) {
     // o numerador nao conta. Foi o defeito medido em jul/2026 (ADS com 100% do
     // liquido e ~0,006% da comissao dentro).
     const c = baseMotor.composicao;
-    const dentroRR = c.rr_liquido > 0 || c.rr_comissao > 0;
-    const dentroADS = c.ads_liquido > 0 || c.ads_comissao > 0;
-    console.log(`    composicao: RR liq ${brl(c.rr_liquido)} / com ${brl(c.rr_comissao)} | ADS liq ${brl(c.ads_liquido)} / com ${brl(c.ads_comissao)}`);
-    assere(
-      (!dentroRR || (c.rr_liquido > 0 && c.rr_comissao > 0)) &&
-        (!dentroADS || (c.ads_liquido > 0 && c.ads_comissao > 0)),
-      `simetria: toda origem no denominador tem comissao no numerador (${compR})`,
-      `RR ${dentroRR ? "dentro" : "fora"} (liq ${c.rr_liquido > 0}, com ${c.rr_comissao > 0}) | ADS ${dentroADS ? "dentro" : "fora"} (liq ${c.ads_liquido > 0}, com ${c.ads_comissao > 0})`,
-    );
-    // NAO-VACUIDADE: no ABERTO tem de haver ADS efetivamente EXCLUIDA, senao a
-    // simetria acima passaria so por nao existir ADS na rede.
-    if (regime === "aberto") {
+    console.log(`    regua ${reguaR.base_calculo} | composicao: RR liq ${brl(c.rr_liquido)} / com ${brl(c.rr_comissao)} | ADS liq ${brl(c.ads_liquido)} / com ${brl(c.ads_comissao)}`);
+
+    if (reguaR.base_calculo === "AVISTA_CREDITO_PF") {
+      // SIMETRIA: uma origem entra nos DOIS recortes ou em NENHUM. So faz
+      // sentido aqui — e a unica regua com termo de comissao E piso.
+      const dentroRR = c.rr_liquido > 0 || c.rr_comissao > 0;
+      const dentroADS = c.ads_liquido > 0 || c.ads_comissao > 0;
       assere(
-        baseMotor.ads_producao_sem_comissao_apurada > 0 && c.ads_liquido === 0,
-        `ADS exclusiva do aberto: fora dos dois recortes e marcada (${compR})`,
-        `lacuna ${brl(baseMotor.ads_producao_sem_comissao_apurada)} em ${baseMotor.ads_linhas_sem_comissao_apurada} linha(s) | ads_liquido no denominador ${brl(c.ads_liquido)}`,
+        (!dentroRR || (c.rr_liquido > 0 && c.rr_comissao > 0)) &&
+          (!dentroADS || (c.ads_liquido > 0 && c.ads_comissao > 0)),
+        `simetria (AVISTA_CREDITO_PF): origem no denominador tem comissao (${compR})`,
+        `RR ${dentroRR ? "dentro" : "fora"} | ADS ${dentroADS ? "dentro" : "fora"}`,
       );
+      if (regime === "aberto") {
+        assere(
+          baseMotor.ads_producao_sem_comissao_apurada > 0 && c.ads_liquido === 0,
+          `ADS FORA dos dois no aberto sob a regua nova (${compR})`,
+          `lacuna ${brl(baseMotor.ads_producao_sem_comissao_apurada)} | ads_liquido ${brl(c.ads_liquido)}`,
+        );
+      } else {
+        assere(
+          c.ads_liquido > 0 && c.ads_comissao > 0,
+          `ADS DENTRO dos dois no fechado (${compR})`,
+          `ads_liquido ${brl(c.ads_liquido)} | ads_comissao ${brl(c.ads_comissao)}`,
+        );
+      }
     } else {
+      // PRODUCAO_LIQUIDA nao tem termo de comissao nem piso: nao ha assimetria a
+      // corrigir. O risco aqui e o OPOSTO — a exclusao vazar para a regua antiga
+      // e subtrair producao que conta. Foi o que aconteceu, e por isso o gate
+      // exige a ADS DENTRO do denominador.
       assere(
-        c.ads_liquido > 0 && c.ads_comissao > 0,
-        `ADS entra nos DOIS no fechado — a assimetria e exclusiva do aberto (${compR})`,
-        `ads_liquido ${brl(c.ads_liquido)} | ads_comissao ${brl(c.ads_comissao)}`,
+        c.ads_liquido > 0,
+        `PRODUCAO_LIQUIDA: ADS DENTRO do denominador, a exclusao NAO vaza (${compR})`,
+        `ads_liquido ${brl(c.ads_liquido)} | lacuna reportada ${brl(baseMotor.ads_producao_sem_comissao_apurada)}`,
       );
     }
     assere(
@@ -585,6 +604,44 @@ for (const s of sujeitos) {
       `fonte "${payload.comissao_gestao.fonte}" parcial ${payload.comissao_gestao.parcial}`,
     );
   }
+}
+
+// -------------------------------------------------------------------------
+// 5b) A COMBINACAO QUE NENHUMA COMPETENCIA REAL COBRE AINDA:
+// regua NOVA (AVISTA_CREDITO_PF) num mes ABERTO. E o que agosto vai ser.
+// Sem este bloco, a exclusao da ADS no aberto nunca seria exercitada — julho
+// esta sob a regua antiga e agosto ainda nao tem producao.
+// -------------------------------------------------------------------------
+linha();
+console.log(`5b) REGUA NOVA em mes ABERTO — o cenario de agosto, com dado de ${ultimaAberta}`);
+linha();
+
+for (const s of sujeitos) {
+  const nova = await resolverReguaLideranca(admin as any, s.cargo, "2026-08");
+  const comAds = await construirBaseLideranca(admin as any, {
+    promoterIds: s.ids, year: ABERTO.year, month: ABERTO.month,
+    fechado: false, baseCalculo: "PRODUCAO_LIQUIDA",
+  });
+  const semAds = await construirBaseLideranca(admin as any, {
+    promoterIds: s.ids, year: ABERTO.year, month: ABERTO.month,
+    fechado: false, baseCalculo: nova.base_calculo,
+  });
+  console.log(`\n  ${nome(s.g)} — ${ultimaAberta} aberto`);
+  console.log(`    PRODUCAO_LIQUIDA  liquido ${brl(comAds.producao_liquida)} (ADS ${brl(comAds.composicao.ads_liquido)} dentro)`);
+  console.log(`    AVISTA_CREDITO_PF liquido ${brl(semAds.producao_liquida)} (ADS ${brl(semAds.composicao.ads_liquido)} dentro) | TRP ${semAds.comissao_media == null ? "—" : pct(semAds.comissao_media)}`);
+  assere(
+    semAds.composicao.ads_liquido === 0 &&
+      semAds.composicao.ads_comissao === 0 &&
+      semAds.ads_producao_sem_comissao_apurada > 0,
+    `regua nova em mes aberto EXCLUI a ADS dos dois (${nome(s.g)})`,
+    `ads_liquido ${brl(semAds.composicao.ads_liquido)} | ads_comissao ${brl(semAds.composicao.ads_comissao)} | lacuna ${brl(semAds.ads_producao_sem_comissao_apurada)}`,
+  );
+  assere(
+    comAds.composicao.ads_liquido > 0 &&
+      Math.abs(comAds.producao_liquida - (semAds.producao_liquida + comAds.composicao.ads_liquido)) < 0.01,
+    `as duas reguas diferem EXATAMENTE pela ADS (${nome(s.g)})`,
+    `${brl(comAds.producao_liquida)} - ${brl(semAds.producao_liquida)} = ${brl(comAds.producao_liquida - semAds.producao_liquida)} | ads_liquido ${brl(comAds.composicao.ads_liquido)}`,
+  );
 }
 
 linha();
