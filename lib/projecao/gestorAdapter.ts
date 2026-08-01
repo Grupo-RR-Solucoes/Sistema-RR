@@ -1,8 +1,13 @@
+import { calcularComissaoGestao } from "@/lib/comissaoGestao";
 import type { TeamProductionPayload, TeamPromoterRow } from "@/lib/equipe/teamProduction";
 import { agregarSerieGrupo, type SerieMesPonto } from "@/lib/historicoMensal";
 import {
+  agruparPorEstado,
+  agruparPorSupervisor,
   asEstado,
+  consolidarGrupoEquipe,
   ESTADO_LABEL,
+  promotoresEmRisco,
   semaforoFromPercent,
   type Estado,
   type EstadoHistorico,
@@ -48,6 +53,64 @@ const NAO_ATRIBUIDO_VAZIO = {
 };
 
 /**
+ * MÉDIA DOS 3 MESES ANTERIORES — regra canônica (decisão Diego, 31/07).
+ *
+ * SOMA POR COMPETÊNCIA e só então tira a média dos meses. NUNCA média por linha
+ * do PMR: a chave de promoter_monthly_results tem 4 campos e inclui company_id,
+ * então um promotor que produziu em RR e em ADS na MESMA competência tem DUAS
+ * linhas — dividir pelo número de linhas corta a produção dele pela metade.
+ *
+ * Aqui a soma por competência já vem pronta: perPromoterMonthly nasce da série
+ * híbrida, e o mapa que a alimenta soma por (promotor, competência) em vez de
+ * sobrescrever (lib/equipe/teamProduction.ts, montagem de pmrByPromoterYm).
+ *
+ * DENOMINADOR = os meses do intervalo que EXISTEM na série. A série começa em
+ * jan/2026 (SERIE_INICIO), então para competências de abr/2026 em diante os 3
+ * anteriores existem sempre e o divisor é 3. Antes disso divide pelos que houver;
+ * nenhum => 0 => "sem_historico".
+ */
+function mediaTresMesesAnteriores(
+  meses: TeamProductionPayload["perPromoterMonthly"][number]["months"],
+  year: number,
+  month: number,
+): number {
+  const alvo = new Set(
+    [1, 2, 3].map((k) => {
+      const dt = new Date(Date.UTC(year, month - 1 - k, 1));
+      return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
+    }),
+  );
+  let soma = 0;
+  let n = 0;
+  for (const m of meses) {
+    const key = `${m.year}-${String(m.month).padStart(2, "0")}`;
+    if (!alvo.has(key)) continue;
+    soma += m.production_value;
+    n += 1;
+  }
+  return n > 0 ? soma / n : 0;
+}
+
+/**
+ * Tendência — MESMA fórmula do motor do sócio (lib/projecaoMetas.ts:379-385),
+ * incluindo o limiar de ±0,001 que separa "estável" de variação real. O que
+ * diverge lá é só o INSUMO (média por linha); a fórmula é idêntica e está
+ * reproduzida aqui até o caminho do sócio ser corrigido — quando for, isto vira
+ * helper compartilhado.
+ */
+function tendenciaDe(
+  projecao: number,
+  media3m: number,
+): { tendencia: ProjecaoPromotor["tendencia"]; tendencia_percent: number | null } {
+  if (media3m <= 0) return { tendencia: "sem_historico", tendencia_percent: null };
+  const vari = (projecao - media3m) / media3m;
+  return {
+    tendencia: vari > 0.001 ? "crescimento" : vari < -0.001 ? "queda" : "estavel",
+    tendencia_percent: vari,
+  };
+}
+
+/**
  * Uma linha do time vira um ProjecaoPromotor.
  *
  * O QUE NÃO É RECALCULADO: `projecao` é o `projection_value` que
@@ -63,10 +126,12 @@ const NAO_ATRIBUIDO_VAZIO = {
 function promotorDoGestor(
   row: TeamPromoterRow,
   janela: TeamProductionPayload["janela"],
+  media3m: number,
 ): ProjecaoPromotor {
   const projecao = row.projection_value;
   const meta = row.meta;
   const percent = meta > 0 ? projecao / meta : null;
+  const tend = tendenciaDe(projecao, media3m);
 
   return {
     promoter_id: row.promoter_id,
@@ -86,13 +151,10 @@ function promotorDoGestor(
     projecao,
     meta,
     percent_projetado: percent,
-    // media_3m / tendencia: FORA por ora. A regra da /projecao (média por LINHA
-    // do PMR) diverge da série do /equipe (soma por competência) — divergência
-    // reportada, decisão pendente. "sem_historico" é o valor que o próprio
-    // motor usa quando não há base, e a tela já sabe renderizá-lo.
-    media_3m: 0,
-    tendencia: "sem_historico",
-    tendencia_percent: null,
+    // media_3m: soma por competência, média dos meses. Ver mediaTresMesesAnteriores.
+    media_3m: media3m,
+    tendencia: tend.tendencia,
+    tendencia_percent: tend.tendencia_percent,
     semaforo: semaforoFromPercent(percent),
     // SEGURO — comissão fica ZERO por IMPOSSIBILIDADE de origem, não por opção:
     // insurance_commission_amount é uma das colunas fisicamente omitidas da
@@ -141,7 +203,20 @@ export function projecaoResultadoDoGestor(
 ): ProjecaoResultado {
   const janela = team.janela;
 
-  const promotores = team.rows.map((r) => promotorDoGestor(r, janela));
+  // Série por promotor indexada ANTES do map: a média dos 3 meses sai dela.
+  const mesesById = new Map(team.perPromoterMonthly.map((pm) => [pm.promoter_id, pm.months]));
+
+  const promotores = team.rows.map((r) =>
+    promotorDoGestor(
+      r,
+      janela,
+      mediaTresMesesAnteriores(
+        mesesById.get(r.promoter_id) ?? [],
+        team.period.year,
+        team.period.month,
+      ),
+    ),
+  );
 
   // gestores: montado a partir dos PRÓPRIOS pares (supervisor_id, supervisor_name)
   // que buildTeamProduction já resolveu por service_role sobre ids autorizados.
@@ -253,5 +328,101 @@ export function projecaoResultadoDoGestor(
     perPromoterMonthly,
     perEstadoMonthly,
     perSupervisorMonthly,
+  };
+}
+
+// ============================================================
+// PAYLOAD DA ROTA — montado AQUI, não inline no route.ts, para que o gate
+// (scripts/gate_projecao_gestor.mts) exercite a MESMA função que a rota serve.
+// Se isto vivesse no handler, o gate testaria uma cópia.
+// ============================================================
+
+/**
+ * Chaves de COMISSÃO que saem do payload do gestor.
+ *
+ * Os agregadores precisam delas para rodar (totaliza() soma
+ * seguro_comissao_* e daria NaN se faltassem), então a limpeza acontece DEPOIS
+ * da agregação, na saída. Zeradas elas seriam inofensivas na tela, mas a régua
+ * é AUSÊNCIA e não zero: campo de comissão presente convida o próximo a
+ * preenchê-lo. `seguro_penetracao` NÃO entra nesta lista — o gestor tem
+ * penetração e ela é renderizada.
+ */
+const CHAVES_COMISSAO = [
+  "seguro_comissao_acumulada",
+  "seguro_comissao_projecao",
+  "seguro_share_acumulada",
+  "seguro_share_projecao",
+] as const;
+
+function semComissao<T extends object>(o: T): Omit<T, (typeof CHAVES_COMISSAO)[number]> {
+  const copia = { ...o } as Record<string, unknown>;
+  for (const k of CHAVES_COMISSAO) delete copia[k];
+  return copia as Omit<T, (typeof CHAVES_COMISSAO)[number]>;
+}
+
+/** Idem para nao_atribuido: balde master não é rede de ninguém, então some. */
+function semNaoAtribuido<T extends object>(o: T): Omit<T, "nao_atribuido"> {
+  const copia = { ...o } as Record<string, unknown>;
+  delete copia.nao_atribuido;
+  return copia as Omit<T, "nao_atribuido">;
+}
+
+/**
+ * Monta o JSON que /api/projecao devolve ao supervisor/gerente_regional.
+ *
+ * COMISSÃO DE GESTÃO — a base NÃO é somada aqui. Entra pronta:
+ *   base realizada  = team.totals.production_value
+ *                     (lib/equipe/teamProduction.ts:663, `production_value: tNet`,
+ *                      onde tNet é acumulado na :479 `tNet += acc.net`)
+ *   base projetada  = team.period_projection.production_value
+ *                     (lib/equipe/teamProduction.ts:679, `projetar(tNet)`)
+ * Em mês FECHADO a projeção não é oferecida: passa null e o card mostra só o
+ * realizado.
+ */
+export function montarPayloadGestor(team: TeamProductionPayload) {
+  const res = projecaoResultadoDoGestor(team);
+
+  const comissao = calcularComissaoGestao(
+    team.totals.production_value,
+    team.fechado ? null : team.period_projection.production_value,
+  );
+
+  const consolidado = semNaoAtribuido(semComissao(consolidarGrupoEquipe(res)));
+
+  const grupos = agruparPorEstado(res).map((g) => ({
+    ...semNaoAtribuido(semComissao(g)),
+    promotores: g.promotores.map(semComissao),
+  }));
+
+  const gruposSupervisor = agruparPorSupervisor(res).map((g) => ({
+    ...semComissao(g),
+    promotores: g.promotores.map(semComissao),
+  }));
+
+  // OMISSÕES DELIBERADAS (ausência, nunca zero inventado):
+  //   companies                      -> o gestor não escolhe empresa; a rede
+  //                                     dele é o recorte, não o CNPJ.
+  //   seguro_comissao_grupo_empresa  -> comissão da empresa não é do gestor
+  //                                     (decisão Diego) e a coluna está fora da
+  //                                     view (20260701_000003:26-33).
+  //   nao_atribuido                  -> o helper exclui is_master (:86).
+  // A tela esconde cada seção pela AUSÊNCIA do campo — ver EquipeView.
+  return {
+    scope: "equipe" as const,
+    year: res.year,
+    month: res.month,
+    referenceDate: res.referenceDate,
+    fechado: res.fechado,
+    janela: res.janela,
+    consolidado,
+    comissao_gestao: comissao,
+    grupos,
+    gruposSupervisor,
+    gestores: res.gestores ?? [],
+    risco: promotoresEmRisco(res).map(semComissao),
+    total_promotores: res.promotores.length,
+    perPromoterMonthly: res.perPromoterMonthly ?? [],
+    perEstadoMonthly: res.perEstadoMonthly ?? [],
+    perSupervisorMonthly: res.perSupervisorMonthly ?? [],
   };
 }

@@ -3,7 +3,7 @@ import { createSupabaseServerClient } from "@/lib/auth/supabaseServerClient";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
 import { buildTeamProduction } from "@/lib/equipe/teamProduction";
-import { projecaoResultadoDoGestor } from "@/lib/projecao/gestorAdapter";
+import { montarPayloadGestor } from "@/lib/projecao/gestorAdapter";
 import {
   agruparPorEstado,
   agruparPorSupervisor,
@@ -46,34 +46,9 @@ export async function GET(req: Request) {
       const db = await createSupabaseServerClient();
       const admin = getSupabaseAdmin();
       const team = await buildTeamProduction(db, admin, { year, month });
-      const resGestor = projecaoResultadoDoGestor(team);
-
-      // OMISSOES DELIBERADAS (ausencia, nunca zero inventado):
-      //   companies                      -> o gestor nao escolhe empresa; a rede
-      //                                     dele e o recorte, nao o CNPJ.
-      //   seguro_comissao_grupo_empresa  -> comissao da empresa nao e do gestor
-      //                                     (decisao Diego) e a coluna esta fora
-      //                                     da view (20260701_000003:26-33).
-      //   nao_atribuido                  -> balde master nao e rede de ninguem; o
-      //                                     helper exclui is_master (:86).
-      // A tela esconde cada secao pela AUSENCIA do campo — ver EquipeView.
-      return Response.json({
-        scope: "equipe",
-        year,
-        month,
-        referenceDate: resGestor.referenceDate,
-        fechado: resGestor.fechado,
-        janela: resGestor.janela,
-        consolidado: consolidarGrupoEquipe(resGestor),
-        grupos: agruparPorEstado(resGestor),
-        gruposSupervisor: agruparPorSupervisor(resGestor),
-        gestores: resGestor.gestores ?? [],
-        risco: promotoresEmRisco(resGestor),
-        total_promotores: resGestor.promotores.length,
-        perPromoterMonthly: resGestor.perPromoterMonthly ?? [],
-        perEstadoMonthly: resGestor.perEstadoMonthly ?? [],
-        perSupervisorMonthly: resGestor.perSupervisorMonthly ?? [],
-      });
+      // O payload e montado no adaptador, NAO aqui: e a mesma funcao que o
+      // scripts/gate_projecao_gestor.mts exercita. Inline, o gate testaria copia.
+      return Response.json(montarPayloadGestor(team));
     }
 
     // Promotor nao filtra por empresa (so ve a si mesmo).

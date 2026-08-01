@@ -6,6 +6,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "../../lib/auth/useUser";
 import FeedbackBanner from "../../components/FeedbackBanner";
 import { UiStyles, HeaderNavy, KpiBand, Table } from "@/components/ui";
+import {
+  PERCENTUAL_COMISSAO_GESTAO_LABEL,
+  type ComissaoGestao,
+} from "@/lib/comissaoGestao";
 
 // ============================================================
 // /projecao — Painel de Metas & Projeção (identidade .rrproj).
@@ -699,6 +703,9 @@ function EquipeView({ data, nav }: { data: any; nav: Nav }) {
   // Presença do CAMPO, não do valor: o sócio pode legitimamente ter R$ 0,00 de
   // comissão de seguro num mês; o gestor não recebe a chave. Ver o bloco de KPIs.
   const temSeguroEmpresa = "seguro_comissao_grupo_empresa" in data;
+  // Só o ramo do gestor manda este campo. Sócio/funcionário não têm comissão de
+  // gestão e o card nem chega a existir para eles.
+  const comissao: ComissaoGestao | null = data.comissao_gestao ?? null;
 
   // Segmented control: agrupa por ESTADO (atual) ou por SUPERVISOR (novo). Drill
   // (estado/supervisor/promotor) abre TELA CHEIA via nav (query param).
@@ -784,6 +791,39 @@ function EquipeView({ data, nav }: { data: any; nav: Nav }) {
           />
         ) : null}
       </div>
+
+      {/* COMISSAO DE GESTAO — so existe no payload do gestor (supervisor/
+          gerente_regional). Ausencia do campo = card nao existe, mesma regra do
+          resto da tela. E a comissao DELE sobre a producao da rede; NAO ha
+          repasse de promotor em lugar nenhum desta tela. */}
+      {comissao ? (
+        <section className="card cgest">
+          <div className="cgest-head">
+            <div>
+              <h3>Sua comissão de gestão</h3>
+              <p className="csub">
+                {PERCENTUAL_COMISSAO_GESTAO_LABEL} sobre a produção líquida da sua rede
+              </p>
+            </div>
+          </div>
+          <div className="cgest-body">
+            <div className="cgest-fig">
+              <span className="l">Comissão realizada</span>
+              <span className="v num">{brl(comissao.valor_acumulado)}</span>
+              <span className="s">sobre {brl(comissao.base_acumulada)} produzidos</span>
+            </div>
+            {comissao.valor_projetado != null ? (
+              <div className="cgest-fig proj">
+                <span className="l">Comissão projetada</span>
+                <span className="v num">{brl(comissao.valor_projetado)}</span>
+                <span className="s">
+                  sobre {brl(comissao.base_projetada ?? 0)} no ritmo atual
+                </span>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {/* RISCO */}
       <section className="card">
@@ -1339,6 +1379,13 @@ const CSS = `
   .rrproj .risk-row > .chip{grid-area:2 / 3;justify-self:end;}
 
   .rrproj .pname{min-width:0;}
+
+  /* comissao de gestao: uma coluna e valor menor. O auto-fit ja empilharia por
+     falta de espaco, mas o minmax(0,1fr) permite duas colunas de 170px cada a
+     356px uteis — legivel demais nao fica. Forca 1fr e reduz o padding lateral. */
+  .rrproj .cgest-body{grid-template-columns:1fr;gap:16px;padding:14px 16px 18px;}
+  .rrproj .cgest-head{padding:16px 16px 0;}
+  .rrproj .cgest-fig .v{font-size:22px;}
 }
 
 @media (max-width:430px){ .rrproj .wrap{padding:16px 12px 36px;} }
@@ -1374,6 +1421,21 @@ const CSS = `
 .rrproj .dw-block h4{margin:0 0 12px;font-size:12.5px;font-weight:600;color:var(--ink-2);display:flex;align-items:baseline;gap:8px;}
 .rrproj .dw-block .dw-hint{font-size:10.5px;font-weight:500;color:var(--ink-3);text-transform:none;letter-spacing:0;}
 .rrproj .dw-empty{padding:16px 4px;color:var(--ink-3);font-size:12.5px;text-align:center;}
+
+/* ---------- comissao de gestao (so no ramo do gestor) ----------
+   SEM largura fixa em lugar nenhum: o grid e auto-fit com minmax(0,1fr), entao
+   os dois numeros dividem o espaco disponivel e nunca pedem mais do que ha.
+   A 560px vira uma coluna, junto com o resto da tela. */
+.rrproj .cgest{border-left:4px solid var(--gold);}
+.rrproj .cgest-head{padding:18px 24px 0;}
+.rrproj .cgest-head h3{font-size:14.5px;font-weight:600;margin:0;color:var(--ink);}
+.rrproj .cgest-head .csub{font-size:12px;color:var(--ink-3);margin:3px 0 0;}
+.rrproj .cgest-body{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:18px;padding:16px 24px 22px;}
+.rrproj .cgest-fig{display:flex;flex-direction:column;gap:3px;min-width:0;}
+.rrproj .cgest-fig .l{font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);}
+.rrproj .cgest-fig .v{font-size:26px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1.1;}
+.rrproj .cgest-fig.proj .v{color:var(--gold-deep);}
+.rrproj .cgest-fig .s{font-size:11.5px;color:var(--ink-3);}
 
 /* ---------- segmented control (por estado | por supervisor) ---------- */
 .rrproj .seg2{display:inline-flex;gap:4px;background:#E7EAF0;border:1px solid var(--bd);border-radius:999px;padding:4px;width:fit-content;margin:-4px 2px 0;}
