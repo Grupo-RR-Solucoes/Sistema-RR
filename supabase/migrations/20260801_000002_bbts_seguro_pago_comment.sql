@@ -43,12 +43,21 @@ commit;
 -- ============================================================
 -- Verificacao pos-execucao
 -- ============================================================
---   select col_description(
---            'public.daily_production_records'::regclass,
---            (select ordinal_position
---               from information_schema.columns
---              where table_schema = 'public'
---                and table_name = 'daily_production_records'
---                and column_name = 'bbts_seguro_pago')
---          ) as comentario;
+--   select col_description(a.attrelid, a.attnum) as comentario
+--     from pg_attribute a
+--    where a.attrelid = 'public.daily_production_records'::regclass
+--      and a.attname  = 'bbts_seguro_pago'
+--      and not a.attisdropped;
 --   -- esperado: texto comecando com 'ADS/BBTS: COMISSAO de seguro paga pela BBTS'.
+--
+-- POR QUE attnum E NAO ordinal_position. col_description recebe o attnum de
+-- pg_attribute. A versao anterior deste bloco passava o ordinal_position de
+-- information_schema.columns, que so coincide com o attnum enquanto a tabela
+-- NUNCA teve coluna derrubada: ordinal_position RENUMERA apos um drop, attnum
+-- nao (o slot morto fica com attisdropped = true e o numero e queimado). Numa
+-- tabela com drop no historico, aquela query leria o comment da coluna ERRADA e
+-- reportaria "a migration nao rodou" sobre uma que rodou.
+--
+-- Conferido em 01/08/2026 na daily_production_records: as duas versoes deram o
+-- MESMO resultado, o que de quebra prova que esta tabela nunca perdeu coluna.
+-- A correcao e para o proximo lugar onde o bloco for copiado, nao para aqui.
