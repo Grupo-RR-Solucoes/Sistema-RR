@@ -35,7 +35,8 @@ import { createClient } from "@supabase/supabase-js";
 import {
   assertReguaNaoAlcancaFechado,
   calcularRemuneracaoLideranca,
-  entraNaBaseAvista,
+  entraNaComissaoDaBase,
+  entraNaProducaoLiquidaDaBase,
   resolverReguaLideranca,
   type BaseLideranca,
   type CargoLideranca,
@@ -168,7 +169,11 @@ const fechamento = await todas<any>((de, ate) =>
     .range(de, ate),
 );
 
-const daBase = fechamento.filter((r) => entraNaBaseAvista(r.entry_type, r.sheet_name));
+// DOIS recortes: a comissao soma CASH + prestamista; o liquido e SO CASH.
+// O prestamista e o subconjunto segurado dos MESMOS contratos (194 de 194 com
+// par em CASH, medido) — somar o liquido dele duplica a producao.
+const daComissao = fechamento.filter((r) => entraNaComissaoDaBase(r.entry_type, r.sheet_name));
+const doLiquido = fechamento.filter((r) => entraNaProducaoLiquidaDaBase(r.entry_type, r.sheet_name));
 const ehSrcc = (r: any) =>
   (r.operation_number && srcc.has(String(r.operation_number))) ||
   (r.contract_number && srcc.has(String(r.contract_number)));
@@ -180,16 +185,20 @@ function baseDaRede(ids: readonly string[]): BaseLideranca & { linhas: number; s
   let liquido = 0;
   let linhas = 0;
   let srccFora = 0;
-  for (const r of daBase) {
+  const daRede = (r: any) => {
     const pid = r.j_key ? promotorDaChave.get(String(r.j_key)) : undefined;
-    if (!pid || !set.has(pid)) continue;
-    if (ehSrcc(r)) {
-      srccFora += 1;
-      continue;
-    }
+    return Boolean(pid && set.has(pid));
+  };
+  for (const r of daComissao) {
+    if (!daRede(r)) continue;
+    if (ehSrcc(r)) { srccFora += 1; continue; }
     comissao += Number(r.commission_value || 0);
-    liquido += Number(r.net_value || 0);
     linhas += 1;
+  }
+  for (const r of doLiquido) {
+    if (!daRede(r)) continue;
+    if (ehSrcc(r)) continue;
+    liquido += Number(r.net_value || 0);
   }
   return { comissao_avista: comissao, producao_liquida: liquido, linhas, srccFora };
 }
@@ -204,10 +213,11 @@ for (const g of gestores ?? []) {
 console.log("\nGRUPO — base da competencia (todas as redes somadas nao e o grupo:");
 console.log("o grupo inclui promotor sem supervisor, que nao entra em rede nenhuma)");
 console.log(`  linhas do fechamento             ${fechamento.length}`);
-console.log(`  linhas na BASE (CASH + prestamista a vista)  ${daBase.length}`);
-console.log(`  comissao da BASE                 ${brl(daBase.filter((r) => !ehSrcc(r)).reduce((s, r) => s + Number(r.commission_value || 0), 0))}`);
-console.log(`  liquido  da BASE                 ${brl(daBase.filter((r) => !ehSrcc(r)).reduce((s, r) => s + Number(r.net_value || 0), 0))}`);
-console.log(`  linhas excluidas por SRCC        ${daBase.filter(ehSrcc).length}`);
+console.log(`  linhas da comissao (CASH + prestamista)      ${daComissao.length}`);
+console.log(`  linhas do liquido  (CASH apenas)             ${doLiquido.length}`);
+console.log(`  comissao da BASE                 ${brl(daComissao.filter((r) => !ehSrcc(r)).reduce((s, r) => s + Number(r.commission_value || 0), 0))}`);
+console.log(`  liquido  da BASE (so CASH)       ${brl(doLiquido.filter((r) => !ehSrcc(r)).reduce((s, r) => s + Number(r.net_value || 0), 0))}`);
+console.log(`  linhas excluidas por SRCC        ${daComissao.filter(ehSrcc).length}`);
 
 if (sujeitos.length === 0) {
   console.log("\n  [ABORTA] nenhum gestor com rede em producao. NAO simulo.");

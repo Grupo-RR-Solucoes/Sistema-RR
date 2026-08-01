@@ -30,21 +30,41 @@
 -- repete/pula linhas e o total sai errado — aconteceu na primeira medicao):
 --
 --   entry_type | sheet_name            linhas         comissao            liquido
---   CASH       | 'A Vista '               707    R$ 187.848,62    R$ 5.346.031,61   <- ENTRA
---   INSURANCE  | 'A Vista '               194      R$ 4.372,62    R$ 1.059.329,56   <- ENTRA (prestamista)
---   INSURANCE  | 'Seguro'                  30       R$ -901,24       R$ 20.656,51   <- cancelamento
---   PRT        | 'PRT'                  10238     R$ 54.479,03            R$ 0,00   <- FORA
---   CONSORCIO  | 'CONSORCIO'               37     R$ 11.903,05            R$ 0,00   <- FORA
---   CREDIT     | 'Crédito'                  8      R$ 8.989,06        R$ 8.989,06   <- FORA (bonus)
---   DEBIT      | 'Débito'                   2       R$ -250,21         R$ -250,21   <- FORA
+--   CASH       | 'A Vista '               707    R$ 187.848,62    R$ 5.346.031,61
+--   INSURANCE  | 'A Vista '               194      R$ 4.372,62    R$ 1.059.329,56
+--   INSURANCE  | 'Seguro'                  30       R$ -901,24       R$ 20.656,51
+--   PRT        | 'PRT'                  10238     R$ 54.479,03            R$ 0,00
+--   CONSORCIO  | 'CONSORCIO'               37     R$ 11.903,05            R$ 0,00
+--   CREDIT     | 'Crédito'                  8      R$ 8.989,06        R$ 8.989,06
+--   DEBIT      | 'Débito'                   2       R$ -250,21         R$ -250,21
 --
---   BASE do grupo em jun/2026: 901 linhas, comissao R$ 192.221,24,
---   liquido R$ 6.405.361,17.
+-- DOIS RECORTES, NAO UM:
+--   comissao da base = CASH + INSURANCE|'A Vista '  = R$ 192.221,24
+--   liquido  da base = CASH APENAS                  = R$ 5.346.031,61
+--
+-- O LIQUIDO NAO SOMA OS DOIS. As 194 linhas de prestamista sao o subconjunto
+-- SEGURADO dos MESMOS contratos das 707 de credito — medido: 194 de 194 tem
+-- contrato tambem em CASH, ZERO sem par. Somar conta a mesma producao 2x.
+--
+-- O erro inflava o liquido em 19,8153% e derrubava a TRP implicita:
+--   comissao / (CASH + seguro) = 3,0009%   errado
+--   comissao / CASH            = 3,5956%   confere com os 3,5974% do
+--                                          fechamento PE (desvio 0,0018 p.p.)
+--
+-- Isso importa PARA O PISO: o piso de 0,07% so deve disparar com TRP abaixo de
+-- 0,0007/0,025 = 2,80%. Com o liquido inflado o gatilho ia para 3,355%, e
+-- maio/2026 fechou em 3,16% — o piso dispararia indevidamente.
+--
+-- PRT, CONSORCIO, CREDIT (bonus), DEBIT, BBCAP e CONTA_CORRENTE ficam FORA dos
+-- dois recortes.
 --
 -- ATENCAO AO DADO: sheet_name da aba a vista e 'A Vista ' COM ESPACO NO FIM.
 -- Comparacao literal falha; o helper normaliza (NFD + trim + upper).
 --
 -- CANCELAMENTO DE SEGURO — definido na regua, NAO aplicado no nivel de rede.
+-- Numero reconciliado em 01/08/2026: 30 linhas / -R$ 901,24, confirmado por DUAS
+-- execucoes com order by id e ids identicos. Uma medicao anterior falou em 51
+-- linhas / -R$ 1.603,27 — era paginacao sem order, e esta descartada.
 -- As 30 linhas de INSURANCE|'Seguro' de jun/2026 tem j_key NULO em 30 de 30:
 -- sem chave J nao ha promotor, logo nao ha supervisor. Ratear seria distribuir
 -- a rede um valor que nao e dela. Decisao Diego (01/08/2026): nao descontar no

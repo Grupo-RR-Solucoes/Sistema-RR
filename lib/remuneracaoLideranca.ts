@@ -60,7 +60,9 @@ export type ReguaLideranca = {
  * restrita. Decisao Diego 01/08/2026: e a comissao da empresa, nao o repasse do
  * promotor.
  *
- * `producao_liquida` = net_value das MESMAS linhas.
+ * `producao_liquida` = net_value das linhas CASH APENAS — NAO das mesmas linhas
+ * da comissao. O prestamista e o subconjunto segurado dos mesmos contratos e o
+ * liquido dele ja esta em CASH; somar duplica. Ver entraNaProducaoLiquidaDaBase.
  *
  * NAO inclui PRT, consorcio, bonus de credito (CREDIT), debito nem conta
  * corrente. Cancelamento de seguro nao entra: ver `desconta_cancelamento_seguro`.
@@ -274,15 +276,46 @@ export function normalizarAba(sheet: unknown): string {
 export const ABA_A_VISTA = "A VISTA";
 
 /**
- * Uma linha de fechamento entra na base AVISTA_CREDITO_PF?
+ * A BASE TEM DOIS RECORTES DIFERENTES, E ISTO NAO E DETALHE.
  *
- * ENTRA:  CASH (credito PF a vista) e INSURANCE na aba a vista (prestamista).
- * FICA FORA: PRT, CONSORCIO, CREDIT (bonus), DEBIT, BBCAP, CONTA_CORRENTE, e
- * INSURANCE na aba 'Seguro' (cancelamento — ver a migration).
+ * COMISSAO  = CASH (credito PF a vista) + INSURANCE na aba a vista (prestamista).
+ * LIQUIDO   = SO CASH.
+ *
+ * POR QUE O LIQUIDO NAO SOMA OS DOIS: as linhas de prestamista sao o subconjunto
+ * SEGURADO dos MESMOS contratos das linhas de credito — o liquido delas ja esta
+ * em CASH. Somar conta a mesma producao duas vezes.
+ *
+ * MEDIDO em jun/2026 (monthly_closing_entries, paginado com order by id):
+ *   linhas CASH                          707
+ *   linhas INSURANCE|'A Vista '          194
+ *   destas, com contrato TAMBEM em CASH  194   <- TODAS
+ *   destas, SEM par em CASH                0
+ *   liquido das que tem par              R$ 1.059.329,56  (= o total delas)
+ *
+ * A duplicata inflava o liquido em 19,8153% e derrubava a TRP implicita:
+ *   comissao / (CASH + seguro) = 3,0009%   <- errado
+ *   comissao / CASH            = 3,5956%   <- confere com os 3,5974% do
+ *                                             fechamento PE (desvio 0,0018 p.p.)
+ *
+ * CONSEQUENCIA NO PISO, que e o que torna isto grave: o piso de 0,07% so deve
+ * disparar quando a TRP da rede cai abaixo de 0,0007/0,025 = 2,80%. Com o
+ * liquido inflado o gatilho subia para 2,80% x 1,198 = 3,355% — e maio/2026
+ * fechou em 3,16%, ou seja, o piso dispararia indevidamente e pagaria a mais.
+ *
+ * FICA FORA DOS DOIS: PRT, CONSORCIO, CREDIT (bonus), DEBIT, BBCAP,
+ * CONTA_CORRENTE e INSURANCE na aba 'Seguro' (cancelamento — ver a migration).
  */
-export function entraNaBaseAvista(entryType: unknown, sheetName: unknown): boolean {
+export function entraNaComissaoDaBase(entryType: unknown, sheetName: unknown): boolean {
   const t = String(entryType ?? "").trim().toUpperCase();
   if (t === "CASH") return true;
   if (t === "INSURANCE") return normalizarAba(sheetName) === ABA_A_VISTA;
   return false;
+}
+
+/**
+ * So CASH. Ver o comentario de entraNaComissaoDaBase para a medicao que prova
+ * que o liquido do prestamista e duplicata.
+ */
+export function entraNaProducaoLiquidaDaBase(entryType: unknown, _sheetName?: unknown): boolean {
+  return String(entryType ?? "").trim().toUpperCase() === "CASH";
 }
