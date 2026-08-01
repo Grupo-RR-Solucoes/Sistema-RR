@@ -6,10 +6,25 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "../../lib/auth/useUser";
 import FeedbackBanner from "../../components/FeedbackBanner";
 import { UiStyles, HeaderNavy, KpiBand, Table } from "@/components/ui";
-import {
-  PERCENTUAL_COMISSAO_GESTAO_LABEL,
-  type ComissaoGestao,
-} from "@/lib/comissaoGestao";
+// A regua NAO mora mais em codigo: vem versionada de leadership_rule_versions,
+// resolvida por lib/remuneracaoLideranca e servida pronta pela rota. Esta tela
+// so RENDERIZA — nao ha percentual literal nem conta aqui.
+type ComissaoLideranca = {
+  percentual: number;
+  piso: number;
+  base_calculo: "PRODUCAO_LIQUIDA" | "AVISTA_CREDITO_PF";
+  criterio: "aliquota" | "piso";
+  valor: number;
+  valor_aliquota: number;
+  valor_piso: number;
+  base_comissao_avista: number;
+  base_producao_liquida: number;
+  comissao_media: number | null;
+  fonte: "fechamento" | "motor";
+  parcial: boolean;
+  ads_producao_sem_comissao_apurada: number;
+  ads_linhas_sem_comissao_apurada: number;
+};
 
 // ============================================================
 // /projecao — Painel de Metas & Projeção (identidade .rrproj).
@@ -151,6 +166,13 @@ function sortPromotores(list: Promotor[], key: SortKey, dir: SortDir): Promotor[
 const brl = (n: number) =>
   "R$ " + new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
 const pctTxt = (r: number | null) => (r === null ? "—" : `${(r * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`);
+// Percentual de REGUA e de comissao media: precisa de mais casas que o pctTxt.
+// Com 1 casa, o piso de 0,07% viraria 0,1% e a comissao media de 3,5956%
+// perderia justamente a parte que decide alíquota x piso.
+const pctReg = (r: number | null) =>
+  r === null
+    ? "—"
+    : `${(r * 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}%`;
 const mes = (y: number, m: number) =>
   `${["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"][m - 1]}/${String(y).slice(-2)}`;
 const ddmm = (iso: string | null | undefined) => {
@@ -705,7 +727,7 @@ function EquipeView({ data, nav }: { data: any; nav: Nav }) {
   const temSeguroEmpresa = "seguro_comissao_grupo_empresa" in data;
   // Só o ramo do gestor manda este campo. Sócio/funcionário não têm comissão de
   // gestão e o card nem chega a existir para eles.
-  const comissao: ComissaoGestao | null = data.comissao_gestao ?? null;
+  const comissao: ComissaoLideranca | null = data.comissao_gestao ?? null;
 
   // Segmented control: agrupa por ESTADO (atual) ou por SUPERVISOR (novo). Drill
   // (estado/supervisor/promotor) abre TELA CHEIA via nav (query param).
@@ -802,26 +824,54 @@ function EquipeView({ data, nav }: { data: any; nav: Nav }) {
             <div>
               <h3>Sua comissão de gestão</h3>
               <p className="csub">
-                {PERCENTUAL_COMISSAO_GESTAO_LABEL} sobre a produção líquida da sua rede
+                {pctReg(comissao.percentual)} sobre a comissão à vista da rede, com piso de{" "}
+                {pctReg(comissao.piso)} sobre a produção líquida — vale o maior
               </p>
             </div>
+            {comissao.parcial ? (
+              <span className="cgest-tag parcial">parcial · competência aberta</span>
+            ) : null}
           </div>
           <div className="cgest-body">
             <div className="cgest-fig">
-              <span className="l">Comissão realizada</span>
-              <span className="v num">{brl(comissao.valor_acumulado)}</span>
-              <span className="s">sobre {brl(comissao.base_acumulada)} produzidos</span>
+              <span className="l">
+                {comissao.parcial ? "Comissão até aqui" : "Comissão da competência"}
+              </span>
+              <span className="v num">{brl(comissao.valor)}</span>
+              <span className="s">
+                venceu o critério <b>{comissao.criterio === "piso" ? "piso" : "alíquota"}</b>
+                {" · "}
+                {comissao.criterio === "piso"
+                  ? `alíquota daria ${brl(comissao.valor_aliquota)}`
+                  : `piso daria ${brl(comissao.valor_piso)}`}
+              </span>
             </div>
-            {comissao.valor_projetado != null ? (
-              <div className="cgest-fig proj">
-                <span className="l">Comissão projetada</span>
-                <span className="v num">{brl(comissao.valor_projetado)}</span>
-                <span className="s">
-                  sobre {brl(comissao.base_projetada ?? 0)} no ritmo atual
-                </span>
-              </div>
-            ) : null}
+            <div className="cgest-fig">
+              <span className="l">Comissão média da rede</span>
+              <span className="v num">
+                {comissao.comissao_media == null ? "—" : pctReg(comissao.comissao_media)}
+              </span>
+              {/* O criterio depende SO desta razao: volume nao muda nada, porque
+                  alíquota e piso escalam juntos. Abaixo do ponto de virada o piso
+                  passa a valer, e isso e sinal de competencia fraca, nao de mes
+                  pequeno. */}
+              <span className="s">
+                {brl(comissao.base_comissao_avista)} sobre {brl(comissao.base_producao_liquida)}
+                {comissao.criterio === "piso" ? " · abaixo do ponto de virada" : ""}
+              </span>
+            </div>
           </div>
+          {comissao.ads_linhas_sem_comissao_apurada > 0 ? (
+            <p className="cgest-lacuna">
+              <b>{brl(comissao.ads_producao_sem_comissao_apurada)}</b> de produção ADS em{" "}
+              {comissao.ads_linhas_sem_comissao_apurada} contrato
+              {comissao.ads_linhas_sem_comissao_apurada === 1 ? "" : "s"}{" "}
+              <b>ainda vai gerar comissão</b> — ela é apurada pela régua da BBTS, que só chega
+              no fechamento. Esta produção está <b>fora</b> da conta acima, dos dois lados: não
+              entra na comissão nem na base do piso. Quando a competência fechar, entra nos
+              dois e o seu valor sobe.
+            </p>
+          ) : null}
         </section>
       ) : null}
 
@@ -1386,6 +1436,7 @@ const CSS = `
   .rrproj .cgest-body{grid-template-columns:1fr;gap:16px;padding:14px 16px 18px;}
   .rrproj .cgest-head{padding:16px 16px 0;}
   .rrproj .cgest-fig .v{font-size:22px;}
+  .rrproj .cgest-lacuna{padding:12px 16px 16px;}
 }
 
 @media (max-width:430px){ .rrproj .wrap{padding:16px 12px 36px;} }
@@ -1436,6 +1487,11 @@ const CSS = `
 .rrproj .cgest-fig .v{font-size:26px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:-.02em;line-height:1.1;}
 .rrproj .cgest-fig.proj .v{color:var(--gold-deep);}
 .rrproj .cgest-fig .s{font-size:11.5px;color:var(--ink-3);}
+.rrproj .cgest-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.rrproj .cgest-tag{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:999px;white-space:nowrap;}
+.rrproj .cgest-tag.parcial{color:var(--gold-deep);background:rgba(214,161,63,.14);border:1px solid rgba(214,161,63,.34);}
+.rrproj .cgest-lacuna{margin:0;padding:12px 24px 18px;font-size:12px;line-height:1.5;color:var(--ink-2);border-top:1px solid var(--bd-soft);}
+.rrproj .cgest-lacuna b{color:var(--ink);font-weight:600;}
 
 /* ---------- segmented control (por estado | por supervisor) ---------- */
 .rrproj .seg2{display:inline-flex;gap:4px;background:#E7EAF0;border:1px solid var(--bd);border-radius:999px;padding:4px;width:fit-content;margin:-4px 2px 0;}

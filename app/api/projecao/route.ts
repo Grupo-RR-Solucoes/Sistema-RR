@@ -3,7 +3,12 @@ import { createSupabaseServerClient } from "@/lib/auth/supabaseServerClient";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
 import { buildTeamProduction } from "@/lib/equipe/teamProduction";
+import { construirBaseLideranca } from "@/lib/lideranca/baseLideranca";
 import { montarPayloadGestor } from "@/lib/projecao/gestorAdapter";
+import {
+  calcularRemuneracaoLideranca,
+  resolverReguaLideranca,
+} from "@/lib/remuneracaoLideranca";
 import {
   agruparPorEstado,
   agruparPorSupervisor,
@@ -46,9 +51,62 @@ export async function GET(req: Request) {
       const db = await createSupabaseServerClient();
       const admin = getSupabaseAdmin();
       const team = await buildTeamProduction(db, admin, { year, month });
+
+      // BASE DA REMUNERACAO — service_role sobre a arvore JA autorizada. A
+      // vw_team_production nao tem coluna de comissao (omitida de proposito em
+      // 20260701_000003:26-33), entao a comissao a vista nao pode sair dela.
+      //
+      // A ARVORE, e NAO team.rows. O WHERE da vw_team_production expoe registro
+      // por `assigned_promoter_id OR promoter_id` na arvore; o buildTeamProduction
+      // agrupa por assigned_promoter_id. Um contrato REATRIBUIDO de uma rede para
+      // outra faz o promotor de FORA aparecer em team.rows — e como esta base
+      // consulta o diario por `.in(assigned_promoter_id, ids)` com service_role,
+      // SEM passar pela view, usar team.rows como escopo somava a producao
+      // INTEIRA dele.
+      //
+      // Medido em 01/08/2026: na rede da Carla (10 promotores) entrava 1
+      // promotora da rede da Izabela por 1 registro-ponte (proposta 221184463,
+      // R$ 460,00), e isso arrastava R$ 63.622,69 de producao dela em jul/2026 e
+      // R$ 2.491,81 em jun/2026. O numero anterior neste comentario, R$
+      // 63.623,63, estava errado em R$ 0,94 — o medido e R$ 63.622,69.
+      //
+      // Desde 01/08/2026 o buildTeamProduction aplica o MESMO recorte, entao
+      // team.rows tambem ja e da arvore. A chamada aqui e mantida de proposito:
+      // a base precisa da arvore INTEIRA, inclusive de quem nao produziu nem tem
+      // meta no mes — team.rows so tem quem aparece. Nao e escopo duplicado, e a
+      // mesma funcao security definer, na mesma request, com o mesmo auth.uid().
+      //
+      // current_user_team_promoter_ids() e security definer e resolve por
+      // auth.uid(), entao vai no client ANON: e a MESMA fonte que a view usa.
+      const { data: arvore, error: erroArvore } = await db.rpc("current_user_team_promoter_ids");
+      if (erroArvore) throw new Error(`current_user_team_promoter_ids: ${erroArvore.message}`);
+      const promoterIds = ((arvore ?? []) as unknown[]).map((x) =>
+        typeof x === "string" ? x : String((x as { current_user_team_promoter_ids?: string })?.current_user_team_promoter_ids ?? x),
+      );
+
+      const competencia = `${team.period.year}-${String(team.period.month).padStart(2, "0")}`;
+      // A REGUA VEM ANTES DA BASE: o base_calculo decide se a ADS entra no mes
+      // aberto (ver ArgsBase.baseCalculo). Montar a base primeiro obrigaria a
+      // adivinhar isso.
+      //
+      // ADMIN e nao `db`: leadership_rule_versions e RLS default-deny (nenhuma
+      // policy, ver 20260801_000001). O client anon devolveria ZERO linhas e o
+      // resolvedor lancaria. A regua e regra publica do sistema, nao dado do
+      // usuario — resolver por service_role nao amplia escopo de ninguem.
+      const regua = await resolverReguaLideranca(admin, role, competencia);
+
+      const base = await construirBaseLideranca(admin, {
+        promoterIds,
+        year: team.period.year,
+        month: team.period.month,
+        fechado: team.fechado,
+        baseCalculo: regua.base_calculo,
+      });
+      const resultado = calcularRemuneracaoLideranca(regua, base, competencia);
+
       // O payload e montado no adaptador, NAO aqui: e a mesma funcao que o
       // scripts/gate_projecao_gestor.mts exercita. Inline, o gate testaria copia.
-      return Response.json(montarPayloadGestor(team));
+      return Response.json(montarPayloadGestor(team, { resultado, base }));
     }
 
     // Promotor nao filtra por empresa (so ve a si mesmo).

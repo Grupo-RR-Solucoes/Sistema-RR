@@ -49,7 +49,8 @@ for (const arquivo of [".env.local", ".env"]) {
 import { buildTeamProduction } from "@/lib/equipe/teamProduction.ts";
 import { montarPayloadGestor } from "@/lib/projecao/gestorAdapter.ts";
 import { buildProjecaoMetas, consolidarGrupoEquipe } from "@/lib/projecaoMetas.ts";
-import { calcularComissaoGestao, PERCENTUAL_COMISSAO_GESTAO } from "@/lib/comissaoGestao.ts";
+import { calcularRemuneracaoLideranca, resolverReguaLideranca } from "@/lib/remuneracaoLideranca.ts";
+import { construirBaseLideranca } from "@/lib/lideranca/baseLideranca.ts";
 import { mediaTresMeses } from "@/lib/projecao/mediaTresMeses.ts";
 import { nowInFortaleza } from "@/lib/dateFortaleza.ts";
 
@@ -124,14 +125,33 @@ async function arvoreDe(appUserId: string, role: string): Promise<string[]> {
 const COLS_VIEW =
   "id, assigned_promoter_id, promoter_id, status, is_srcc_restricted, movement_date, contract_date, proposal_date, net_value, gross_value, insurance_value, has_insurance";
 
-/** Shim no lugar do client ANON: devolve o que a view/policy devolveriam. */
-function shimDb(rows: any[], targets: any[]) {
+/**
+ * Shim no lugar do client ANON: devolve o que a view/policy devolveriam.
+ *
+ * `rpc` foi acrescentado em 01/08/2026: o buildTeamProduction passou a resolver
+ * a arvore por current_user_team_promoter_ids no proprio client ANON. O shim
+ * devolve `arvore` ali — a MESMA lista que alimenta o WHERE reproduzido em
+ * `rows` logo abaixo, que e exatamente como o banco se comporta (a view e o
+ * helper leem o mesmo auth.uid()).
+ *
+ * NAO mascara o defeito: `rows` continua reproduzindo o OR da view
+ * (assigned OU promoter na arvore), entao o forasteiro CHEGA ao
+ * buildTeamProduction e o gate mede se ele foi barrado la dentro. Um shim que
+ * filtrasse `rows` so por assigned e que tornaria o teste vacuo.
+ */
+function shimDb(rows: any[], targets: any[], arvore: readonly string[]) {
   return {
     from(tabela: string) {
       const dados =
         tabela === "vw_team_production" ? rows : tabela === "monthly_targets" ? targets : [];
       return { select: () => Promise.resolve({ data: dados, error: null }) };
     },
+    rpc: (nome: string) =>
+      Promise.resolve(
+        nome === "current_user_team_promoter_ids"
+          ? { data: Array.from(arvore), error: null }
+          : { data: null, error: { message: `rpc nao esperado no shim: ${nome}` } },
+      ),
   } as any;
 }
 
@@ -139,8 +159,10 @@ async function payloadDoGestor(appUserId: string, role: string, year: number, mo
   const ids = await arvoreDe(appUserId, role);
   if (ids.length === 0) return { ids, payload: null as any };
 
+  // .order("id") OBRIGATORIO: range() sem ordem estavel repete/pula linhas entre
+  // paginas. Estava faltando aqui nas duas paginacoes.
   const cruas = await todas<any>((de, ate) =>
-    admin.from("daily_production_records").select(COLS_VIEW).range(de, ate),
+    admin.from("daily_production_records").select(COLS_VIEW).order("id").range(de, ate),
   );
   const setIds = new Set(ids);
   const rows = cruas.filter(
@@ -148,12 +170,32 @@ async function payloadDoGestor(appUserId: string, role: string, year: number, mo
   );
 
   const alvos = await todas<any>((de, ate) =>
-    admin.from("monthly_targets").select("promoter_id, year, month, meta, meta_1, meta_2").range(de, ate),
+    admin.from("monthly_targets").select("promoter_id, year, month, meta, meta_1, meta_2").order("id").range(de, ate),
   );
   const targets = alvos.filter((t) => setIds.has(t.promoter_id));
 
-  const team = await buildTeamProduction(shimDb(rows, targets), admin as any, { year, month });
-  return { ids, payload: montarPayloadGestor(team) };
+  const team = await buildTeamProduction(shimDb(rows, targets, ids), admin as any, { year, month });
+
+  // ESTE GATE ESTAVA QUEBRADO desde a frente da regua de lideranca: o
+  // montarPayloadGestor ganhou um 2o parametro OBRIGATORIO (`lideranca`) e a
+  // chamada aqui continuou com um argumento so, entao o script morria em
+  // TypeError ANTES da primeira assercao — nao provava nada e nao acusava.
+  // `scripts` esta em tsconfig.json:41 (exclude), entao o tsc nao pega.
+  //
+  // Reproduz o que a rota faz, na mesma ordem: regua ANTES da base (o
+  // base_calculo decide se a ADS entra no mes aberto), base sobre a ARVORE.
+  const competencia = `${team.period.year}-${String(team.period.month).padStart(2, "0")}`;
+  const regua = await resolverReguaLideranca(admin as any, role as any, competencia);
+  const base = await construirBaseLideranca(admin as any, {
+    promoterIds: ids,
+    year: team.period.year,
+    month: team.period.month,
+    fechado: team.fechado,
+    baseCalculo: regua.base_calculo,
+  });
+  const resultado = calcularRemuneracaoLideranca(regua, base, competencia);
+
+  return { ids, payload: montarPayloadGestor(team, { resultado, base }) };
 }
 
 // ---------------------------------------------------------------- competencia
@@ -339,11 +381,17 @@ assere(
 // (f) a comissao e mesmo a regua sobre a base
 if (sup.payload) {
   const c = sup.payload.comissao_gestao;
-  const esperado = calcularComissaoGestao(c.base_acumulada, null).valor_acumulado;
+  // A regua vem de leadership_rule_versions, nao de constante em codigo.
+  const regua = await resolverReguaLideranca(admin as any, "supervisor", `${YEAR}-${String(MONTH).padStart(2, "0")}`);
+  const esperado = calcularRemuneracaoLideranca(
+    regua,
+    { comissao_avista: c.base_comissao_avista, producao_liquida: c.base_producao_liquida },
+    `${YEAR}-${String(MONTH).padStart(2, "0")}`,
+  );
   assere(
-    Math.abs(c.valor_acumulado - esperado) < 0.01,
-    `comissao = ${PERCENTUAL_COMISSAO_GESTAO} x base`,
-    `${brl(c.base_acumulada)} x ${PERCENTUAL_COMISSAO_GESTAO} = ${brl(esperado)}  (payload: ${brl(c.valor_acumulado)})`,
+    Math.abs(c.valor - esperado.valor) < 0.01 && c.criterio === esperado.criterio,
+    `comissao do payload == regua versionada aplicada a mesma base`,
+    `payload ${brl(c.valor)} criterio "${c.criterio}" vs helper ${brl(esperado.valor)} criterio "${esperado.criterio}"`,
   );
 }
 

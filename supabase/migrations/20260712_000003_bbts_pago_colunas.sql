@@ -15,7 +15,18 @@
 -- linha é criada ou apagada; só copia campo->coluna nas linhas da ADS que já têm
 -- __bbts_meta. Idempotente (só preenche onde a coluna está NULL). Transacional.
 --
--- STATUS: NÃO EXECUTADA. Rodar no Studio.
+-- STATUS: EXECUTADA. Corrigido em 01/08/2026 — o cabeçalho dizia "NÃO EXECUTADA"
+-- e estava desatualizado. Conferido em produção: as três colunas respondem a
+-- select, e o backfill rodou (jun/2026 tem bbts_pag_avista preenchido em 19/19
+-- das linhas elegíveis da ADS).
+--
+-- ERRATA DE SEMÂNTICA no comment de bbts_seguro_pago abaixo: ele diz "prêmio de
+-- seguro". A medição de 01/08/2026 mostra que é COMISSÃO, não prêmio —
+-- R$ 97,54 sobre R$ 82.939,80 de produção segurada = 0,1176%, ordem de grandeza
+-- de comissão (a do RR na mesma competência é 0,0818% do líquido). Prêmio
+-- estaria na casa de 1-5% da produção segurada. O comment não foi reescrito
+-- aqui porque esta migration já rodou; a correção vai numa migration própria
+-- junto com a implementação da base ADS.
 
 begin;
 
