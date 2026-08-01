@@ -85,10 +85,10 @@ const pad = (s, n) => { s = String(s ?? ""); return s.length >= n ? s : s + " ".
       .map((r) => [
         r.promoter_id,
         Math.round(r.prod_total * 100),
-        Math.round(r.credito_rr * 100),
-        Math.round(r.credito_ads * 100),
-        Math.round(r.seguro_rr * 100),
-        Math.round(r.seguro_ads * 100),
+        Math.round(r.repasse_credito_rr * 100),
+        Math.round(r.repasse_credito_ads * 100),
+        Math.round(r.repasse_seguro_rr * 100),
+        Math.round(r.repasse_seguro_ads * 100),
         Math.round(r.acordo * 1e6),
         r.status_meta,
       ].join(":"))
@@ -96,7 +96,7 @@ const pad = (s, n) => { s = String(s ?? ""); return s.length >= n ? s : s + " ".
     const h = crypto.createHash("sha256").update(JSON.stringify(norm)).digest("hex").slice(0, 12);
     const tot = (k) => (g.rows || []).reduce((s, x) => s + (x[k] || 0), 0);
     partes.push(h);
-    console.log(`  2026-${String(m).padStart(2, "0")}  hash=${h}  credito_rr=${pad(brl(tot("credito_rr")), 16)} credito_ads=${pad(brl(tot("credito_ads")), 14)} seguro_rr=${pad(brl(tot("seguro_rr")), 13)} seguro_ads=${brl(tot("seguro_ads"))}`);
+    console.log(`  2026-${String(m).padStart(2, "0")}  hash=${h}  repasse_credito_rr=${pad(brl(tot("repasse_credito_rr")), 16)} repasse_credito_ads=${pad(brl(tot("repasse_credito_ads")), 14)} repasse_seguro_rr=${pad(brl(tot("repasse_seguro_rr")), 13)} repasse_seguro_ads=${brl(tot("repasse_seguro_ads"))}`);
   }
   // BASELINE medido em MAIN (git stash) ANTES da faxina — abril+junho+julho.
   const BASELINE_MAIN = "49296f8dee56be95";
