@@ -50,6 +50,7 @@ import { buildTeamProduction } from "@/lib/equipe/teamProduction.ts";
 import { montarPayloadGestor } from "@/lib/projecao/gestorAdapter.ts";
 import { buildProjecaoMetas, consolidarGrupoEquipe } from "@/lib/projecaoMetas.ts";
 import { calcularComissaoGestao, PERCENTUAL_COMISSAO_GESTAO } from "@/lib/comissaoGestao.ts";
+import { mediaTresMeses } from "@/lib/projecao/mediaTresMeses.ts";
 import { nowInFortaleza } from "@/lib/dateFortaleza.ts";
 
 const admin = createClient(
@@ -344,6 +345,66 @@ if (sup.payload) {
     `comissao = ${PERCENTUAL_COMISSAO_GESTAO} x base`,
     `${brl(c.base_acumulada)} x ${PERCENTUAL_COMISSAO_GESTAO} = ${brl(esperado)}  (payload: ${brl(c.valor_acumulado)})`,
   );
+}
+
+// -------------------------------------------------------------------------
+// 3) MEDIA DE 3 MESES — soma por competencia, nunca por linha (fase 7).
+// Casos REAIS: todo par (promotor, competencia) com mais de uma linha no PMR.
+// A media de UMA competencia (n=1) tem de dar a SOMA das linhas dela; a regra
+// antiga daria soma/numero-de-linhas. Nao ha caso sintetico aqui.
+// -------------------------------------------------------------------------
+linha();
+console.log("3) MEDIA DE 3 MESES — soma por competencia");
+linha();
+
+const pmr = await todas<any>((de, ate) =>
+  admin
+    .from("promoter_monthly_results")
+    .select("promoter_id, year, month, company_id, source, production_value")
+    .range(de, ate),
+);
+
+const porPromotorComp = new Map<string, any[]>();
+for (const r of pmr) {
+  const k = `${r.promoter_id}|${r.year}|${r.month}`;
+  porPromotorComp.set(k, (porPromotorComp.get(k) ?? []).concat([r]));
+}
+const multi = [...porPromotorComp.entries()].filter(([, v]) => v.length > 1);
+
+console.log(`  pares (promotor, competencia) com >1 linha no PMR: ${multi.length}`);
+
+if (multi.length === 0) {
+  pula(
+    "media de 3 meses soma por competencia",
+    "nenhum promotor com 2 linhas de PMR na mesma competencia — sem caso real para exercitar",
+  );
+} else {
+  const { data: nomes } = await admin.from("promoters").select("id, name");
+  const nomeDe = new Map((nomes ?? []).map((p: any) => [p.id, p.name]));
+
+  for (const [k, linhas] of multi) {
+    const [pid, ano, mes] = k.split("|");
+    const y = Number(ano);
+    const m = Number(mes);
+    const soma = linhas.reduce((s: number, r: any) => s + Number(r.production_value || 0), 0);
+    const regraAntiga = soma / linhas.length;
+
+    // n=1 e referencia = competencia SEGUINTE => a janela e exatamente esta
+    // competencia, entao a media dela e a soma das suas linhas.
+    const seguinte = new Date(Date.UTC(y, m, 1));
+    const obtido = mediaTresMeses(
+      linhas.map((r: any) => ({ year: r.year, month: r.month, valor: Number(r.production_value || 0) })),
+      seguinte.getUTCFullYear(),
+      seguinte.getUTCMonth() + 1,
+      1,
+    );
+
+    assere(
+      Math.abs(obtido - soma) < 0.01 && Math.abs(obtido - regraAntiga) > 0.01,
+      `${nomeDe.get(pid) ?? pid} ${ano}-${String(m).padStart(2, "0")}: media == soma, nao metade`,
+      `${linhas.length} linhas (${linhas.map((r: any) => r.source).join("/")}) | soma=${brl(soma)} | helper=${brl(obtido)} | regra antiga daria ${brl(regraAntiga)}`,
+    );
+  }
 }
 
 linha();
