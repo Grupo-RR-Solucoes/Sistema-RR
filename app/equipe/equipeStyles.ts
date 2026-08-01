@@ -64,4 +64,22 @@ export const RRTEAM_CSS = `
 @keyframes rrteam-spin{to{transform:rotate(360deg);}}
 
 @media (max-width:640px){ .rrteam .wrap{padding:20px 16px 44px;} }
+
+/* TELEFONE — solta o texto das celulas. Isto NAO e redundante com o kit:
+
+     kit     .rr-table-cards .rrui-table tbody td   -> 2 classes + 2 elementos
+     aqui    .rrteam .rrui-table tbody td           -> 2 classes + 2 elementos
+
+   Empatam em especificidade, e esta folha e injetada DEPOIS do <UiStyles/>
+   (EquipeVisao.tsx:401-402), entao o white-space:nowrap da linha 44 VENCERIA o
+   white-space:normal do modo cartao e as celulas nao quebrariam linha. Anular
+   aqui, mais abaixo no mesmo arquivo, e o unico jeito sem !important.
+
+   O min-width:150px do .pname (linha 45) impedia o cartao de estreitar. */
+@media (max-width:560px){
+  .rrteam .rrui-table tbody td{white-space:normal;}
+  .rrteam .pname{min-width:0;}
+}
+
+@media (max-width:430px){ .rrteam .wrap{padding:16px 12px 36px;} }
 `;
