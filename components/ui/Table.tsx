@@ -1,4 +1,4 @@
-import type { ReactNode, TdHTMLAttributes } from "react";
+import type { CSSProperties, ReactNode, TdHTMLAttributes } from "react";
 
 export interface TableProps {
   children?: ReactNode;
@@ -13,6 +13,12 @@ export interface TableProps {
    * é menor que minWidth, o .rr-table-wrap (overflow-x:auto) mostra a barra.
    * Sem min-width a tabela encolhe pra caber e o scroll nunca dispara.
    * Default: 720.
+   *
+   * NÃO vira mais `style={{minWidth}}`: sai como a variável --tbl-min, lida por
+   * `.rrui-table{min-width:var(--tbl-min,720px)}` (uiCss.ts). Como propriedade
+   * inline ela era inalcançável — nenhuma media query conseguia zerá-la no
+   * telefone. Como variável, a regra de 560px sobrescreve a PROPRIEDADE e o
+   * inline deixa de mandar. Mesmo mecanismo do --kpi-cols do KpiBand.
    */
   minWidth?: number;
   /**
@@ -29,6 +35,20 @@ export interface TableProps {
    * (ex.: uma barra de ação fixa no rodapé). Hoje nenhuma passa.
    */
   maxHeightOffset?: number;
+  /**
+   * MODO CARTÃO no telefone (<=560px): cada <tr> do corpo vira um cartão
+   * empilhado, o <thead> some e cada <td> mostra o próprio rótulo. OPT-IN —
+   * tabela sem a prop continua idêntica ao que era (rolagem lateral).
+   *
+   * EXIGE `data-l="<rótulo da coluna>"` em CADA <td>: é o attr(data-l) do
+   * ::before que substitui o cabeçalho escondido. Sem o atributo o cartão sai
+   * sem rótulo — a célula não some, mas fica sem contexto.
+   *
+   * O padrão não é novo: é o de app/promotores (PromotoresClient.tsx:2716-2737
+   * e PromotorView.tsx:666-683), escrito à mão em tabela crua. Aqui ele vira
+   * mecanismo do kit; o CSS vive em uiCss.ts (.rr-table-cards).
+   */
+  cards?: boolean;
   className?: string;
 }
 
@@ -42,6 +62,8 @@ const DEFAULT_MIN_WIDTH = 720;
  *  - `scrollable`  → janela com altura + thead STICKY no topo (vertical).
  *  - `minWidth`    → scroll HORIZONTAL quando a tabela estoura a largura.
  *  - `maxHeightOffset` → calibra a altura da janela (scrollable).
+ *  - `cards`       → no telefone (<=560px) as linhas viram cartões empilhados.
+ *    Exige data-l em cada <td>. OPT-IN: sem a prop, nada muda.
  *  - 1ª coluna fixa (horizontal): marque os <th>/<td> da coluna com a
  *    className "rr-sticky-col" (position:sticky;left:0 + z-index/bg corretos no
  *    CSS). Funciona junto com o thead sticky — ver hierarquia de z-index no
@@ -72,11 +94,13 @@ export function Table({
   scrollable,
   minWidth = DEFAULT_MIN_WIDTH,
   maxHeightOffset,
+  cards,
   className,
 }: TableProps) {
   const wrap = [
     "rr-table-wrap",
     scrollable ? "rr-table-wrap--scrollable" : "",
+    cards ? "rr-table-cards" : "",
     className,
   ]
     .filter(Boolean)
@@ -89,7 +113,10 @@ export function Table({
       : undefined;
   return (
     <div className={wrap} style={wrapStyle}>
-      <table className="rrui-table" style={{ minWidth }}>
+      <table
+        className="rrui-table"
+        style={{ ["--tbl-min"]: `${minWidth}px` } as CSSProperties}
+      >
         {children}
       </table>
     </div>

@@ -375,7 +375,7 @@ function DrillPromotor({ data, id, from, nav }: { data: any; id: string; from: s
       </div></section>
       <section className="card"><div className="card-pad">
         <h3 className="drill-h">Meta vs realizado (histórico)</h3>
-        <Table scrollable minWidth={560}>
+        <Table scrollable minWidth={560} cards>
           <thead><tr><th>Mês</th><th className="r">Produção</th><th className="r">Meta</th><th className="r">% meta</th><th className="r">Penetração seg.</th></tr></thead>
           <tbody>
             {histRows.length === 0 ? (
@@ -383,11 +383,11 @@ function DrillPromotor({ data, id, from, nav }: { data: any; id: string; from: s
             ) : (
               histRows.map((m) => (
                 <tr key={`${m.year}-${m.month}`}>
-                  <td>{m.label}</td>
-                  <td className="r">{brl(m.producao)}</td>
-                  <td className="r">{m.meta > 0 ? brl(m.meta) : "—"}</td>
-                  <td className="r">{pctTxt(m.percent)}</td>
-                  <td className="r">{pctTxt(m.penetracao_seg)}</td>
+                  <td data-l="Mês">{m.label}</td>
+                  <td className="r" data-l="Produção">{brl(m.producao)}</td>
+                  <td className="r" data-l="Meta">{m.meta > 0 ? brl(m.meta) : "—"}</td>
+                  <td className="r" data-l="% meta">{pctTxt(m.percent)}</td>
+                  <td className="r" data-l="Penetração seg.">{pctTxt(m.penetracao_seg)}</td>
                 </tr>
               ))
             )}
@@ -420,15 +420,15 @@ function DrillEstado({ data, id, nav }: { data: any; id: string; nav: Nav }) {
       </div></section>
       <section className="card"><div className="card-pad">
         <h3 className="drill-h">Promotores do estado <span className="drill-hint">clique para abrir</span></h3>
-        <Table scrollable minWidth={480}>
+        <Table scrollable minWidth={480} cards>
           <thead><tr><th>Promotor</th><th className="r">Acumulado</th><th className="r">Projeção</th><th className="r">% meta</th></tr></thead>
           <tbody>
             {g.promotores.map((pr) => (
               <tr key={pr.promoter_id} className="clickrow" onClick={() => nav.goPromotor(pr.promoter_id, `estado:${id}`)}>
-                <td className="pname">{pr.promoter_name}</td>
-                <td className="r">{brl(pr.producao_acumulada)}</td>
-                <td className="r">{brl(pr.projecao)}</td>
-                <td className="r">{pctTxt(pr.percent_projetado)}</td>
+                <td className="pname" data-l="Promotor">{pr.promoter_name}</td>
+                <td className="r" data-l="Acumulado">{brl(pr.producao_acumulada)}</td>
+                <td className="r" data-l="Projeção">{brl(pr.projecao)}</td>
+                <td className="r" data-l="% meta">{pctTxt(pr.percent_projetado)}</td>
               </tr>
             ))}
           </tbody>
@@ -461,15 +461,15 @@ function DrillSupervisor({ data, id, nav }: { data: any; id: string; nav: Nav })
       </div></section>
       <section className="card"><div className="card-pad">
         <h3 className="drill-h">Promotores da equipe <span className="drill-hint">clique para abrir</span></h3>
-        <Table scrollable minWidth={480}>
+        <Table scrollable minWidth={480} cards>
           <thead><tr><th>Promotor</th><th className="r">Acumulado</th><th className="r">Projeção</th><th className="r">% meta</th></tr></thead>
           <tbody>
             {g.promotores.map((pr) => (
               <tr key={pr.promoter_id} className="clickrow" onClick={() => nav.goPromotor(pr.promoter_id, `supervisor:${id}`)}>
-                <td className="pname">{pr.promoter_name}</td>
-                <td className="r">{brl(pr.producao_acumulada)}</td>
-                <td className="r">{brl(pr.projecao)}</td>
-                <td className="r">{pctTxt(pr.percent_projetado)}</td>
+                <td className="pname" data-l="Promotor">{pr.promoter_name}</td>
+                <td className="r" data-l="Acumulado">{brl(pr.producao_acumulada)}</td>
+                <td className="r" data-l="Projeção">{brl(pr.projecao)}</td>
+                <td className="r" data-l="% meta">{pctTxt(pr.percent_projetado)}</td>
               </tr>
             ))}
           </tbody>
@@ -836,7 +836,7 @@ function EquipeView({ data, nav }: { data: any; nav: Nav }) {
               <Chip s={g.semaforo} />
             </div>
           </div>
-          <Table scrollable minWidth={880}>
+          <Table scrollable minWidth={880} cards>
               <thead>
                 <tr>
                   <th className="rr-sticky-col">Promotor</th>
@@ -902,29 +902,32 @@ function EquipeView({ data, nav }: { data: any; nav: Nav }) {
               <tbody>
                 {sortPromotores(g.promotores, sortKey, sortDir).map((p) => (
                   <tr key={p.promoter_id} className="clickrow" onClick={() => nav.goPromotor(p.promoter_id, `estado:${estadoKey(g.estado)}`)}>
-                    <td className="rr-sticky-col pname">{p.promoter_name}</td>
-                    <td className="r">{brl(p.producao_acumulada)}</td>
-                    <td className="r">{brl(p.projecao)}</td>
-                    <td className="r">{p.meta > 0 ? brl(p.meta) : "—"}</td>
-                    <td className="pctcell">{pctTxt(p.percent_projetado)}</td>
-                    <td className="c"><TrendCell p={p} /></td>
-                    <td className="c"><Chip s={p.semaforo} /></td>
-                    <td className="r">{pctTxt(p.seguro_penetracao)}</td>
+                    {/* data-l = rotulo do thead. Os 5 ordenaveis rendem
+                        {label}{arrow(...)}; a seta e estado de ordenacao, nao
+                        entra no rotulo. */}
+                    <td className="rr-sticky-col pname" data-l="Promotor">{p.promoter_name}</td>
+                    <td className="r" data-l="Acumulado">{brl(p.producao_acumulada)}</td>
+                    <td className="r" data-l="Projeção">{brl(p.projecao)}</td>
+                    <td className="r" data-l="Meta">{p.meta > 0 ? brl(p.meta) : "—"}</td>
+                    <td className="pctcell" data-l="% projetado">{pctTxt(p.percent_projetado)}</td>
+                    <td className="c" data-l="Tendência"><TrendCell p={p} /></td>
+                    <td className="c" data-l="Semáforo"><Chip s={p.semaforo} /></td>
+                    <td className="r" data-l="Penetração seg.">{pctTxt(p.seguro_penetracao)}</td>
                   </tr>
                 ))}
                 {g.nao_atribuido && g.nao_atribuido.acumulada > 0 ? (
                   <tr className="na-row">
-                    <td className="rr-sticky-col pname">
+                    <td className="rr-sticky-col pname" data-l="Promotor">
                       Não atribuído · chave master
                       <span className="na-tag">{g.nao_atribuido.count} prop · aguardando Migração</span>
                     </td>
-                    <td className="r">{brl(g.nao_atribuido.acumulada)}</td>
-                    <td className="r">{brl(g.nao_atribuido.projecao)}</td>
-                    <td className="r">—</td>
-                    <td className="pctcell">—</td>
-                    <td className="c">—</td>
-                    <td className="c">—</td>
-                    <td className="r">—</td>
+                    <td className="r" data-l="Acumulado">{brl(g.nao_atribuido.acumulada)}</td>
+                    <td className="r" data-l="Projeção">{brl(g.nao_atribuido.projecao)}</td>
+                    <td className="r" data-l="Meta">—</td>
+                    <td className="pctcell" data-l="% projetado">—</td>
+                    <td className="c" data-l="Tendência">—</td>
+                    <td className="c" data-l="Semáforo">—</td>
+                    <td className="r" data-l="Penetração seg.">—</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -1289,6 +1292,37 @@ const CSS = `
   .rrproj .emp-head .right{width:100%;justify-content:space-between;}
   .rrproj .compbars{gap:10px;}
 }
+
+/* TELEFONE — os grids que nao colapsavam em nenhum breakpoint.
+
+   .dw-kpis: repeat(3,1fr) direto para 1fr. Sao 3 valores monetarios; a 384px
+   cada trilha ficava com ~90px.
+
+   .risk-row: escolhi REFLUXO EM DUAS LINHAS (grid-area explicito), nao a
+   reducao de padding sozinha. Motivo: a linha tem 4 trilhas, e tres delas sao
+   de largura fixa por conteudo — .rank 24px, .proj com white-space:nowrap
+   (linha 1205) segurando um BRL inteiro, e o .chip do semaforo, tambem nowrap.
+   Quem absorve a sobra e o .who, que tem min-width:0 (linha 1202) e portanto
+   encolhe ATE ZERO. Ou seja: o nome do promotor, que e a identidade da linha,
+   era o unico item que sumia. Trocar 24px de padding por 14px devolve 20px —
+   nao muda esse desfecho, so adia. Na forma escolhida o .who fica sozinho na
+   primeira linha com a largura toda, e .proj + semaforo dividem a segunda.
+   O padding lateral cai para 14px junto, porque ai ele e ganho liquido.
+
+   .pname: o min-width:150px travava a coluna do nome nas tabelas. */
+@media (max-width:560px){
+  .rrproj .dw-kpis{grid-template-columns:1fr;}
+
+  .rrproj .risk-row{grid-template-columns:auto 1fr auto;row-gap:10px;column-gap:12px;padding:14px 14px;}
+  .rrproj .risk-row .rank{grid-area:1 / 1;}
+  .rrproj .risk-row .who{grid-area:1 / 2 / auto / 4;}
+  .rrproj .risk-row .proj{grid-area:2 / 2;text-align:left;}
+  .rrproj .risk-row > .chip{grid-area:2 / 3;justify-self:end;}
+
+  .rrproj .pname{min-width:0;}
+}
+
+@media (max-width:430px){ .rrproj .wrap{padding:16px 12px 36px;} }
 
 /* ---------- drill-down histórico (aditivo): clicáveis, gráfico de linha, drawer ---------- */
 .rrproj .emp-head.clickhead{cursor:pointer;}

@@ -143,7 +143,7 @@ function RankingTable({
   );
 
   return (
-    <Table scrollable minWidth={760}>
+    <Table scrollable minWidth={760} cards>
       <thead>
         <tr>
           <th className="rr-sticky-col">Promotor</th>
@@ -163,11 +163,14 @@ function RankingTable({
         ) : (
           sorted.map((p) => (
             <tr key={p.promoter_id} className="clickrow" onClick={() => onSelect(p.promoter_id)}>
-              <td className="rr-sticky-col pname">{p.promoter_name}</td>
-              <td className="r">{brl(p.production_value)}</td>
-              <td className="r">{pct(p.insurance_penetration_percent)}</td>
-              <td className="r">{pct(p.attainment_percent)}</td>
-              <td className="c">
+              {/* data-l = rotulo EXATO do thead acima. Os tres do meio saem do
+                  helper head(), que renderiza {label} + a seta de ordenacao; a
+                  seta e estado, nao rotulo, entao fica de fora do data-l. */}
+              <td className="rr-sticky-col pname" data-l="Promotor">{p.promoter_name}</td>
+              <td className="r" data-l="Produção">{brl(p.production_value)}</td>
+              <td className="r" data-l="Penetração seg.">{pct(p.insurance_penetration_percent)}</td>
+              <td className="r" data-l="% meta">{pct(p.attainment_percent)}</td>
+              <td className="c" data-l="Status">
                 <span className={`chip ${semColor(p.attainment_percent)}`}>
                   <span className="d" />
                   {STATUS_LABEL[p.target_status]}
@@ -222,7 +225,7 @@ function PromoterDetail({
           </div>
           <div className="dw-block">
             <h4>Meta vs realizado (histórico)</h4>
-            <Table scrollable minWidth={520}>
+            <Table scrollable minWidth={520} cards>
               <thead>
                 <tr>
                   <th>Mês</th>
@@ -242,11 +245,11 @@ function PromoterDetail({
                 ) : (
                   hist.map((m) => (
                     <tr key={`${m.year}-${m.month}`}>
-                      <td>{m.label}</td>
-                      <td className="r">{brl(m.production_value)}</td>
-                      <td className="r">{m.meta > 0 ? brl(m.meta) : "—"}</td>
-                      <td className="r">{pct(m.attainment_percent)}</td>
-                      <td className="c">
+                      <td data-l="Mês">{m.label}</td>
+                      <td className="r" data-l="Produção">{brl(m.production_value)}</td>
+                      <td className="r" data-l="Meta">{m.meta > 0 ? brl(m.meta) : "—"}</td>
+                      <td className="r" data-l="% atingido">{pct(m.attainment_percent)}</td>
+                      <td className="c" data-l="Status">
                         <span className={`chip ${semColor(m.attainment_percent)}`}>
                           <span className="d" />
                           {m.meta > 0 ? (m.attainment_percent != null && m.attainment_percent >= 100 ? "Bateu" : "Abaixo") : "Sem meta"}
