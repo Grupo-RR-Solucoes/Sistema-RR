@@ -110,7 +110,9 @@ type LinhaDiario = {
   term_months: number | null;
   installments: number | null;
   company_received_percent: number | null;
-  insurance_commission_amount: number | null;
+  // insurance_commission_amount NAO consta de proposito — ver o bloco de decisao
+  // no laco da ADS. Nao esta no tipo nem no SELECT: a base nao le esse campo, e
+  // sem ele aqui nao ha como voltar a ler por acidente.
   bbts_pag_avista: number | null;
   bbts_seguro_pago: number | null;
   product_code: string | null;
@@ -179,7 +181,8 @@ async function todas<T>(fn: (de: number, ate: number) => any): Promise<T[]> {
 const COLUNAS_DIARIO =
   "id, company_id, assigned_promoter_id, status, is_srcc_restricted, net_value, gross_value, " +
   "insurance_value, insurance_type, has_insurance, interest_rate, term_months, installments, " +
-  "company_received_percent, insurance_commission_amount, bbts_pag_avista, bbts_seguro_pago, " +
+  // SEM insurance_commission_amount: decisao de 01/08/2026, ver o laco da ADS.
+  "company_received_percent, bbts_pag_avista, bbts_seguro_pago, " +
   "product_code, product_description, convenio_code, convenio_type, convenio_segment, " +
   "proposal_number, contract_number, movement_date, contract_date, proposal_date";
 
@@ -414,14 +417,35 @@ export async function construirBaseLideranca(
     // jul/2026 na rede da Carla — o piso ia de 75,2% para 88,8% da alíquota e a
     // folga ate o gatilho caia de 32,9% para 12,6%.
     //
-    // insurance_commission_amount da ADS TAMBEM sai. Ele entrava no numerador
-    // antes (R$ 13,20 na Carla, R$ 13,88 na Izabela em jul/2026) e nunca foi
-    // confirmado se e comissao-EMPRESA ou repasse de promotor. A duvida deixa de
-    // bloquear esta frente, mas o campo pode ser lido em outro lugar — fica
-    // anotado para verificacao propria.
-    //
     // A assimetria e EXCLUSIVA do aberto: no fechado a ADS entra nos dois, via
     // bbts_pag_avista + bbts_seguro_pago (cobertura 19/19 em jun/2026).
+    //
+    // ------------------------------------------------------------------
+    // insurance_commission_amount NUNCA e lido em linha ADS, em regua NENHUMA.
+    // ------------------------------------------------------------------
+    // Nao e "comissao-empresa ou repasse de promotor" — nao e nenhum dos dois.
+    // Medido em 01/08/2026, sobre TODA a historia da ADS:
+    //
+    //   - 3 linhas, e so 3, tem o campo > 0. Total R$ 27,08 (R$ 13,20 na rede da
+    //     Carla, R$ 13,88 na da Izabela, tudo em jul/2026; jun/2026 tem ZERO).
+    //   - As tres reproduzem `gross x 0,15%` na virgula, com
+    //     insurance_commission_percent = 0.15 gravado, e commission_rule_source
+    //     TRP35_ESTOQUE_D0 / TRP35_SLIP — regua do RR, que nao se aplica a ADS.
+    //   - Ordem de grandeza: 0,0052% do liquido ADS contra 0,0774% do RR na
+    //     mesma competencia. Comissao de verdade seria ~15x maior.
+    //
+    // E residuo congelado: gravado por app/api/calculate/monthly ANTES da trava
+    // semAds (:678-681), que hoje exclui a ADS de qualquer escrita. Os tres
+    // importadores BBTS gravam NULL nesta coluna (bbtsDailyImport:329,
+    // bbtsClosingImport:368 e :459), entao ninguem mais a escreve para a ADS.
+    // lib/promoterAnalytics.ts:1801-1812 ja documenta o mesmo diagnostico e
+    // recalcula por cima ao exibir.
+    //
+    // DIVIDA NOMEADA (decisao Diego, 01/08/2026): as 3 linhas NAO sao corrigidas
+    // no banco. Quem consome o campo em linha ADS recalcula por cima; esta base
+    // simplesmente nao o le. Se um dia a coluna passar a ser escrita para a ADS
+    // por uma regua legitima, e preciso REVERTER esta decisao conscientemente —
+    // o gate abaixo trava a volta silenciosa.
     for (const d of ads) {
       // A LACUNA e reportada nos DOIS casos: o credito ADS nao esta apurado no
       // aberto, independentemente de qual regua vigora.
@@ -430,16 +454,12 @@ export async function construirBaseLideranca(
 
       if (excluirAdsNoAberto) continue;
 
-      // PRODUCAO_LIQUIDA: a ADS entra nos dois, como sempre esteve.
+      // PRODUCAO_LIQUIDA: a producao ADS entra no denominador, como sempre
+      // esteve. O NUMERADOR nao ganha nada: ver o bloco acima. Antes desta
+      // correcao, os R$ 27,08 de residuo entravam em `comissao` aqui.
       liquido += num(d.net_value);
       adsLiquido += num(d.net_value);
       linhasLiquido += 1;
-      const segApurado = num(d.insurance_commission_amount);
-      if (segApurado > 0) {
-        comissao += segApurado;
-        adsComissao += segApurado;
-        linhasComissao += 1;
-      }
     }
   }
 
