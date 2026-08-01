@@ -617,7 +617,7 @@ export default function CadastrosPage() {
                   })()}
                 </div>
               </div>
-              <Table scrollable minWidth={600}>
+              <Table scrollable minWidth={600} cards>
                   <thead>
                     <tr>
                       <th className="rr-sticky-col">Nome</th>
@@ -642,12 +642,12 @@ export default function CadastrosPage() {
                         const diverge = p.estado != null && fiscal != null && p.estado !== fiscal;
                         return (
                           <tr key={p.id} className={active ? "" : "inactive"}>
-                            <td className="nm rr-sticky-col">
+                            <td className="nm rr-sticky-col" data-l="Nome">
                               {p.name}
                               <small>{p.keys[0]?.j_key || "Sem chave"}</small>
                             </td>
-                            <td>{p.company_name}</td>
-                            <td className="estcell">
+                            <td data-l="Empresa">{p.company_name}</td>
+                            <td className="estcell" data-l="Estado (gerencial)">
                               {p.is_master ? (
                                 <span className="est-na">—</span>
                               ) : (
@@ -673,11 +673,11 @@ export default function CadastrosPage() {
                                 </div>
                               )}
                             </td>
-                            <td className="c"><span className="cntpill">{p.keys.length}</span></td>
-                            <td className="num">{fmtDate(p.hired_at)}</td>
-                            <td>{p.is_master ? <MasterBadge /> : <span className="badge indiv">Individual</span>}</td>
-                            <td><StatusChip active={active} /></td>
-                            <td className="actcell">
+                            <td className="c" data-l="Chaves J"><span className="cntpill">{p.keys.length}</span></td>
+                            <td className="num" data-l="Admissão">{fmtDate(p.hired_at)}</td>
+                            <td data-l="Tipo">{p.is_master ? <MasterBadge /> : <span className="badge indiv">Individual</span>}</td>
+                            <td data-l="Status"><StatusChip active={active} /></td>
+                            <td className="actcell" data-l="Ações">
                               <div className="acts">
                                 <button className="iconact" title="Editar" onClick={() => editPromoter(p)}><IcoPencil /></button>
                                 <ToggleBtn active={active} onClick={() => togglePromoter(p)} />
@@ -790,7 +790,7 @@ export default function CadastrosPage() {
                     <p className="csub">Pessoas jurídicas do grupo</p>
                   </div>
                 </div>
-                <Table scrollable minWidth={600}>
+                <Table scrollable minWidth={600} cards>
                     <thead>
                       <tr>
                         <th className="rr-sticky-col">Nome fantasia</th>
@@ -810,11 +810,11 @@ export default function CadastrosPage() {
                           const active = isActive(c.active);
                           return (
                             <tr key={c.id} className={active ? "" : "inactive"}>
-                              <td className="nm rr-sticky-col">{c.name}<small>{c.legal_name || "—"}</small></td>
-                              <td className="num mono">{fmtCnpj(c.cnpj)}</td>
-                              <td className="c"><span className="cntpill">{c.identifiers.length}</span></td>
-                              <td><StatusChip active={active} /></td>
-                              <td className="actcell">
+                              <td className="nm rr-sticky-col" data-l="Nome fantasia">{c.name}<small>{c.legal_name || "—"}</small></td>
+                              <td className="num mono" data-l="CNPJ">{fmtCnpj(c.cnpj)}</td>
+                              <td className="c" data-l="Identificadores"><span className="cntpill">{c.identifiers.length}</span></td>
+                              <td data-l="Status"><StatusChip active={active} /></td>
+                              <td className="actcell" data-l="Ações">
                                 <div className="acts">
                                   <button className="iconact" title="Editar" onClick={() => editCompany(c)}><IcoPencil /></button>
                                   <ToggleBtn active={active} onClick={() => toggleCompany(c)} />
@@ -849,7 +849,7 @@ export default function CadastrosPage() {
                     <IcoPlus />{submitting === "identifier_upsert" ? "Salvando…" : "Adicionar"}
                   </button>
                 </form>
-                <Table scrollable minWidth={600}>
+                <Table scrollable minWidth={600} cards>
                     <thead>
                       <tr><th className="rr-sticky-col">Empresa</th><th>MCI</th><th>Coban</th><th>Tipo</th></tr>
                     </thead>
@@ -860,10 +860,10 @@ export default function CadastrosPage() {
                         data.companies.flatMap((c) =>
                           c.identifiers.map((i) => (
                             <tr key={i.id}>
-                              <td className="nm rr-sticky-col">{c.name}</td>
-                              <td className="num mono">{i.mci || "—"}</td>
-                              <td className="num mono">{i.coban_code || "—"}</td>
-                              <td><span className="idtype">{i.identifier_type || "PRIMARY"}</span></td>
+                              <td className="nm rr-sticky-col" data-l="Empresa">{c.name}</td>
+                              <td className="num mono" data-l="MCI">{i.mci || "—"}</td>
+                              <td className="num mono" data-l="Coban">{i.coban_code || "—"}</td>
+                              <td data-l="Tipo"><span className="idtype">{i.identifier_type || "PRIMARY"}</span></td>
                             </tr>
                           ))
                         )
@@ -925,7 +925,7 @@ export default function CadastrosPage() {
                   <p className="csub">Identificadores de operador na produção</p>
                 </div>
               </div>
-              <Table scrollable minWidth={600}>
+              <Table scrollable minWidth={600} cards>
                   <thead>
                     <tr>
                       <th className="rr-sticky-col">Chave J</th>
@@ -947,12 +947,12 @@ export default function CadastrosPage() {
                         const master = (k.key_type || "").toUpperCase() === "MASTER";
                         return (
                           <tr key={k.id} className={active ? "" : "inactive"}>
-                            <td className="num mono rr-sticky-col" style={{ fontWeight: 600, color: "var(--ink)" }}>{k.j_key}</td>
-                            <td>{k.company_name}</td>
-                            <td style={k.promoter_name ? undefined : { color: "var(--ink-3)" }}>{k.promoter_name || "Sem promotor"}</td>
-                            <td>{master ? <MasterBadge /> : <span className="badge indiv">Individual</span>}</td>
-                            <td><StatusChip active={active} /></td>
-                            <td className="actcell">
+                            <td className="num mono rr-sticky-col" data-l="Chave J" style={{ fontWeight: 600, color: "var(--ink)" }}>{k.j_key}</td>
+                            <td data-l="Empresa">{k.company_name}</td>
+                            <td data-l="Promotor" style={k.promoter_name ? undefined : { color: "var(--ink-3)" }}>{k.promoter_name || "Sem promotor"}</td>
+                            <td data-l="Tipo">{master ? <MasterBadge /> : <span className="badge indiv">Individual</span>}</td>
+                            <td data-l="Status"><StatusChip active={active} /></td>
+                            <td className="actcell" data-l="Ações">
                               <div className="acts">
                                 <button className="iconact" title="Editar" onClick={() => editJKey(k)}><IcoPencil /></button>
                                 <ToggleBtn active={active} onClick={() => toggleJKey(k)} />
@@ -1178,7 +1178,8 @@ const CSS = `
 .rrcad .tcard-head{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px 22px 14px;border-bottom:1px solid var(--bd-soft);}
 .rrcad .tcard-head h2{font-size:14.5px;font-weight:600;margin:0;color:var(--ink);}
 .rrcad .tcard-head .csub{font-size:11.5px;color:var(--ink-3);margin-top:2px;}
-/* Tabelas migradas para o kit (<Table scrollable minWidth={600}>): scroll horizontal,
+/* Tabelas migradas para o kit (<Table scrollable minWidth={600} cards>): scroll horizontal
+   no desktop, cartao empilhado no telefone (<=560px, via data-l em cada td),
    min-width, thead sticky, padding, zebra, hover e coluna fixa vêm do kit
    (.rr-table-wrap / .rrui-table / .rr-sticky-col). Mantidos só ajustes da tela:
    alinhamento .c/.r dos cabeçalhos e células e células em linha única. */
@@ -1329,4 +1330,20 @@ const CSS = `
   .rrcad .search{max-width:100%;}
   .rrcad .newbtn{margin-left:0;}
 }
+
+/* TELEFONE — solta o texto das celulas para o modo cartao poder quebrar linha.
+   NAO e redundante com o kit:
+
+     kit    .rr-table-cards .rrui-table tbody td   -> 2 classes + 2 elementos
+     aqui   .rrcad .rrui-table tbody td            -> 2 classes + 2 elementos
+
+   Empatam, e esta folha e injetada DEPOIS do <UiStyles/>, entao o nowrap da
+   linha 1190 venceria o white-space:normal do cartao e as celulas nao
+   quebrariam. Anular aqui, mais abaixo no mesmo arquivo, e o unico jeito sem
+   !important. */
+@media (max-width:560px){
+  .rrcad .rrui-table tbody td{white-space:normal;}
+}
+
+@media (max-width:430px){ .rrcad .wrap{padding:16px 12px 36px;} }
 `;

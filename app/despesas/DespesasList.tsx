@@ -502,7 +502,7 @@ export default function DespesasList({
           </div>
 
           {!noneAtAll && !emptyFiltered ? (
-            <Table scrollable minWidth={920}>
+            <Table scrollable minWidth={920} cards>
                 <thead>
                   <tr>
                     <th className="rr-sticky-col">Descrição</th>
@@ -527,11 +527,11 @@ export default function DespesasList({
                     const rowBusy = busyId === e.id;
                     return (
                       <tr key={e.id}>
-                        <td className="rr-sticky-col desc-cell">
+                        <td className="rr-sticky-col desc-cell" data-l="Descrição">
                           {e.description}
                           {e.notes ? <span className="obs">{e.notes}</span> : null}
                         </td>
-                        <td>
+                        <td data-l="Empresa / Escopo">
                           {group ? (
                             <span className="scope">
                               <span className="badge grupo">Grupo</span>Rateado
@@ -540,17 +540,17 @@ export default function DespesasList({
                             <span className="scope">{companyName}</span>
                           )}
                         </td>
-                        <td className="cat-cell">
+                        <td className="cat-cell" data-l="Categoria">
                           <span className="cat-tag">{categoryName}</span>
                         </td>
-                        <td className="comp-cell">
+                        <td className="comp-cell" data-l="Competência">
                           {String(e.month).padStart(2, "0")}/{e.year}
                         </td>
-                        <td className={`venc-cell${over ? " over" : ""}`}>
+                        <td className={`venc-cell${over ? " over" : ""}`} data-l="Vencimento">
                           {formatDateBR(e.due_date)}
                         </td>
-                        <td className="amt">{formatBRL(e.amount)}</td>
-                        <td style={{ textAlign: "center" }}>
+                        <td className="amt" data-l="Valor">{formatBRL(e.amount)}</td>
+                        <td data-l="Status" style={{ textAlign: "center" }}>
                           {paid ? (
                             <span className="chip paga">
                               <span className="d" />
@@ -563,7 +563,7 @@ export default function DespesasList({
                             </span>
                           )}
                         </td>
-                        <td>
+                        <td data-l="Ações">
                           <div className="acts">
                             <button
                               className="iconbtn edit"

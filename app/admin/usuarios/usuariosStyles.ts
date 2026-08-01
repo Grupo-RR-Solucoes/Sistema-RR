@@ -193,6 +193,23 @@ export const RRADMIN_CSS = `
 .rradmin .toast .ck-i{color:var(--yellow);}
 
 @media (max-width:640px){ .rradmin .search{max-width:100%;} .rradmin .newbtn{margin-left:0;} }
+
+/* TELEFONE — solta o texto das celulas para o modo cartao poder quebrar linha.
+   NAO e redundante com o kit:
+
+     kit    .rr-table-cards .rrui-table tbody td   -> 2 classes + 2 elementos
+     aqui   .rradmin .rrui-table tbody td          -> 2 classes + 2 elementos
+
+   Empatam, e esta folha e injetada DEPOIS do <UiStyles/>, entao o nowrap da
+   linha 78 venceria o white-space:normal do cartao.
+
+   Vale para DUAS telas: /admin/usuarios e /admin/equipes, que importa este
+   mesmo RRADMIN_CSS e tambem usa className="rradmin". */
+@media (max-width:560px){
+  .rradmin .rrui-table tbody td{white-space:normal;}
+}
+
+@media (max-width:430px){ .rradmin .wrap{padding:16px 12px 36px;} }
 `;
 
 export function initials(name?: string | null, email?: string): string {

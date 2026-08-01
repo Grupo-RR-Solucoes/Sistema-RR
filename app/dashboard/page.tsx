@@ -463,7 +463,7 @@ function CnpjCard({ rows }: { rows: CnpjRow[] }) {
         <div><h2>Simples por CNPJ</h2></div>
         <Link className="card-link" href="/receitas">Receita / RBT12 <span className="arr">→</span></Link>
       </div>
-      <Table className="cnpj-table">
+      <Table className="cnpj-table" cards>
         <thead>
           <tr>
             <th>Status</th>
@@ -475,10 +475,10 @@ function CnpjCard({ rows }: { rows: CnpjRow[] }) {
         <tbody>
           {rows.map((r) => (
             <tr key={r.nome}>
-              <td><Chip variant={chipFor(r.sinal)}>{chipLabel(r.sinal)}</Chip></td>
-              <td>{r.nome}</td>
-              <td><Chip variant="neutral" dot={false}>{r.faixa}</Chip></td>
-              <Num>{brl0(r.rbt12)}</Num>
+              <td data-l="Status"><Chip variant={chipFor(r.sinal)}>{chipLabel(r.sinal)}</Chip></td>
+              <td data-l="Empresa">{r.nome}</td>
+              <td data-l="Faixa"><Chip variant="neutral" dot={false}>{r.faixa}</Chip></td>
+              <Num data-l="RBT12">{brl0(r.rbt12)}</Num>
             </tr>
           ))}
           {rows.length === 0 ? (
