@@ -52,8 +52,9 @@
 --                                          fechamento PE (desvio 0,0018 p.p.)
 --
 -- Isso importa PARA O PISO: o piso de 0,07% so deve disparar com TRP abaixo de
--- 0,0007/0,025 = 2,80%. Com o liquido inflado o gatilho ia para 3,355%, e
--- maio/2026 fechou em 3,16% — o piso dispararia indevidamente.
+-- 0,0007/0,025 = 2,80%. Com o liquido inflado o gatilho subiria de 2,80% para
+-- 3,355%, reduzindo a folga contra a TRP efetiva de 3,5956% para 0,24 p.p. — o
+-- que faria o piso disparar em qualquer competencia de mix mais fraco.
 --
 -- PRT, CONSORCIO, CREDIT (bonus), DEBIT, BBCAP e CONTA_CORRENTE ficam FORA dos
 -- dois recortes.
@@ -69,8 +70,13 @@
 -- sem chave J nao ha promotor, logo nao ha supervisor. Ratear seria distribuir
 -- a rede um valor que nao e dela. Decisao Diego (01/08/2026): nao descontar no
 -- nivel de rede; o desconto continua so no consolidado do grupo, onde ja e
--- aplicado. A coluna desconta_cancelamento_seguro registra a INTENCAO da regua
--- para quando a atribuicao existir.
+-- aplicado.
+--
+-- POR ISSO desconta_cancelamento_seguro NASCE FALSE NAS QUATRO LINHAS. Flag que
+-- diz TRUE e nao e honrada pelo calculo vira bug no dia em que alguem ler a
+-- coluna sem ler este cabecalho. A intencao da regua fica em notes, que e texto
+-- e ninguem confunde com regra executavel. Ligar o flag so quando o calculo
+-- souber honra-lo.
 --
 -- SRCC: monthly_closing_entries NAO tem is_srcc_restricted (ver o create table
 -- em 20260420_000001_rr_foundation.sql:339-361). A coluna vive em
@@ -98,7 +104,8 @@ create table if not exists leadership_rule_versions (
   -- vale para a competencia inteira. fim NULO = vigente ate segunda ordem.
   competencia_inicio            date not null,
   competencia_fim               date,
-  -- Registra a intencao da regua mesmo onde o dado ainda nao permite aplicar.
+  -- Se TRUE, a base desta vigencia desconta o cancelamento de seguro. Nasce
+  -- FALSE em todas as linhas: nenhum calculo honra o flag hoje.
   desconta_cancelamento_seguro  boolean not null default false,
   notes                         text,
   created_at                    timestamptz not null default now(),
@@ -132,9 +139,9 @@ comment on column leadership_rule_versions.base_calculo is
   'AVISTA_CREDITO_PF (regua de 2026-08 em diante). O PISO multiplica sempre a '
   'producao liquida da base.';
 comment on column leadership_rule_versions.desconta_cancelamento_seguro is
-  'Intencao da regua. Em 2026-08 nasce TRUE mas NAO e aplicado no nivel de rede: '
-  'as linhas de cancelamento (INSURANCE|Seguro) tem j_key nulo e nao sao '
-  'atribuiveis a promotor. Ver o cabecalho desta migration.';
+  'Se TRUE, a base desta vigencia desconta o cancelamento de seguro da '
+  'competencia. Ligar SOMENTE quando o calculo souber honrar o flag — hoje '
+  'nenhuma vigencia o usa. O motivo de cada linha esta em notes.';
 
 -- ============================================================
 -- 2) Seed das duas reguas
@@ -158,14 +165,17 @@ values
    'producao remunera o supervisor e o gerente acima dele.'),
 
   ('supervisor',       0.025000, 0.000700, 'AVISTA_CREDITO_PF',
-   date '2026-08-01', null, true,
+   date '2026-08-01', null, false,
    'Regua nova. Maior entre 2,5% da comissao a vista da base e 0,07% da '
-   'producao liquida da base.'),
+   'producao liquida da base. A regua PREVE descontar cancelamento de seguro, '
+   'mas o flag fica FALSE: as linhas de cancelamento tem j_key nulo e nao sao '
+   'atribuiveis a rede. Ligar so quando a atribuicao existir E o calculo honrar.'),
 
   ('gerente_regional', 0.035000, 0.001000, 'AVISTA_CREDITO_PF',
-   date '2026-08-01', null, true,
+   date '2026-08-01', null, false,
    'Regua nova. Maior entre 3,5% da comissao a vista da base e 0,10% da '
-   'producao liquida da base.')
+   'producao liquida da base. Mesma ressalva do supervisor sobre o desconto de '
+   'cancelamento de seguro: previsto na regua, flag FALSE ate ser honrado.')
 on conflict (cargo, competencia_inicio) do nothing;
 
 commit;
