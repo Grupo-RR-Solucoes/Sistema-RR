@@ -59,10 +59,22 @@ export async function GET(req: Request) {
       // A ARVORE, e NAO team.rows. O WHERE da vw_team_production expoe registro
       // por `assigned_promoter_id OR promoter_id` na arvore; o buildTeamProduction
       // agrupa por assigned_promoter_id. Um contrato REATRIBUIDO de uma rede para
-      // outra faz o promotor de FORA aparecer em team.rows — e usar isso como
-      // escopo somaria a producao INTEIRA dele. Medido em 01/08/2026: na rede da
-      // Carla (10 promotores) entrava 1 promotora da rede da Izabela por 1
-      // registro-ponte, inflando a base em R$ 63.623,63 em jul/2026.
+      // outra faz o promotor de FORA aparecer em team.rows — e como esta base
+      // consulta o diario por `.in(assigned_promoter_id, ids)` com service_role,
+      // SEM passar pela view, usar team.rows como escopo somava a producao
+      // INTEIRA dele.
+      //
+      // Medido em 01/08/2026: na rede da Carla (10 promotores) entrava 1
+      // promotora da rede da Izabela por 1 registro-ponte (proposta 221184463,
+      // R$ 460,00), e isso arrastava R$ 63.622,69 de producao dela em jul/2026 e
+      // R$ 2.491,81 em jun/2026. O numero anterior neste comentario, R$
+      // 63.623,63, estava errado em R$ 0,94 — o medido e R$ 63.622,69.
+      //
+      // Desde 01/08/2026 o buildTeamProduction aplica o MESMO recorte, entao
+      // team.rows tambem ja e da arvore. A chamada aqui e mantida de proposito:
+      // a base precisa da arvore INTEIRA, inclusive de quem nao produziu nem tem
+      // meta no mes — team.rows so tem quem aparece. Nao e escopo duplicado, e a
+      // mesma funcao security definer, na mesma request, com o mesmo auth.uid().
       //
       // current_user_team_promoter_ids() e security definer e resolve por
       // auth.uid(), entao vai no client ANON: e a MESMA fonte que a view usa.

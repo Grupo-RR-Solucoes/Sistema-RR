@@ -699,7 +699,10 @@ export async function buildTeamProduction(
   admin: SupabaseClient, // service_role — só p/ nomes/supervisor dos ids já autorizados
   opts: { year?: number; month?: number }
 ): Promise<TeamProductionPayload> {
-  const [viewRes, targetRes, gestorRes] = await Promise.all([
+  const [arvoreRes, viewRes, targetRes, gestorRes] = await Promise.all([
+    // A ÁRVORE CANÔNICA. security definer, resolve por auth.uid() — vai no client
+    // ANON porque é a MESMA fonte que o WHERE da view usa (20260701_000003:68-95).
+    db.rpc("current_user_team_promoter_ids"),
     db
       .from("vw_team_production")
       .select(
@@ -716,16 +719,61 @@ export async function buildTeamProduction(
 
   if (viewRes.error) throw viewRes.error;
   if (targetRes.error) throw targetRes.error;
+  // FALHA FECHADA, nunca tolerante: sem árvore não há escopo, e cair para "sem
+  // filtro" reabriria exatamente o vazamento que este bloco fecha.
+  if (arvoreRes.error) {
+    throw new Error(`current_user_team_promoter_ids: ${arvoreRes.error.message}`);
+  }
 
-  const rows = (viewRes.data ?? []) as ViewRow[];
-  const targets = (targetRes.data ?? []) as TargetRow[];
+  // ESCOPO DE EXIBIÇÃO = A ÁRVORE, não o que a view devolveu.
+  //
+  // O WHERE da view é um OR: `assigned_promoter_id IN arvore OR promoter_id IN
+  // arvore` (20260701_000003:144-145). Um contrato REATRIBUÍDO de uma rede para
+  // outra continua com o promoter_id de origem, então a view o devolve ao gestor
+  // de origem — e o agrupamento por assigned_promoter_id logo abaixo criava uma
+  // LINHA para um promotor que não é do time dele.
+  //
+  // Medido em 01/08/2026, rede da Carla (10 promotores): 1 registro-ponte
+  // (proposta 221184463, R$ 460,00, 29/07) de JÉSSICA, que é da rede da Izabela.
+  // O dano tem DUAS magnitudes, porque as linhas do período têm duas origens:
+  //   - mês ABERTO (linhas vêm do diário, via view): entra só o registro-ponte
+  //     — R$ 460,00 em jul/2026. A view limita o estrago.
+  //   - mês FECHADO (linhas vêm do PMR, buscado por service_role sobre allIds):
+  //     entra a produção INTEIRA do forasteiro, porque essa busca não passa pela
+  //     view — R$ 2.491,81 em jun/2026. É o caso GRAVE, e é o que faz o filtro
+  //     precisar valer também para `allIds` e não só para `rows`.
+  // Efeito colateral que some junto: a Izabela aparecia como GESTORA na tela da
+  // Carla, porque o supervisor_id vinha na linha da Jéssica.
+  //
+  // Este é o MESMO recorte que app/api/projecao/route.ts:69-73 já aplica ao
+  // caminho de PAGAMENTO desde 93c837e. Fazê-lo aqui, na fonte, é o que impede
+  // pagamento e exibição de divergirem de novo — os dois consumidores de
+  // `rows` (lib/projecao/gestorAdapter.ts:173 e :192) passam a herdar o recorte
+  // sem precisar repeti-lo.
+  const arvore = new Set(
+    ((arvoreRes.data ?? []) as unknown[]).map((x) =>
+      typeof x === "string"
+        ? x
+        : String((x as { current_user_team_promoter_ids?: string })?.current_user_team_promoter_ids ?? x)
+    )
+  );
+
+  const rows = ((viewRes.data ?? []) as ViewRow[]).filter(
+    (r) => r.assigned_promoter_id != null && arvore.has(r.assigned_promoter_id)
+  );
+  // As metas já vêm restritas à árvore pela policy monthly_targets_gestor_select
+  // (20260701_000003:161-167). O filtro aqui é redundante DE PROPÓSITO: mantém a
+  // invariante "nada fora da árvore atravessa esta função" verdadeira sem
+  // depender de uma policy que vive noutro arquivo.
+  const targets = ((targetRes.data ?? []) as TargetRow[]).filter((t) => arvore.has(t.promoter_id));
   const gestorOverrides = gestorRes.error
     ? []
     : ((gestorRes.data ?? []) as Array<{ year: number; month: number; meta: number }>);
 
   // ids de TODOS os promotores que aparecem (produção em qualquer mês OU meta) —
-  // para resolver nome + supervisor via service_role. O escopo continua limitado
-  // ao que a view/metas já autorizaram (mesmo padrão da resolução de nomes).
+  // para resolver nome + supervisor via service_role. Como `rows` e `targets` já
+  // estão recortados pela árvore, allIds ⊆ árvore por construção: é ele que
+  // escopa a busca do PMR, que é service_role e NÃO passa pela view.
   const allIds = new Set<string>();
   for (const r of rows) if (r.assigned_promoter_id) allIds.add(r.assigned_promoter_id);
   for (const t of targets) allIds.add(t.promoter_id);

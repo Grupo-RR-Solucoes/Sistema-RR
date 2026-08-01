@@ -170,6 +170,18 @@ export function projecaoResultadoDoGestor(
   // Série por promotor indexada ANTES do map: a média dos 3 meses sai dela.
   const mesesById = new Map(team.perPromoterMonthly.map((pm) => [pm.promoter_id, pm.months]));
 
+  // ESCOPO: `team.rows` JÁ vem recortado pela árvore canônica — o filtro por
+  // current_user_team_promoter_ids vive em buildTeamProduction, na fonte, e não
+  // aqui. Até 01/08/2026 não vinha: a view devolve `assigned IN arvore OR
+  // promoter IN arvore`, e o promotor de FORA reatribuído virava linha. O efeito
+  // nesta tela era duplo — a Jéssica (rede da Izabela) aparecia no rank da Carla,
+  // e a IZABELA aparecia como GESTORA na tela da Carla, porque o bloco de
+  // gestores logo abaixo lê `r.supervisor_id` das linhas.
+  //
+  // A /projecao ficou incoerente CONSIGO MESMA nesse intervalo: o caminho de
+  // PAGAMENTO já lia a árvore (route.ts:69-73, desde 93c837e) enquanto a
+  // EXIBIÇÃO ainda lia team.rows. Não repetir o filtro aqui é deliberado —
+  // recorte em dois lugares é como as duas metades divergiram.
   const promotores = team.rows.map((r) =>
     promotorDoGestor(
       r,
