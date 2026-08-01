@@ -1,6 +1,13 @@
 import { calcularComissaoGestao } from "@/lib/comissaoGestao";
 import type { TeamProductionPayload, TeamPromoterRow } from "@/lib/equipe/teamProduction";
 import { agregarSerieGrupo, type SerieMesPonto } from "@/lib/historicoMensal";
+// Media dos 3 meses + tendencia: MESMO helper que lib/projecaoMetas usa. Havia
+// duas implementacoes; agora ha uma.
+import {
+  mediaTresMeses,
+  tendenciaDe,
+  type EntradaMensal,
+} from "@/lib/projecao/mediaTresMeses";
 import {
   agruparPorEstado,
   agruparPorSupervisor,
@@ -53,61 +60,17 @@ const NAO_ATRIBUIDO_VAZIO = {
 };
 
 /**
- * MÉDIA DOS 3 MESES ANTERIORES — regra canônica (decisão Diego, 31/07).
+ * Série do promotor -> EntradaMensal[], para o helper canônico de média.
  *
- * SOMA POR COMPETÊNCIA e só então tira a média dos meses. NUNCA média por linha
- * do PMR: a chave de promoter_monthly_results tem 4 campos e inclui company_id,
- * então um promotor que produziu em RR e em ADS na MESMA competência tem DUAS
- * linhas — dividir pelo número de linhas corta a produção dele pela metade.
- *
- * Aqui a soma por competência já vem pronta: perPromoterMonthly nasce da série
- * híbrida, e o mapa que a alimenta soma por (promotor, competência) em vez de
- * sobrescrever (lib/equipe/teamProduction.ts, montagem de pmrByPromoterYm).
- *
- * DENOMINADOR = os meses do intervalo que EXISTEM na série. A série começa em
- * jan/2026 (SERIE_INICIO), então para competências de abr/2026 em diante os 3
- * anteriores existem sempre e o divisor é 3. Antes disso divide pelos que houver;
- * nenhum => 0 => "sem_historico".
+ * A conversão é só de nome de campo: a série do /equipe já vem somada por
+ * competência (uma entrada por mês), então o agrupamento que mediaTresMeses faz
+ * é no-op aqui. É de propósito que o helper aceita as duas formas — o caminho do
+ * sócio entrega linhas cruas do PMR, várias por competência.
  */
-function mediaTresMesesAnteriores(
+function entradasDaSerie(
   meses: TeamProductionPayload["perPromoterMonthly"][number]["months"],
-  year: number,
-  month: number,
-): number {
-  const alvo = new Set(
-    [1, 2, 3].map((k) => {
-      const dt = new Date(Date.UTC(year, month - 1 - k, 1));
-      return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
-    }),
-  );
-  let soma = 0;
-  let n = 0;
-  for (const m of meses) {
-    const key = `${m.year}-${String(m.month).padStart(2, "0")}`;
-    if (!alvo.has(key)) continue;
-    soma += m.production_value;
-    n += 1;
-  }
-  return n > 0 ? soma / n : 0;
-}
-
-/**
- * Tendência — MESMA fórmula do motor do sócio (lib/projecaoMetas.ts:379-385),
- * incluindo o limiar de ±0,001 que separa "estável" de variação real. O que
- * diverge lá é só o INSUMO (média por linha); a fórmula é idêntica e está
- * reproduzida aqui até o caminho do sócio ser corrigido — quando for, isto vira
- * helper compartilhado.
- */
-function tendenciaDe(
-  projecao: number,
-  media3m: number,
-): { tendencia: ProjecaoPromotor["tendencia"]; tendencia_percent: number | null } {
-  if (media3m <= 0) return { tendencia: "sem_historico", tendencia_percent: null };
-  const vari = (projecao - media3m) / media3m;
-  return {
-    tendencia: vari > 0.001 ? "crescimento" : vari < -0.001 ? "queda" : "estavel",
-    tendencia_percent: vari,
-  };
+): EntradaMensal[] {
+  return meses.map((m) => ({ year: m.year, month: m.month, valor: m.production_value }));
 }
 
 /**
@@ -210,8 +173,8 @@ export function projecaoResultadoDoGestor(
     promotorDoGestor(
       r,
       janela,
-      mediaTresMesesAnteriores(
-        mesesById.get(r.promoter_id) ?? [],
+      mediaTresMeses(
+        entradasDaSerie(mesesById.get(r.promoter_id) ?? []),
         team.period.year,
         team.period.month,
       ),
