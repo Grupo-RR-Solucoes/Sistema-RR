@@ -1495,4 +1495,10 @@ const CSS = `
   .rrimp .tabbar{width:100%;justify-content:space-between;}
   .rrimp .tab{padding:9px 12px;}
 }
+
+/* TELEFONE — o painel de estatisticas do import sai de 2 colunas para 1. Sao
+   5 numeros; ja colapsou 5->3->2 acima, aqui fecha em 1. */
+@media (max-width:560px){
+  .rrimp .rstats{grid-template-columns:1fr;}
+}
 `;

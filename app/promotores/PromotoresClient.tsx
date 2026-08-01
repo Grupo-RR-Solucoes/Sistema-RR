@@ -2736,4 +2736,10 @@ const CSS = `
   .rrprom tfoot td{display:flex;justify-content:space-between;background:none;border:none;border-top:1px solid var(--bd-soft);}
   .rrprom tfoot td::before{content:attr(data-l);font-weight:600;color:var(--ink-2);}
 }
+
+/* TELEFONE — o painel .dk parava em 2 colunas la no breakpoint de 980px e
+   nunca mais colapsava. */
+@media (max-width:560px){
+  .rrprom .dk{grid-template-columns:1fr;}
+}
 `;

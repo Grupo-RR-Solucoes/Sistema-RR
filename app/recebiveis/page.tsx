@@ -287,7 +287,7 @@ export default function RecebiveisPage() {
                 <EmptyState title="Nenhuma competência fechada no período." />
               ) : (
                 <>
-                  <Table className="fc-tbl">
+                  <Table className="fc-tbl" cards>
                     <thead>
                       <tr>
                         <th>Competência</th>
@@ -310,19 +310,19 @@ export default function RecebiveisPage() {
                         const recebidoTotal = (m.recebidoPrt ?? 0) + (m.recebidoAvista ?? 0);
                         return (
                           <tr key={m.competencia}>
-                            <td>
+                            <td data-l="Competência">
                               <span className="comp">{fmtComp(m.competencia)}</span>{" "}
                               <Chip variant="ok">fechado</Chip>
                             </td>
-                            <Num title={congeladoTitle}>
+                            <Num data-l="Previu então (PRT)" title={congeladoTitle}>
                               {m.previstoPrtCongelado == null ? "—" : brl(m.previstoPrtCongelado)}
                             </Num>
-                            <Num>{brl(m.recebidoPrt)}</Num>
-                            <Num className={`gap ${erroTone}`} title={congeladoTitle}>
+                            <Num data-l="Recebido PRT">{brl(m.recebidoPrt)}</Num>
+                            <Num data-l="Erro da previsão" className={`gap ${erroTone}`} title={congeladoTitle}>
                               {m.gapPrtCongelado == null ? "—" : brl2(m.gapPrtCongelado)}
                             </Num>
-                            <Num>{brl(recebidoTotal)}</Num>
-                            <td className="cob" title={m.cobertura.nota}>
+                            <Num data-l="Recebido total">{brl(recebidoTotal)}</Num>
+                            <td className="cob" data-l="Cobertura" title={m.cobertura.nota}>
                               {m.cobertura.incluido.length > 0
                                 ? m.cobertura.incluido.map((x) => x.split(" (")[0]).join(" + ")
                                 : "—"}
@@ -360,7 +360,7 @@ export default function RecebiveisPage() {
               {mesesProjecao.length === 0 ? (
                 <EmptyState title="Sem competências futuras no horizonte." />
               ) : (
-                <Table className="fc-tbl">
+                <Table className="fc-tbl" cards>
                   <thead>
                     <tr>
                       <th>Competência</th>
@@ -383,20 +383,22 @@ export default function RecebiveisPage() {
                         : "Sem snapshot congelado anterior a esta competência";
                       return (
                         <tr key={m.competencia}>
-                          <td>
+                          <td data-l="Competência">
                             <span className="comp">{fmtComp(m.competencia)}</span>{" "}
                             <Chip variant="neutral">futuro</Chip>
                           </td>
-                          <Num>{brl(m.previstoPrt)}</Num>
-                          <Num>{brl(m.previstoAvista)}</Num>
-                          <Num>{brl(m.previstoDiferido)}</Num>
-                          <Num>{brl(total)}</Num>
+                          <Num data-l="Prev. PRT">{brl(m.previstoPrt)}</Num>
+                          <Num data-l="Prev. à vista">{brl(m.previstoAvista)}</Num>
+                          <Num data-l="Prev. diferido">{brl(m.previstoDiferido)}</Num>
+                          <Num data-l="Previsto total">{brl(total)}</Num>
+                          {/* Coluna CONDICIONAL: o data-l acompanha o mesmo ternario do
+                              thead, senao o cartao rotularia errado quando ela existe. */}
                           {temCongeladoNaProjecao ? (
-                            <Num title={congeladoTitle}>
+                            <Num data-l="Previu então (PRT)" title={congeladoTitle}>
                               {m.previstoPrtCongelado == null ? "—" : brl(m.previstoPrtCongelado)}
                             </Num>
                           ) : null}
-                          <td className="cob" title={m.cobertura.nota}>
+                          <td className="cob" data-l="Cobertura" title={m.cobertura.nota}>
                             {m.cobertura.incluido.length > 0
                               ? m.cobertura.incluido.map((x) => x.split(" (")[0]).join(" + ")
                               : "—"}
@@ -451,7 +453,7 @@ export default function RecebiveisPage() {
                       <span className="kv num">{inad.parcelasFuturasPerdidas}</span>
                     </div>
                   </div>
-                  <Table className="fc-tbl">
+                  <Table className="fc-tbl" cards>
                     <thead>
                       <tr>
                         <th>Nº Operação</th>
@@ -463,10 +465,10 @@ export default function RecebiveisPage() {
                     <tbody>
                       {inad.itens.slice(0, 10).map((it) => (
                         <tr key={it.operacao}>
-                          <td className="comp">{it.operacao}</td>
-                          <Num>{brl2(it.comissaoMensal)}</Num>
-                          <Num>{it.parcelasRestantes}</Num>
-                          <Num>{it.parcelasPagas} / {it.parcelasTotal}</Num>
+                          <td className="comp" data-l="Nº Operação">{it.operacao}</td>
+                          <Num data-l="Comissão/mês">{brl2(it.comissaoMensal)}</Num>
+                          <Num data-l="Restantes">{it.parcelasRestantes}</Num>
+                          <Num data-l="Pgs / Total">{it.parcelasPagas} / {it.parcelasTotal}</Num>
                         </tr>
                       ))}
                     </tbody>

@@ -281,7 +281,7 @@ export default function UsuariosList({
               <span className="lg"><span className="sw" style={{ background: "var(--green)" }} />Promotor</span>
             </div>
           </div>
-          <Table scrollable minWidth={780}>
+          <Table scrollable minWidth={780} cards>
               <thead>
                 <tr>
                   <th className="rr-sticky-col">Nome</th>
@@ -308,22 +308,22 @@ export default function UsuariosList({
                     const showActions = canManage && !isSelf;
                     return (
                       <tr key={u.id} className={u.active ? undefined : "inactive"}>
-                        <td className="rr-sticky-col">
+                        <td className="rr-sticky-col" data-l="Nome">
                           <div className="nm">
                             <span className="av">{initials(u.full_name, u.email)}</span>
                             {u.full_name ?? "—"}
                             {isSelf ? <span className="self">Você</span> : null}
                           </div>
                         </td>
-                        <td><span className="em">{u.email}</span></td>
-                        <td><span className={`rolechip ${roleClass(u.role)}`}><span className="d" />{roleLabel(u.role).toUpperCase()}</span></td>
-                        <td>
+                        <td data-l="E-mail"><span className="em">{u.email}</span></td>
+                        <td data-l="Perfil"><span className={`rolechip ${roleClass(u.role)}`}><span className="d" />{roleLabel(u.role).toUpperCase()}</span></td>
+                        <td data-l="Status">
                           <span className={`chip ${u.active ? "on" : "off"}`}>
                             <span className="d" />{u.active ? "Ativo" : "Inativo"}
                           </span>
                         </td>
-                        <td className="num">{formatDate(u.created_at)}</td>
-                        <td className="actcell">
+                        <td className="num" data-l="Criado em">{formatDate(u.created_at)}</td>
+                        <td className="actcell" data-l="Ações">
                           {showActions ? (
                             <div className="acts">
                               <button className="iconact" title="Editar nome e papel" disabled={busyId === u.id} onClick={() => setEditTarget(u)}><IcoPencil /></button>

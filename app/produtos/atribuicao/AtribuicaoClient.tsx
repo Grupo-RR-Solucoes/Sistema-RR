@@ -57,6 +57,10 @@ const CSS = `
 .rratr .rowsel:disabled{background:var(--neu);color:var(--ink-3)}
 .rratr tr.gestaorow td{background:rgba(198,157,74,.10)}
 .rratr .hintline{font-size:12.5px;color:var(--ink-3);margin:2px 0 12px}
+
+/* TELEFONE ESTREITO — o .wrap nao tinha media query nenhuma e ficava com 20px
+   de cada lado a 384px. */
+@media (max-width:430px){ .rratr .wrap{padding:16px 12px 36px;gap:16px} }
 `;
 
 function brl0(v: number) {
@@ -169,7 +173,7 @@ export default function AtribuicaoClient() {
       {itens.length === 0 ? (
         <EmptyState title={`Nenhuma linha de ${titulo.toLowerCase()} na fila.`} description="Se acabou de importar, use “Sincronizar fila”." />
       ) : (
-        <Table scrollable minWidth={640}>
+        <Table scrollable minWidth={640} cards>
           <thead>
             <tr>
               <th className="rr-sticky-col">{idLabel}</th>
@@ -180,7 +184,9 @@ export default function AtribuicaoClient() {
           <tbody>
             {itens.map((it) => (
               <tr key={it.id} className={it.beneficiario_kind === "gestao" ? "gestaorow" : undefined}>
-                <td className="rr-sticky-col idn">
+                {/* idLabel e VARIAVEL (muda por escopo), entao o data-l e a
+                    MESMA expressao do th — nao um literal que sairia do ar. */}
+                <td className="rr-sticky-col idn" data-l={idLabel}>
                   {it.operation_number}
                   {it.balde ? (
                     <>
@@ -189,7 +195,7 @@ export default function AtribuicaoClient() {
                     </>
                   ) : null}
                 </td>
-                <td>
+                <td data-l="Status">
                   {it.status === "ASSIGNED" ? (
                     <Chip variant="ok">atribuído</Chip>
                   ) : (
@@ -202,7 +208,7 @@ export default function AtribuicaoClient() {
                     </>
                   ) : null}
                 </td>
-                <td>
+                <td data-l="Quem vendeu">
                   <select
                     className="rowsel"
                     value={it.beneficiario_value}

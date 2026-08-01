@@ -828,6 +828,13 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
             width: 100%;
           }
         }
+        /* TELEFONE — os stats param de dividir a linha. Ja colapsaram
+           4 -> 3 -> 2 acima; aqui fecham em 1. */
+        @media (max-width: 560px) {
+          .pmrrec__stats {
+            grid-template-columns: 1fr;
+          }
+        }
       `}</style>
     </section>
   );

@@ -152,7 +152,7 @@ export default function EquipesView({
               <p className="csub">Escolha o supervisor responsável por cada promotor.</p>
             </div>
           </div>
-          <Table scrollable minWidth={620}>
+          <Table scrollable minWidth={620} cards>
             <thead>
               <tr>
                 <th className="rr-sticky-col">Promotor</th>
@@ -167,13 +167,13 @@ export default function EquipesView({
                   const key = `promoter:${p.id}`;
                   return (
                     <tr key={p.id}>
-                      <td className="rr-sticky-col">
+                      <td className="rr-sticky-col" data-l="Promotor">
                         <div className="nm">
                           <span className="av">{initials(p.name)}</span>
                           {p.name}
                         </div>
                       </td>
-                      <td>
+                      <td data-l="Supervisor responsável">
                         <select
                           className={`linksel${p.supervisor_user_id ? "" : " unset"}`}
                           value={p.supervisor_user_id ?? ""}
@@ -203,7 +203,7 @@ export default function EquipesView({
               <p className="csub">Escolha o gerente regional de cada supervisor.</p>
             </div>
           </div>
-          <Table scrollable minWidth={620}>
+          <Table scrollable minWidth={620} cards>
             <thead>
               <tr>
                 <th className="rr-sticky-col">Supervisor</th>
@@ -218,13 +218,13 @@ export default function EquipesView({
                   const key = `supervisor:${s.id}`;
                   return (
                     <tr key={s.id}>
-                      <td className="rr-sticky-col">
+                      <td className="rr-sticky-col" data-l="Supervisor">
                         <div className="nm">
                           <span className="av">{initials(s.full_name, s.email)}</span>
                           {gestorName(s.full_name, s.email)}
                         </div>
                       </td>
-                      <td>
+                      <td data-l="Gerente regional">
                         <select
                           className={`linksel${s.manager_user_id ? "" : " unset"}`}
                           value={s.manager_user_id ?? ""}
@@ -459,7 +459,7 @@ function GestorMetaEditor() {
         </div>
       ) : null}
 
-      <Table scrollable minWidth={720}>
+      <Table scrollable minWidth={720} cards>
         <thead>
           <tr>
             <th className="rr-sticky-col">Gestor</th>
@@ -481,14 +481,14 @@ function GestorMetaEditor() {
               const draft = drafts[g.user_id] ?? (g.meta_override != null ? String(g.meta_override) : "");
               return (
                 <tr key={g.user_id}>
-                  <td className="rr-sticky-col"><div className="nm"><span className="av">{initials(g.name)}</span>{g.name}</div></td>
-                  <td>{ROLE_PT(g.role)}</td>
-                  <td className="r">{brlMeta(g.meta_derivada)}</td>
-                  <td className="r">
+                  <td className="rr-sticky-col" data-l="Gestor"><div className="nm"><span className="av">{initials(g.name)}</span>{g.name}</div></td>
+                  <td data-l="Papel">{ROLE_PT(g.role)}</td>
+                  <td className="r" data-l="Meta derivada">{brlMeta(g.meta_derivada)}</td>
+                  <td className="r" data-l="Meta efetiva">
                     {brlMeta(efetiva)}
                     {g.meta_override != null ? <span className="metatag">ajustada</span> : null}
                   </td>
-                  <td>
+                  <td data-l="Override (R$)">
                     <input
                       className="metainput"
                       inputMode="numeric"
@@ -498,7 +498,10 @@ function GestorMetaEditor() {
                       onChange={(e) => setDrafts((d) => ({ ...d, [g.user_id]: e.target.value.replace(/[^\d]/g, "") }))}
                     />
                   </td>
-                  <td>
+                  {/* O cabecalho desta coluna e <th /> — vazio de proposito. O
+                      data-l acompanha: rotulo exato do thead, e o thead nao tem
+                      texto. Os botoes "Salvar"/"Limpar" ja se explicam. */}
+                  <td data-l="">
                     <div className="metaacts">
                       <button
                         className="mbtn save"

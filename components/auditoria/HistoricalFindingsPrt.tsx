@@ -3,6 +3,7 @@
 import type { CSSProperties } from "react";
 import { useMemo, useState } from "react";
 import EmptyStatePanel from "../EmptyStatePanel";
+import { HISTORICAL_FINDINGS_CSS } from "./historicalFindingsCss";
 import {
   type PrtResult,
   type PrtStatus,
@@ -70,6 +71,7 @@ export default function HistoricalFindingsPrt({ results }: { results: PrtResult[
 
   return (
     <div style={styles.container}>
+      <style dangerouslySetInnerHTML={{ __html: HISTORICAL_FINDINGS_CSS }} />
       <div style={styles.pillRow}>
         {FILTER_OPTIONS.map((opt) => (
           <button
@@ -96,8 +98,8 @@ export default function HistoricalFindingsPrt({ results }: { results: PrtResult[
         />
       ) : (
         <>
-          <div style={styles.tableWrap}>
-            <table style={styles.table}>
+          <div className="hf-wrap" style={styles.tableWrap}>
+            <table className="hf-table" style={styles.table}>
               <thead>
                 <tr>
                   <th style={styles.th}>Contrato</th>
@@ -264,16 +266,19 @@ const styles: Record<string, CSSProperties> = {
     color: "var(--rr-muted)",
     fontWeight: 600,
   },
+  // overflow e maxHeight saem daqui: viraram .hf-wrap em historicalFindingsCss,
+  // para que a media query do telefone alcance a altura. Ver aquele arquivo.
   tableWrap: {
-    overflow: "auto",
-    maxHeight: "calc(100vh - var(--chrome-offset))",
     border: "1px solid var(--rr-line)",
     borderRadius: "16px",
     background: "rgba(255,255,255,0.96)",
   },
+  // minWidth vira a variavel --hf-min, lida por .hf-table em folha. Como
+  // PROPRIEDADE inline nenhuma media query a alcancava — mesmo defeito que o kit
+  // corrigiu em components/ui/Table.tsx com --tbl-min.
   table: {
     width: "100%",
-    minWidth: 900,
+    ["--hf-min" as string]: "900px",
     borderCollapse: "separate",
     borderSpacing: 0,
   },

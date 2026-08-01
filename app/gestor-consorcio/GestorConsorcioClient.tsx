@@ -53,6 +53,13 @@ function brl2(v?: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v || 0));
 }
 
+// Layout do container. Em folha, e nao em style inline, para que o telefone
+// alcance o padding lateral (ver o comentario na marcacao).
+const GESTOR_CSS = `
+.gcwrap{max-width:1000px;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:22px;}
+@media (max-width:430px){ .gcwrap{padding:16px 12px 36px;gap:16px;} }
+`;
+
 export default function GestorConsorcioClient() {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState("");
@@ -85,7 +92,11 @@ export default function GestorConsorcioClient() {
   return (
     <div>
       <UiStyles />
-      <main style={{ maxWidth: 1000, margin: "0 auto", padding: 24, display: "flex", flexDirection: "column", gap: 22 }}>
+      {/* O padding saiu do style inline para a folha abaixo: como PROPRIEDADE
+          inline nenhuma media query o alcancava, e a 384px os 24px de cada lado
+          comem 48 dos 356 uteis. Mesmo motivo do --tbl-min no kit. */}
+      <style dangerouslySetInnerHTML={{ __html: GESTOR_CSS }} />
+      <main className="gcwrap">
         <HeaderNavy
           eyebrow="GESTOR CONSÓRCIO"
           title="Consórcio — visão do gestor"
@@ -116,7 +127,7 @@ export default function GestorConsorcioClient() {
         {/* MINHA VENDA PROPRIA — so aparece quando ha venda propria atribuida a ele */}
         {vp && vp.habilitada ? (
           <Card title="Minha venda própria">
-            <Table scrollable minWidth={620}>
+            <Table scrollable minWidth={620} cards>
               <thead>
                 <tr>
                   <th>Competência</th>
@@ -129,18 +140,23 @@ export default function GestorConsorcioClient() {
               <tbody>
                 {vp.competencias.map((c) => (
                   <tr key={c.competencia}>
-                    <td>{compLabel(c.competencia)}</td>
-                    <Num>{brl2(c.bbcap)}</Num>
-                    <Num>{brl2(c.conta_corrente)}</Num>
-                    <Num>{brl2(c.consorcio)}</Num>
-                    <Num>{brl2(c.final)}</Num>
+                    <td data-l="Competência">{compLabel(c.competencia)}</td>
+                    <Num data-l="BBCAP">{brl2(c.bbcap)}</Num>
+                    <Num data-l="Conta Corrente">{brl2(c.conta_corrente)}</Num>
+                    <Num data-l="Consórcio (40%)">{brl2(c.consorcio)}</Num>
+                    <Num data-l="Total">{brl2(c.final)}</Num>
                   </tr>
                 ))}
               </tbody>
+              {/* tfoot: o td de colSpan ja diz "Total" e por isso fica sem data-l
+                  (regra: celula de colSpan nao recebe rotulo). A celula Num
+                  recebe o rotulo da COLUNA dela, senao no cartao o numero fica
+                  solto. Sem escrever a tag por extenso no comentario: o
+                  verificador de data-l varre o texto e a leria como celula. */}
               <tfoot>
                 <tr>
                   <td colSpan={4}>Total</td>
-                  <Num>{brl2(vp.total)}</Num>
+                  <Num data-l="Total">{brl2(vp.total)}</Num>
                 </tr>
               </tfoot>
             </Table>
@@ -158,7 +174,7 @@ export default function GestorConsorcioClient() {
           ) : promotores.length === 0 ? (
             <EmptyState title="Nenhuma produção de consórcio ainda." description="Assim que houver parcelas atribuídas e recebidas, elas aparecem aqui." />
           ) : (
-            <Table scrollable minWidth={640}>
+            <Table scrollable minWidth={640} cards>
               <thead>
                 <tr>
                   <th className="rr-sticky-col">Vendedor</th>
@@ -170,17 +186,17 @@ export default function GestorConsorcioClient() {
               <tbody>
                 {promotores.map((p) => (
                   <tr key={p.promoter_id ?? (p.is_gestao ? `g-${p.promoter_name}` : "__na__")}>
-                    <td className="rr-sticky-col">{p.promoter_name}</td>
-                    <Num>{p.propostas}</Num>
-                    <Num>{p.parcelas_recebidas}</Num>
-                    <Num>{brl2(p.base_recebida)}</Num>
+                    <td className="rr-sticky-col" data-l="Vendedor">{p.promoter_name}</td>
+                    <Num data-l="Propostas">{p.propostas}</Num>
+                    <Num data-l="Parcelas recebidas">{p.parcelas_recebidas}</Num>
+                    <Num data-l="Base recebida (comissão-empresa)">{brl2(p.base_recebida)}</Num>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr>
                   <td colSpan={3}>Total</td>
-                  <Num>{brl2(prod?.total_base_recebida)}</Num>
+                  <Num data-l="Base recebida (comissão-empresa)">{brl2(prod?.total_base_recebida)}</Num>
                 </tr>
               </tfoot>
             </Table>
@@ -193,7 +209,7 @@ export default function GestorConsorcioClient() {
           ) : comps.length === 0 ? (
             <EmptyState title="Nenhum repasse de consórcio encontrado." description="Seu repasse aparece após o fechamento das competências com consórcio." />
           ) : (
-            <Table scrollable>
+            <Table scrollable cards>
               <thead>
                 <tr>
                   <th>Competência</th>
@@ -205,17 +221,17 @@ export default function GestorConsorcioClient() {
               <tbody>
                 {comps.map((c) => (
                   <tr key={c.competencia}>
-                    <td>{compLabel(c.competencia)}</td>
-                    <Num>{c.empresas}</Num>
-                    <Num>{brl2(c.base)}</Num>
-                    <Num>{brl2(c.gestor_10)}</Num>
+                    <td data-l="Competência">{compLabel(c.competencia)}</td>
+                    <Num data-l="Empresas">{c.empresas}</Num>
+                    <Num data-l="Base (comissão-empresa)">{brl2(c.base)}</Num>
+                    <Num data-l="Meu repasse (10%)">{brl2(c.gestor_10)}</Num>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr>
                   <td colSpan={3}>Total</td>
-                  <Num>{brl2(data?.total)}</Num>
+                  <Num data-l="Meu repasse (10%)">{brl2(data?.total)}</Num>
                 </tr>
               </tfoot>
             </Table>
