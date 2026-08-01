@@ -196,14 +196,34 @@ function targetsDaRede(ids: readonly string[]) {
   const set = new Set(ids);
   return targetsBruto.filter((t) => set.has(t.promoter_id));
 }
-/** Ocupa o lugar do client ANON dentro do buildTeamProduction. */
-function shimDb(rows: any[], targets: any[]) {
+/**
+ * Ocupa o lugar do client ANON dentro do buildTeamProduction.
+ *
+ * REVISAO 01/08/2026 (a pergunta era: `rowsDaRede(s.ids)` mascara o defeito?).
+ * NAO mascara. rowsDaRede reproduz o OR da view — `assigned IN ids OR
+ * promoter IN ids` — que e literalmente 20260701_000003:144-145. O forasteiro
+ * portanto ENTRA em `rows` e chega ao buildTeamProduction; o gate mede se ele
+ * foi barrado la dentro. O shim que mascararia seria um que filtrasse `rows` so
+ * por assigned_promoter_id: ai o forasteiro nunca chegaria e a secao 5 passaria
+ * por vacuidade. Nao e o caso, e a NAO-VACUIDADE agora e assercao explicita.
+ *
+ * `rpc` acrescentado junto: o buildTeamProduction passou a resolver a arvore por
+ * current_user_team_promoter_ids no proprio client ANON. Devolver `ids` aqui e o
+ * comportamento do banco — view e helper leem o mesmo auth.uid().
+ */
+function shimDb(rows: any[], targets: any[], arvore: readonly string[]) {
   return {
     from(tabela: string) {
       const dados =
         tabela === "vw_team_production" ? rows : tabela === "monthly_targets" ? targets : [];
       return { select: () => Promise.resolve({ data: dados, error: null }) };
     },
+    rpc: (nome: string) =>
+      Promise.resolve(
+        nome === "current_user_team_promoter_ids"
+          ? { data: Array.from(arvore), error: null }
+          : { data: null, error: { message: `rpc nao esperado no shim: ${nome}` } },
+      ),
   } as any;
 }
 
@@ -294,7 +314,12 @@ for (const s of sujeitos) {
   const atual = Math.round(base.producao_liquida * 0.001 * 100) / 100;
 
   console.log(`\n  ${nome(s.g)} (${s.cargo}, ${s.ids.length} promotores)`);
-  console.log(`    base: ${base.linhas_comissao} linhas de comissao | ${brl(base.comissao_avista)} | liquido ${brl(base.producao_liquida)} | ${base.linhas_srcc_excluidas} fora por SRCC`);
+  console.log(`    producao liquida TOTAL  ${brl(base.producao_liquida).padStart(18)}`);
+  console.log(`    comissao a vista TOTAL  ${brl(base.comissao_avista).padStart(18)}`);
+  console.log(`      RR   liquido ${brl(base.composicao.rr_liquido).padStart(18)}   comissao ${brl(base.composicao.rr_comissao).padStart(15)}`);
+  console.log(`      ADS  liquido ${brl(base.composicao.ads_liquido).padStart(18)}   comissao ${brl(base.composicao.ads_comissao).padStart(15)}`);
+  console.log(`    comissao media da rede  ${(base.comissao_media == null ? "—" : pct(base.comissao_media)).padStart(18)}`);
+  console.log(`    ${base.linhas_comissao} linhas de comissao | ${base.linhas_liquido} de liquido | ${base.linhas_srcc_excluidas} fora por SRCC`);
   console.log(`    regua ate ${antiga.competencia_fim}: aliquota ${pct(antiga.aliquota)} piso ${pct(antiga.piso)} base ${antiga.base_calculo}`);
   assere(
     Math.abs(rAntiga.valor - atual) < 0.01,
@@ -325,6 +350,9 @@ for (const s of sujeitos) {
   const esperado = Math.max(esperadoAliq, esperadoPiso);
 
   console.log(`\n  ${nome(s.g)} (${s.cargo})`);
+  console.log(`    base: liquido ${brl(base.producao_liquida)} (RR ${brl(base.composicao.rr_liquido)} + ADS ${brl(base.composicao.ads_liquido)})`);
+  console.log(`          comissao ${brl(base.comissao_avista)} (RR ${brl(base.composicao.rr_comissao)} + ADS ${brl(base.composicao.ads_comissao)})`);
+  console.log(`          comissao media ${base.comissao_media == null ? "—" : pct(base.comissao_media)}`);
   console.log(`    regua nova: aliquota ${pct(nova.aliquota)} sobre comissao | piso ${pct(nova.piso)} sobre liquido`);
   console.log(`    (a) aliquota x comissao = ${brl(base.comissao_avista)} x ${pct(nova.aliquota)} = ${brl(esperadoAliq)}`);
   console.log(`    (b) piso x liquido      = ${brl(base.producao_liquida)} x ${pct(nova.piso)} = ${brl(esperadoPiso)}`);
@@ -526,7 +554,7 @@ for (const s of sujeitos) {
     const motor = calcularRemuneracaoLideranca(reguaR, baseMotor, compR);
 
     // Lado TELA: o payload que a rota serve, montado pela MESMA funcao.
-    const team = await buildTeamProduction(shimDb(rowsDaRede(s.ids), targetsDaRede(s.ids)), admin as any, {
+    const team = await buildTeamProduction(shimDb(rowsDaRede(s.ids), targetsDaRede(s.ids), s.ids), admin as any, {
       year: ano,
       month: mes,
     });
@@ -672,6 +700,177 @@ linha();
     passou = false;
   }
   assere(passou, "regua comecando em 2026-08 (aberta) e ACEITA", `fechadas: ${fechadas.join(", ")}`);
+}
+
+// -------------------------------------------------------------------------
+// 7) ESCOPO DE EXIBICAO — o /equipe e a /projecao so mostram a ARVORE.
+//
+// O defeito: o WHERE da vw_team_production e um OR (assigned OU promoter na
+// arvore, 20260701_000003:144-145) e o buildTeamProduction agrupava por
+// assigned_promoter_id. Contrato REATRIBUIDO entre redes virava linha de um
+// promotor que nao e do time. Duas magnitudes, porque as linhas do periodo tem
+// duas origens: no mes ABERTO entra so o registro-ponte (a view limita), no mes
+// FECHADO entra a producao INTEIRA do forasteiro (o PMR e buscado por
+// service_role sobre allIds, sem passar pela view).
+// -------------------------------------------------------------------------
+linha();
+console.log("7) ESCOPO DE EXIBICAO — arvore, nao team.rows");
+linha();
+
+for (const s of sujeitos) {
+  for (const [ano, mes] of [[YEAR, MONTH], [ABERTO.year, ABERTO.month]] as const) {
+    const comp = `${ano}-${String(mes).padStart(2, "0")}`;
+    const arvore = new Set(s.ids);
+    const rowsView = rowsDaRede(s.ids); // o OR da view, como o banco devolve
+
+    // NAO-VACUIDADE. Sem forasteiro na entrada, tudo abaixo passa por vacuidade:
+    // "nenhum id fora da arvore" seria verdade porque nenhum id fora da arvore
+    // chegou. Exige contrato REATRIBUIDO entre redes no periodo.
+    const forasteirosNaEntrada = new Set(
+      rowsView
+        .filter((r: any) => r.assigned_promoter_id && !arvore.has(r.assigned_promoter_id))
+        .map((r: any) => r.assigned_promoter_id as string),
+    );
+    const pontes = rowsView.filter(
+      (r: any) => r.assigned_promoter_id && !arvore.has(r.assigned_promoter_id),
+    );
+
+    const team = await buildTeamProduction(shimDb(rowsView, targetsDaRede(s.ids), s.ids), admin as any, {
+      year: ano,
+      month: mes,
+    });
+
+    console.log(`\n  ${nome(s.g)} — ${comp} (fechado=${team.fechado})`);
+
+    if (forasteirosNaEntrada.size === 0) {
+      pula(
+        `NAO-VACUIDADE do escopo (${nome(s.g)}, ${comp})`,
+        `nenhum contrato reatribuido de outra rede chega pela view — o filtro nao e exercitado nesta rede/competencia`,
+      );
+    } else {
+      assere(
+        pontes.length > 0,
+        `NAO-VACUIDADE: ha contrato reatribuido no periodo (${nome(s.g)}, ${comp})`,
+        `${pontes.length} registro(s)-ponte, ${forasteirosNaEntrada.size} promotor(es) de fora na entrada da view`,
+      );
+    }
+
+    // (a) TODO assigned_promoter_id exposto pertence a arvore.
+    const expostos = team.rows.map((r) => r.promoter_id);
+    const foraDaArvore = expostos.filter((id) => !arvore.has(id));
+    assere(
+      foraDaArvore.length === 0,
+      `todo promotor exposto pertence a arvore (${nome(s.g)}, ${comp})`,
+      `${expostos.length} exposto(s), ${foraDaArvore.length} fora da arvore${foraDaArvore.length ? ": " + foraDaArvore.join(", ") : ""}`,
+    );
+
+    // (a2) O MESMO vale para tudo que deriva de rows: serie por promotor e os
+    // gestores que a /projecao monta a partir de r.supervisor_id. Era por aqui
+    // que a IZABELA aparecia como gestora na tela da CARLA.
+    const serieFora = team.perPromoterMonthly.map((p) => p.promoter_id).filter((id) => !arvore.has(id));
+    assere(
+      serieFora.length === 0,
+      `serie por promotor tambem so tem a arvore (${nome(s.g)}, ${comp})`,
+      `${team.perPromoterMonthly.length} na serie, ${serieFora.length} fora`,
+    );
+    const gestoresExpostos = [...new Set(team.rows.map((r) => r.supervisor_id).filter(Boolean))];
+    assere(
+      gestoresExpostos.length <= 1 && (gestoresExpostos.length === 0 || gestoresExpostos[0] === s.g.id),
+      `nenhum gestor de outra rede exposto (${nome(s.g)}, ${comp})`,
+      `gestores em team.rows: ${gestoresExpostos.join(", ") || "(nenhum)"} | esperado: ${s.g.id}`,
+    );
+
+    // (b) A producao cai EXATAMENTE pelo valor dos forasteiros, nem um centavo
+    // a mais. O contrafactual e o payload montado SEM o filtro, reproduzido aqui
+    // passando ao shim uma arvore que contem tambem os forasteiros — assim o
+    // filtro interno vira no-op e o resultado e o comportamento ANTIGO.
+    const arvoreLarga = [...s.ids, ...forasteirosNaEntrada];
+    const teamAntigo = await buildTeamProduction(
+      shimDb(rowsView, targetsDaRede(s.ids), arvoreLarga),
+      admin as any,
+      { year: ano, month: mes },
+    );
+    const somaDosForasteiros = teamAntigo.rows
+      .filter((r) => !arvore.has(r.promoter_id))
+      .reduce((acc, r) => acc + r.production_value, 0);
+    const queda = teamAntigo.totals.production_value - team.totals.production_value;
+    assere(
+      Math.abs(queda - somaDosForasteiros) < 0.005,
+      `producao cai EXATAMENTE pelos forasteiros (${nome(s.g)}, ${comp})`,
+      `antes ${brl(teamAntigo.totals.production_value)} -> depois ${brl(team.totals.production_value)} | queda ${brl(queda)} | soma dos forasteiros ${brl(somaDosForasteiros)} | diferenca ${brl(queda - somaDosForasteiros)}`,
+    );
+    // A META nao pode se mexer: ela ja vinha escopada pela policy
+    // monthly_targets_gestor_select. Se mexer, o filtro pegou meta legitima.
+    assere(
+      Math.abs(teamAntigo.totals.meta - team.totals.meta) < 0.005,
+      `a meta do time NAO muda (${nome(s.g)}, ${comp})`,
+      `antes ${brl(teamAntigo.totals.meta)} -> depois ${brl(team.totals.meta)}`,
+    );
+
+    // (c) O MESMO escopo alimenta PAGAMENTO e EXIBICAO. A incoerencia da
+    // /projecao (pagava pela arvore, exibia por team.rows) nao pode voltar.
+    const idsExibicao = new Set(team.rows.map((r) => r.promoter_id));
+    const forasDaExibicao = [...idsExibicao].filter((id) => !arvore.has(id));
+    assere(
+      forasDaExibicao.length === 0,
+      `pagamento e exibicao compartilham o escopo (${nome(s.g)}, ${comp})`,
+      `pagamento: ${arvore.size} id(s) da arvore | exibicao: ${idsExibicao.size} id(s), ${forasDaExibicao.length} fora do escopo de pagamento`,
+    );
+  }
+}
+
+// -------------------------------------------------------------------------
+// 8) insurance_commission_amount NUNCA entra na base pela ADS.
+// Decisao de 01/08/2026: e residuo de regua do RR (3 linhas em toda a historia,
+// R$ 27,08, `gross x 0,15%` com source TRP35_*), nao comissao-empresa nem
+// repasse. O campo saiu do SELECT e do tipo em lib/lideranca/baseLideranca.
+// Este bloco trava a VOLTA: se alguem reintroduzir a leitura, ads_comissao no
+// mes aberto deixa de ser zero e o gate falha.
+// -------------------------------------------------------------------------
+linha();
+console.log("8) ADS: insurance_commission_amount fora da base, em regua NENHUMA");
+linha();
+
+for (const s of sujeitos) {
+  for (const bc of ["PRODUCAO_LIQUIDA", "AVISTA_CREDITO_PF"] as const) {
+    const b = await construirBaseLideranca(admin as any, {
+      promoterIds: s.ids,
+      year: ABERTO.year,
+      month: ABERTO.month,
+      fechado: false,
+      baseCalculo: bc,
+    });
+    const c = b.composicao;
+    // No aberto a ADS nao tem comissao apurada por fonte nenhuma: sob a regua
+    // nova ela sai dos dois recortes, sob a antiga entra so no denominador.
+    assere(
+      c.ads_comissao === 0,
+      `${bc}: ADS nao contribui comissao no mes aberto (${nome(s.g)}, ${ultimaAberta})`,
+      `ads_comissao ${brl(c.ads_comissao)} | ads_liquido ${brl(c.ads_liquido)} | antes da correcao entravam R$ 13,20 (Carla) / R$ 13,88 (Izabela)`,
+    );
+  }
+}
+{
+  // Prova ESTRUTURAL, nao so numerica: o campo nao esta no SELECT nem no tipo.
+  // A assercao numerica acima cai se alguem reintroduzir a leitura E houver
+  // residuo; esta cai mesmo que o residuo tenha sumido do banco.
+  //
+  // Comentarios de linha sao removidos antes do teste DE PROPOSITO: o bloco de
+  // decisao no proprio modulo cita o nome do campo varias vezes, e e assim que
+  // se quer — o nome existe la como registro da decisao, nao como codigo.
+  const src = fs.readFileSync(
+    new URL("../lib/lideranca/baseLideranca.ts", import.meta.url),
+    "utf8",
+  );
+  const semComentarios = src.replace(/^\s*\/\/.*$/gm, "");
+  const voltou = semComentarios.includes("insurance_commission_amount");
+  assere(
+    !voltou,
+    "baseLideranca nao le nem seleciona insurance_commission_amount",
+    voltou
+      ? "o campo VOLTOU ao codigo do modulo (fora de comentario)"
+      : "ausente do SELECT, do tipo e de qualquer leitura — so citado em comentario",
+  );
 }
 
 linha();
