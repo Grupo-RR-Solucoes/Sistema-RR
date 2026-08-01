@@ -366,8 +366,17 @@ a {
      funcionario       7 itens   854,1 + 422 = 1276,1px   <- PIOR
      socio             7 itens   816,2 + 422 = 1238,2px
      gestor_consorcio  2 itens   308,9 + 372 =  680,9px
+     supervisor        2 itens   234,7 + 372 =  606,7px
      promotor          2 itens   226,0 + 372 =  598,0px
-     supervisor        1 item    131,6 + 372 =  503,6px
+
+   ATUALIZADO (frente /projecao do gestor): supervisor e gerente_regional
+   ganharam "Projecao" no grupo Gestao e sairam de 1 item para 2. A soma usa os
+   MESMOS rotulos ja medidos na tabela acima — "Minha Equipe" 131,6 +
+   "Projecao" 103,1 = 234,7px. Continuam na faixa CURTA (data-bar="curta", que
+   e ate 2 itens) e abaixo dos 710px do ponto de quebra, entao nenhum breakpoint
+   muda: acima de 710px a barra mostra os dois, abaixo o hamburguer volta pela
+   regra [data-burger="colapsada"]. O pior caso do sistema segue sendo o
+   funcionario, intocado.
 
    O pior papel NAO e o socio: e o funcionario. Ele nao tem Dashboard nem
    Financeiro, entao a barra dele completa com "Receita & Simples" e
