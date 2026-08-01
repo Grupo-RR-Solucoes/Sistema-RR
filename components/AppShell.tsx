@@ -97,6 +97,13 @@ const navGroups: NavGroup[] = [
     label: "Gestão",
     items: [
       { href: "/equipe", label: "Minha Equipe", icon: "users", visibleTo: ["supervisor", "gerente_regional"] },
+      // Projeção da PRÓPRIA REDE. É uma SEGUNDA entrada para /projecao, não a
+      // mesma: a de cima (grupo Comercial) serve socio/funcionario/promotor e
+      // segue intacta. Os dois visibleTo são DISJUNTOS, então nenhum papel vê o
+      // destino duas vezes. Fica aqui, e não no Comercial, porque supervisor e
+      // gerente_regional só enxergam este grupo — o cabeçalho "Comercial"
+      // apareceria com um item só.
+      { href: "/projecao", label: "Projeção", icon: "trending", visibleTo: ["supervisor", "gerente_regional"] },
       // Gestor de consorcio (M3): ve producao geral + o proprio 10%, nunca a
       // comissao dos promotores.
       { href: "/gestor-consorcio", label: "Consórcio (10%)", icon: "percent", visibleTo: ["gestor_consorcio"] },

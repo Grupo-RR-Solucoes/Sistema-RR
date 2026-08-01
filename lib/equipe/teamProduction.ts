@@ -7,6 +7,9 @@ import { todayInFortaleza } from "@/lib/dateFortaleza";
 // divergiu; agora a janela RR + a aritmética de dias úteis + o ritmo linear vêm
 // todos de um lugar só.
 import { resolverJanelaRitmo, projetarPorRitmo } from "@/lib/janelaRitmo";
+// MESMO serializador de data que a /projecao usa (lib/projecaoMetas.ts:38), para
+// a janela exposta sair byte-idêntica em formato à de ProjecaoResultado.janela.
+import { ymd } from "@/lib/trp/vigencia";
 // Série mensal HÍBRIDA (mês corrente=daily, fechados=PMR) — helper comum com a
 // /projecao. Corrige os buracos jan/fev/mar/mai (daily só tem abr+/2026).
 import {
@@ -92,6 +95,15 @@ export interface TeamPromoterRow {
   /** supervisor responsável (F2). Para a visão de 2 níveis do gerente. */
   supervisor_id: string | null;
   supervisor_name: string | null;
+  /**
+   * ADITIVOS — atributos do promotor, resolvidos por service_role sobre ids que
+   * a vw_team_production / a policy de monthly_targets JÁ autorizaram. Existem
+   * para o ramo do gestor da /projecao poder agrupar por estado e rotular a
+   * empresa; a tela do /equipe não os renderiza hoje e segue igual.
+   */
+  estado: string | null;
+  company_id: string | null;
+  company_name: string | null;
   production_value: number;
   gross_value: number;
   proposal_count: number;
@@ -149,6 +161,32 @@ export interface TeamProductionPayload {
   };
   /** Projeção de fechamento do time no mês selecionado (Σ das projeções). */
   period_projection: { production_value: number };
+  /**
+   * ADITIVO — a janela de produção que ESTA montagem já resolveu, no MESMO
+   * formato que ProjecaoResultado.janela (lib/projecaoMetas.ts:146-152).
+   *
+   * Existe para que o ramo do gestor da /projecao NÃO reimplemente ritmo: a
+   * projeção por promotor (projection_value) e a do time (period_projection) já
+   * saíram de resolverJanelaRitmo/projetarPorRitmo aqui dentro. Sem expor a
+   * janela, o adaptador teria de recalcular — que é exatamente a duplicação que
+   * o comentário do bloco de projeção (logo abaixo) registra ter eliminado.
+   *
+   * Datas em ISO (YYYY-MM-DD), não Date: isto atravessa JSON.
+   */
+  janela: {
+    inicio: string;
+    fim: string;
+    dias_uteis_totais: number;
+    dias_uteis_decorridos: number;
+    dias_uteis_ritmo: number;
+  };
+  /**
+   * ADITIVO — regime da competência selecionada, já detectado aqui dentro
+   * (periodoFechado = regime !== 'open'). Mesma razão da janela acima: o ramo do
+   * gestor da /projecao precisa do booleano para a nota "competência
+   * fechada/aberta" e NÃO pode redetectar regime por conta própria.
+   */
+  fechado: boolean;
   /** Série mensal agregada do time, jan/2026 → competência corrente. */
   monthlySeries: MonthPoint[];
   /**
@@ -285,6 +323,13 @@ export function assembleTeamProduction(
   // diário (comportamento anterior). Fechado ('cms' | 'fechamento') => vêm do PMR.
   // Default 'open' preserva o comportamento de quem chamar sem o argumento.
   regime: MonthRegime = "open",
+  // ADITIVOS no FIM da lista, com default vazio: os 4 gates que chamam esta
+  // função posicionalmente (golden_projecao_supervisores, janela_ritmo_paridade,
+  // mov3_equipe_gate, test_equipe_dashboard) param em `regime` e seguem válidos.
+  // Mapas vazios => estado/empresa saem null, que é o que o /equipe já ignorava.
+  estadoById: Map<string, string | null> = new Map(),
+  companyIdById: Map<string, string | null> = new Map(),
+  companyNameById: Map<string, string> = new Map(),
 ): TeamProductionPayload {
   // ---- competências disponíveis (dos registros + das metas) ----
   const periodsMap = new Map<string, TeamPeriod>();
@@ -393,11 +438,15 @@ export function assembleTeamProduction(
     const meta1 = toNumber(t?.meta_1);
     const meta2 = toNumber(t?.meta_2);
     const sup = supById.get(pid) ?? { id: null, name: null };
+    const cid = companyIdById.get(pid) ?? null;
     return {
       promoter_id: pid,
       promoter_name: nameById.get(pid) ?? "—",
       supervisor_id: sup.id,
       supervisor_name: sup.name,
+      estado: estadoById.get(pid) ?? null,
+      company_id: cid,
+      company_name: cid ? companyNameById.get(cid) ?? null : null,
       production_value: acc.net,
       gross_value: acc.gross,
       proposal_count: acc.count,
@@ -628,6 +677,16 @@ export function assembleTeamProduction(
       attainment_percent: tMeta > 0 ? (tNet / tMeta) * 100 : null,
     },
     period_projection: { production_value: projetar(tNet) },
+    // ADITIVO: a MESMA janela que projetou as linhas acima, exposta em ISO para
+    // o adaptador do gestor reusar sem recalcular ritmo. Ver TeamProductionPayload.
+    janela: {
+      inicio: ymd(janela.start),
+      fim: ymd(janela.end),
+      dias_uteis_totais: janela.total,
+      dias_uteis_decorridos: janela.diasDecorridos,
+      dias_uteis_ritmo: janela.diasParaRitmo,
+    },
+    fechado: periodoFechado,
     monthlySeries,
     perPromoterMonthly,
     // meta_efetiva = override do gestor (se houver) senão a derivada (tMeta).
@@ -673,19 +732,54 @@ export async function buildTeamProduction(
 
   const nameById = new Map<string, string>();
   const supById = new Map<string, { id: string | null; name: string | null }>();
+  // ATRIBUTOS (não autorização). estado e company_id descrevem promotores cujos
+  // ids JÁ vieram autorizados pela vw_team_production / policy de monthly_targets
+  // — o .in(allIds) abaixo não amplia o conjunto, só descreve o que já entrou.
+  // Mesma disciplina do name/supervisor_user_id acima e do PMR mais abaixo:
+  // service_role resolve ATRIBUTO, nunca decide QUEM. Nenhuma das duas é coluna
+  // de comissão ou PII (estado é a UF de atuação; company_id é a empresa do
+  // cadastro, que a própria vw_team_production já expõe por linha).
+  const estadoById = new Map<string, string | null>();
+  const companyIdById = new Map<string, string | null>();
+  const companyNameById = new Map<string, string>();
 
   if (allIds.size > 0) {
     const { data: promData, error: promErr } = await admin
       .from("promoters")
-      .select("id, name, supervisor_user_id")
+      .select("id, name, supervisor_user_id, estado, company_id")
       .in("id", Array.from(allIds));
     if (promErr) throw promErr;
 
     const supIds = new Set<string>();
-    for (const p of (promData ?? []) as Array<{ id: string; name: string; supervisor_user_id: string | null }>) {
+    const companyIds = new Set<string>();
+    for (const p of (promData ?? []) as Array<{
+      id: string;
+      name: string;
+      supervisor_user_id: string | null;
+      estado: string | null;
+      company_id: string | null;
+    }>) {
       nameById.set(p.id, p.name);
       supById.set(p.id, { id: p.supervisor_user_id ?? null, name: null });
+      estadoById.set(p.id, p.estado ?? null);
+      companyIdById.set(p.id, p.company_id ?? null);
       if (p.supervisor_user_id) supIds.add(p.supervisor_user_id);
+      if (p.company_id) companyIds.add(p.company_id);
+    }
+
+    // Nome da empresa pelo MESMO padrão: .in() sobre os company_id que já
+    // apareceram nos promotores autorizados. Não lista o cadastro de empresas —
+    // resolve o rótulo das que a árvore do gestor já alcançou. Tolerante: erro
+    // → mapa vazio e o consumidor cai no fallback (a tela do /equipe não
+    // renderiza empresa hoje, então erro aqui não pode derrubar a resposta).
+    if (companyIds.size > 0) {
+      const { data: compData } = await admin
+        .from("companies")
+        .select("id, name")
+        .in("id", Array.from(companyIds));
+      for (const c of (compData ?? []) as Array<{ id: string; name: string | null }>) {
+        if (c.name) companyNameById.set(c.id, c.name);
+      }
     }
 
     if (supIds.size > 0) {
@@ -784,6 +878,9 @@ export async function buildTeamProduction(
     refDate,
     gestorOverrides,
     pmrByPromoterYm,
-    regime
+    regime,
+    estadoById,
+    companyIdById,
+    companyNameById
   );
 }

@@ -36,6 +36,12 @@ import { fetchAllRows } from "@/lib/queryHelpers";
 // A aritmética de dias úteis (decorridos EXIBIDO × divisor do ritmo) saiu daqui
 // para lib/janelaRitmo.ts pelo mesmo motivo: a /equipe tinha uma segunda cópia.
 import { ymd } from "@/lib/trp/vigencia";
+// Media dos 3 meses + tendencia: fonte UNICA, compartilhada com o ramo do gestor.
+import {
+  mediaTresMeses,
+  tendenciaDe,
+  type EntradaMensal,
+} from "@/lib/projecao/mediaTresMeses";
 
 // Re-export da API pública que outros módulos importam de "@/lib/projecaoMetas".
 export {
@@ -223,16 +229,22 @@ export async function buildProjecaoMetas(
   const startKey = ymd(start);
 
   // Media dos 3 meses anteriores (production_value do PMR).
-  const priors = [1, 2, 3].map((k) => {
-    const dt = new Date(Date.UTC(year, month - 1 - k, 1));
-    return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}`;
-  });
-  const priorByPromoter = new Map<string, number[]>();
+  // Media dos 3 meses anteriores. Aqui SO agrupamos as linhas por promotor; quem
+  // soma por competencia e tira a media e o helper canonico (mediaTresMeses), o
+  // MESMO que o ramo do gestor usa.
+  //
+  // O QUE ISTO CORRIGE: antes o laco fazia arr.push POR LINHA do PMR e a media
+  // dividia por priorVals.length. Como a chave do PMR inclui company_id, um
+  // promotor com producao RR ('fechamento') e ADS ('bbts') na MESMA competencia
+  // tem DUAS linhas — as duas eram contadas como dois meses e a media dele saia
+  // pela metade. Medido em 31/07/2026: 4 promotores, todos em jun/2026. Como
+  // junho e um dos 3 meses anteriores de jul/ago/set, o erro estava vivo na tela.
+  //
+  // NENHUM filtro de competencia aqui: o helper recorta a janela dos 3 meses.
+  const priorByPromoter = new Map<string, EntradaMensal[]>();
   for (const row of allPmr) {
-    const key = `${row.year}-${pad2(row.month)}`;
-    if (!priors.includes(key)) continue;
     const arr = priorByPromoter.get(row.promoter_id) || [];
-    arr.push(toNumber(row.production_value));
+    arr.push({ year: row.year, month: row.month, valor: toNumber(row.production_value) });
     priorByPromoter.set(row.promoter_id, arr);
   }
 
@@ -373,16 +385,8 @@ export async function buildProjecaoMetas(
     const meta = toNumber(row.target_value);
     const percent = meta > 0 ? projecao / meta : null;
 
-    const priorVals = priorByPromoter.get(row.promoter_id) || [];
-    const media3m =
-      priorVals.length > 0 ? priorVals.reduce((s, v) => s + v, 0) / priorVals.length : 0;
-    let tendencia: Tendencia = "sem_historico";
-    let tendenciaPercent: number | null = null;
-    if (media3m > 0) {
-      const vari = (projecao - media3m) / media3m;
-      tendenciaPercent = vari;
-      tendencia = vari > 0.001 ? "crescimento" : vari < -0.001 ? "queda" : "estavel";
-    }
+    const media3m = mediaTresMeses(priorByPromoter.get(row.promoter_id) || [], year, month);
+    const { tendencia, tendencia_percent: tendenciaPercent } = tendenciaDe(projecao, media3m);
 
     return {
       promoter_id: row.promoter_id,
@@ -592,7 +596,10 @@ export function agruparPorCnpj(res: ProjecaoResultado): ProjecaoGrupoCnpj[] {
 // nao muda). Meta por estado = soma dos target_value dos promotores (derivada).
 
 /** Narrowing seguro: string do banco -> Estado | null (o CHECK garante o dominio). */
-function asEstado(v: unknown): Estado | null {
+// `export` acrescentado para o adaptador do gestor (lib/projecao/gestorAdapter)
+// reusar a MESMA regra de narrowing em vez de duplicá-la. Zero mudança de
+// comportamento: a função e todos os chamadores internos seguem iguais.
+export function asEstado(v: unknown): Estado | null {
   return v === "AL" || v === "SE" || v === "PE" || v === "BA" ? v : null;
 }
 /** Estado IMPLICITO pela empresa-operacao (nome). SO para bucketar o master. AL/PE. */
@@ -602,7 +609,9 @@ function estadoDaEmpresa(companyName: string | null | undefined): Estado | null 
   if (n.includes("PERNAMBUCO")) return "PE";
   return null;
 }
-const ESTADO_LABEL: Record<Estado, string> = {
+// `export` pelo mesmo motivo de asEstado acima: o adaptador do gestor precisa do
+// rótulo em EstadoHistorico.estado_label. Nenhum comportamento muda.
+export const ESTADO_LABEL: Record<Estado, string> = {
   AL: "Alagoas",
   SE: "Sergipe",
   PE: "Pernambuco",

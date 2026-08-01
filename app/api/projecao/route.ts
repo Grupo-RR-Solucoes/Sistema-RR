@@ -1,5 +1,9 @@
 import { apiGuardErrorResponse, withAuthenticatedAnon } from "@/lib/auth/guards";
+import { createSupabaseServerClient } from "@/lib/auth/supabaseServerClient";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
+import { buildTeamProduction } from "@/lib/equipe/teamProduction";
+import { montarPayloadGestor } from "@/lib/projecao/gestorAdapter";
 import {
   agruparPorEstado,
   agruparPorSupervisor,
@@ -26,6 +30,27 @@ export async function GET(req: Request) {
     const hoje = nowInFortaleza();
     const year = Number(searchParams.get("year") || 0) || hoje.year;
     const month = Number(searchParams.get("month") || 0) || hoje.month;
+    // GESTOR (supervisor | gerente_regional) — ramo PROPRIO, antes do motor do
+    // socio. Nao passa por buildProjecaoMetas de proposito: aquele motor le 8
+    // tabelas CRUAS que nao tem policy para estes papeis e devolveria vazio.
+    //
+    // A autorizacao e a mesma da /equipe e nasce no BANCO: buildTeamProduction le
+    // vw_team_production (WHERE por current_user_team_promoter_ids) com o client
+    // ANON, e monthly_targets pela policy monthly_targets_gestor_select. O
+    // service_role entra la dentro so para resolver ATRIBUTO (nome, estado,
+    // empresa, PMR de producao/penetracao) sobre ids que a view ja autorizou.
+    //
+    // O adaptador e PURO: nao le banco, so troca o formato para o que os 4
+    // agregadores da /projecao ja consomem.
+    if (role === "supervisor" || role === "gerente_regional") {
+      const db = await createSupabaseServerClient();
+      const admin = getSupabaseAdmin();
+      const team = await buildTeamProduction(db, admin, { year, month });
+      // O payload e montado no adaptador, NAO aqui: e a mesma funcao que o
+      // scripts/gate_projecao_gestor.mts exercita. Inline, o gate testaria copia.
+      return Response.json(montarPayloadGestor(team));
+    }
+
     // Promotor nao filtra por empresa (so ve a si mesmo).
     const companyId =
       role === "promotor" ? undefined : searchParams.get("companyId") || undefined;
