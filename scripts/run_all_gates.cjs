@@ -69,6 +69,13 @@ const GATES = [
       "createClient + daily_production_records de PRODUCAO; exigiria service role no runner",
   },
   {
+    arquivo: "scripts/gate-competencia-janela.cjs",
+    nome: "competencia por janela de producao (volume da escala / Frente C)",
+    modo: "needs-db",
+    motivo:
+      "createClient + daily_production_records de PRODUCAO; exigiria service role no runner",
+  },
+  {
     arquivo: "scripts/trp_parser_escalares_gate.cjs",
     nome: "parser TRP - escalares de categoria",
     modo: "needs-local",
