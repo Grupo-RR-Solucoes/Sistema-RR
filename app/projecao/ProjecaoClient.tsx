@@ -865,9 +865,11 @@ function EquipeView({ data, nav }: { data: any; nav: Nav }) {
             <p className="cgest-lacuna">
               <b>{brl(comissao.ads_producao_sem_comissao_apurada)}</b> de produção ADS em{" "}
               {comissao.ads_linhas_sem_comissao_apurada} contrato
-              {comissao.ads_linhas_sem_comissao_apurada === 1 ? "" : "s"} ainda sem comissão
-              apurada — a régua da BBTS só chega no fechamento. Este valor <b>não</b> está
-              somado acima e vai entrar quando a competência fechar.
+              {comissao.ads_linhas_sem_comissao_apurada === 1 ? "" : "s"}{" "}
+              <b>ainda vai gerar comissão</b> — ela é apurada pela régua da BBTS, que só chega
+              no fechamento. Esta produção está <b>fora</b> da conta acima, dos dois lados: não
+              entra na comissão nem na base do piso. Quando a competência fechar, entra nos
+              dois e o seu valor sobe.
             </p>
           ) : null}
         </section>

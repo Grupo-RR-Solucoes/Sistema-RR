@@ -65,6 +65,23 @@ export type BaseLiderancaDetalhada = BaseLideranca & {
    */
   ads_producao_sem_comissao_apurada: number;
   ads_linhas_sem_comissao_apurada: number;
+  /**
+   * DECOMPOSICAO POR ORIGEM — existe para a simetria ser VERIFICAVEL DE FORA.
+   *
+   * A regra: uma origem entra nos DOIS recortes ou em NENHUM. Se entrasse so no
+   * denominador, o piso multiplicaria producao cuja comissao o numerador nao
+   * conta, e alíquota e piso deixariam de olhar a mesma base.
+   *
+   * Medido em jul/2026 antes da correcao: a ADS estava com 100% do liquido e
+   * ~0,006% da comissao dentro. Na rede da Carla isso levava o piso de 75,2%
+   * para 88,8% da alíquota e comia a folga ate o gatilho de 32,9% para 12,6%.
+   */
+  composicao: {
+    rr_liquido: number;
+    rr_comissao: number;
+    ads_liquido: number;
+    ads_comissao: number;
+  };
 };
 
 type LinhaFechamento = {
@@ -177,6 +194,7 @@ function baseVazia(fechado: boolean): BaseLiderancaDetalhada {
     linhas_srcc_excluidas: 0,
     ads_producao_sem_comissao_apurada: 0,
     ads_linhas_sem_comissao_apurada: 0,
+    composicao: { rr_liquido: 0, rr_comissao: 0, ads_liquido: 0, ads_comissao: 0 },
   };
 }
 
@@ -247,6 +265,10 @@ export async function construirBaseLideranca(
   let srccExcluidas = 0;
   let adsProducaoSemComissao = 0;
   let adsLinhasSemComissao = 0;
+  let rrLiquido = 0;
+  let rrComissao = 0;
+  let adsLiquido = 0;
+  let adsComissao = 0;
 
   if (args.fechado) {
     // ---------------- RR: monthly_closing_entries ----------------
@@ -286,10 +308,12 @@ export async function construirBaseLideranca(
       }
       if (naComissao) {
         comissao += num(r.commission_value);
+        rrComissao += num(r.commission_value);
         linhasComissao += 1;
       }
       if (noLiquido) {
         liquido += num(r.net_value);
+        rrLiquido += num(r.net_value);
         linhasLiquido += 1;
       }
     }
@@ -307,8 +331,11 @@ export async function construirBaseLideranca(
         adsLinhasSemComissao += 1;
         continue;
       }
-      comissao += num(pagAvista) + num(d.bbts_seguro_pago);
+      const comAds = num(pagAvista) + num(d.bbts_seguro_pago);
+      comissao += comAds;
+      adsComissao += comAds;
       liquido += num(d.net_value);
+      adsLiquido += num(d.net_value);
       linhasComissao += 1;
       linhasLiquido += 1;
     }
@@ -324,6 +351,7 @@ export async function construirBaseLideranca(
       const rate = num(d.interest_rate);
       const prazo = num(d.term_months) || num(d.installments);
       liquido += netValue;
+      rrLiquido += netValue;
       linhasLiquido += 1;
 
       // As 3 condicoes que closingAnalytics.ts exige para precificar. Medido em
@@ -350,22 +378,34 @@ export async function construirBaseLideranca(
         proposal_date: d.proposal_date,
       } as any);
 
-      comissao += num(r.credito.avista_empresa) + num(r.seguro.empresa);
+      const comRr = num(r.credito.avista_empresa) + num(r.seguro.empresa);
+      comissao += comRr;
+      rrComissao += comRr;
       linhasComissao += 1;
     }
 
-    // ADS no mes aberto: o CREDITO fica de fora, marcado. O motor precifica
-    // credito pela TRP, que e a regua do RR — a ADS e paga pela BBTS. Estimar
-    // por TRP seria numero com regua errada. O SEGURO entra, porque
-    // insurance_commission_amount ja esta apurado no proprio diario.
+    // ADS NO MES ABERTO SAI DOS DOIS RECORTES (decisao Diego, 01/08/2026).
+    // Nem numerador nem denominador.
+    //
+    // POR QUE NAO ENTRAR NOS DOIS: apurar o credito ADS no aberto so seria
+    // possivel pela TRP, que e regua do RR. Medido em jun/2026, a ADS pagou
+    // 2,8417% contra 3,5956% do RR — a TRP superestimaria a comissao ADS em
+    // ~27% e mascararia o piso na direcao oposta.
+    //
+    // POR QUE NAO ENTRAR SO NO DENOMINADOR (o que o codigo fazia antes): o piso
+    // multiplicaria producao cuja comissao o numerador nao conta. Medido em
+    // jul/2026 na rede da Carla — o piso ia de 75,2% para 88,8% da alíquota e a
+    // folga ate o gatilho caia de 32,9% para 12,6%.
+    //
+    // insurance_commission_amount da ADS TAMBEM sai. Ele entrava no numerador
+    // antes (R$ 13,20 na Carla, R$ 13,88 na Izabela em jul/2026) e nunca foi
+    // confirmado se e comissao-EMPRESA ou repasse de promotor. A duvida deixa de
+    // bloquear esta frente, mas o campo pode ser lido em outro lugar — fica
+    // anotado para verificacao propria.
+    //
+    // A assimetria e EXCLUSIVA do aberto: no fechado a ADS entra nos dois, via
+    // bbts_pag_avista + bbts_seguro_pago (cobertura 19/19 em jun/2026).
     for (const d of ads) {
-      liquido += num(d.net_value);
-      linhasLiquido += 1;
-      const segApurado = num(d.insurance_commission_amount);
-      if (segApurado > 0) {
-        comissao += segApurado;
-        linhasComissao += 1;
-      }
       adsProducaoSemComissao += num(d.net_value);
       adsLinhasSemComissao += 1;
     }
@@ -387,5 +427,11 @@ export async function construirBaseLideranca(
     linhas_srcc_excluidas: srccExcluidas,
     ads_producao_sem_comissao_apurada: round2(adsProducaoSemComissao),
     ads_linhas_sem_comissao_apurada: adsLinhasSemComissao,
+    composicao: {
+      rr_liquido: round2(rrLiquido),
+      rr_comissao: round2(rrComissao),
+      ads_liquido: round2(adsLiquido),
+      ads_comissao: round2(adsComissao),
+    },
   };
 }

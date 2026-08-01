@@ -549,6 +549,35 @@ for (const s of sujeitos) {
       `tela == motor (${nome(s.g)}, ${compR})`,
       `tela ${brl(payload.comissao_gestao.valor)} "${payload.comissao_gestao.criterio}" vs motor ${brl(motor.valor)} "${motor.criterio}"`,
     );
+    // SIMETRIA POR ORIGEM: uma origem entra nos DOIS recortes ou em NENHUM.
+    // Se entrasse so no denominador, o piso multiplicaria producao cuja comissao
+    // o numerador nao conta. Foi o defeito medido em jul/2026 (ADS com 100% do
+    // liquido e ~0,006% da comissao dentro).
+    const c = baseMotor.composicao;
+    const dentroRR = c.rr_liquido > 0 || c.rr_comissao > 0;
+    const dentroADS = c.ads_liquido > 0 || c.ads_comissao > 0;
+    console.log(`    composicao: RR liq ${brl(c.rr_liquido)} / com ${brl(c.rr_comissao)} | ADS liq ${brl(c.ads_liquido)} / com ${brl(c.ads_comissao)}`);
+    assere(
+      (!dentroRR || (c.rr_liquido > 0 && c.rr_comissao > 0)) &&
+        (!dentroADS || (c.ads_liquido > 0 && c.ads_comissao > 0)),
+      `simetria: toda origem no denominador tem comissao no numerador (${compR})`,
+      `RR ${dentroRR ? "dentro" : "fora"} (liq ${c.rr_liquido > 0}, com ${c.rr_comissao > 0}) | ADS ${dentroADS ? "dentro" : "fora"} (liq ${c.ads_liquido > 0}, com ${c.ads_comissao > 0})`,
+    );
+    // NAO-VACUIDADE: no ABERTO tem de haver ADS efetivamente EXCLUIDA, senao a
+    // simetria acima passaria so por nao existir ADS na rede.
+    if (regime === "aberto") {
+      assere(
+        baseMotor.ads_producao_sem_comissao_apurada > 0 && c.ads_liquido === 0,
+        `ADS exclusiva do aberto: fora dos dois recortes e marcada (${compR})`,
+        `lacuna ${brl(baseMotor.ads_producao_sem_comissao_apurada)} em ${baseMotor.ads_linhas_sem_comissao_apurada} linha(s) | ads_liquido no denominador ${brl(c.ads_liquido)}`,
+      );
+    } else {
+      assere(
+        c.ads_liquido > 0 && c.ads_comissao > 0,
+        `ADS entra nos DOIS no fechado — a assimetria e exclusiva do aberto (${compR})`,
+        `ads_liquido ${brl(c.ads_liquido)} | ads_comissao ${brl(c.ads_comissao)}`,
+      );
+    }
     assere(
       payload.comissao_gestao.parcial === (regime === "aberto") &&
         payload.comissao_gestao.fonte === (regime === "aberto" ? "motor" : "fechamento"),
