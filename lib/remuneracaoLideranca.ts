@@ -3,9 +3,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 /**
  * REMUNERACAO DE LIDERANCA — FONTE UNICA DO CALCULO.
  *
- * Substitui a constante em codigo (lib/comissaoGestao.ts:27,
- * `export const PERCENTUAL_COMISSAO_GESTAO = 0.001`) por uma regua VERSIONADA
- * POR VIGENCIA, lida de leadership_rule_versions. A regra passa a ser DADO.
+ * SUBSTITUIU a constante em codigo. Ate 01/08/2026 a remuneracao vinha de
+ * `lib/comissaoGestao.ts`, que tinha `PERCENTUAL_COMISSAO_GESTAO = 0.001` fixo;
+ * esse modulo foi REMOVIDO e nao ha mais percentual literal em lugar nenhum do
+ * app. A regra agora e DADO, versionada por vigencia em leadership_rule_versions.
  *
  * DUAS REGUAS (seed em supabase/migrations/20260801_000001):
  *

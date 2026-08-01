@@ -1,4 +1,5 @@
-import { calcularComissaoGestao } from "@/lib/comissaoGestao";
+import type { BaseLiderancaDetalhada } from "@/lib/lideranca/baseLideranca";
+import type { ResultadoLideranca } from "@/lib/remuneracaoLideranca";
 import type { TeamProductionPayload, TeamPromoterRow } from "@/lib/equipe/teamProduction";
 import { agregarSerieGrupo, type SerieMesPonto } from "@/lib/historicoMensal";
 // Media dos 3 meses + tendencia: MESMO helper que lib/projecaoMetas usa. Havia
@@ -342,13 +343,32 @@ function semNaoAtribuido<T extends object>(o: T): Omit<T, "nao_atribuido"> {
  * Em mês FECHADO a projeção não é oferecida: passa null e o card mostra só o
  * realizado.
  */
-export function montarPayloadGestor(team: TeamProductionPayload) {
+export function montarPayloadGestor(
+  team: TeamProductionPayload,
+  lideranca: { resultado: ResultadoLideranca; base: BaseLiderancaDetalhada },
+) {
   const res = projecaoResultadoDoGestor(team);
 
-  const comissao = calcularComissaoGestao(
-    team.totals.production_value,
-    team.fechado ? null : team.period_projection.production_value,
-  );
+  // A remuneracao NAO e calculada aqui. Chega pronta de lib/remuneracaoLideranca
+  // (regua versionada) sobre a base de lib/lideranca/baseLideranca. Esta funcao
+  // so monta o JSON — e por isso o gate consegue provar que tela e motor dao o
+  // MESMO numero: e literalmente o mesmo objeto.
+  const comissao = {
+    percentual: lideranca.resultado.regua.aliquota,
+    piso: lideranca.resultado.regua.piso,
+    base_calculo: lideranca.resultado.regua.base_calculo,
+    criterio: lideranca.resultado.criterio,
+    valor: lideranca.resultado.valor,
+    valor_aliquota: lideranca.resultado.valor_aliquota,
+    valor_piso: lideranca.resultado.valor_piso,
+    base_comissao_avista: lideranca.base.comissao_avista,
+    base_producao_liquida: lideranca.base.producao_liquida,
+    comissao_media: lideranca.base.comissao_media,
+    fonte: lideranca.base.fonte,
+    parcial: lideranca.base.parcial,
+    ads_producao_sem_comissao_apurada: lideranca.base.ads_producao_sem_comissao_apurada,
+    ads_linhas_sem_comissao_apurada: lideranca.base.ads_linhas_sem_comissao_apurada,
+  };
 
   const consolidado = semNaoAtribuido(semComissao(consolidarGrupoEquipe(res)));
 

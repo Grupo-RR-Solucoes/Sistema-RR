@@ -9,7 +9,7 @@
  *
  * O QUE PROVA
  *   1. A regua ANTIGA (leadership_rule_versions, vigencia ate 2026-07) reproduz
- *      SEM DESVIO o valor que lib/comissaoGestao.ts produz hoje.
+ *      SEM DESVIO a formula do lib/comissaoGestao removido (0,001 x liquido).
  *   2. A regua NOVA, aplicada a mesma competencia, produz o valor esperado e diz
  *      qual criterio prevaleceu (aliquota ou piso).
  *   3. A trava de competencia congelada recusa regua que retroage sobre mes
@@ -41,11 +41,14 @@ import {
   type BaseLideranca,
   type CargoLideranca,
 } from "@/lib/remuneracaoLideranca.ts";
-import { calcularComissaoGestao } from "@/lib/comissaoGestao.ts";
 // Competencia de um registro: a janela RR NAO e o mes calendario, entao o mes
 // da data NAO serve. Este e o mesmo helper que promoterAnalytics e teamProduction
 // usam. Usar slice(0,7) da data punha 30/06 em junho quando o canonico diz julho.
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod.ts";
+import { construirBaseLideranca } from "@/lib/lideranca/baseLideranca.ts";
+import { montarPayloadGestor } from "@/lib/projecao/gestorAdapter.ts";
+import { buildTeamProduction } from "@/lib/equipe/teamProduction.ts";
+import { remuneracaoLideranca } from "@/lib/remuneracaoLideranca.ts";
 
 // .env -> process.env (mesma precedencia do scripts/_ts_register.cjs, que so
 // serve CommonJS e nao alcanca este .mts): shell > .env.local > .env.
@@ -163,6 +166,47 @@ for (const d of daily) {
   if (d.contract_number) srcc.add(String(d.contract_number));
 }
 
+/**
+ * Reproduz a vw_team_production para uma rede. A view e RLS por auth.uid(), que
+ * e nulo em script; aqui o WHERE dela e reproduzido espelhando
+ * 20260701_000003:144-145 (assigned_promoter_id OU promoter_id na arvore).
+ * Prova a MONTAGEM, nao a RLS.
+ */
+const COLS_VIEW =
+  "id, assigned_promoter_id, promoter_id, status, is_srcc_restricted, movement_date, contract_date, proposal_date, net_value, gross_value, insurance_value, has_insurance";
+const diarioBruto = await todas<any>((de, ate) =>
+  admin.from("daily_production_records").select(COLS_VIEW).order("id").range(de, ate),
+);
+const targetsBruto = await todas<any>((de, ate) =>
+  admin
+    .from("monthly_targets")
+    .select("promoter_id, year, month, meta, meta_1, meta_2")
+    .order("id")
+    .range(de, ate),
+);
+function rowsDaRede(ids: readonly string[]) {
+  const set = new Set(ids);
+  return diarioBruto.filter(
+    (r) =>
+      (r.assigned_promoter_id && set.has(r.assigned_promoter_id)) ||
+      (r.promoter_id && set.has(r.promoter_id)),
+  );
+}
+function targetsDaRede(ids: readonly string[]) {
+  const set = new Set(ids);
+  return targetsBruto.filter((t) => set.has(t.promoter_id));
+}
+/** Ocupa o lugar do client ANON dentro do buildTeamProduction. */
+function shimDb(rows: any[], targets: any[]) {
+  return {
+    from(tabela: string) {
+      const dados =
+        tabela === "vw_team_production" ? rows : tabela === "monthly_targets" ? targets : [];
+      return { select: () => Promise.resolve({ data: dados, error: null }) };
+    },
+  } as any;
+}
+
 const fechamento = await todas<any>((de, ate) =>
   admin
     .from("monthly_closing_entries")
@@ -235,18 +279,25 @@ console.log(`1) REGUA ANTIGA reproduz o valor atual — ${COMP}`);
 linha();
 
 for (const s of sujeitos) {
-  const base = baseDaRede(s.ids);
+  // MESMO construtor da secao 5. Antes havia uma funcao local aqui que ignorava
+  // a ADS, e as duas secoes discordavam da mesma rede.
+  const base = await construirBaseLideranca(admin as any, {
+    promoterIds: s.ids, year: YEAR, month: MONTH, fechado: true,
+  });
   const antiga = await resolverReguaLideranca(admin as any, s.cargo, COMP);
   const rAntiga = calcularRemuneracaoLideranca(antiga, base, COMP);
-  // O valor ATUAL, do modulo que a tela usa hoje.
-  const atual = calcularComissaoGestao(base.producao_liquida, null).valor_acumulado;
+  // O valor que o modulo REMOVIDO (lib/comissaoGestao) produzia: 0,001 sobre a
+  // producao liquida. Escrito literal AQUI, e so aqui, para o gate continuar
+  // provando a paridade depois que o modulo deixou de existir. Se este numero
+  // divergir do seed da regua antiga, um dos dois esta errado.
+  const atual = Math.round(base.producao_liquida * 0.001 * 100) / 100;
 
   console.log(`\n  ${nome(s.g)} (${s.cargo}, ${s.ids.length} promotores)`);
-  console.log(`    base: ${base.linhas} linhas | comissao ${brl(base.comissao_avista)} | liquido ${brl(base.producao_liquida)} | ${base.srccFora} fora por SRCC`);
+  console.log(`    base: ${base.linhas_comissao} linhas de comissao | ${brl(base.comissao_avista)} | liquido ${brl(base.producao_liquida)} | ${base.linhas_srcc_excluidas} fora por SRCC`);
   console.log(`    regua ate ${antiga.competencia_fim}: aliquota ${pct(antiga.aliquota)} piso ${pct(antiga.piso)} base ${antiga.base_calculo}`);
   assere(
     Math.abs(rAntiga.valor - atual) < 0.01,
-    `regua versionada == lib/comissaoGestao (${nome(s.g)})`,
+    `regua versionada == 0,001 x liquido, a formula do modulo removido (${nome(s.g)})`,
     `versionada ${brl(rAntiga.valor)} vs atual ${brl(atual)}  (desvio ${brl(rAntiga.valor - atual)}) | criterio: ${rAntiga.criterio}`,
   );
 }
@@ -256,7 +307,9 @@ console.log(`2) REGUA NOVA aplicada a ${COMP} — o que passaria a pagar`);
 linha();
 
 for (const s of sujeitos) {
-  const base = baseDaRede(s.ids);
+  const base = await construirBaseLideranca(admin as any, {
+    promoterIds: s.ids, year: YEAR, month: MONTH, fechado: true,
+  });
   // A regua NOVA vive na vigencia 2026-08+; resolvo por ela e aplico a base de
   // junho, que e a comparacao que o entregavel pede.
   const nova = await resolverReguaLideranca(admin as any, s.cargo, "2026-08");
@@ -405,8 +458,108 @@ for (const cargo of ["supervisor", "gerente_regional"] as CargoLideranca[]) {
   );
 }
 
+// Competencia ABERTA com dado: a mais recente do diario que NAO tem fechamento.
+// A existencia do fechamento e testada com HEAD+limit(1) por competencia — sao
+// poucas competencias, e varrer monthly_closing_entries inteira para isso estoura
+// o statement timeout (aconteceu).
+const compsDoDiario = new Set<string>();
+for (const d of diarioBruto) {
+  const p =
+    getProductionPeriodFromValue(d.movement_date) ||
+    getProductionPeriodFromValue(d.contract_date) ||
+    getProductionPeriodFromValue(d.proposal_date);
+  if (p) compsDoDiario.add(`${p.year}-${String(p.month).padStart(2, "0")}`);
+}
+const abertas: string[] = [];
+for (const c of [...compsDoDiario].sort()) {
+  const { count, error } = await admin
+    .from("monthly_closing_entries")
+    .select("id", { head: true, count: "exact" })
+    .eq("year", Number(c.slice(0, 4)))
+    .eq("month", Number(c.slice(5, 7)));
+  if (error) throw new Error(error.message);
+  if (!count) abertas.push(c);
+}
+if (abertas.length === 0) {
+  console.log("\n  [ABORTA] nenhuma competencia ABERTA com dado — o teste de mes aberto seria vacuo.");
+  linha();
+  process.exit(1);
+}
+const ultimaAberta = abertas[abertas.length - 1];
+const ABERTO = { year: Number(ultimaAberta.slice(0, 4)), month: Number(ultimaAberta.slice(5, 7)) };
+console.log(`\ncompetencias ABERTAS com dado: ${abertas.join(", ")} -> testando ${ultimaAberta}`);
+
+// -------------------------------------------------------------------------
+// 5) FONTE UNICA: a TELA e o MOTOR tem de dar o MESMO numero.
+// O payload que a rota serve sai de montarPayloadGestor; o "motor" e
+// remuneracaoLideranca sobre construirBaseLideranca. Se divergirem, ha uma
+// segunda conta em algum lugar — exatamente o que esta frente veio matar.
+//
+// Exercita os DOIS regimes: a competencia do gate (fechada) e a competencia
+// corrente (aberta, fonte 'motor', parcial=true).
+// -------------------------------------------------------------------------
 linha();
-console.log("5) TRAVA DE COMPETENCIA CONGELADA");
+console.log("5) FONTE UNICA — tela x motor, nos dois regimes");
+linha();
+
+for (const s of sujeitos) {
+  for (const regime of ["fechado", "aberto"] as const) {
+    // Mes ABERTO = a ultima competencia COM dado e SEM fechamento. Agosto esta
+    // vazio e o teste passaria por vacuidade (0 == 0) — o mesmo modo de falha
+    // que a guarda da secao 2 barra.
+    const ano = regime === "fechado" ? YEAR : ABERTO.year;
+    const mes = regime === "fechado" ? MONTH : ABERTO.month;
+    const compR = `${ano}-${String(mes).padStart(2, "0")}`;
+
+    // Lado MOTOR: base + regua, direto.
+    const baseMotor = await construirBaseLideranca(admin as any, {
+      promoterIds: s.ids,
+      year: ano,
+      month: mes,
+      fechado: regime === "fechado",
+    });
+    const motor = await remuneracaoLideranca(admin as any, s.cargo, compR, baseMotor);
+
+    // Lado TELA: o payload que a rota serve, montado pela MESMA funcao.
+    const team = await buildTeamProduction(shimDb(rowsDaRede(s.ids), targetsDaRede(s.ids)), admin as any, {
+      year: ano,
+      month: mes,
+    });
+    // A rota passa a ARVORE (via RPC current_user_team_promoter_ids), NAO
+    // team.rows — ver o comentario em app/api/projecao/route.ts. Aqui s.ids e a
+    // reproducao dessa arvore.
+    const baseTela = await construirBaseLideranca(admin as any, {
+      promoterIds: s.ids,
+      year: team.period.year,
+      month: team.period.month,
+      fechado: team.fechado,
+    });
+    const resTela = await remuneracaoLideranca(admin as any, s.cargo, compR, baseTela);
+    const payload = montarPayloadGestor(team, { resultado: resTela, base: baseTela });
+
+    console.log(`\n  ${nome(s.g)} — ${compR} (${regime})`);
+    console.log(`    base: comissao ${brl(baseMotor.comissao_avista)} | liquido ${brl(baseMotor.producao_liquida)} | fonte ${baseMotor.fonte} | parcial ${baseMotor.parcial}`);
+    console.log(`    comissao media da rede: ${baseMotor.comissao_media == null ? "—" : pct(baseMotor.comissao_media)}`);
+    if (baseMotor.ads_linhas_sem_comissao_apurada > 0) {
+      console.log(`    LACUNA ADS: ${brl(baseMotor.ads_producao_sem_comissao_apurada)} em ${baseMotor.ads_linhas_sem_comissao_apurada} contrato(s) sem comissao apurada`);
+    }
+    assere(
+      Math.abs(payload.comissao_gestao.valor - motor.valor) < 0.01 &&
+        payload.comissao_gestao.criterio === motor.criterio,
+      `tela == motor (${nome(s.g)}, ${compR})`,
+      `tela ${brl(payload.comissao_gestao.valor)} "${payload.comissao_gestao.criterio}" vs motor ${brl(motor.valor)} "${motor.criterio}"`,
+    );
+    assere(
+      payload.comissao_gestao.parcial === (regime === "aberto") &&
+        payload.comissao_gestao.fonte === (regime === "aberto" ? "motor" : "fechamento"),
+      `regime marcado corretamente (${compR})`,
+      `fonte "${payload.comissao_gestao.fonte}" parcial ${payload.comissao_gestao.parcial}`,
+    );
+  }
+}
+
+linha();
+console.log("6) TRAVA DE COMPETENCIA CONGELADA");
 linha();
 {
   const fechadas = ["2026-06", "2026-07"];

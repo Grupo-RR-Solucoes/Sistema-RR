@@ -49,7 +49,7 @@ for (const arquivo of [".env.local", ".env"]) {
 import { buildTeamProduction } from "@/lib/equipe/teamProduction.ts";
 import { montarPayloadGestor } from "@/lib/projecao/gestorAdapter.ts";
 import { buildProjecaoMetas, consolidarGrupoEquipe } from "@/lib/projecaoMetas.ts";
-import { calcularComissaoGestao, PERCENTUAL_COMISSAO_GESTAO } from "@/lib/comissaoGestao.ts";
+import { calcularRemuneracaoLideranca, resolverReguaLideranca } from "@/lib/remuneracaoLideranca.ts";
 import { mediaTresMeses } from "@/lib/projecao/mediaTresMeses.ts";
 import { nowInFortaleza } from "@/lib/dateFortaleza.ts";
 
@@ -339,11 +339,17 @@ assere(
 // (f) a comissao e mesmo a regua sobre a base
 if (sup.payload) {
   const c = sup.payload.comissao_gestao;
-  const esperado = calcularComissaoGestao(c.base_acumulada, null).valor_acumulado;
+  // A regua vem de leadership_rule_versions, nao de constante em codigo.
+  const regua = await resolverReguaLideranca(admin as any, "supervisor", `${YEAR}-${String(MONTH).padStart(2, "0")}`);
+  const esperado = calcularRemuneracaoLideranca(
+    regua,
+    { comissao_avista: c.base_comissao_avista, producao_liquida: c.base_producao_liquida },
+    `${YEAR}-${String(MONTH).padStart(2, "0")}`,
+  );
   assere(
-    Math.abs(c.valor_acumulado - esperado) < 0.01,
-    `comissao = ${PERCENTUAL_COMISSAO_GESTAO} x base`,
-    `${brl(c.base_acumulada)} x ${PERCENTUAL_COMISSAO_GESTAO} = ${brl(esperado)}  (payload: ${brl(c.valor_acumulado)})`,
+    Math.abs(c.valor - esperado.valor) < 0.01 && c.criterio === esperado.criterio,
+    `comissao do payload == regua versionada aplicada a mesma base`,
+    `payload ${brl(c.valor)} criterio "${c.criterio}" vs helper ${brl(esperado.valor)} criterio "${esperado.criterio}"`,
   );
 }
 

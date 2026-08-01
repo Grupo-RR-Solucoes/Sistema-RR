@@ -3,7 +3,9 @@ import { createSupabaseServerClient } from "@/lib/auth/supabaseServerClient";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
 import { buildTeamProduction } from "@/lib/equipe/teamProduction";
+import { construirBaseLideranca } from "@/lib/lideranca/baseLideranca";
 import { montarPayloadGestor } from "@/lib/projecao/gestorAdapter";
+import { remuneracaoLideranca } from "@/lib/remuneracaoLideranca";
 import {
   agruparPorEstado,
   agruparPorSupervisor,
@@ -46,9 +48,43 @@ export async function GET(req: Request) {
       const db = await createSupabaseServerClient();
       const admin = getSupabaseAdmin();
       const team = await buildTeamProduction(db, admin, { year, month });
+
+      // BASE DA REMUNERACAO — service_role sobre a arvore JA autorizada. A
+      // vw_team_production nao tem coluna de comissao (omitida de proposito em
+      // 20260701_000003:26-33), entao a comissao a vista nao pode sair dela.
+      //
+      // A ARVORE, e NAO team.rows. O WHERE da vw_team_production expoe registro
+      // por `assigned_promoter_id OR promoter_id` na arvore; o buildTeamProduction
+      // agrupa por assigned_promoter_id. Um contrato REATRIBUIDO de uma rede para
+      // outra faz o promotor de FORA aparecer em team.rows — e usar isso como
+      // escopo somaria a producao INTEIRA dele. Medido em 01/08/2026: na rede da
+      // Carla (10 promotores) entrava 1 promotora da rede da Izabela por 1
+      // registro-ponte, inflando a base em R$ 63.623,63 em jul/2026.
+      //
+      // current_user_team_promoter_ids() e security definer e resolve por
+      // auth.uid(), entao vai no client ANON: e a MESMA fonte que a view usa.
+      const { data: arvore, error: erroArvore } = await db.rpc("current_user_team_promoter_ids");
+      if (erroArvore) throw new Error(`current_user_team_promoter_ids: ${erroArvore.message}`);
+      const promoterIds = ((arvore ?? []) as unknown[]).map((x) =>
+        typeof x === "string" ? x : String((x as { current_user_team_promoter_ids?: string })?.current_user_team_promoter_ids ?? x),
+      );
+
+      const base = await construirBaseLideranca(admin, {
+        promoterIds,
+        year: team.period.year,
+        month: team.period.month,
+        fechado: team.fechado,
+      });
+      const competencia = `${team.period.year}-${String(team.period.month).padStart(2, "0")}`;
+      // ADMIN e nao `db`: leadership_rule_versions e RLS default-deny (nenhuma
+      // policy, ver 20260801_000001). O client anon devolveria ZERO linhas e o
+      // resolvedor lancaria. A regua e regra publica do sistema, nao dado do
+      // usuario — resolver por service_role nao amplia escopo de ninguem.
+      const resultado = await remuneracaoLideranca(admin, role, competencia, base);
+
       // O payload e montado no adaptador, NAO aqui: e a mesma funcao que o
       // scripts/gate_projecao_gestor.mts exercita. Inline, o gate testaria copia.
-      return Response.json(montarPayloadGestor(team));
+      return Response.json(montarPayloadGestor(team, { resultado, base }));
     }
 
     // Promotor nao filtra por empresa (so ve a si mesmo).
