@@ -1,5 +1,9 @@
 import { apiGuardErrorResponse, withAuthenticatedAnon } from "@/lib/auth/guards";
+import { createSupabaseServerClient } from "@/lib/auth/supabaseServerClient";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
+import { buildTeamProduction } from "@/lib/equipe/teamProduction";
+import { projecaoResultadoDoGestor } from "@/lib/projecao/gestorAdapter";
 import {
   agruparPorEstado,
   agruparPorSupervisor,
@@ -26,6 +30,52 @@ export async function GET(req: Request) {
     const hoje = nowInFortaleza();
     const year = Number(searchParams.get("year") || 0) || hoje.year;
     const month = Number(searchParams.get("month") || 0) || hoje.month;
+    // GESTOR (supervisor | gerente_regional) — ramo PROPRIO, antes do motor do
+    // socio. Nao passa por buildProjecaoMetas de proposito: aquele motor le 8
+    // tabelas CRUAS que nao tem policy para estes papeis e devolveria vazio.
+    //
+    // A autorizacao e a mesma da /equipe e nasce no BANCO: buildTeamProduction le
+    // vw_team_production (WHERE por current_user_team_promoter_ids) com o client
+    // ANON, e monthly_targets pela policy monthly_targets_gestor_select. O
+    // service_role entra la dentro so para resolver ATRIBUTO (nome, estado,
+    // empresa, PMR de producao/penetracao) sobre ids que a view ja autorizou.
+    //
+    // O adaptador e PURO: nao le banco, so troca o formato para o que os 4
+    // agregadores da /projecao ja consomem.
+    if (role === "supervisor" || role === "gerente_regional") {
+      const db = await createSupabaseServerClient();
+      const admin = getSupabaseAdmin();
+      const team = await buildTeamProduction(db, admin, { year, month });
+      const resGestor = projecaoResultadoDoGestor(team);
+
+      // OMISSOES DELIBERADAS (ausencia, nunca zero inventado):
+      //   companies                      -> o gestor nao escolhe empresa; a rede
+      //                                     dele e o recorte, nao o CNPJ.
+      //   seguro_comissao_grupo_empresa  -> comissao da empresa nao e do gestor
+      //                                     (decisao Diego) e a coluna esta fora
+      //                                     da view (20260701_000003:26-33).
+      //   nao_atribuido                  -> balde master nao e rede de ninguem; o
+      //                                     helper exclui is_master (:86).
+      // A tela esconde cada secao pela AUSENCIA do campo — ver EquipeView.
+      return Response.json({
+        scope: "equipe",
+        year,
+        month,
+        referenceDate: resGestor.referenceDate,
+        fechado: resGestor.fechado,
+        janela: resGestor.janela,
+        consolidado: consolidarGrupoEquipe(resGestor),
+        grupos: agruparPorEstado(resGestor),
+        gruposSupervisor: agruparPorSupervisor(resGestor),
+        gestores: resGestor.gestores ?? [],
+        risco: promotoresEmRisco(resGestor),
+        total_promotores: resGestor.promotores.length,
+        perPromoterMonthly: resGestor.perPromoterMonthly ?? [],
+        perEstadoMonthly: resGestor.perEstadoMonthly ?? [],
+        perSupervisorMonthly: resGestor.perSupervisorMonthly ?? [],
+      });
+    }
+
     // Promotor nao filtra por empresa (so ve a si mesmo).
     const companyId =
       role === "promotor" ? undefined : searchParams.get("companyId") || undefined;

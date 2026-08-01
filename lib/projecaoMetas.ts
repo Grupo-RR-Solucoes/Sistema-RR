@@ -592,7 +592,10 @@ export function agruparPorCnpj(res: ProjecaoResultado): ProjecaoGrupoCnpj[] {
 // nao muda). Meta por estado = soma dos target_value dos promotores (derivada).
 
 /** Narrowing seguro: string do banco -> Estado | null (o CHECK garante o dominio). */
-function asEstado(v: unknown): Estado | null {
+// `export` acrescentado para o adaptador do gestor (lib/projecao/gestorAdapter)
+// reusar a MESMA regra de narrowing em vez de duplicá-la. Zero mudança de
+// comportamento: a função e todos os chamadores internos seguem iguais.
+export function asEstado(v: unknown): Estado | null {
   return v === "AL" || v === "SE" || v === "PE" || v === "BA" ? v : null;
 }
 /** Estado IMPLICITO pela empresa-operacao (nome). SO para bucketar o master. AL/PE. */
@@ -602,7 +605,9 @@ function estadoDaEmpresa(companyName: string | null | undefined): Estado | null 
   if (n.includes("PERNAMBUCO")) return "PE";
   return null;
 }
-const ESTADO_LABEL: Record<Estado, string> = {
+// `export` pelo mesmo motivo de asEstado acima: o adaptador do gestor precisa do
+// rótulo em EstadoHistorico.estado_label. Nenhum comportamento muda.
+export const ESTADO_LABEL: Record<Estado, string> = {
   AL: "Alagoas",
   SE: "Sergipe",
   PE: "Pernambuco",

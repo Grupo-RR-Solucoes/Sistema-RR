@@ -696,6 +696,9 @@ function EquipeView({ data, nav }: { data: any; nav: Nav }) {
   const gruposSupervisor: GrupoSupervisor[] = data.gruposSupervisor || [];
   const risco: Promotor[] = data.risco || [];
   const jan = data.janela;
+  // Presença do CAMPO, não do valor: o sócio pode legitimamente ter R$ 0,00 de
+  // comissão de seguro num mês; o gestor não recebe a chave. Ver o bloco de KPIs.
+  const temSeguroEmpresa = "seguro_comissao_grupo_empresa" in data;
 
   // Segmented control: agrupa por ESTADO (atual) ou por SUPERVISOR (novo). Drill
   // (estado/supervisor/promotor) abre TELA CHEIA via nav (query param).
@@ -721,7 +724,12 @@ function EquipeView({ data, nav }: { data: any; nav: Nav }) {
 
   return (
     <>
-      {/* KPIs — faixa navy (kit) */}
+      {/* KPIs — faixa navy (kit).
+          AUSÊNCIA, NUNCA ZERO: o ramo do gestor OMITE seguro_comissao_grupo_empresa
+          (comissão da empresa não é dele, e a coluna está fora da vw_team_production).
+          Sem o campo, a segunda faixa não existe e a penetração — que o gestor TEM —
+          sobe para a faixa principal como 5º item. `in` e não truthiness: R$ 0,00 é
+          um valor legítimo para o sócio num mês sem seguro. */}
       <div className="kpiwrap-navy">
         <KpiBand
           valueSize={24}
@@ -744,26 +752,37 @@ function EquipeView({ data, nav }: { data: any; nav: Nav }) {
             { label: "Projeção do grupo", value: brl(cons.projecao), sub: "estimativa de fechamento", accent: true },
             { label: "Meta do grupo", value: brl(cons.meta), sub: "soma das metas por estado" },
             { label: "% projetado do grupo", value: pctTxt(cons.percent_projetado), sub: <Chip s={cons.semaforo} onNavy /> },
+            ...(temSeguroEmpresa
+              ? []
+              : [
+                  {
+                    label: "Penetração seguro",
+                    value: pctTxt(cons.seguro_penetracao),
+                    sub: "atual, ponderada",
+                  },
+                ]),
           ]}
         />
         {/* Seguro (DB-driven). KPI do GRUPO = comissão-EMPRESA (aberto §188; fechado
             fechamento.valor_seguro), MESMA fonte do dashboard/financeiro. Penetracao =
             card proprio (atual, ponderada); SEM meta/semaforo. */}
-        <KpiBand
-          valueSize={24}
-          columns={2}
-          items={[
-            {
-              label: "Comissão seguro (empresa)",
-              value: brl(data.seguro_comissao_grupo_empresa),
-            },
-            {
-              label: "Penetração seguro",
-              value: pctTxt(cons.seguro_penetracao),
-              sub: "atual, ponderada",
-            },
-          ]}
-        />
+        {temSeguroEmpresa ? (
+          <KpiBand
+            valueSize={24}
+            columns={2}
+            items={[
+              {
+                label: "Comissão seguro (empresa)",
+                value: brl(data.seguro_comissao_grupo_empresa),
+              },
+              {
+                label: "Penetração seguro",
+                value: pctTxt(cons.seguro_penetracao),
+                sub: "atual, ponderada",
+              },
+            ]}
+          />
+        ) : null}
       </div>
 
       {/* RISCO */}

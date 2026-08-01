@@ -180,6 +180,13 @@ export interface TeamProductionPayload {
     dias_uteis_decorridos: number;
     dias_uteis_ritmo: number;
   };
+  /**
+   * ADITIVO — regime da competência selecionada, já detectado aqui dentro
+   * (periodoFechado = regime !== 'open'). Mesma razão da janela acima: o ramo do
+   * gestor da /projecao precisa do booleano para a nota "competência
+   * fechada/aberta" e NÃO pode redetectar regime por conta própria.
+   */
+  fechado: boolean;
   /** Série mensal agregada do time, jan/2026 → competência corrente. */
   monthlySeries: MonthPoint[];
   /**
@@ -679,6 +686,7 @@ export function assembleTeamProduction(
       dias_uteis_decorridos: janela.diasDecorridos,
       dias_uteis_ritmo: janela.diasParaRitmo,
     },
+    fechado: periodoFechado,
     monthlySeries,
     perPromoterMonthly,
     // meta_efetiva = override do gestor (se houver) senão a derivada (tMeta).
