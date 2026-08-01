@@ -42,6 +42,10 @@ import {
   type CargoLideranca,
 } from "@/lib/remuneracaoLideranca.ts";
 import { calcularComissaoGestao } from "@/lib/comissaoGestao.ts";
+// Competencia de um registro: a janela RR NAO e o mes calendario, entao o mes
+// da data NAO serve. Este e o mesmo helper que promoterAnalytics e teamProduction
+// usam. Usar slice(0,7) da data punha 30/06 em junho quando o canonico diz julho.
+import { getProductionPeriodFromValue } from "@/lib/productionPeriod.ts";
 
 // .env -> process.env (mesma precedencia do scripts/_ts_register.cjs, que so
 // serve CommonJS e nao alcanca este .mts): shell > .env.local > .env.
@@ -319,10 +323,14 @@ linha();
       .range(de, ate),
   );
 
-  const daComp = ads.filter((r) => {
-    const d = String(r.movement_date || r.contract_date || r.proposal_date || "");
-    return d.slice(0, 7) === COMP;
-  });
+  const competenciaDe = (r: any) => {
+    const p =
+      getProductionPeriodFromValue(r.movement_date) ||
+      getProductionPeriodFromValue(r.contract_date) ||
+      getProductionPeriodFromValue(r.proposal_date);
+    return p ? `${p.year}-${String(p.month).padStart(2, "0")}` : null;
+  };
+  const daComp = ads.filter((r) => competenciaDe(r) === COMP);
   const elegiveis = daComp.filter(elegivelAds);
   const semPago = elegiveis.filter((r) => r.bbts_pag_avista == null);
 
@@ -345,8 +353,60 @@ linha();
   }
 }
 
+// -------------------------------------------------------------------------
+// 4) BORDA DA VIGENCIA. competencia_fim = 2026-07-01 tem de ser INCLUSIVO:
+// julho e o ULTIMO mes da regua antiga. O gate compara junho, que esta no MEIO
+// da vigencia e nao exercita a borda — um resolvedor que comparasse com < em vez
+// de <= passaria em junho e deixaria julho SEM regua nenhuma.
+// -------------------------------------------------------------------------
 linha();
-console.log("4) TRAVA DE COMPETENCIA CONGELADA");
+console.log("4) BORDA DA VIGENCIA (julho fecha a antiga, agosto abre a nova)");
+linha();
+
+for (const cargo of ["supervisor", "gerente_regional"] as CargoLideranca[]) {
+  const jul = await resolverReguaLideranca(admin as any, cargo, "2026-07");
+  assere(
+    jul.base_calculo === "PRODUCAO_LIQUIDA" && jul.competencia_fim === "2026-07-01",
+    `${cargo} em 2026-07 resolve para a regua ANTIGA (fim inclusivo)`,
+    `base ${jul.base_calculo} | aliquota ${pct(jul.aliquota)} | piso ${pct(jul.piso)} | vigencia ${jul.competencia_inicio}..${jul.competencia_fim}`,
+  );
+
+  const ago = await resolverReguaLideranca(admin as any, cargo, "2026-08");
+  const aliqEsperada = cargo === "supervisor" ? 0.025 : 0.035;
+  const pisoEsperado = cargo === "supervisor" ? 0.0007 : 0.001;
+  assere(
+    ago.base_calculo === "AVISTA_CREDITO_PF" &&
+      Math.abs(ago.aliquota - aliqEsperada) < 1e-9 &&
+      Math.abs(ago.piso - pisoEsperado) < 1e-9 &&
+      ago.competencia_fim === null,
+    `${cargo} em 2026-08 resolve para a regua NOVA`,
+    `base ${ago.base_calculo} | aliquota ${pct(ago.aliquota)} | piso ${pct(ago.piso)} | vigencia ${ago.competencia_inicio}..${ago.competencia_fim ?? "aberta"}`,
+  );
+
+  // Borda de INICIO da regua antiga.
+  const jan = await resolverReguaLideranca(admin as any, cargo, "2026-01");
+  assere(
+    jan.competencia_inicio === "2026-01-01" && jan.base_calculo === "PRODUCAO_LIQUIDA",
+    `${cargo} em 2026-01 resolve (borda de inicio, inclusiva)`,
+    `vigencia ${jan.competencia_inicio}..${jan.competencia_fim}`,
+  );
+
+  // Antes de qualquer vigencia o resolvedor tem de FALHAR, nao devolver default.
+  let lancou = false;
+  try {
+    await resolverReguaLideranca(admin as any, cargo, "2025-12");
+  } catch {
+    lancou = true;
+  }
+  assere(
+    lancou,
+    `${cargo} em 2025-12 (antes de toda vigencia) LANCA em vez de assumir default`,
+    lancou ? "lancou" : "NAO lancou — devolveu regua para competencia sem regua",
+  );
+}
+
+linha();
+console.log("5) TRAVA DE COMPETENCIA CONGELADA");
 linha();
 {
   const fechadas = ["2026-06", "2026-07"];
