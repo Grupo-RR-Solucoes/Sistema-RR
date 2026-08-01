@@ -773,3 +773,46 @@ a {
 .rr-table-wrap--scrollable thead th.rr-sticky-col {
   background: #E8EDF5;
 }
+
+/* ===================================================================
+   TELEFONE — a janela viewport-bound e desligada.
+
+   O --chrome-offset (239px = --nav-h + 183px) e calibragem de COMPUTADOR; a
+   ressalva esta escrita na propria definicao, la em cima:
+
+     "183px e CALIBRAGEM, nao medida de uma tela. O header nao tem altura
+      fixa: varia com subtitle, KpiBand e o que cada tela empilha entre o
+      header e a tabela."
+
+   A 384px o header nao encolhe, cresce: o titulo de 27px quebra em varias
+   linhas e o KpiBand empilha. A janela calc(100vh - 239px) entao COMECA
+   abaixo da dobra, e o thead grudado no topo dela gruda fora da tela.
+   Sem max-height a tabela volta a crescer com a pagina.
+
+   O VALOR DE --chrome-offset NAO MUDA. Ele segue exato para o desktop; aqui
+   so a media query do telefone deixa de consumi-lo.
+
+   Estas regras vencem as de cima por ORDEM: mesma especificidade de classe,
+   declaradas depois no arquivo.
+
+   RESSALVA DE CASCATA (nao e descuido): o overflow-y:visible abaixo NAO
+   computa como visible enquanto .rr-table-wrap tiver overflow-x:auto — pela
+   spec de overflow, se um eixo nao e visible o outro vira auto. O efeito util
+   e o max-height:none; o thead continua sticky contra o proprio wrapper, nao
+   contra a viewport, entao ele NAO flutua abaixo da barra numa tabela comum.
+   O overflow so vira visible de verdade no modo cartao (.rr-table-cards, em
+   uiCss.ts), onde a tabela e display:block e nao tem eixo horizontal para
+   conter. Manter o overflow-x:auto aqui e deliberado: com min-width:0 a tabela
+   comum ainda pode estourar (th e celula .mono seguem nowrap), e overflow
+   contido e melhor que rolagem do documento inteiro. */
+@media (max-width: 560px) {
+  .rr-table-wrap--scrollable {
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .rr-table-wrap--scrollable thead {
+    position: sticky;
+    top: var(--nav-h);
+  }
+}

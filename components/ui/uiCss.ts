@@ -32,6 +32,16 @@ export const UI_CSS = `
 .rrui-hnavy__title{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
 .rrui-hnavy__subtitle{font-size:13px;color:rgba(255,255,255,.62);margin:8px 0 0;}
 .rrui-hnavy__aside{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+/* TELEFONE — o padding de 34px lateral come 68px dos 356 úteis a 384px (19%).
+   16px devolve 36px ao conteúdo. O título de 27px cai para 21px porque a 384px
+   ele quebrava em 2-3 linhas e era ele quem empurrava a tabela abaixo da dobra.
+   O overflow:hidden FICA: é ele que recorta a faixa dourada do ::after no raio
+   do bloco. Vence o padding-top:34px do --sem-eyebrow (acima) por ordem: mesma
+   especificidade de classe, esta regra vem depois no arquivo. */
+@media (max-width:560px){
+  .rrui-hnavy{padding:22px 16px 24px;}
+  .rrui-hnavy__title{font-size:21px;}
+}
 
 /* ===== KpiBand — faixa multi-stat embutida no navy ===== */
 .rrui-kpiband{margin-top:28px;display:grid;grid-template-columns:repeat(var(--kpi-cols,1),1fr);border-top:1px solid rgba(255,255,255,.10);padding-top:24px;}
@@ -47,8 +57,18 @@ export const UI_CSS = `
 .rrui-kpiband__sub--gold{color:var(--gold);}
 .rrui-kpiband__sub--amber{color:var(--gold-soft);}
 .rrui-kpiband__sub--ok{color:var(--ok-soft);}
-@media (max-width:920px){ .rrui-kpiband{--kpi-cols:2;row-gap:22px;} .rrui-kpiband__stat{padding-left:0;} .rrui-kpiband__stat + .rrui-kpiband__stat::before{display:none;} }
-@media (max-width:560px){ .rrui-kpiband{--kpi-cols:1;} }
+/* COLAPSO RESPONSIVO — a PROPRIEDADE, nunca a variável.
+   Estas duas regras escreviam --kpi-cols:2 / --kpi-cols:1 e não faziam nada:
+   KpiBand.tsx:52-57 grava --kpi-cols no style INLINE do elemento
+   (cols = columns ?? items.length, nunca undefined), e custom property inline
+   vence regra de classe mesmo dentro de media query. Sobrescrever
+   grid-template-columns direto tira a variável do caminho — o inline continua
+   lá, só deixou de decidir o layout.
+   Mesmo motivo em __value: --kpi-value também vem inline (prop valueSize), então
+   o telefone fixa o font-size na própria classe. O nowrap fica: com 1 coluna,
+   a largura inteira do bloco é do valor. */
+@media (max-width:920px){ .rrui-kpiband{grid-template-columns:repeat(2,1fr);row-gap:22px;} .rrui-kpiband__stat{padding-left:0;} .rrui-kpiband__stat + .rrui-kpiband__stat::before{display:none;} }
+@media (max-width:560px){ .rrui-kpiband{grid-template-columns:1fr;} .rrui-kpiband__value{font-size:20px;} }
 
 /* ===== DeltaBadge — variacao vs mes anterior ("^ 12,4% vs junho") =====
    Vive sobre o navy (dentro do KpiBand), por isso usa as variantes -soft dos
@@ -122,13 +142,63 @@ export const UI_CSS = `
 .rrui-btn--secundario:hover:not(:disabled){background:var(--neu);border-color:var(--bd-soft);}
 
 /* ===== Table (ftable) ===== */
-.rrui-table{width:100%;border-collapse:collapse;font-size:13px;color:var(--ink);}
+.rrui-table{width:100%;border-collapse:collapse;font-size:13px;color:var(--ink);min-width:var(--tbl-min,720px);}
 .rrui-table thead th{background:var(--neu);color:var(--ink-2);text-transform:uppercase;font-size:11px;letter-spacing:.04em;font-weight:600;text-align:left;padding:9px 12px;border-bottom:1px solid var(--bd);white-space:nowrap;}
 .rrui-table tbody td{padding:8px 12px;border-bottom:1px solid var(--bd-soft);}
 .rrui-table tbody tr:nth-child(even){background:var(--neu);}
 .rrui-table tbody tr:hover{background:var(--blue-bg);}
 .rrui-table .mono,.rrui-table .rrui-table__num{font-family:var(--font-mono),'IBM Plex Mono',ui-monospace,monospace;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
 .rrui-table tfoot td{padding:10px 12px;font-weight:700;color:var(--ink);border-top:4px solid var(--accent);background:var(--paper);}
+
+/* TELEFONE — a tabela para de exigir 720px (o DEFAULT_MIN_WIDTH) contra 356
+   úteis. Só é alcançável porque o Table.tsx passou a gravar --tbl-min em vez de
+   min-width: propriedade inline nenhuma media query vence. Sozinho isto NÃO
+   resolve a leitura (9 colunas em 356px continuam ilegíveis) — resolve o
+   arrastar de lado. A leitura é o modo cartão abaixo. */
+@media (max-width:560px){
+  .rrui-table{min-width:0;}
+}
+
+/* ===== Table — MODO CARTÃO (opt-in via <Table cards>) =====
+   Padrão trazido de app/promotores/PromotoresClient.tsx:2716-2737, que já roda
+   em produção em tabela crua. Aqui vira mecanismo do kit, escopado em
+   .rr-table-cards para NÃO tocar nas outras 26 chamadas de <Table>.
+
+   Cada <td> precisa de data-l="<rótulo>": o thead é escondido e o ::before
+   devolve o rótulo por célula. Linha de estado vazio (o <td colSpan=N>) fica
+   SEM data-l de propósito — ela não é um cartão, é uma mensagem. */
+@media (max-width:560px){
+  /* overflow SHORTHAND, não overflow-y isolado: com overflow-x:auto herdado do
+     .rr-table-wrap (globals.css) o eixo vertical computaria auto e o wrapper
+     seguiria sendo container de rolagem. Aqui é seguro zerar os dois — a
+     tabela virou display:block com min-width:0, não há eixo horizontal. */
+  .rr-table-wrap.rr-table-cards{overflow:visible;}
+  .rr-table-cards .rrui-table,
+  .rr-table-cards .rrui-table thead,
+  .rr-table-cards .rrui-table tbody,
+  .rr-table-cards .rrui-table tfoot,
+  .rr-table-cards .rrui-table tr,
+  .rr-table-cards .rrui-table th,
+  .rr-table-cards .rrui-table td{display:block;}
+  .rr-table-cards .rrui-table thead{display:none;}
+  .rr-table-cards .rrui-table tbody tr{border:1px solid var(--bd);border-radius:var(--r-card);margin-bottom:12px;padding:6px 14px;background:var(--paper);}
+  /* zebra e hover são de LINHA de tabela; num cartão viram bloco chapado. */
+  .rr-table-cards .rrui-table tbody tr:nth-child(even){background:var(--paper);}
+  .rr-table-cards .rrui-table tbody tr:hover{background:var(--paper);}
+  .rr-table-cards .rrui-table tbody td{display:flex;justify-content:space-between;align-items:center;gap:16px;text-align:right;padding:9px 0;border-bottom:1px solid var(--bd-soft);white-space:normal;}
+  .rr-table-cards .rrui-table tbody td:last-child{border-bottom:none;}
+  .rr-table-cards .rrui-table tbody td::before{content:attr(data-l);font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);text-align:left;flex:none;}
+  /* o .mono/__num traz white-space:nowrap próprio (linha do bloco base) */
+  .rr-table-cards .rrui-table tbody td.rrui-table__num,
+  .rr-table-cards .rrui-table tbody td.mono{white-space:normal;}
+  /* 1ª coluna fixa não faz sentido sem eixo horizontal; o sticky left:0 sobre
+     um td que virou block deixaria fundo sólido cobrindo o cartão. */
+  .rr-table-wrap.rr-table-cards .rr-sticky-col{position:static;background:transparent;}
+  .rr-table-cards .rrui-table tfoot td{display:flex;justify-content:space-between;gap:16px;border-top:1px solid var(--bd-soft);}
+  .rr-table-cards .rrui-table tfoot td::before{content:attr(data-l);font-weight:600;color:var(--ink-2);}
+  /* célula de estado vazio (colSpan): sem data-l, volta a ser bloco de texto */
+  .rr-table-cards .rrui-table tbody td[colspan]{display:block;text-align:center;}
+}
 
 /* ===== Chip ===== */
 .rrui-chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;font-weight:600;border:1px solid transparent;white-space:nowrap;}
