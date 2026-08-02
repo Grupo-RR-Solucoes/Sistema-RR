@@ -46,12 +46,12 @@ const faixa = (p: number) => (p >= 0.30 ? "≥30" : p >= 0.21 ? "21-30" : p >= 0
       pad((r.promoter_name || "?").slice(0, 25), 26) + padL(brl(r.prod_rr), 12) + padL(brl(r.prod_ads), 11) +
       padL(brl(r.prod_total), 12) + padL(r.status_meta, 11) + padL(pct(r.penetracao_consolidada), 7) +
       padL(faixa(r.penetracao_consolidada), 6) + padL(pct(r.seguro_share), 6) + padL(brl(r.volume_consolidado), 12) +
-      padL(pct(r.acordo), 7) + padL(brl(r.credito_rr), 11) + padL(brl(r.credito_ads), 10) +
-      padL(brl(r.seguro_rr), 9) + padL(brl(r.seguro_ads), 8)
+      padL(pct(r.acordo), 7) + padL(brl(r.repasse_credito_rr), 11) + padL(brl(r.repasse_credito_ads), 10) +
+      padL(brl(r.repasse_seguro_rr), 9) + padL(brl(r.repasse_seguro_ads), 8)
     );
   }
   console.log("-".repeat(h.length));
   const t = res.totals;
-  console.log(`TOTAL — crédito RR ${brl(t.credito_rr)} | crédito ADS ${brl(t.credito_ads)} | seguro RR ${brl(t.seguro_rr)} | seguro ADS ${brl(t.seguro_ads)}`);
+  console.log(`TOTAL — crédito RR ${brl(t.repasse_credito_rr)} | crédito ADS ${brl(t.repasse_credito_ads)} | seguro RR ${brl(t.repasse_seguro_rr)} | seguro ADS ${brl(t.repasse_seguro_ads)}`);
   console.log(`\n${res.dry_run ? "DRY-RUN: nada gravado." : `GRAVADO: RR ${res.rr_gravadas} linhas + ADS ${res.ads_gravadas} linhas.`}`);
 })().catch((e) => { console.error("ERRO:", e && e.message ? e.message : e); process.exit(1); });

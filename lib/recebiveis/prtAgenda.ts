@@ -212,12 +212,30 @@ export async function fetchPrtSnapshot(
 ): Promise<PrtContract[]> {
   const contracts: PrtContract[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
+    // ORDEM ESTAVEL OBRIGATORIA. Sem ORDER BY o `.range()` nao tem ordem
+    // definida: a mesma linha vem em duas paginas e outra em nenhuma. Medido em
+    // 01/08/2026 nesta query, jun/2026: 10.238 linhas devolvidas mas apenas
+    // 7.238 ids distintos — 3.000 DUPLICADAS e 55 contratos que a leitura nunca
+    // via.
+    //
+    // O estrago era na Fatia B (prtInadimplencia): o Set de operacoes do
+    // snapshot RECENTE ficava furado, entao contrato que continuava pagando
+    // parecia ter sumido. A deteccao acusava 2.814 paradas antecipadas quando
+    // as reais eram 66 — 2.748 FALSOS POSITIVOS, R$ 13.343,59 de "comissao
+    // perdida" contra R$ 221,55 de verdade.
+    //
+    // PROVA DE QUE O COMPORTAMENTO E INDEFINIDO, NAO APENAS SUBOTIMO: a MESMA
+    // query logica (monthly_closing_entries, PRT, jun/2026, as mesmas 10.238
+    // linhas) devolveu 2.000 duplicadas em closingAnalytics:1167 e 3.000 aqui.
+    // Conjunto igual, numeros diferentes — o Postgres escolhe livre a cada
+    // requisicao. Nao ha "ordem natural" para confiar.
     const { data, error } = await supabase
       .from("monthly_closing_entries")
       .select("metadata")
       .eq("entry_type", PRT_ENTRY_TYPE)
       .eq("year", ano)
       .eq("month", mes)
+      .order("id", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(error.message);
     const rows = (data ?? []) as Array<{ metadata: Record<string, unknown> | null }>;

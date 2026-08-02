@@ -20,6 +20,65 @@
  *   C) o range da janela e coerente: start < endExclusive, e o endExclusive de
  *      uma competencia e o start da seguinte (as janelas se encaixam sem furo
  *      nem sobreposicao).
+ *
+ * ============================================================================
+ * NOTA DE CORRECAO — O NUMERO DO COMMIT 3daea7e ESTA ERRADO (medido 01/08/2026)
+ * ============================================================================
+ * O commit 3daea7e (e a memoria da frente) diz que reprocessar jun/2026 tira
+ * R$ 82,29 da ERIKA LILIAM. O valor MEDIDO POR EXECUCAO e -R$ 23,17.
+ * A nota vive aqui, e nao num commit de texto, porque este arquivo e o que
+ * alguem abre antes de reprocessar uma competencia fechada. O historico do
+ * git NAO foi reescrito.
+ *
+ * DE ONDE VEIO O ERRO. Os -82,29 foram ESTIMATIVA que assumiu uniformidade:
+ * aplicaram a queda de degrau (Frente C 0,6355 -> 0,6250 = 1,05 p.p.) sobre a
+ * base INTEIRA da ERIKA.
+ *
+ *     estimativa antiga:  7.931,48 x 0,0105 = 83,28   (~ os 82,29 do commit)
+ *     medido de verdade:  2.206,71 x 0,0105 = 23,17
+ *
+ * POR QUE SO UMA PARTE DA BASE. acordoDoContrato (closingMonthly.ts:340-358)
+ * so passa a Frente C nos contratos da FAIXA 5,80% (flag isFaixa580); fora
+ * dela vale o acordo base (62,50%), que nao depende do degrau. Dos 42
+ * contratos da ERIKA em jun/2026 (7 deles por heranca master, __pid em
+ * closingMonthly.ts:229), apenas 7 mudam:
+ *
+ *     FAIXA 5,80%    63,5500% -> 62,5000%   n= 7   comEmp 2.206,71   -23,17
+ *     fora da faixa  62,5000% -> 62,5000%   n=35   comEmp 5.724,77     0,00
+ *
+ * Reproduzido chamando consolidateMonthlyFromClosing REAL e injetando os dois
+ * volumes (225.634,94 e 216.344,94) por volumeConsolidadoByPromoter /
+ * prodConsolidadoByPromoter: production_commission_value vai de 4.980,35 para
+ * 4.957,18.
+ *
+ * ---------------------------------------------------------------------------
+ * PMR HIBRIDO — 26 DE 41, E E ANTERIOR AO 3daea7e
+ * ---------------------------------------------------------------------------
+ * O PMR de jun/2026 tem production_value vindo do FECHAMENTO (janela) enquanto
+ * o degrau foi decidido pelo volume do proposalDetailing (CALENDARIO). Medido
+ * sobre os 41 promotores com PMR source='fechamento' em jun/2026: 26 estavam
+ * HIBRIDOS, 15 coerentes. O 3daea7e ALINHOU os 26 (volume-janela ==
+ * production_value gravado). Ele NAO introduziu divergencia: revelou e fechou
+ * uma que ja existia em 26 linhas.
+ *
+ * A ERIKA e so a 14a maior divergencia. As maiores:
+ *     357d85d6   R$ 107.000,00      1962afcb   R$  26.975,00
+ *     bbca7d0f   R$  27.699,15      9286ee24   R$   9.290,00  (ERIKA)
+ *     c747e058   R$  27.000,00
+ *
+ * ***  O SILENCIO DOS OUTROS 25 E CIRCUNSTANCIAL, NAO ESTRUTURAL.  ***
+ * Hoje so a ERIKA muda dinheiro. Os outros 25 estao quietos porque nao tem
+ * promoter_goal_repasse, ou nao tem contrato na faixa 5,80% para a Frente C
+ * morder, ou nao cruzam fronteira de degrau — nao porque o codigo os proteja.
+ * Se qualquer um deles ganhar acordo de Frente C ou passar a vender na faixa,
+ * a divergencia dele VIRA DINHEIRO na hora. A maior (357d85d6, R$ 107.000,00)
+ * e mais de dez vezes a da ERIKA. Reavaliar esta lista antes de reprocessar,
+ * e nao confiar no "so um promotor" de hoje.
+ *
+ * JULHO EM DIANTE JA NASCE ALINHADO: o recorte por janela vale desde o
+ * 3daea7e, entao competencia nova nao acumula divergencia. O problema e
+ * historico e finito, nao recorrente.
+ * ============================================================================
  */
 require("./_ts_register.cjs");
 const { createClient } = require("@supabase/supabase-js");
@@ -41,7 +100,10 @@ const valido = r => {
 async function todas(t, c) {
   const o = [];
   for (let p = 0; ; p++) {
-    const { data, error } = await sb.from(t).select(c).range(p * 1000, p * 1000 + 999);
+    // .order("id") OBRIGATORIO: range() sem ordem estavel repete/pula linhas
+    // entre paginas. Faltava aqui — num gate que decide se se reprocessa mes
+    // fechado, ler o conjunto errado e pior que nao ler.
+    const { data, error } = await sb.from(t).select(c).order("id").range(p * 1000, p * 1000 + 999);
     if (error) throw error;
     o.push(...(data ?? []));
     if (!data || data.length < 1000) break;

@@ -62,10 +62,41 @@ export type GroupRow = {
   seguro_share: number; // 0..1
   volume_consolidado: number;
   acordo: number; // 0..1 (resultante na ADS, com volume consolidado)
-  credito_rr: number;
-  credito_ads: number;
-  seguro_rr: number;
-  seguro_ads: number;
+
+  // ------------------------------------------------------------------
+  // OS 4 CAMPOS DE DINHEIRO SAO REPASSE AO PROMOTOR. NENHUM E COMISSAO-EMPRESA.
+  // ------------------------------------------------------------------
+  // Os nomes antigos — "credito" e "seguro" com sufixo _rr, sem prefixo algum —
+  // enganaram de verdade em 01/08/2026: levaram a hipotese de que o volume do
+  // promotor estava acoplado a comissao da EMPRESA, acoplamento que nao existe.
+  // O prefixo `repasse_` esta aqui para que o proximo nao repita a viagem.
+  //
+  // NOS QUATRO o valor JA CARREGA o share do promotor aplicado; a
+  // comissao-empresa e apenas o MULTIPLICANDO. Por isso os quatro dizem
+  // `repasse_`: dentro deste tipo o nome da FONTE nao aparece, entao um unico
+  // campo sem o prefixo, ao lado de tres com, seria lido como "este aqui e o
+  // da empresa" — exatamente pelo contraste.
+  //
+  //   repasse_credito_rr   = production_commission_value do fechamento RR
+  //                          closingMonthly.ts:477 -> :454 -> :392
+  //                          `a.avista += c.comissaoEmpresaAvista * acordoDoContrato(pid, c)`
+  //                          (acordoDoContrato, :340-358, consome monthlyVolumesMap
+  //                          [degrau ENTRANTE] e frenteC.productionValue)
+  //
+  //   repasse_seguro_rr    = insurance_commission_value do fechamento RR
+  //                          closingMonthly.ts:478 -> :455
+  //                          `insuranceCommission = seguroEmpresa * seguroShare`
+  //
+  //   repasse_credito_ads  = comissao_promotor_credito, bbtsMonthly.ts:347
+  //   repasse_seguro_ads   = seguro_comissao_promotor,  bbtsMonthly.ts:350
+  //
+  // A comissao-EMPRESA de seguro existe e tem outro nome: `seguro_empresa`
+  // em closingMonthly.ts:436/:501, comentada la como "(embutido + avulso),
+  // BRUTA". Ela NAO e exposta neste GroupRow.
+  repasse_credito_rr: number;
+  repasse_credito_ads: number;
+  repasse_seguro_rr: number;
+  repasse_seguro_ads: number;
 };
 
 export async function consolidateMonthlyGroup(
@@ -224,10 +255,10 @@ export async function consolidateMonthlyGroup(
       seguro_share: c.share,
       volume_consolidado: c.prodTotal,
       acordo: ar?.acordo ?? 0,
-      credito_rr: rrr?.production_commission_value ?? 0,
-      credito_ads: ar?.comissao_promotor_credito ?? 0,
-      seguro_rr: rrr?.insurance_commission_value ?? 0,
-      seguro_ads: ar?.seguro_comissao_promotor ?? 0,
+      repasse_credito_rr: rrr?.production_commission_value ?? 0,
+      repasse_credito_ads: ar?.comissao_promotor_credito ?? 0,
+      repasse_seguro_rr: rrr?.insurance_commission_value ?? 0,
+      repasse_seguro_ads: ar?.seguro_comissao_promotor ?? 0,
     });
   }
   rows.sort((x, y) => y.prod_total - x.prod_total);
@@ -240,10 +271,10 @@ export async function consolidateMonthlyGroup(
     payload: [...(rrRes.payload ?? []), ...(adsRes.payload ?? [])] as any[],
     rows,
     totals: {
-      credito_rr: rows.reduce((s, r) => s + r.credito_rr, 0),
-      credito_ads: rows.reduce((s, r) => s + r.credito_ads, 0),
-      seguro_rr: rows.reduce((s, r) => s + r.seguro_rr, 0),
-      seguro_ads: rows.reduce((s, r) => s + r.seguro_ads, 0),
+      repasse_credito_rr: rows.reduce((s, r) => s + r.repasse_credito_rr, 0),
+      repasse_credito_ads: rows.reduce((s, r) => s + r.repasse_credito_ads, 0),
+      repasse_seguro_rr: rows.reduce((s, r) => s + r.repasse_seguro_rr, 0),
+      repasse_seguro_ads: rows.reduce((s, r) => s + r.repasse_seguro_ads, 0),
     },
     rr_gravadas: rrRes.gravadas ?? 0,
     ads_gravadas: adsRes.gravadas ?? 0,

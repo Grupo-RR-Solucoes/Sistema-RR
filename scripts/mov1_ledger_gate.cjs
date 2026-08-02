@@ -53,14 +53,14 @@ const K = (p, c) => `${p}|${c ?? "NULL"}`;
   console.log("=".repeat(88));
   const g = await consolidateMonthlyGroup(sb, { year: 2026, month: 6, dryRun: true });
   const norm = g.rows
-    .map((r) => [r.promoter_id, Math.round(r.prod_total * 100), Math.round(r.credito_rr * 100),
-      Math.round(r.credito_ads * 100), Math.round(r.seguro_rr * 100), Math.round(r.seguro_ads * 100), r.status_meta].join(":"))
+    .map((r) => [r.promoter_id, Math.round(r.prod_total * 100), Math.round(r.repasse_credito_rr * 100),
+      Math.round(r.repasse_credito_ads * 100), Math.round(r.repasse_seguro_rr * 100), Math.round(r.repasse_seguro_ads * 100), r.status_meta].join(":"))
     .sort();
   const hash = crypto.createHash("sha256").update(JSON.stringify(norm)).digest("hex").slice(0, 16);
   const tot = (k) => g.rows.reduce((s, x) => s + (x[k] || 0), 0);
   console.log(`   HASH_ROWS = ${hash}   (tem que ser IGUAL em main — rode com git stash)`);
-  console.log(`   credito_rr=${brl(tot("credito_rr"))}  credito_ads=${brl(tot("credito_ads"))}  ` +
-    `seguro_rr=${brl(tot("seguro_rr"))}  seguro_ads=${brl(tot("seguro_ads"))}`);
+  console.log(`   repasse_credito_rr=${brl(tot("repasse_credito_rr"))}  repasse_credito_ads=${brl(tot("repasse_credito_ads"))}  ` +
+    `repasse_seguro_rr=${brl(tot("repasse_seguro_rr"))}  repasse_seguro_ads=${brl(tot("repasse_seguro_ads"))}`);
 
   // ---- 2. RECONCILIACAO (junho) ----
   console.log("\n" + "=".repeat(88));

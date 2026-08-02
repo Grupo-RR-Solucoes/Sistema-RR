@@ -15,8 +15,8 @@
  *   Nada de cálculo é reimplementado aqui.
  *
  * GATES
- *   1. jun/2026 NO-OP (âncoras): orquestrador BBTS-2d totals.credito_rr = 109.538,42 e
- *      totals.credito_ads = 5.153,53 nas DUAS fontes, e payload deep-equal (EPS 1e-9).
+ *   1. jun/2026 NO-OP (âncoras): orquestrador BBTS-2d totals.repasse_credito_rr = 109.538,42 e
+ *      totals.repasse_credito_ads = 5.153,53 nas DUAS fontes, e payload deep-equal (EPS 1e-9).
  *   2. abr/mai/2026 NO-OP: orquestrador, closingAnalytics, bbtsMonthly e promoterAnalytics
  *      deep-equal entre as fontes.
  *      RESSALVA CONHECIDA E ESPERADA: o payload de closingAnalytics carrega, ALÉM do mês
@@ -36,8 +36,8 @@ const { createClient } = require("@supabase/supabase-js");
 const H = require("./motor_credito_trp_db_gate_lib.cjs");
 
 const PAGE = 1000;
-const ANCORA_RR = 109538.42;   // jun/2026 — orquestrador totals.credito_rr
-const ANCORA_ADS = 5153.53;    // jun/2026 — orquestrador totals.credito_ads
+const ANCORA_RR = 109538.42;   // jun/2026 — orquestrador totals.repasse_credito_rr
+const ANCORA_ADS = 5153.53;    // jun/2026 — orquestrador totals.repasse_credito_ads
 
 const NOOP = [
   { comp: "2026-06", y: 2026, m: 6, ancoras: true },
@@ -143,10 +143,10 @@ async function main() {
 
     if (c.ancoras) {
       const tj = orqJ.out.totals, td = orqD.out.totals;
-      const okRR = Math.abs(tj.credito_rr - ANCORA_RR) < 0.005 && Math.abs(td.credito_rr - ANCORA_RR) < 0.005;
-      const okADS = Math.abs(tj.credito_ads - ANCORA_ADS) < 0.005 && Math.abs(td.credito_ads - ANCORA_ADS) < 0.005;
-      console.log(`  ÂNCORA RR  crédito jun: json=${H.brl(tj.credito_rr)}  db=${H.brl(td.credito_rr)}  (esperado ${H.brl(ANCORA_RR)}) ${okRR ? "✓" : "✗"}`);
-      console.log(`  ÂNCORA ADS crédito jun: json=${H.brl(tj.credito_ads)}  db=${H.brl(td.credito_ads)}  (esperado ${H.brl(ANCORA_ADS)}) ${okADS ? "✓" : "✗"}`);
+      const okRR = Math.abs(tj.repasse_credito_rr - ANCORA_RR) < 0.005 && Math.abs(td.repasse_credito_rr - ANCORA_RR) < 0.005;
+      const okADS = Math.abs(tj.repasse_credito_ads - ANCORA_ADS) < 0.005 && Math.abs(td.repasse_credito_ads - ANCORA_ADS) < 0.005;
+      console.log(`  ÂNCORA RR  crédito jun: json=${H.brl(tj.repasse_credito_rr)}  db=${H.brl(td.repasse_credito_rr)}  (esperado ${H.brl(ANCORA_RR)}) ${okRR ? "✓" : "✗"}`);
+      console.log(`  ÂNCORA ADS crédito jun: json=${H.brl(tj.repasse_credito_ads)}  db=${H.brl(td.repasse_credito_ads)}  (esperado ${H.brl(ANCORA_ADS)}) ${okADS ? "✓" : "✗"}`);
       if (!okRR || !okADS) falhas++;
     }
     falhas += difOrq.length + difADS.length + difPA.length + difRRReal.length;

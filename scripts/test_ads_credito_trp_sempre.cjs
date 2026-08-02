@@ -35,9 +35,9 @@ async function main() {
   try { gJun = await consolidateMonthlyGroup(sb, { year: 2026, month: 6, dryRun: true }); } catch (e) { errGJun = e; }
   ok("junho NAO aborta", !errGJun, errGJun && errGJun.message);
   if (gJun) {
-    console.log(`   orquestrador: credito RR ${brl(gJun.totals.credito_rr)} | credito ADS ${brl(gJun.totals.credito_ads)}`);
-    ok("junho credito ADS == 5.153,53 (no-op)", near(gJun.totals.credito_ads, 5153.53, 0.5), `${brl(gJun.totals.credito_ads)}`);
-    ok("junho credito RR intocado (~109.538)", near(gJun.totals.credito_rr, 109538.42, 1), `${brl(gJun.totals.credito_rr)}`);
+    console.log(`   orquestrador: credito RR ${brl(gJun.totals.repasse_credito_rr)} | credito ADS ${brl(gJun.totals.repasse_credito_ads)}`);
+    ok("junho credito ADS == 5.153,53 (no-op)", near(gJun.totals.repasse_credito_ads, 5153.53, 0.5), `${brl(gJun.totals.repasse_credito_ads)}`);
+    ok("junho credito RR intocado (~109.538)", near(gJun.totals.repasse_credito_rr, 109538.42, 1), `${brl(gJun.totals.repasse_credito_rr)}`);
   }
   // aviso: nao ha mais o gate jul+
   const jun = await consolidateMonthlyFromBbts(sb, { year: 2026, month: 6, dryRun: true });
@@ -48,7 +48,7 @@ async function main() {
   let gJul = null, errGJul = null;
   try { gJul = await consolidateMonthlyGroup(sb, { year: 2026, month: 7, dryRun: true }); } catch (e) { errGJul = e; }
   ok("julho NAO aborta no orquestrador (antes: gate taxa_relatorio abortava)", !errGJul, errGJul && errGJul.message);
-  if (gJul) console.log(`   orquestrador julho: credito ADS ${brl(gJul.totals.credito_ads)} (parcial, balde nao migrado)`);
+  if (gJul) console.log(`   orquestrador julho: credito ADS ${brl(gJul.totals.repasse_credito_ads)} (parcial, balde nao migrado)`);
   let jul = null, errJul = null;
   try { jul = await consolidateMonthlyFromBbts(sb, { year: 2026, month: 7, dryRun: true }); } catch (e) { errJul = e; }
   ok("julho NAO aborta (consolidador direto)", !errJul, errJul && errJul.message);
