@@ -35,7 +35,28 @@ import { BBTS_COMPANY_ID } from "@/lib/bbtsCompanyId.ts";
 
 const YEAR = Number(process.env.BBTS_YEAR || 2026);
 const MONTH = Number(process.env.BBTS_MONTH || 7);
-const ESPERADO = Number(process.env.SEGURO_ESPERADO || 34.55);
+// REANCORADO em 01/08/2026: 34,55 -> 49,91.
+//
+// NAO foi cravado "o que da agora". O 49,91 foi PROVADO por reconstrucao
+// independente: a regua BBTS lida direto de bbts_rule_versions (competencia
+// 2026-07, v1, is_active) aplicada linha a linha sobre daily_production_records,
+// SEM passar por promoterAnalytics nem por buildPromoterAnalytics. As 11 linhas
+// da ADS com premio > 0 somam exatamente R$ 49,91, com 0 linha sem taxa
+// resolvida:
+//
+//   ESTOQUE D0 x4 (0,100%)  13,00 + 8,80 + 8,00 + 7,15 = 36,95
+//   SLIP NOVO  48 (0,150%)                              =  5,27
+//   SLIP/SLIP NOVO x5 (0,100%)  2,10+2,09+1,26+0,60+0,55 =  6,60
+//   ESTOQUE D0 120 (0,100%)                             =  1,10
+//                                                        -------
+//                                                          49,91
+//
+// A ancora antiga (34,55) era de quando a coluna crua do RR ainda contaminava a
+// leitura da ADS. Este numero e comissao-EMPRESA; nao confundir com os R$ 27,08
+// de residuo da regua do RR que sairam da base de lideranca no mesmo dia.
+//
+// SEGURO_ESPERADO continua sobrescrevendo, para investigacao pontual.
+const ESPERADO = Number(process.env.SEGURO_ESPERADO || 49.91);
 const brl = (n: number) => Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pad = (s: any, n: number) => { s = String(s ?? ""); return s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length); };
 const padL = (s: any, n: number) => { s = String(s ?? ""); return s.length >= n ? s.slice(0, n) : " ".repeat(n - s.length) + s; };
