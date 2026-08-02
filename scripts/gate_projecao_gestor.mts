@@ -53,6 +53,7 @@ import { calcularRemuneracaoLideranca, resolverReguaLideranca } from "@/lib/remu
 import { construirBaseLideranca } from "@/lib/lideranca/baseLideranca.ts";
 import { mediaTresMeses } from "@/lib/projecao/mediaTresMeses.ts";
 import { nowInFortaleza } from "@/lib/dateFortaleza.ts";
+import { getProductionPeriodFromValue } from "@/lib/productionPeriod.ts";
 
 const admin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -199,9 +200,52 @@ async function payloadDoGestor(appUserId: string, role: string, year: number, mo
 }
 
 // ---------------------------------------------------------------- competencia
+//
+// A COMPETENCIA E DESCOBERTA POR MEDICAO, nao pelo calendario nem cravada.
+//
+// Ate 01/08/2026 o default era `hoje`. No dia 1 de qualquer mes isso aponta
+// para uma competencia sem producao e o gate ABORTA com exit 1 — vermelho que
+// nao significa defeito nenhum, so a data em que se rodou. Foi exatamente o
+// que aconteceu: `gate_projecao_gestor` reprovava sozinho em 01/08/2026 e
+// passava com GATE_YEAR=2026 GATE_MONTH=7.
+//
+// Cravar 2026-07 seria trocar um vermelho por uma bomba-relogio: em setembro
+// o numero estaria velho de novo. Entao o gate procura a ULTIMA competencia
+// com producao no diario, que e o mesmo padrao que o
+// gate_remuneracao_lideranca.mts:504-521 ja usa para achar a aberta.
+//
+// GATE_YEAR/GATE_MONTH continuam sobrescrevendo, para investigacao pontual.
 const hoje = nowInFortaleza();
-const YEAR = Number(process.env.GATE_YEAR || 0) || hoje.year;
-const MONTH = Number(process.env.GATE_MONTH || 0) || hoje.month;
+async function ultimaCompetenciaComProducao(): Promise<{ year: number; month: number } | null> {
+  const diario = await todas<any>((de, ate) =>
+    admin
+      .from("daily_production_records")
+      .select("movement_date, contract_date, proposal_date")
+      .order("id")
+      .range(de, ate),
+  );
+  const comps = new Set<string>();
+  for (const d of diario) {
+    const p =
+      getProductionPeriodFromValue(d.movement_date) ||
+      getProductionPeriodFromValue(d.contract_date) ||
+      getProductionPeriodFromValue(d.proposal_date);
+    if (p) comps.add(`${p.year}-${String(p.month).padStart(2, "0")}`);
+  }
+  const ordenadas = [...comps].sort();
+  if (ordenadas.length === 0) return null;
+  const c = ordenadas[ordenadas.length - 1];
+  return { year: Number(c.slice(0, 4)), month: Number(c.slice(5, 7)) };
+}
+const descoberta = process.env.GATE_YEAR && process.env.GATE_MONTH
+  ? null
+  : await ultimaCompetenciaComProducao();
+const YEAR = Number(process.env.GATE_YEAR || 0) || descoberta?.year || hoje.year;
+const MONTH = Number(process.env.GATE_MONTH || 0) || descoberta?.month || hoje.month;
+if (descoberta) {
+  console.log(`
+competencia DESCOBERTA por medicao (ultima com producao no diario): ${YEAR}-${String(MONTH).padStart(2, "0")}`);
+}
 
 linha();
 console.log(`GATE /projecao DO GESTOR — competencia ${String(MONTH).padStart(2, "0")}/${YEAR}`);

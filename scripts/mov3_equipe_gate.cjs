@@ -130,26 +130,24 @@ async function pageAll(tabela, cols) {
     console.log(`  2026-${String(m).padStart(2, "0")}  /equipe ${pad(brl(equipe), 18)} PMR fechado ${pad(brl(ledger), 18)} ${bate ? "OK — as 4 telas concordam" : "!! DIVERGE"}`);
   }
 
-  // ---- 4. a proposta SRCC de 80k sai de junho ----
-  console.log("\n" + "=".repeat(96));
-  console.log("4) A PROPOSTA 213615547 (R$ 80.000,00) — SRCC no fechamento, nao no diario");
-  console.log("=".repeat(96));
-  const alvo = rows.find((r) => String(r.proposal_number ?? "") === "213615547") ||
-    (await pageAll("daily_production_records", "proposal_number, assigned_promoter_id, net_value, is_srcc_restricted"))
-      .find((r) => String(r.proposal_number) === "213615547");
-  const pid = alvo?.assigned_promoter_id;
+  // A SECAO 4 FOI APOSENTADA EM 01/08/2026.
+  //
+  // Ela media que a proposta 213615547 (R$ 80.000,00) — SRCC no fechamento mas
+  // is_srcc_restricted=false no diario — saia do /equipe quando o mes fechado
+  // passou a derivar do PMR. Provou o MOV 3 no dia em que ele entrou.
+  //
+  // O dado foi corrigido: is_srcc_restricted da 213615547 e `true` hoje, entao
+  // diario e fechamento concordam, o delta virou 0 e a assercao passou a acusar
+  // SUCESSO como falha (esperava -80.000,00 e obtinha 0,00).
+  //
+  // NAO foi reancorada porque a SECAO 3 ja garante o que importa, e melhor:
+  // /equipe == PMR fechado, vivo contra vivo, sobre TODA a competencia em vez de
+  // um contrato. Reancorar aqui seria manter um caso particular mais fraco que a
+  // regra geral que ja existe duas secoes acima.
+  //
+  // `depoisJun` continua sendo montado abaixo porque a secao 5 depende dele.
   const regJun = await detectMonthRegime(sb, 2026, 6);
-  const antesJun = monta(2026, 6, "open");
   const depoisJun = monta(2026, 6, regJun);
-  const rA = (antesJun.rows || []).find((r) => r.promoter_id === pid);
-  const rD = (depoisJun.rows || []).find((r) => r.promoter_id === pid);
-  console.log(`  promotor da proposta: ${nameById.get(pid) || pid}`);
-  console.log(`     producao ANTES (diario, inclui a SRCC): ${brl(rA?.production_value)}`);
-  console.log(`     producao DEPOIS (PMR, exclui a SRCC)  : ${brl(rD?.production_value)}`);
-  console.log(`     delta: ${brl(num(rD?.production_value) - num(rA?.production_value))}   (esperado -80.000,00)`);
-  const okSrcc = Math.abs((num(rA?.production_value) - num(rD?.production_value)) - 80000) < 0.02;
-  console.log(`  -> a SRCC de R$ 80.000,00 saiu do /equipe: ${okSrcc ? "OK" : "!! CONFERIR"}`);
-  if (!okSrcc) falhas++;
 
   // ---- 5. mascaramento ----
   console.log("\n" + "=".repeat(96));

@@ -27,7 +27,7 @@
  *
  * Como rodar:
  *   - Sem framework configurado; usar `node --test --import tsx lib/__tests__/auditoriaAvista.test.ts`
- *   - CHECKPOINT C executável: `node scripts/check_auditoria_avista.cjs --escopo-reduzido`
+ *   - CHECKPOINT C executável: `node scripts/diag_auditoria_avista.cjs --escopo-reduzido`
  *
  * Cobertura (testes puros, sem Supabase):
  * 1. SRCC: dif=comissao_paga, status=SRCC, bloco=EXCLUIDO_AUDITORIA.

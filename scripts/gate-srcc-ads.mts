@@ -6,7 +6,9 @@
 //      (1->SIM, 2->NAO, 4->NAO_SE_APLICA, 3->NAO GRAVA), em DRY-RUN;
 //   2. as 19 linhas de junho ja gravadas passam de "Sem informacao" para
 //      "Nao"/"Nao se aplica" SEM reimportar — so pelo alias no rotulo;
-//   3. as 35 de julho continuam "Sem informacao" (a diaria da BBTS nao traz SRCC);
+//   3. INVARIANTE (01/08/2026): linha com resposta CONHECIDA nunca exibe
+//      "Sem informacao", e nenhuma REGRIDE para ela. Antes eram contagens
+//      cravadas (18/1/35/54) que envelheciam com o crescimento de julho;
 //   4. NENHUMA linha muda de is_srcc_restricted, de elegibilidade de producao ou
 //      de soma — nem na ADS, nem no RR;
 //   5. o alias novo NAO mexe no lado RR (nenhuma linha do RR tem srcc_cd).
@@ -149,11 +151,41 @@ const antes = contaLabel(ads, (r) => getSrccRestrictionLabel(semChavesNovas(r)))
 const depois = contaLabel(ads, (r) => getSrccRestrictionLabel(r));
 console.log("  ADS antes :", [...antes].sort().map(([k, n]) => `"${k}": ${n}`).join("  ·  "));
 console.log("  ADS depois:", [...depois].sort().map(([k, n]) => `"${k}": ${n}`).join("  ·  "));
-checa('18 linhas passam a "Não"', (depois.get("Não") || 0) === 18);
-checa('1 linha passa a "Não se aplica"', (depois.get("Não se aplica") || 0) === 1);
-checa('35 seguem "Sem informação" (julho, diaria sem SRCC)',
-  (depois.get("Sem informação") || 0) === 35);
-checa('antes: as 54 diziam "Sem informação"', (antes.get("Sem informação") || 0) === 54);
+// INVARIANTE, nao contagem (trocado em 01/08/2026).
+//
+// As assercoes anteriores cravavam 18 / 1 / 35 / 54. Sao contagens sobre dado
+// VIVO: julho cresceu e elas passaram a reprovar sem que nada tivesse
+// quebrado. Retrato so vale no dia em que foi tirado.
+//
+// O que o conserto garante NAO e um numero: e que linha com resposta CONHECIDA
+// da gestora nunca mais exiba "Sem informação". Isso vale com 19 linhas ou com
+// 19 mil.
+// "resposta conhecida" = a gestora respondeu, seja na coluna srcc_resolucao
+// (o que o fechamento grava) seja no raw_payload sob uma das CHAVES_NOVAS (o
+// codigo cru da BBTS). Ler so a coluna daria 0 e a invariante passaria por
+// vacuidade — foi o que aconteceu na 1a tentativa desta reescrita.
+const temResposta = (r: any) => {
+  if (String(r.srcc_resolucao ?? "").trim() !== "") return true;
+  const rp = r.raw_payload || {};
+  return CHAVES_NOVAS.some((k) => String(rp[k] ?? "").trim() !== "");
+};
+const comResposta = ads.filter(temResposta);
+const mentindo = comResposta.filter((r) => getSrccRestrictionLabel(r as any) === "Sem informação");
+console.log(`  [nao-vacuidade] ${comResposta.length} de ${ads.length} linhas ADS tem resposta CONHECIDA da gestora`);
+if (comResposta.length === 0) {
+  console.log('  [ATENCAO] nenhuma linha ADS tem resposta conhecida — a invariante passaria por VACUIDADE.');
+}
+checa(
+  `INVARIANTE: toda linha ADS com resposta conhecida NAO exibe "Sem informação" (${comResposta.length} avaliadas, ${mentindo.length} mentindo)`,
+  comResposta.length > 0 && mentindo.length === 0
+);
+// O rotulo so pode MELHORAR: nenhuma linha pode regredir de resposta conhecida
+// para "Sem informação" quando as chaves novas entram.
+const regrediram = ads.filter(
+  (r) => getSrccRestrictionLabel(semChavesNovas(r) as any) !== "Sem informação" &&
+         getSrccRestrictionLabel(r as any) === "Sem informação"
+);
+checa(`nenhuma linha REGREDIU para "Sem informação" (${regrediram.length})`, regrediram.length === 0);
 
 const estados = contaLabel(ads, (r) => getSrccEstado(r));
 console.log("  estados ADS:", [...estados].sort().map(([k, n]) => `${k}: ${n}`).join("  ·  "));

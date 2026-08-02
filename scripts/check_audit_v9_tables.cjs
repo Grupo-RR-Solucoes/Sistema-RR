@@ -5,7 +5,20 @@
  * Verifica:
  *   1. 4 tabelas audit_v9_* existem (via SELECT em cada uma)
  *   2. 7+ indexes não-PK criados (via RPC se disponível, ou skip com aviso)
- *   3. Todas as 4 tabelas vazias (count=0)
+ *   3. Nenhuma das 4 tabelas ESVAZIOU (count > 0)
+ *
+ * ASSERCAO INVERTIDA EM 01/08/2026. Ela nasceu como validacao pos-migration —
+ * "as tabelas existem e ainda estao vazias, o seed nao rodou". Depois do seed
+ * ela passou a acusar SUCESSO como se fosse falha: `4 tabelas vazias: FAIL (ja
+ * populadas)`.
+ *
+ * O que envelheceu foi o SINAL, nao o gate. A premissa NAO e irreversivel:
+ * tabela populada pode ser esvaziada por reimportacao, por truncate manual ou
+ * por migration futura — e ai a auditoria v9 inteira fica sem base, em
+ * silencio. Entao ele passa a vigiar o outro lado: NENHUMA pode esvaziar.
+ *
+ * Se um dia se quiser de novo checar o estado pre-seed, isso e outra
+ * ferramenta, nao esta.
  *
  * Conecta via SUPABASE_SERVICE_ROLE_KEY do .env.local (bypass RLS).
  */
@@ -56,7 +69,9 @@ async function main() {
     else console.log(`  FAIL — ${r.tabela}: ${r.erro}`);
   }
   const todasExistem = resultados.every((r) => r.existe);
-  const todasVazias = resultados.every((r) => r.vazia === true);
+  // INVERTIDO: o defeito e ESVAZIAR, nao estar populada.
+  const vazias = resultados.filter((r) => r.vazia === true);
+  const nenhumaVazia = vazias.length === 0;
 
   // 2. Indexes (via RPC supabase-js — se RPC não existir, fallback aviso)
   console.log("\n=== 2. Indexes ===");
@@ -95,11 +110,13 @@ async function main() {
   // 3. Resumo
   console.log("\n=== 3. Resumo ===");
   console.log(`  4 tabelas existem: ${todasExistem ? "PASS" : "FAIL"}`);
-  console.log(`  4 tabelas vazias: ${todasVazias ? "PASS" : "FAIL (já populadas — verificar)"}`);
+  console.log(
+    `  nenhuma tabela ESVAZIOU: ${nenhumaVazia ? "PASS" : "FAIL — " + vazias.map((r) => r.tabela).join(", ") + " sem linhas; a auditoria v9 fica sem base"}`
+  );
   console.log(`  Indexes: verificação manual no Studio (RPC genérica não existe)`);
 
   if (!todasExistem) process.exit(1);
-  if (!todasVazias) process.exit(2);
+  if (!nenhumaVazia) process.exit(2);
   process.exit(0);
 }
 

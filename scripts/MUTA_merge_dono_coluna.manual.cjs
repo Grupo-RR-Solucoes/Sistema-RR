@@ -1,3 +1,15 @@
+/* ============================================================================
+ * ATENCAO — ESTE ARQUIVO ESCREVE EM PRODUCAO. NAO E GATE.
+ * ============================================================================
+ * Faz DELETE e UPDATE em daily_production_records (linhas de fixture
+ * "ZZTEST-MERGE-%"). Renomeado em 01/08/2026 de `test_merge_dono_coluna.cjs`
+ * por RISCO CONCRETO: o prefixo `test_` o incluia no criterio "arquivos que
+ * asserem" do passo de cobertura do run_all_gates, entao qualquer runner que
+ * varresse por prefixo o executaria CONTRA PRODUCAO.
+ *
+ * O prefixo MUTA_ e o sufixo .manual.cjs existem para que nenhum criterio
+ * automatico o pegue. NUNCA registrar no run_all_gates.
+ * ========================================================================== */
 /*
  * TESTE do MERGE POR DONO DE COLUNA (lib/dailyRecordMerge.ts) — prova b/c/d.
  * Usa uma proposta sandbox (prefixo ZZTEST-MERGE-) na empresa ADS e LIMPA no fim.
@@ -79,7 +91,7 @@ async function main() {
     console.log("  Este teste ESCREVE linhas sandbox (ZZTEST-MERGE-*) em daily_production_records");
     console.log("  de PRODUCAO e as apaga no fim (DELETE escopado ao prefixo — nao toca dado real).");
     console.log("  Nao ha staging. Para executar de fato, rode com --apply:");
-    console.log("    node scripts/test_merge_dono_coluna.cjs --apply");
+    console.log("    node scripts/MUTA_merge_dono_coluna.manual.cjs --apply");
     console.log("\n  DRY-RUN: nada foi escrito.");
     process.exit(0);
   }
