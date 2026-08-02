@@ -2067,6 +2067,11 @@ export function selectPromoterView(
           dia: agoraDelta.day,
           recorteIndisponivel: true,
         }),
+        // BORDA DE MES VAZIO — linhas do daily na competencia atual, inteira
+        // (somaRecordsRecortado conta antes do filtro de dia), no MESMO universo
+        // de promotores dos cards. Zero = nada importado: esconde em vez de
+        // comparar ausencia com mes cheio.
+        linhasOrigemAtual: at.linhas,
         fonteAtual: "daily-vivo",
         fonteAnterior: base.previousClosedSource,
       });

@@ -121,7 +121,11 @@ export type MotivoOculto =
   | "sem-atual"      // metrica do mes corrente indisponivel
   | "sem-anterior"   // nao ha competencia anterior consolidada (ex.: jan/2026)
   | "base-zero"      // M-1 = 0 -> divisao por zero (delta seria +infinito)
-  | "base-negativa"; // M-1 < 0 -> variacao percentual existe mas engana
+  | "base-negativa"  // M-1 < 0 -> variacao percentual existe mas engana
+  // A competencia atual nao tem NENHUMA linha de origem: o zero e AUSENCIA DE
+  // IMPORTACAO, nao resultado. O nome diz a CAUSA (nada foi importado), nao o
+  // efeito (o valor deu zero) — sao situacoes diferentes e so uma esconde.
+  | "atual-sem-importacao";
 
 export type ResultadoDelta = {
   valorAtual: number | null;
@@ -368,6 +372,26 @@ export type ParametrosDelta = {
    * helper so registra qual janela foi usada, para o badge poder rotular.
    */
   janela?: Janela;
+  /**
+   * BORDA DE MES VAZIO — quantas LINHAS DE ORIGEM a competencia ATUAL tem,
+   * antes de qualquer recorte por dia. `0` = nada foi importado nela.
+   *
+   * POR QUE ISTO PRECISOU ENTRAR NA ENTRADA. O helper recebia apenas o VALOR
+   * agregado, e um valor `0` e ambiguo: pode ser "o mes nao vendeu" (informacao
+   * real, que DEVE aparecer como queda) ou "o mes nao foi importado" (ausencia,
+   * que nao e desempenho nenhum). Nada do que chegava aqui separava os dois —
+   * `janela.recorteIndisponivel` nao serve, porque tambem fica true quando e a
+   * ponta ANTERIOR que nao tem daily. Quem consulta o dado sabe a contagem; so
+   * faltava ela viajar junto.
+   *
+   * CONTRATO: conte as linhas da COMPETENCIA INTEIRA, nao as do recorte. A
+   * pergunta e "existe dado neste mes?", nao "existe dado ate o dia N" — essa
+   * segunda ja e respondida pela Fase 2.1 (ver diasComDadoNoMesCorrente).
+   *
+   * Ausente/`null` => o chamador nao sabe informar e a borda NAO se aplica
+   * (comportamento anterior preservado, bit a bit).
+   */
+  linhasOrigemAtual?: number | null;
 };
 
 /**
@@ -412,6 +436,30 @@ export function calcularDelta(params: ParametrosDelta): ResultadoDelta {
 
   if (base.valorAtual == null) {
     return { ...base, motivoOculto: "sem-atual" };
+  }
+  // BORDA DE MES VAZIO — zero SEM IMPORTACAO nao e queda.
+  //
+  // A DISTINCAO E O PONTO: producao legitimamente zero num mes QUE TEM dado
+  // importado e informacao real e continua mostrando delta (-100%, e esta
+  // certo: o mes existiu e nao vendeu). O que se esconde e o mes em que NADA
+  // foi importado — ali o zero e ausencia de fato, nao resultado, e comparar
+  // ausencia com um mes cheio produz "-100,0%" que le como colapso de vendas.
+  //
+  // Por isso a guarda exige as DUAS condicoes: valor zero E zero linha de
+  // origem. So o valor nao basta; so a contagem tambem nao (um mes pode ter
+  // linhas e somar zero).
+  //
+  // FICA ANTES das guardas do M-1 de proposito: quando a competencia atual nao
+  // foi importada, ESSE e o diagnostico util ("falta importar a diaria"), e nao
+  // "nao ha mes anterior". As duas escondem o badge igual; muda so o motivo que
+  // fica registrado no payload.
+  //
+  // E o mesmo raciocinio da Fase 2.1, um degrau adiante: ela ja impedia que
+  // dado PARCIAL fosse lido como queda (corte em min(hoje, ultimo dia com
+  // dado)); faltava o caso em que nao ha dado NENHUM, onde nao existe dia para
+  // onde recuar o corte e a Fase 2.1 nao tem o que fazer.
+  if (base.valorAtual === 0 && params.linhasOrigemAtual === 0) {
+    return { ...base, motivoOculto: "atual-sem-importacao" };
   }
   if (base.valorAnterior == null) {
     return { ...base, motivoOculto: "sem-anterior" };
@@ -474,6 +522,19 @@ export type ParametrosDeltaSerie = {
    * recorte nos dois pontos; aqui so viaja junto para o badge rotular.
    */
   janela?: Janela;
+  /**
+   * BORDA DE MES VAZIO — repassado tal qual para calcularDelta. Ver o contrato
+   * completo em ParametrosDelta.linhasOrigemAtual.
+   *
+   * NAO da para derivar isto da propria serie: um ponto com `valor: 0` pode ser
+   * mes vazio OU mes que nao vendeu, e a serie nao carrega essa diferenca. Duas
+   * series do sistema chegam a esta funcao com o mes corrente ja materializado
+   * em zero — producaoMensal do Dashboard (monthsSet.add(month)) e a serie
+   * hibrida da /equipe (rangeMeses cobre ate o mes do refDate, e mes corrente
+   * sem daily vira producao 0 / fonte "vazio"). Nas duas, o zero so se explica
+   * com a contagem, que vem de fora.
+   */
+  linhasOrigemAtual?: number | null;
 };
 
 /**
@@ -488,7 +549,7 @@ export type ParametrosDeltaSerie = {
  * (dez/2025) nao existe no ledger PMR.
  */
 export function deltaDaSerie(params: ParametrosDeltaSerie): ResultadoDelta {
-  const { serie, competencia, tipo, janela } = params;
+  const { serie, competencia, tipo, janela, linhasOrigemAtual } = params;
   const anterior = competenciaAnterior(competencia);
 
   const achar = (c: Competencia) =>
@@ -503,6 +564,7 @@ export function deltaDaSerie(params: ParametrosDeltaSerie): ResultadoDelta {
     valorAnterior: pAnterior?.valor ?? null,
     tipo,
     janela,
+    linhasOrigemAtual,
     fonteAtual: pAtual?.fonte ?? null,
     fonteAnterior: pAnterior?.fonte ?? null,
   });
