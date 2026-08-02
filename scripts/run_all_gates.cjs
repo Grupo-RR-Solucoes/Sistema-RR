@@ -82,6 +82,19 @@ const GATES = [
     motivo:
       "le 3 PDFs de C:/Users/diego/Downloads; o repo tem 0 PDFs versionados",
   },
+  // PRIMEIRO gate .ts/.mts do registro. So foi possivel depois que o runner
+  // aprendeu a invocar TypeScript (ver comoInvocar). Ate 01/08/2026 ele so
+  // rodava quando alguem digitava o caminho a mao — e prova a regua de
+  // lideranca que entra em vigor na competencia 2026-08.
+  // Os outros 15 .ts/.mts NAO entram aqui nesta fase: a classificacao dos 68
+  // e decisao do Diego (FASE 2).
+  {
+    arquivo: "scripts/gate_remuneracao_lideranca.mts",
+    nome: "remuneracao de lideranca (regua versionada, 2 regimes)",
+    modo: "needs-db",
+    motivo:
+      "createClient + monthly_closing_entries/daily/leadership_rule_versions de PRODUCAO; exigiria service role no runner",
+  },
 ];
 
 const SELF = GATES.filter((g) => g.modo === "self-contained");
@@ -163,6 +176,35 @@ let coberturaFalhou = false;
   }
 }
 
+// ---------------------------------------------------------------------------
+// COMO INVOCAR — .cjs roda direto, .ts/.mts precisa de tsx
+// ---------------------------------------------------------------------------
+// O runner fazia `spawnSync(process.execPath, [abs])`, ou seja `node arquivo`.
+// Isso NAO executa TypeScript, entao nenhum gate .ts/.mts jamais poderia ter
+// entrado no registro. Nao era esquecimento — era incapacidade. Consequencia
+// medida em 01/08/2026: dos 68 gates rastreados, 6 registrados e 3 executados
+// no modo padrao; os 16 .ts/.mts eram TODOS orfaos, incluindo os dois que
+// provam a regua de lideranca que entra em vigor em agosto.
+//
+// POR QUE tsx E NAO O _ts_register.cjs QUE OS GATES JA USAM. Medido, 7
+// execucoes de um arquivo trivial:
+//     node arquivo.cjs            (baseline CJS)          227ms
+//     node arquivo.mts            (strip nativo do Node)  307ms
+//     node -r _ts_register a.ts                           756ms
+//     tsx arquivo.mts                                     639ms
+// tsx e mais RAPIDO que o _ts_register (639 x 756) e, decisivo, e o unico que
+// resolve o alias "@/..." em import ESM: o _ts_register faz isso por
+// Module._resolveFilename, que so vale para CommonJS, e devolve
+// ERR_MODULE_NOT_FOUND num .mts com `import ... from "@/lib/..."` — que e
+// exatamente como os gates .mts importam. O strip nativo do Node 24, apesar de
+// ser o mais barato, tambem nao resolve o alias.
+const TSX_CLI = path.join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+function comoInvocar(abs) {
+  if (!/\.(ts|mts|cts)$/.test(abs)) return { args: [abs] };
+  if (!fs.existsSync(TSX_CLI)) return { erro: "tsx nao encontrado em node_modules/tsx/dist/cli.mjs" };
+  return { args: [TSX_CLI, abs] };
+}
+
 const resultados = [];
 for (const g of aRodar) {
   const abs = path.join(ROOT, g.arquivo);
@@ -171,9 +213,17 @@ for (const g of aRodar) {
     resultados.push({ ...g, status: "AUSENTE", code: null });
     continue;
   }
+  const inv = comoInvocar(abs);
+  if (inv.erro) {
+    // FALHA, nao pulo: gate que nao consegue rodar tem de ficar VERMELHO. Pular
+    // aqui reproduziria o defeito que esta frente existe para matar.
+    console.log("\n>>> " + g.nome + "\n    NAO EXECUTAVEL: " + inv.erro);
+    resultados.push({ ...g, status: "FALHOU", code: null });
+    continue;
+  }
   console.log("\n>>> " + g.nome + "  (" + g.arquivo + ")");
   const t0 = process.hrtime.bigint();
-  const r = spawnSync(process.execPath, [abs], {
+  const r = spawnSync(process.execPath, inv.args, {
     cwd: ROOT,
     stdio: "inherit",
     env: process.env,
