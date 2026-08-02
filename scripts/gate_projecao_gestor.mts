@@ -409,6 +409,10 @@ const pmr = await todas<any>((de, ate) =>
   admin
     .from("promoter_monthly_results")
     .select("promoter_id, year, month, company_id, source, production_value")
+    // .order("id") OBRIGATORIO: range() sem ordem estavel repete/pula linhas.
+    // Hoje a tabela tem 343 linhas e nao pagina, entao nao ha erro vivo aqui —
+    // mas o defeito nasce sozinho no dia em que passar de 1000.
+    .order("id")
     .range(de, ate),
 );
 

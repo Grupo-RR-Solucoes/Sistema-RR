@@ -97,11 +97,21 @@ export async function buildAuditoria(
 
   // ---- recuperável NOVO (curado v9 NOT EXISTS cobranca_itens, por contrato) ----
   const [avCurado, prCurado, itens] = await Promise.all([
-    fetchAllRows<{ contract_number: string; valor_solicitacao_regularizacao: number }>(() =>
-      supabase.from("audit_v9_avista").select("contract_number, valor_solicitacao_regularizacao").in("bloco", BLOCOS_AVISTA)
+    // TIEBREAK EXPLICITO: audit_v9_avista e audit_v9_prt NAO TEM coluna `id`
+    // (curadas, sem PK sintetica), entao o default do fetchAllRows quebraria
+    // aqui com "column ... .id does not exist". As duas PAGINAM — 23.879 e
+    // 12.612 linhas — logo precisam de ordem total de verdade, nao de um
+    // fallback qualquer. `contract_number` foi medido UNICO nas duas em
+    // 01/08/2026 (23879/23879 e 12612/12612 distintos).
+    fetchAllRows<{ contract_number: string; valor_solicitacao_regularizacao: number }>(
+      () => supabase.from("audit_v9_avista").select("contract_number, valor_solicitacao_regularizacao").in("bloco", BLOCOS_AVISTA),
+      undefined,
+      "contract_number"
     ),
-    fetchAllRows<{ contract_number: string; valor_solicitacao_regularizacao: number }>(() =>
-      supabase.from("audit_v9_prt").select("contract_number, valor_solicitacao_regularizacao").eq("bloco", BLOCO_PRT)
+    fetchAllRows<{ contract_number: string; valor_solicitacao_regularizacao: number }>(
+      () => supabase.from("audit_v9_prt").select("contract_number, valor_solicitacao_regularizacao").eq("bloco", BLOCO_PRT),
+      undefined,
+      "contract_number"
     ),
     fetchAllRows<{ tipo: string; contract_number: string; cobranca_id: string }>(() =>
       supabase.from("cobranca_itens").select("tipo, contract_number, cobranca_id")
