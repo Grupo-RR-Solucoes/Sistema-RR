@@ -43,12 +43,28 @@ type Projecao = {
   mesLabel: string;
   show: boolean;
 };
+// COMPETENCIA CANONICA — a competência EFETIVA do payload. Toda etiqueta de
+// competência da tela sai daqui; nada é remontado de year/month nem escrito
+// como literal fixo. `divergente` é o canal de aviso: se algum dia o valor e a
+// competência renderizada se separarem, a tela tem como dizer, em vez de exibir
+// um mês sob o rótulo de outro (que foi exatamente o defeito de 01/08).
+type Competencia = {
+  year: number;
+  month: number;
+  key: string;
+  label: string;
+  regime: "cms" | "fechamento" | "open";
+  parcial: boolean;
+  divergente: boolean;
+};
+
 type Payload = {
   periodoLabel: string;
   // MOV 2 (A): competência renderizada + regime dela ('cms' | 'fechamento' | 'open').
   year: number;
   month: number;
   regime: "cms" | "fechamento" | "open";
+  competencia: Competencia;
   producaoGrupoMes: number;
   producaoParcial: boolean;
   producaoNaoAtribuida: number;
@@ -178,9 +194,13 @@ function Header({
   const prev = data ? brl0(data.previsaoReceita) : "—";
   const lim = data ? pct1(data.limiteSimples.pct) : "—";
   const limSub = data ? `${mm2(data.limiteSimples.rbt12)} / ${mm2(data.limiteSimples.teto)}` : "";
+  // COMPETENCIA CANONICA — este sub era o literal fixo "mês corrente · parcial".
+  // Ele mentia em QUALQUER competência que não fosse a corrente: navegando para
+  // um mês fechado, o cartão continuava anunciando "mês corrente · parcial".
+  // Agora sai da competência efetiva do payload, igual aos demais cartões.
   const prodSub = (
     <>
-      mês corrente · parcial
+      {data ? `${data.competencia.label} · ${data.competencia.parcial ? "parcial" : "fechado"}` : "—"}
       {data && data.producaoNaoAtribuidaCount > 0 ? (
         <>
           <br />
@@ -206,16 +226,22 @@ function Header({
   // producaoMensal, e aqui reinserimos no topo caso ela ainda assim não venha.
   // A guarda do cliente não é redundância decorativa — ela cobre payload antigo
   // em cache e qualquer regressão futura do lado do servidor.
-  const ano = data?.year ?? new Date().getFullYear();
+  // COMPETENCIA CANONICA — UMA fonte para o badge inteiro.
+  // O `ano` das <option> e o `selKey` saíam de data.year/data.month enquanto o
+  // regime ao lado saía de data.regime: duas leituras do mesmo payload que
+  // podiam (e podem, num payload antigo em cache) discordar, produzindo
+  // "jan/2026 · produção corrente" — mês de uma fonte, estado de outra. Agora
+  // tudo desce de data.competencia.
+  const ano = data?.competencia.year ?? new Date().getFullYear();
   const opcoes = (() => {
     const base = (data?.producaoMensal || []).map((p) => ({ month: p.month, label: p.mes }));
-    if (data && !base.some((o) => o.month === data.month)) {
-      base.unshift({ month: data.month, label: MES_CURTO[data.month - 1] });
+    if (data && !base.some((o) => o.month === data.competencia.month)) {
+      base.unshift({ month: data.competencia.month, label: MES_CURTO[data.competencia.month - 1] });
     }
     return base;
   })();
-  const selKey = data ? `${data.year}-${data.month}` : "";
-  const regimeTxt = data ? REGIME_LABEL[data.regime] ?? data.regime : "—";
+  const selKey = data ? `${data.competencia.year}-${data.competencia.month}` : "";
+  const regimeTxt = data ? REGIME_LABEL[data.competencia.regime] ?? data.competencia.regime : "—";
 
   return (
     <HeaderNavy
@@ -230,7 +256,8 @@ function Header({
               onChange={(e) => {
                 const [y, m] = e.target.value.split("-").map(Number);
                 // Voltar ao mês corrente = limpar a query (comp = null).
-                const corrente = !comp && data && y === data.year && m === data.month;
+                const corrente =
+                  !comp && data && y === data.competencia.year && m === data.competencia.month;
                 onComp(corrente ? null : { year: y, month: m });
               }}
               aria-label="Competência"
