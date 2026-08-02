@@ -27,6 +27,7 @@ const { getAVistaPercent, computeComissaoPromotor } = await import(
 );
 const { detectMonthRegime } = await import("../lib/cmsMonthly.ts");
 const { nowInFortaleza } = await import("../lib/dateFortaleza.ts");
+const { getProductionPeriodFromValue } = await import("../lib/productionPeriod.ts");
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -43,10 +44,62 @@ const brl = (n: number) =>
 const LINHA = "-".repeat(84);
 const DUPLA = "=".repeat(84);
 
+// COMPETENCIA DESCOBERTA POR MEDICAO, nao pelo calendario.
+//
+// Ate 01/08/2026 isto era `nowInFortaleza()` puro, sem override. No dia 1 de
+// qualquer mes o universo da tela e VAZIO e o gate reporta 0 em tudo — que nao
+// e "o conserto funcionou", e "nao ha o que medir". Medido nesse dia:
+//   competencia 2026-08 · registros no universo da tela: 0
+// e GATE_YEAR/GATE_MONTH eram simplesmente IGNORADOS.
+//
+// Agora procura a ultima competencia ABERTA com producao no diario (a tela so
+// le a diaria em mes aberto; em fechado o proprio gate aborta logo abaixo).
+// Mesmo padrao do gate_projecao_gestor.mts e do gate_remuneracao_lideranca.mts.
 const agora = nowInFortaleza();
-const year = agora.year;
-const month = agora.month;
 const p2 = (n: number) => String(n).padStart(2, "0");
+
+async function ultimaAbertaComProducao(): Promise<{ year: number; month: number } | null> {
+  let de = 0;
+  const comps = new Set<string>();
+  for (;;) {
+    const { data, error } = await supabase
+      .from("daily_production_records")
+      .select("movement_date, contract_date, proposal_date")
+      .order("id")
+      .range(de, de + 999);
+    if (error) throw new Error(error.message);
+    for (const d of data ?? []) {
+      const p =
+        getProductionPeriodFromValue(d.movement_date) ||
+        getProductionPeriodFromValue(d.contract_date) ||
+        getProductionPeriodFromValue(d.proposal_date);
+      if (p) comps.add(`${p.year}-${p2(p.month)}`);
+    }
+    if ((data ?? []).length < 1000) break;
+    de += 1000;
+  }
+  for (const c of [...comps].sort().reverse()) {
+    const y = Number(c.slice(0, 4));
+    const m = Number(c.slice(5, 7));
+    const r = await detectMonthRegime(supabase, y, m).catch(() => "open");
+    if (r === "open") return { year: y, month: m };
+  }
+  return null;
+}
+
+const forcado = process.env.GATE_YEAR && process.env.GATE_MONTH
+  ? { year: Number(process.env.GATE_YEAR), month: Number(process.env.GATE_MONTH) }
+  : null;
+const descoberta = forcado ?? (await ultimaAbertaComProducao());
+if (!descoberta) {
+  console.log("[ABORTA] nenhuma competencia ABERTA com producao no diario.");
+  process.exit(1);
+}
+const year = descoberta.year;
+const month = descoberta.month;
+if (!forcado) {
+  console.log(`competencia DESCOBERTA por medicao (ultima ABERTA com producao): ${year}-${p2(month)}`);
+}
 
 const regime = await detectMonthRegime(supabase, year, month).catch(() => "open");
 console.log(DUPLA);
