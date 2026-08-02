@@ -438,6 +438,38 @@ export async function GET(req: Request) {
       manualRules = (data || []) as ManualRuleRow[];
     }
 
+    // ESCOPO DE EMPRESA — sem filtro na tela, o grupo e o RR. A producao ADS
+    // (empresa BBTS, active=false) NAO pode entrar no volume que decide o
+    // degrau da escala do promotor. Com companyId selecionado, o escopo e a
+    // empresa escolhida (inclui a ADS quando a ADS e a selecionada).
+    //
+    // POR QUE ISSO IMPORTA. monthlyVolumesMap decide a faixa da escala
+    // ENTRANTE e frenteCProductionMap decide o degrau da Frente C
+    // (base/meta1/meta2) — os dois viram share_percent na tela. Todos os
+    // caminhos de PAGAMENTO ja passavam escopo (closingMonthly:320 com
+    // rrCompanyIds, bbtsMonthly:293 e bbtsOrchestrator:195/196); esta rota,
+    // que so EXIBE, nao passava, e por isso exibia um degrau que o motor nao
+    // paga. Medido em 02/08/2026: em jun/2026 a MARIA LETICIA aparecia em
+    // meta2 (0,6034) porque os R$ 49.350,00 da ADS somavam aos R$ 74.442,69
+    // do RR e cruzavam a meta2 de R$ 96.000,00 — enquanto o PMR dela daquele
+    // mes ja estava separado em fechamento 74.442,69 e bbts 49.350,00, isto
+    // e, paga em base (0,5833). A tela mentia 2,01 p.p. sobre o proprio
+    // sistema. Nenhum centavo muda com esta correcao: ela alinha a EXIBICAO
+    // ao que o pagamento sempre fez.
+    //
+    // Mesma familia do 3daea7e, que corrigiu o volume por JANELA; aqui e o
+    // volume por EMPRESA.
+    let scopeCompanyIds: string[] | undefined;
+    if (companyId) {
+      scopeCompanyIds = [companyId];
+    } else {
+      const { data: rrCos } = await supabase
+        .from("companies")
+        .select("id")
+        .eq("group_name", "Grupo RR");
+      scopeCompanyIds = (rrCos || []).map((c: { id: string }) => c.id);
+    }
+
     // Dia 4.5 Etapa B: pre-carrega 3 maps (profiles + escalas + volume
     // mensal) para a cascata sync de share_percent. fetchPromoterShareData
     // faz no maximo 3-4 queries em batch independente do numero de rows.
@@ -448,7 +480,13 @@ export async function GET(req: Request) {
       goalRepasseMap,
       targetsMap,
       frenteCProductionMap,
-    } = await fetchPromoterShareData(supabase, promoterIds, year, month);
+    } = await fetchPromoterShareData(
+      supabase,
+      promoterIds,
+      year,
+      month,
+      scopeCompanyIds
+    );
 
     // MEDIDA B — a taxa a vista EFETIVA, pela cascata de tres degraus do motor.
     //
