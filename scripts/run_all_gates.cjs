@@ -170,16 +170,16 @@ const GATES = [
   {
     arquivo: "scripts/check_condicoes_seed.cjs",
     nome: "condicoes do seed (JSON curado)",
-    modo: "self-contained",
+    modo: "needs-local",
     motivo:
-      "varre os JSONs versionados; ninguem revisa JSON curado editado a mao",
+      "le auditorias/RELATORIO_AUDITORIA_FINAL_v9.xlsx (3,69 MB), que esta no .gitignore:20 e NAO existe no CI. Reprovou o PR #164 com ENOENT",
   },
   {
     arquivo: "scripts/check_lookup_vs_v9.cjs",
     nome: "lookup x v9 (JSON curado)",
-    modo: "self-contained",
+    modo: "needs-local",
     motivo:
-      "idem; fica no CI por decisao de 01/08/2026",
+      "mesmo XLSX ignorado do check_condicoes_seed. regras_promotiva/json esta versionado (49/49); o XLSX nao",
   },
   {
     arquivo: "scripts/gate-competencia-janela.cjs",
@@ -539,44 +539,96 @@ function comoInvocar(abs) {
 // A regra passa a ser COBRADA aqui, nao lembrada. Mesma ideia do passo de
 // cobertura da tipagem logo acima.
 //
-// POR QUE NAO VARRER URL: `bbts_seguro_regua_gate.cjs:24` define
-// NEXT_PUBLIC_SUPABASE_URL = "http://stub.local" justamente para NAO falar com
-// o banco. Stub e o padrao CERTO de se tornar self-contained; varrer URL
-// puniria quem fez a coisa certa. O que importa e chamar createClient contra um
-// banco de verdade, e isso o primeiro padrao ja pega.
+// A 3a REGRA MUDOU em 02/08/2026: de "caminho absoluto" para "le arquivo NAO
+// RASTREADO no git". O caminho absoluto era o SINTOMA; o arquivo nao versionado
+// e a CAUSA, e a regra nova cobre a classe inteira:
+//   test_item4_pdf_extract.cjs   caminho ABSOLUTO (C:/Users/diego/Downloads)
+//   check_condicoes_seed.cjs     caminho RELATIVO ao repo, arquivo IGNORADO
+//   check_lookup_vs_v9.cjs       (auditorias/ esta no .gitignore:20)
+// So a segunda forma escapava da regra antiga — e foi ela que reprovou o CI do
+// PR #164 depois que a primeira ja tinha sido consertada.
 //
-// O padrao de .env casa o NOME DO ARQUIVO entre aspas, nao `process.env`: ler
-// variavel de ambiente e legitimo; abrir o arquivo de credencial e que nao e.
+// A deteccao de caminho absoluto CONTINUA, porque sai de graca e caminho
+// absoluto e defeito por si: mesmo que o arquivo exista na maquina de quem
+// rodou, ele nao existe na de mais ninguem.
+//
+// POR QUE NAO VARRO A ARVORE DE IMPORTS. Medido: dos 17 self-contained, dois
+// ALCANCAM createClient por import —
+//   test_equipes_socio_gestor.ts -> lib/equipes/model.ts -> lib/supabaseAdmin.ts
+//   test_gestor_meta.ts          -> lib/equipes/model.ts -> lib/supabaseAdmin.ts
+// e os DOIS passam no CI, porque lib/supabaseAdmin.ts:10-20 instancia o cliente
+// LAZY, dentro de getSupabaseAdmin(). Varrer a arvore daria 2 falsos positivos
+// e 0 verdadeiros. Lazy e o padrao que se quer INCENTIVAR; puni-lo empurraria
+// todo mundo de volta para o cliente no topo do modulo.
+const RASTREADOS = (() => {
+  const r = spawnSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8" });
+  if (r.status !== 0) return null;
+  return new Set(r.stdout.split(/\r?\n/).map((x) => x.trim()).filter(Boolean));
+})();
+
+/** Caminhos que o arquivo tenta ler, extraidos dos literais. Sem recursao. */
+function caminhosCitados(src) {
+  const out = new Set();
+  // path.join(...) / path.resolve(...): junta os argumentos ENTRE ASPAS e
+  // ignora os identificadores (ROOT, __dirname), resolvendo depois nas duas
+  // bases possiveis.
+  for (const m of src.matchAll(/path\.(?:join|resolve)\(([^)]*)\)/g)) {
+    const partes = [...m[1].matchAll(/["'`]([^"'`]+)["'`]/g)].map((x) => x[1]);
+    if (partes.length) out.add(partes.join("/"));
+  }
+  // literais soltos com extensao de dado
+  for (const m of src.matchAll(/["'`]([^"'`\n]*\.(?:xlsx|xls|pdf|csv|json))["'`]/g)) out.add(m[1]);
+  return [...out];
+}
+
 const REGRAS_SELF = [
   { nome: "chama createClient", re: /\bcreateClient\s*\(/ },
   { nome: "le arquivo .env/.env.local", re: /["'`]\.env(\.local)?["'`]/ },
-  { nome: "caminho absoluto ou fora do repo", re: /["'`](?:[A-Za-z]:[\/]|\/Users\/|\/home\/|~\/)/ },
+  { nome: "caminho absoluto", re: /["'`](?:[A-Za-z]:[\/]|\/Users\/|\/home\/|~\/)/ },
 ];
 let criterioFalhou = false;
 {
   const violacoes = [];
-  for (const g of GATES.filter((x) => x.modo === "self-contained")) {
+  const selfs = GATES.filter((x) => x.modo === "self-contained");
+  for (const g of selfs) {
     const abs = path.join(ROOT, g.arquivo);
     if (!fs.existsSync(abs)) continue;
     const src = fs.readFileSync(abs, "utf8").replace(/^\s*\/\/.*$/gm, "");
     for (const r of REGRAS_SELF) {
       const m = src.match(r.re);
-      if (m) violacoes.push({ arquivo: g.arquivo, regra: r.nome, trecho: m[0] });
+      if (m) violacoes.push({ arquivo: g.arquivo, regra: r.nome, detalhe: m[0] });
+    }
+    // 3a regra: arquivo que EXISTE aqui e NAO esta no git -> no CI nao existe.
+    if (RASTREADOS) {
+      for (const cit of caminhosCitados(src)) {
+        if (/^[A-Za-z]:[\/]|^\/|^~/.test(cit)) continue; // absoluto: ja coberto acima
+        for (const base of [ROOT, path.join(ROOT, "scripts")]) {
+          const alvo = path.resolve(base, cit);
+          // So ARQUIVO: `git ls-files` nao lista diretorios, entao um literal
+          // como ".." resolveria para a raiz e viraria falso positivo.
+          if (!fs.existsSync(alvo) || !fs.statSync(alvo).isFile()) continue;
+          const rel = path.relative(ROOT, alvo).split(path.sep).join("/");
+          if (!RASTREADOS.has(rel)) {
+            violacoes.push({ arquivo: g.arquivo, regra: "le arquivo NAO rastreado no git", detalhe: rel });
+          }
+        }
+      }
     }
   }
   console.log("\n>>> VERIFICACAO DO CRITERIO self-contained");
-  const n = GATES.filter((x) => x.modo === "self-contained").length;
-  console.log(`    ${n} gate(s) self-contained x ${REGRAS_SELF.length} regras`);
+  console.log(
+    `    ${selfs.length} gate(s) x ${REGRAS_SELF.length + 1} regras` +
+    (RASTREADOS ? `   (git ls-files: ${RASTREADOS.size} arquivos rastreados)` : "   [git indisponivel: regra do untracked PULADA]")
+  );
   if (violacoes.length) {
     criterioFalhou = true;
     console.log("    FALHOU — gate self-contained que NAO pode rodar no CI:");
-    for (const v of violacoes) console.log(`      - ${v.arquivo}: ${v.regra}  (${v.trecho})`);
-    console.log("    Conserto: mova para needs-db (createClient/.env) ou needs-local (caminho).");
+    for (const v of violacoes) console.log(`      - ${v.arquivo}: ${v.regra}  (${v.detalhe})`);
+    console.log("    Conserto: mova para needs-db (createClient/.env) ou needs-local (arquivo fora do git).");
   } else {
-    console.log("    OK — nenhum self-contained chama createClient, le .env ou usa caminho absoluto.");
+    console.log("    OK — nenhum chama createClient, le .env, usa caminho absoluto ou le arquivo fora do git.");
   }
 }
-
 const resultados = [];
 for (const g of aRodar) {
   const abs = path.join(ROOT, g.arquivo);
@@ -631,7 +683,7 @@ console.log(
 );
 console.log(
   "  " + (criterioFalhou ? "FALHOU " : "PASSOU ") +
-  " | criterio self-contained (createClient / .env / caminho absoluto)"
+  " | criterio self-contained (createClient / .env / caminho absoluto / arquivo fora do git)"
 );
 
 // TETO DA FAIXA --db: verificado pelo PROPRIO runner, sobre o tempo MEDIDO.
