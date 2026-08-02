@@ -329,6 +329,13 @@ const GATES = [
       "59s; createClient; monthly_closing_entries/leadership_rule_versions de PRODUCAO",
   },
   {
+    arquivo: "scripts/mov3_equipe_gate.cjs",
+    nome: "/equipe converge para o PMR em mes fechado (MOV 3)",
+    modo: "needs-db",
+    motivo:
+      "createClient; daily + PMR de PRODUCAO. 4 secoes vivo-x-vivo; a 5a (delta da SRCC 213615547) foi aposentada em 01/08",
+  },
+  {
     arquivo: "scripts/check_audit_v9_tables.cjs",
     nome: "audit_v9: nenhuma das 4 tabelas esvaziou",
     modo: "needs-db",
