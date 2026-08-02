@@ -121,7 +121,12 @@ export default function ReceitasPage() {
   const [eData, setEData] = useState("");
   const [eSaving, setESaving] = useState(false);
 
-  const periodKey = selectedKey || periods.find((p) => isClosed(p.ano, p.mes))?.key || periods[0]?.key || "";
+  // COMPETENCIA CANONICA — abre no mes CORRENTE, em aberto (decisao Diego,
+  // 01/08). Antes: `periods.find((p) => isClosed(p.ano, p.mes))?.key`, que
+  // abria no primeiro mes FECHADO, isto e, sempre em M-1. periods[0] e o mes
+  // corrente por construcao (buildPeriods comeca em i=0, o proprio mes), entao
+  // a lista ja o contem e nao precisa de guarda de insercao.
+  const periodKey = selectedKey || periods[0]?.key || "";
   const period = periods.find((p) => p.key === periodKey) || periods[0];
 
   async function loadAll() {

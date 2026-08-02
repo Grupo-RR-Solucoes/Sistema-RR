@@ -523,9 +523,15 @@ export default function ProjecaoClient() {
 
 function ProjecaoContent() {
   const { user, loading: userLoading } = useUser();
+  // COMPETENCIA CANONICA — mes corrente pelo relogio LOCAL, nao pelos getters
+  // UTC. `new Date()` no browser ja e local; ler getUTCMonth() dela devolve o
+  // mes em UTC e, das 21h BRT em diante no ultimo dia do mes, a tela abria na
+  // competencia SEGUINTE por 3 horas. Mesmo defeito que lib/dateFortaleza
+  // resolve no servidor; aqui as demais telas (/receitas, /financeiro,
+  // /promotores) ja usam os getters locais, entao isto tambem alinha o cliente.
   const now = new Date();
-  const [year, setYear] = useState(now.getUTCFullYear());
-  const [month, setMonth] = useState(now.getUTCMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
   const [companyId, setCompanyId] = useState("");
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -533,13 +539,17 @@ function ProjecaoContent() {
 
   const isPromotor = user?.role === "promotor";
 
-  // Competencias recentes (atual + 5 anteriores).
+  // Competencias recentes (atual + 5 anteriores). Mesmo relogio LOCAL do estado
+  // acima: se a lista partisse do mes em UTC e o estado do mes local, os dois
+  // discordariam na virada e o <select> nao acharia a competencia selecionada —
+  // o React marcaria a primeira opcao e a tela exibiria um mes sob o rotulo de
+  // outro, que e o defeito que esta frente esta matando.
   const periodOptions = useMemo(() => {
     const out: Array<{ key: string; label: string; y: number; m: number }> = [];
     for (let k = 0; k < 6; k++) {
-      const dt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - k, 1));
-      const y = dt.getUTCFullYear();
-      const m = dt.getUTCMonth() + 1;
+      const dt = new Date(now.getFullYear(), now.getMonth() - k, 1);
+      const y = dt.getFullYear();
+      const m = dt.getMonth() + 1;
       out.push({ key: `${y}-${m}`, label: mes(y, m), y, m });
     }
     return out;

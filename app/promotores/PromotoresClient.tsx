@@ -366,39 +366,26 @@ function PromotoresFullPage() {
     load();
   }, [selectedKey, companyId, promoterId, reloadKey, unassignedMode]);
 
-  // DEFAULT de competência = último mês FECHADO. Heurística de data: o mês
-  // corrente do calendário está aberto (em produção), então escolhemos o
-  // período mais recente ANTERIOR a ele (ex.: hoje jun → default mai). Sem
-  // seleção manual ainda; só roda no load inicial. Fallback: selectedPeriod.
+  // COMPETENCIA CANONICA — DEFAULT = MES CORRENTE, em todas as abas.
+  //
+  // Antes: "último mês FECHADO" para todas as abas menos a Migração, que já
+  // usava o mês vigente. Duas regras de abertura na MESMA tela, e nenhuma
+  // delas era o mês corrente para quem chegava pela Visão geral. Decisão
+  // Diego (01/08): todas as telas abrem no mês corrente, sem exceção — mês
+  // sem produção abre zerado, e isso é informação, não erro.
+  //
+  // `data.selectedPeriod` já é a competência canônica resolvida pelo servidor
+  // (mês corrente quando a query não pede outra) e o servidor garante que ela
+  // está em `data.periods`. O fallback aqui é a guarda de cliente do par.
   useEffect(() => {
     if (selectedKey || data.periods.length === 0) {
       return;
     }
     const now = new Date();
-    const cy = now.getFullYear();
-    const cm = now.getMonth() + 1;
-    // AJUSTE 2 — aba Migração = redistribuição AO VIVO: no LOAD INICIAL já
-    // entrando na Migração (link do Dashboard / ?tab=migracao), default no mês
-    // VIGENTE (aberto), não no último fechado. Demais abas seguem a heurística
-    // de último mês fechado abaixo (números consolidados). O clique na aba
-    // depois do load é tratado no efeito de transição de seção.
-    if (activeSection === "migracao") {
-      const current = data.periods.find((p) => p.year === cy && p.month === cm);
-      const target = current?.key || data.selectedPeriod.key;
-      if (target) setSelectedKey(target);
-      return;
-    }
-    const closed = data.periods.filter(
-      (p) => p.year < cy || (p.year === cy && p.month < cm)
+    const current = data.periods.find(
+      (p) => p.year === now.getFullYear() && p.month === now.getMonth() + 1
     );
-    const pick = closed.reduce<PeriodOption | null>((best, p) => {
-      if (!best) return p;
-      if (p.year > best.year || (p.year === best.year && p.month > best.month)) {
-        return p;
-      }
-      return best;
-    }, null);
-    const target = pick?.key || data.selectedPeriod.key;
+    const target = current?.key || data.selectedPeriod.key;
     if (target) {
       setSelectedKey(target);
     }

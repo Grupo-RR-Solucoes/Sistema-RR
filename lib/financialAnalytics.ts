@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { fetchAllRows } from "@/lib/queryHelpers";
+import { nowInFortaleza } from "@/lib/dateFortaleza";
 
 const MONTH_NAMES = [
   "jan",
@@ -383,19 +384,27 @@ function isPaidExpense(row: ExpenseRow) {
   return status === "PAID" || status === "PAGO" || Boolean(row.payment_date);
 }
 
+// COMPETENCIA CANONICA — esta funcao ja era o MODELO da sintese (year/month
+// pedidos que nao existem viram periodo sintetizado, em vez de recuar para
+// outro mes). O que faltava era o outro lado da regra: sem year/month ela
+// devolvia `periods[0]`, isto e, "primeira da lista" — na pratica a competencia
+// mais recente COM dado, nunca a corrente. Agora o default e o mes CORRENTE em
+// America/Fortaleza (nao UTC: as 21h BRT o mes ja virava o seguinte), pela
+// mesma sintese. Quem chama sem competencia passa a abrir no mes corrente,
+// mesmo que ele ainda nao tenha lancamento nenhum.
 function makeSelectedPeriod(periods: FinancePeriodOption[], year?: number, month?: number) {
-  if (year && month) {
-    return (
-      periods.find((period) => period.year === year && period.month === month) || {
-        key: getPeriodKey(year, month),
-        label: getPeriodLabel(year, month),
-        year,
-        month,
-      }
-    );
-  }
+  const agora = nowInFortaleza();
+  const alvoYear = year && month ? year : agora.year;
+  const alvoMonth = year && month ? month : agora.month;
 
-  return periods[0];
+  return (
+    periods.find((period) => period.year === alvoYear && period.month === alvoMonth) || {
+      key: getPeriodKey(alvoYear, alvoMonth),
+      label: getPeriodLabel(alvoYear, alvoMonth),
+      year: alvoYear,
+      month: alvoMonth,
+    }
+  );
 }
 
 export async function buildFinancialAnalytics(

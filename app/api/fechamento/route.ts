@@ -4,6 +4,7 @@ import { apiGuardErrorResponse, withSocioAnon } from "@/lib/auth/guards";
 import { buildClosingAnalytics } from "@/lib/closingAnalytics";
 import { getClosingPeriods } from "@/lib/auditoria";
 import { fetchAllRows } from "@/lib/queryHelpers";
+import { nowInFortaleza } from "@/lib/dateFortaleza";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,12 +27,35 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const yParam = Number(searchParams.get("year")) || undefined;
     const mParam = Number(searchParams.get("month")) || undefined;
-    const nowD = new Date();
-    const now = { year: nowD.getUTCFullYear(), month: nowD.getUTCMonth() + 1 };
+    // COMPETENCIA CANONICA — "hoje" no fuso America/Fortaleza, nao UTC: as 21h
+    // BRT o mes ja virava o seguinte em UTC e a tela abria na competencia errada
+    // por 3 horas todo fim de mes. Mesma fonte unica que o dashboard usa.
+    const now = nowInFortaleza();
 
     const { periods, lastClosed } = await getClosingPeriods(supabase, now);
-    const selected =
-      (yParam && mParam ? periods.find((p) => p.year === yParam && p.month === mParam) || null : lastClosed) || lastClosed;
+    // COMPETENCIA CANONICA — abre no mes CORRENTE (decisao Diego, 01/08), nao no
+    // ultimo FECHADO. Quando o corrente ainda nao fechou ele ja vem na lista como
+    // `fechado: false` (lib/auditoria.ts, "mes corrente como em aberto no topo")
+    // e o ramo logo abaixo devolve aguardandoFechamento — a tela diz "aguardando
+    // fechamento" em vez de exibir zeros, que e exatamente o comportamento
+    // desejado.
+    //
+    // A competencia PEDIDA tambem deixa de ser trocada: antes, um year/month fora
+    // da lista caia em `|| lastClosed` e a tela mostrava outro mes sob o rotulo do
+    // pedido. Agora ela e sintetizada como nao-fechada e cai no mesmo ramo de
+    // aguardando.
+    const pedido =
+      yParam && mParam
+        ? periods.find((p) => p.year === yParam && p.month === mParam) ?? {
+            year: yParam,
+            month: mParam,
+            key: `${yParam}-${String(mParam).padStart(2, "0")}`,
+            label: `${MES[mParam - 1]}/${yParam}`,
+            fechado: false,
+          }
+        : null;
+    const corrente = periods.find((p) => p.year === now.year && p.month === now.month) ?? null;
+    const selected = pedido ?? corrente ?? lastClosed;
 
     if (!selected) {
       return NextResponse.json({ periods, selectedPeriod: null, aguardandoFechamento: true, summary: null, companyRows: [], recebidoPorMes: [] });
