@@ -116,6 +116,21 @@ const janela = resolverJanela({
   diasComDadoNoMesCorrente: diasComDado,
 });
 
+// INDEPENDENCIA DO DIA. Rodar no dia 1 ou 2 do mes torna a comparacao vacua: o
+// recorte "ate o dia N" da competencia CORRENTE cobre 1 dia, e a rota devolve
+// zero. Medido em 01/08/2026: N=1 contra os 24 da medida, producao atual 0.
+// Pular com motivo NOMINAL e melhor que reprovar por causa da data — mas nao
+// pode sumir do resumo, senao silencio vira falso OK.
+if ((janela.diaCorteAtual ?? 0) < 3) {
+  console.log(
+    `
+[PULO] N=${janela.diaCorteAtual} na competencia corrente: a janela ate-dia-N cobre ` +
+    `menos de 3 dias e a comparacao seria vacua. Rode a partir do dia 3.`
+  );
+  process.exitCode = 0;
+  process.exit(0);
+}
+
 const prodAtual = calcularProducaoMensalDoGrupo({ records: dailyRecorte, competencia });
 const prodAnterior = calcularProducaoMensalDoGrupo({ records: dailyRecorte, competencia: compAnterior });
 const trpProvider = await buildTrpCreditProvider(dailyRecorte.map((r) => r.contract_date));
@@ -148,6 +163,19 @@ console.log(
 );
 
 // ---- as ancoras da MEDIDA C ----
+//
+// ATENCAO — ESTAS ANCORAS SAO ABSOLUTAS SOBRE DADO VIVO E JA ESTAO VELHAS.
+// Medido em 01/08/2026, com N valido: `producao mes inteiro (anterior)` da
+// 6.482.490,15 contra os 5.607.522,23 congelados aqui — julho cresceu depois
+// que a medida foi cravada. Das 8 conferencias, 6 falham por isso e apenas 2
+// falhavam pela data (o N), ja tratado pelo PULO acima.
+//
+// Ou seja: tornar o gate independente do dia NAO o deixa verde. Ele compara a
+// rota VIVA contra um retrato CONGELADO, o que so funciona no dia em que o
+// retrato foi tirado. Enquanto isso nao for decidido (reancorar, e envelhecer
+// de novo no mes que vem; ou reescrever para comparar rota x recalculo
+// independente, ambos vivos) ele NAO entra no run_all_gates — registrar
+// vermelho conhecido treina todo mundo a ignorar o runner.
 const ESPERADO = {
   prodAtual: 5243424.32,
   prodAnterior: 5607522.23,

@@ -329,6 +329,13 @@ const GATES = [
       "59s; createClient; monthly_closing_entries/leadership_rule_versions de PRODUCAO",
   },
   {
+    arquivo: "scripts/gate_projecao_gestor.mts",
+    nome: "/projecao do gestor (montagem + mascaramento)",
+    modo: "needs-db",
+    motivo:
+      "createClient; daily/PMR de PRODUCAO. Competencia DESCOBERTA por medicao (ultima com producao), nao pelo calendario",
+  },
+  {
     arquivo: "scripts/trp_parser_escalares_gate.cjs",
     nome: "parser TRP - escalares de categoria",
     modo: "needs-local",
