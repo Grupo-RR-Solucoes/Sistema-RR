@@ -8,7 +8,7 @@
  * PASSA por calcularOperacao — o hash prova que nenhum contrato ADS de mes
  * fechado mudou de numero com o candidate-list.
  *
- * Uso: TRP_SOURCE=db node scripts/prova_pmr_fechado_hash.cjs <ano> <mes>
+ * Uso: TRP_SOURCE=db node scripts/dump_pmr_fechado_hash.cjs <ano> <mes>
  */
 process.env.TRP_SOURCE = process.env.TRP_SOURCE || "db";
 require("./_ts_register.cjs");
@@ -40,7 +40,7 @@ function canonical(value) {
 async function main() {
   const year = Number(process.argv[2]);
   const month = Number(process.argv[3]);
-  if (!year || !month) { console.error("uso: prova_pmr_fechado_hash.cjs <ano> <mes>"); process.exit(3); }
+  if (!year || !month) { console.error("uso: dump_pmr_fechado_hash.cjs <ano> <mes>"); process.exit(3); }
 
   const res = await reconsolidarCompetenciaFechada(sb, { year, month, dryRun: true });
   if (!res.ran) {

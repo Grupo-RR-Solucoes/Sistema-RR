@@ -372,7 +372,7 @@ export function auditAvistaContrato(
 
 /**
  * Mapeamento operacional: motor bloco abstrato → string esperada na coluna
- * audit_v9_avista.bloco. Usado pelo validador (check_auditoria_avista.cjs)
+ * audit_v9_avista.bloco. Usado pelo validador (diag_auditoria_avista.cjs)
  * para comparar a 4ª dimensão (bloco) byte a byte com v9.
  *
  *   PEDIDO_FIRME_2.1 + status SUBPAGAMENTO            → "2.1_AVISTA_SUBPAGAMENTO"

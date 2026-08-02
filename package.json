@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "gates": "node scripts/run_all_gates.cjs",
+    "gates:db": "node scripts/run_all_gates.cjs --db",
     "gates:full": "node scripts/run_all_gates.cjs --full",
     "typecheck": "tsc --noEmit",
     "typecheck:gates": "tsc -p tsconfig.gates.json"

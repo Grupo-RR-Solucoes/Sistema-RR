@@ -89,5 +89,12 @@ function readEnv() {
   }
 
   console.log("\n" + (falhas === 0 ? "GATE OK (0 falhas)" : `GATE FALHOU (${falhas} falha(s))`));
-  process.exit(falhas === 0 ? 0 : 1);
+  // process.exitCode, NAO process.exit(). Medido em 01/08/2026, 3/3 execucoes:
+  // process.exit() derruba o event loop enquanto um handle async do cliente
+  // Supabase ainda esta fechando, e o libuv aborta com
+  //   Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\winsync.c:76
+  // O abort SOBRESCREVE o codigo de saida: o gate imprimia "GATE OK (0 falhas)"
+  // e saia != 0. Falso vermelho e pior que vermelho — treina todo mundo a
+  // ignorar o runner. Com exitCode o Node drena os handles e sai limpo (3/3).
+  process.exitCode = falhas === 0 ? 0 : 1;
 })();

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * scripts/check_auditoria_avista.cjs — CHECKPOINTs B/C executável (Fase 4.3).
+ * scripts/diag_auditoria_avista.cjs — CHECKPOINTs B/C executável (Fase 4.3).
  *
  * Como rodar:
- *   node scripts/check_auditoria_avista.cjs --amostra-checkpoint-b   # 100 contratos
- *   node scripts/check_auditoria_avista.cjs --full                   # 23.879 contratos
+ *   node scripts/diag_auditoria_avista.cjs --amostra-checkpoint-b   # 100 contratos
+ *   node scripts/diag_auditoria_avista.cjs --full                   # 23.879 contratos
  *
  * Replica em CJS a lógica de:
  *   - lib/regrasLoader.ts (getMatrizTRPParaContrato + helpers)
@@ -1047,7 +1047,7 @@ async function runQueriesEspeculativas() {
 // ============================================================== main =====
 async function main() {
   const tStart = Date.now();
-  console.log(`=== check_auditoria_avista (${MODE_FULL ? "FULL 23.879" : "AMOSTRA CHECKPOINT B 100"}) ===\n`);
+  console.log(`=== diag_auditoria_avista (${MODE_FULL ? "FULL 23.879" : "AMOSTRA CHECKPOINT B 100"}) ===\n`);
 
   // Queries especulativas em ambos os modos (rápidas e críticas para detecção)
   const queriesEspeculativas = await runQueriesEspeculativas();

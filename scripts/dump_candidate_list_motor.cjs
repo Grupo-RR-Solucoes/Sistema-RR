@@ -9,7 +9,7 @@
  * e nas 5 FAIXAS de producao (a faixa real do route varia por empresa/mes —
  * cobrindo as 5, a prova nao depende dela).
  *
- * Uso: TRP_SOURCE=db node scripts/prova_candidate_list_motor.cjs <saida.json>
+ * Uso: TRP_SOURCE=db node scripts/dump_candidate_list_motor.cjs <saida.json>
  * Rodar 2x — no codigo PRE-fix e POS-fix — e diffar os JSONs:
  *   - contratos com pct != 0 no PRE nao podem mudar (o fix so tira zero indevido);
  *   - os unicos deltas permitidos sao 0 -> pct (a classe "motor commitava numa
@@ -49,7 +49,7 @@ async function fetchAll(table, sel) {
 
 async function main() {
   const outPath = process.argv[2];
-  if (!outPath) { console.error("uso: node prova_candidate_list_motor.cjs <saida.json>"); process.exit(3); }
+  if (!outPath) { console.error("uso: node dump_candidate_list_motor.cjs <saida.json>"); process.exit(3); }
 
   const dpr = await fetchAll(
     "daily_production_records",
