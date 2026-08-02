@@ -384,6 +384,13 @@ const GATES = [
     motivo:
       "le 3 PDFs de C:/Users/diego/Downloads; o repo tem 0 PDFs versionados",
   },
+  {
+    arquivo: "scripts/gate_competencia.mts",
+    nome: "competencia canonica (7 telas: lista, abertura, pedida, sem dado, rotulo)",
+    modo: "needs-db-lento",
+    motivo:
+      "33,1s; createClient; exercita 5 resolvedores de competencia (promoterAnalytics, closingAnalytics, financialAnalytics, projecaoMetas, getClosingPeriods) em 3 competencias cada. LENTO por isso, nao por ineficiencia: cortar competencia ou resolvedor e cortar cobertura. Fora da --db para nao estourar o teto de 90s, mesmo motivo do gate_projecao_gestor",
+  },
 ];
 
 // ---------------------------------------------------------------------------
