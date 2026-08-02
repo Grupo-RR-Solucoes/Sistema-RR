@@ -23,8 +23,15 @@
 // entra aqui a mao, com o motivo da classificacao escrito.
 //
 // COMO CLASSIFICAR UM GATE NOVO:
-//   self-contained  -> nao chama createClient E nao le caminho absoluto/fora do
-//                      repo. Entra no CI de graca.
+//   self-contained  -> as TRES coisas, nao uma:
+//                        (a) nao chama createClient;
+//                        (b) nao le .env / .env.local por conta propria;
+//                        (c) nao le caminho absoluto nem nada fora do repo.
+//                      Entra no CI de graca. NAO basta (a): em 02/08/2026 o CI
+//                      do PR #164 reprovou porque dois gates classificados so
+//                      por (a) violavam (b) e (c). O passo VERIFICACAO DO
+//                      CRITERIO, mais abaixo, agora cobra os tres por varredura
+//                      — a regra deixou de depender de alguem lembrar dela.
 //   needs-db        -> chama createClient. NUNCA vai pro CI: exigiria a service
 //                      role de producao num runner publico.
 //   needs-local     -> le arquivo que nao esta versionado (ex.: PDF no
@@ -100,9 +107,9 @@ const GATES = [
   {
     arquivo: "scripts/test_item4_pdf_extract.cjs",
     nome: "extrator de PDF do fechamento ADS",
-    modo: "self-contained",
+    modo: "needs-local",
     motivo:
-      "fixture versionada; sem banco",
+      "le C:/Users/diego/Downloads (:9). Estava como self-contained e REPROVOU o CI do PR #164: no ubuntu o caminho nao existe e da ENOENT",
   },
   {
     arquivo: "scripts/test_debitos_edicao.cjs",
@@ -128,9 +135,9 @@ const GATES = [
   {
     arquivo: "scripts/golden_carteira_vs_metadata.ts",
     nome: "golden carteira x metadata",
-    modo: "self-contained",
+    modo: "needs-db",
     motivo:
-      "fixture versionada; sem banco",
+      "le o service_role de .env.local (:23-33). Estava como self-contained e REPROVOU o CI do PR #164: sem secrets ele morre em 'Legacy API keys are disabled'",
   },
   {
     arquivo: "scripts/test_equipe_dashboard.ts",
@@ -515,6 +522,61 @@ function comoInvocar(abs) {
   return { args: [TSX_CLI, abs] };
 }
 
+// ---------------------------------------------------------------------------
+// VERIFICACAO DO CRITERIO — self-contained e as TRES coisas, nao uma
+// ---------------------------------------------------------------------------
+// Em 02/08/2026 o CI do PR #164 reprovou porque dois gates foram classificados
+// como self-contained aplicando so metade do criterio ("nao chama
+// createClient"):
+//   golden_carteira_vs_metadata.ts  le o service_role de .env.local -> no CI,
+//                                   que roda SEM secrets por desenho, morre em
+//                                   "Legacy API keys are disabled";
+//   test_item4_pdf_extract.cjs      le C:/Users/diego/Downloads -> no ubuntu o
+//                                   caminho nao existe e da ENOENT.
+// Nenhum dos dois chama createClient, entao o criterio pela metade os aprovou.
+// Local os dois passam: o Windows tem a pasta e o .env.local esta em disco.
+//
+// A regra passa a ser COBRADA aqui, nao lembrada. Mesma ideia do passo de
+// cobertura da tipagem logo acima.
+//
+// POR QUE NAO VARRER URL: `bbts_seguro_regua_gate.cjs:24` define
+// NEXT_PUBLIC_SUPABASE_URL = "http://stub.local" justamente para NAO falar com
+// o banco. Stub e o padrao CERTO de se tornar self-contained; varrer URL
+// puniria quem fez a coisa certa. O que importa e chamar createClient contra um
+// banco de verdade, e isso o primeiro padrao ja pega.
+//
+// O padrao de .env casa o NOME DO ARQUIVO entre aspas, nao `process.env`: ler
+// variavel de ambiente e legitimo; abrir o arquivo de credencial e que nao e.
+const REGRAS_SELF = [
+  { nome: "chama createClient", re: /\bcreateClient\s*\(/ },
+  { nome: "le arquivo .env/.env.local", re: /["'`]\.env(\.local)?["'`]/ },
+  { nome: "caminho absoluto ou fora do repo", re: /["'`](?:[A-Za-z]:[\/]|\/Users\/|\/home\/|~\/)/ },
+];
+let criterioFalhou = false;
+{
+  const violacoes = [];
+  for (const g of GATES.filter((x) => x.modo === "self-contained")) {
+    const abs = path.join(ROOT, g.arquivo);
+    if (!fs.existsSync(abs)) continue;
+    const src = fs.readFileSync(abs, "utf8").replace(/^\s*\/\/.*$/gm, "");
+    for (const r of REGRAS_SELF) {
+      const m = src.match(r.re);
+      if (m) violacoes.push({ arquivo: g.arquivo, regra: r.nome, trecho: m[0] });
+    }
+  }
+  console.log("\n>>> VERIFICACAO DO CRITERIO self-contained");
+  const n = GATES.filter((x) => x.modo === "self-contained").length;
+  console.log(`    ${n} gate(s) self-contained x ${REGRAS_SELF.length} regras`);
+  if (violacoes.length) {
+    criterioFalhou = true;
+    console.log("    FALHOU — gate self-contained que NAO pode rodar no CI:");
+    for (const v of violacoes) console.log(`      - ${v.arquivo}: ${v.regra}  (${v.trecho})`);
+    console.log("    Conserto: mova para needs-db (createClient/.env) ou needs-local (caminho).");
+  } else {
+    console.log("    OK — nenhum self-contained chama createClient, le .env ou usa caminho absoluto.");
+  }
+}
+
 const resultados = [];
 for (const g of aRodar) {
   const abs = path.join(ROOT, g.arquivo);
@@ -567,6 +629,10 @@ console.log(
   "  " + (coberturaFalhou ? "FALHOU " : "PASSOU ") +
   " | cobertura da tipagem dos gates (tsconfig.gates.json)"
 );
+console.log(
+  "  " + (criterioFalhou ? "FALHOU " : "PASSOU ") +
+  " | criterio self-contained (createClient / .env / caminho absoluto)"
+);
 
 // TETO DA FAIXA --db: verificado pelo PROPRIO runner, sobre o tempo MEDIDO.
 // Sem isso o teto seria so um numero num comentario, e a faixa cresceria ate
@@ -607,10 +673,11 @@ if (aPular.length > 0) {
   console.log("  (exige .env.local com a service role e os PDFs da TRP em disco)");
 }
 
-if (falhas.length > 0 || coberturaFalhou || tetoEstourou) {
+if (falhas.length > 0 || coberturaFalhou || tetoEstourou || criterioFalhou) {
   const motivos = falhas.map((f) => f.nome);
   if (coberturaFalhou) motivos.push("cobertura da tipagem dos gates");
   if (tetoEstourou) motivos.push("teto de tempo da faixa --db");
+  if (criterioFalhou) motivos.push("criterio self-contained violado");
   console.log("\n  RESULTADO: FALHOU — " + motivos.join(", "));
   process.exit(1);
 }
