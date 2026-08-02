@@ -428,7 +428,19 @@ export async function buildDre(
   // receita cheia com comissão 0 — um lucro fabricado. Não monta. Antes isto era só um
   // alerta, e o número falso ia para a tela do mesmo jeito. Alcançável quando a
   // competência é pedida direto (year/month na URL), fora da lista de períodos.
-  if (base.latestPeriod.year !== selected.year || base.latestPeriod.month !== selected.month) {
+  //
+  // COMPETENCIA CANONICA — O DETECTOR MUDOU, A RECUSA NAO.
+  // Isto testava `base.latestPeriod !== selected`: a divergência SÓ existia porque
+  // o analytics trocava a competência pedida pela mais recente com dado. Agora ele
+  // sintetiza a pedida, `latestPeriod` é SEMPRE igual a `selected` e a comparação
+  // seria eternamente falsa — a guarda morreria em silêncio e o lucro fabricado
+  // passaria a ser o caminho PADRÃO da tela (o DRE abre no mês corrente, que no
+  // dia 1 não tem PMR). O sinal agora é dito em voz alta pela própria base:
+  // `competencia.temDado === false` é EXATAMENTE a condição que a comparação
+  // detectava — a competência não aparece em periodsMap, isto é, não há linha de
+  // PMR, meta nem daily nela. Mesma recusa, mesma mensagem, sem depender de
+  // efeito colateral de fallback.
+  if (!base.competencia.temDado) {
     return {
       closed: false,
       period: selected,
