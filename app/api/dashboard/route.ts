@@ -807,6 +807,16 @@ export async function GET(req: Request) {
           serie: serieProducaoCheia,
           competencia,
           janela: resolverJanela({ competencia, modo: "ate-dia-N", dia: agora.day, recorteIndisponivel: true }),
+          // BORDA DE MES VAZIO — quantas linhas a competencia atual tem no
+          // daily, INTEIRA (somaDailyRecortado conta antes de aplicar o corte
+          // por dia). Zero aqui = nada importado, e o helper esconde o delta em
+          // vez de exibir "-100%" contra o mes anterior cheio.
+          //
+          // Este ramo e justamente o que roda quando falta daily em alguma
+          // ponta, e desde que a competencia renderizada passou a existir em
+          // producaoMensal o ponto atual vem materializado em ZERO — sem esta
+          // contagem, ausencia de importacao viraria queda de desempenho.
+          linhasOrigemAtual: atual.linhas,
         });
       }
     } else {

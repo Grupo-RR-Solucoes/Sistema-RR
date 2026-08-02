@@ -464,3 +464,98 @@ test("33) deltaDaSerie repassa a janela intacta", () => {
   assert.equal(r.fontesDivergentes, false); // recorte le a MESMA fonte dos 2 lados
   assert.equal(r.deltaPct, -10.6);
 });
+
+// ---------------------------------------------------------------------------
+// BORDA DE MES VAZIO — zero SEM IMPORTACAO nao e queda.
+//
+// O par 43/44 e o coracao desta borda: MESMO valor atual (zero), MESMO valor
+// anterior, e resultados OPOSTOS — so a contagem de linhas de origem muda. Se
+// um dia alguem "simplificar" a guarda para olhar so o valor, o 44 cai.
+// ---------------------------------------------------------------------------
+
+test("43) mes atual ZERO e SEM linha de origem: esconde (nao e queda)", () => {
+  const r = calcularDelta({
+    competencia: { year: 2026, month: 8 },
+    valorAtual: 0,
+    valorAnterior: 4_332_356.55,
+    linhasOrigemAtual: 0,
+  });
+  assert.equal(r.mostrar, false);
+  assert.equal(r.motivoOculto, "atual-sem-importacao");
+  assert.equal(formatarDelta(r), null);
+});
+
+test("44) mes atual ZERO mas COM linha de origem: MOSTRA -100% (nao vendeu, e informacao)", () => {
+  const r = calcularDelta({
+    competencia: { year: 2026, month: 8 },
+    valorAtual: 0,
+    valorAnterior: 4_332_356.55,
+    linhasOrigemAtual: 12, // houve importacao; o mes existiu e nao vendeu
+  });
+  assert.equal(r.mostrar, true);
+  assert.equal(r.motivoOculto, null);
+  assert.equal(r.deltaPct, -100);
+  assert.equal(r.direcao, "down");
+  assert.equal(formatarDelta(r), "-100,0%");
+});
+
+test("45) sem informar linhasOrigemAtual, o comportamento anterior e preservado", () => {
+  const r = calcularDelta({
+    competencia: { year: 2026, month: 8 },
+    valorAtual: 0,
+    valorAnterior: 4_332_356.55,
+  });
+  assert.equal(r.mostrar, true);
+  assert.equal(r.deltaPct, -100);
+});
+
+test("46) a borda so vale para valor ZERO: mes com pouco dado e muita venda mostra", () => {
+  // Contagem baixa nao esconde nada. A guarda exige zero linha E zero valor;
+  // 1 linha com venda e um mes de verdade, ainda que magro.
+  const r = calcularDelta({
+    competencia: { year: 2026, month: 8 },
+    valorAtual: 1_000,
+    valorAnterior: 4_332_356.55,
+    linhasOrigemAtual: 1,
+  });
+  assert.equal(r.mostrar, true);
+  assert.equal(r.motivoOculto, null);
+});
+
+test("47) a borda fica ANTES do M-1: sem importacao, o motivo util e esse", () => {
+  // Mes atual vazio E sem M-1 consolidado. As duas guardas escondem; o motivo
+  // registrado e o acionavel ("falta importar"), nao "nao ha mes anterior".
+  const r = calcularDelta({
+    competencia: { year: 2026, month: 8 },
+    valorAtual: 0,
+    valorAnterior: null,
+    linhasOrigemAtual: 0,
+  });
+  assert.equal(r.mostrar, false);
+  assert.equal(r.motivoOculto, "atual-sem-importacao");
+});
+
+test("48) deltaDaSerie repassa linhasOrigemAtual (Dashboard e /equipe dependem disso)", () => {
+  // Reproduz a forma REAL das duas series: o mes corrente ja vem materializado
+  // em zero (producaoMensal com monthsSet.add(month) no Dashboard; rangeMeses
+  // ate o mes do refDate na /equipe). Sem o repasse, isto voltaria a dar -100%.
+  const serie: PontoSerie[] = [
+    { year: 2026, month: 7, valor: 4_332_356.55, fonte: "pmr+master" },
+    { year: 2026, month: 8, valor: 0, fonte: "daily-vivo" },
+  ];
+  const semDado = deltaDaSerie({
+    serie,
+    competencia: { year: 2026, month: 8 },
+    linhasOrigemAtual: 0,
+  });
+  assert.equal(semDado.mostrar, false);
+  assert.equal(semDado.motivoOculto, "atual-sem-importacao");
+
+  const comDado = deltaDaSerie({
+    serie,
+    competencia: { year: 2026, month: 8 },
+    linhasOrigemAtual: 7,
+  });
+  assert.equal(comDado.mostrar, true);
+  assert.equal(comDado.deltaPct, -100);
+});
