@@ -329,6 +329,20 @@ const GATES = [
       "59s; createClient; monthly_closing_entries/leadership_rule_versions de PRODUCAO",
   },
   {
+    arquivo: "scripts/gate-medida-c-rota.mts",
+    nome: "MEDIDA C: a janela da rota nao decapita a competencia M-1",
+    modo: "needs-db",
+    motivo:
+      "createClient; daily de PRODUCAO. VIVO x VIVO: LADO A e a query da rota (com janela), LADO B e query PROPRIA sem janela — os dois deste run",
+  },
+  {
+    arquivo: "scripts/gate-srcc-ads.mts",
+    nome: "SRCC ADS: resposta conhecida nunca exibe 'Sem informacao'",
+    modo: "needs-db",
+    motivo:
+      "createClient; daily da ADS de PRODUCAO. INVARIANTE (nao contagem) desde 01/08; auto-declara a nao-vacuidade",
+  },
+  {
     arquivo: "scripts/mov3_equipe_gate.cjs",
     nome: "/equipe converge para o PMR em mes fechado (MOV 3)",
     modo: "needs-db",
@@ -352,9 +366,9 @@ const GATES = [
   {
     arquivo: "scripts/gate_projecao_gestor.mts",
     nome: "/projecao do gestor (montagem + mascaramento)",
-    modo: "needs-db",
+    modo: "needs-db-lento",
     motivo:
-      "createClient; daily/PMR de PRODUCAO. Competencia DESCOBERTA por medicao (ultima com producao), nao pelo calendario",
+      "15,7s; createClient; daily/PMR de PRODUCAO. PROMOVIDO a lento em 01/08 para caber os dois de vivo-x-vivo na --db sem estourar o teto de 90s",
   },
   {
     arquivo: "scripts/trp_parser_escalares_gate.cjs",

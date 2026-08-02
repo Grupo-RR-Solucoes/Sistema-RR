@@ -116,21 +116,13 @@ const janela = resolverJanela({
   diasComDadoNoMesCorrente: diasComDado,
 });
 
-// INDEPENDENCIA DO DIA. Rodar no dia 1 ou 2 do mes torna a comparacao vacua: o
-// recorte "ate o dia N" da competencia CORRENTE cobre 1 dia, e a rota devolve
-// zero. Medido em 01/08/2026: N=1 contra os 24 da medida, producao atual 0.
-// Pular com motivo NOMINAL e melhor que reprovar por causa da data — mas nao
-// pode sumir do resumo, senao silencio vira falso OK.
-if ((janela.diaCorteAtual ?? 0) < 3) {
-  console.log(
-    `
-[PULO] N=${janela.diaCorteAtual} na competencia corrente: a janela ate-dia-N cobre ` +
-    `menos de 3 dias e a comparacao seria vacua. Rode a partir do dia 3.`
-  );
-  process.exitCode = 0;
-  process.exit(0);
-}
-
+// O PULO POR N<3 FOI REMOVIDO em 01/08/2026, junto com as ancoras congeladas.
+// Ele existia porque as 8 conferencias antigas comparavam o recorte "ate o dia
+// N" contra um retrato: no dia 1 do mes N=1 e a comparacao ficava vacua. A
+// invariante que ficou no lugar — a janela da rota contem a competencia M-1
+// inteira — NAO depende do dia em que se roda, entao o gate voltou a valer todo
+// dia. Os numeros de producao/comissao abaixo continuam impressos como
+// DIAGNOSTICO; nenhum deles e mais assercao.
 const prodAtual = calcularProducaoMensalDoGrupo({ records: dailyRecorte, competencia });
 const prodAnterior = calcularProducaoMensalDoGrupo({ records: dailyRecorte, competencia: compAnterior });
 const trpProvider = await buildTrpCreditProvider(dailyRecorte.map((r) => r.contract_date));
@@ -162,44 +154,74 @@ console.log(
     `\n  variacao ${(((atual.total - anterior.total) / anterior.total) * 100).toFixed(1)}%`
 );
 
-// ---- as ancoras da MEDIDA C ----
+// ---------------------------------------------------------------------------
+// VIVO x VIVO — os dois lados computados NESTE run, por queries DIFERENTES
+// ---------------------------------------------------------------------------
+// A versao anterior comparava a rota contra 8 valores ABSOLUTOS congelados
+// (producao 5.243.424,32, 633 linhas, comissao 170.828,97 ...). Medido em
+// 01/08/2026: julho tinha crescido de 5.607.522,23 para 6.482.490,15 e as 8
+// conferencias falhavam. Retrato so vale no dia em que foi tirado.
 //
-// ATENCAO — ESTAS ANCORAS SAO ABSOLUTAS SOBRE DADO VIVO E JA ESTAO VELHAS.
-// Medido em 01/08/2026, com N valido: `producao mes inteiro (anterior)` da
-// 6.482.490,15 contra os 5.607.522,23 congelados aqui — julho cresceu depois
-// que a medida foi cravada. Das 8 conferencias, 6 falham por isso e apenas 2
-// falhavam pela data (o N), ja tratado pelo PULO acima.
+// O que este gate defende NAO e um numero: e que a JANELA DA ROTA
+// (recorteRange, que comeca no dia 20 de dois meses antes) NAO DECAPITE a
+// competencia M-1, que comeca no ultimo dia UTIL do mes anterior. Isso se
+// verifica sem retrato nenhum.
 //
-// Ou seja: tornar o gate independente do dia NAO o deixa verde. Ele compara a
-// rota VIVA contra um retrato CONGELADO, o que so funciona no dia em que o
-// retrato foi tirado. Enquanto isso nao for decidido (reancorar, e envelhecer
-// de novo no mes que vem; ou reescrever para comparar rota x recalculo
-// independente, ambos vivos) ele NAO entra no run_all_gates — registrar
-// vermelho conhecido treina todo mundo a ignorar o runner.
-const ESPERADO = {
-  prodAtual: 5243424.32,
-  prodAnterior: 5607522.23,
-  linhasAtual: 633,
-  linhasAnterior: 724,
-  n: 24,
-  nAnterior: 24,
-  atual: 170828.97,
-  anterior: 164533.04,
+// DE ONDE VEM CADA LADO — se os dois saissem da mesma query o gate passaria por
+// CONSTRUCAO e nao provaria nada:
+//   LADO A (rota)          `dailyRecorte` — query COM o filtro
+//                          movement_date >= recorteRange.inicio e < fim.
+//   LADO B (independente)  `universoDiario` — query SEM janela nenhuma; a
+//                          competencia sai linha a linha de
+//                          getProductionPeriodFromValue.
+// Duas idas ao banco, com predicados diferentes.
+const universoDiario: any[] = [];
+{
+  let d2 = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("daily_production_records")
+      .select("id, company_id, status, is_srcc_restricted, net_value, movement_date, cancellation_date")
+      .order("id")
+      .range(d2, d2 + passo - 1);
+    if (error) throw new Error(error.message);
+    universoDiario.push(...(data || []));
+    if (!data || data.length < passo) break;
+    d2 += passo;
+  }
+}
+const daComp = (r: any, c: { year: number; month: number }) => {
+  const p = getProductionPeriodFromValue(r.movement_date);
+  return !!p && p.year === c.year && p.month === c.month;
 };
+const elegivelAqui = (r: any) =>
+  !!r.company_id && idsAtivas.has(r.company_id) && emProducao(r.status) && valido(r);
+
+const idsRotaM1 = new Set(dailyRecorte.filter((r) => elegivelAqui(r) && daComp(r, compAnterior)).map((r) => r.id));
+const idsIndepM1 = new Set(universoDiario.filter((r) => elegivelAqui(r) && daComp(r, compAnterior)).map((r) => r.id));
+const faltamNaRota = [...idsIndepM1].filter((id) => !idsRotaM1.has(id));
+const sobramNaRota = [...idsRotaM1].filter((id) => !idsIndepM1.has(id));
+const liqPerdido = universoDiario.filter((r) => faltamNaRota.includes(r.id)).reduce((a, r) => a + Number(r.net_value || 0), 0);
+const rotM1 = `${compAnterior.year}-${String(compAnterior.month).padStart(2, "0")}`;
+
+console.log("");
+console.log("-".repeat(78));
+console.log("VIVO x VIVO — a janela da rota contem a competencia M-1 inteira?");
+console.log("-".repeat(78));
+console.log(`  LADO A  rota (janela ${recorteRange.inicio}..${recorteRange.fim}) ve ${idsRotaM1.size} linhas de ${rotM1}`);
+console.log(`  LADO B  independente (sem janela, competencia por linha)  ve ${idsIndepM1.size} linhas de ${rotM1}`);
+console.log(`  [nao-vacuidade] LADO B varreu ${universoDiario.length} linhas numa query PROPRIA, sem reusar a da rota`);
+if (idsIndepM1.size === 0) console.log("  [ATENCAO] a competencia M-1 esta VAZIA — o gate passaria por vacuidade, nao por merito.");
 
 const checks: Array<[string, number | null, number | null]> = [
-  ["producao mes inteiro (atual)", prodAtual.total, ESPERADO.prodAtual],
-  ["producao mes inteiro (anterior)", prodAnterior.total, ESPERADO.prodAnterior],
-  ["linhas na competencia (atual)", prodAtual.linhas, ESPERADO.linhasAtual],
-  ["linhas na competencia (anterior)", prodAnterior.linhas, ESPERADO.linhasAnterior],
-  ["N do mes corrente", janela.diaCorteAtual, ESPERADO.n],
-  ["N do mes anterior", janela.diaCorteAnterior, ESPERADO.nAnterior],
-  ["comissao recortada (atual)", atual.total, ESPERADO.atual],
-  ["comissao recortada (anterior)", anterior.total, ESPERADO.anterior],
+  ["linhas da M-1 vistas pela rota", idsRotaM1.size, idsIndepM1.size],
+  ["linhas da M-1 que a rota PERDE", faltamNaRota.length, 0],
+  ["linhas que a rota inclui a MAIS", sobramNaRota.length, 0],
+  ["liquido perdido pela janela", Math.round(liqPerdido * 100) / 100, 0],
 ];
 
 console.log("\n" + "-".repeat(78));
-console.log("CONFERENCIA contra a MEDIDA C (janela propria, 15 de dois meses antes)");
+console.log("CONFERENCIA — rota x recalculo independente, ambos DESTE run");
 console.log("-".repeat(78));
 let falhas = 0;
 for (const [nome, obtido, esperado] of checks) {
