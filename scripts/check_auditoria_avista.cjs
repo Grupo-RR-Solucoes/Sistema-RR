@@ -956,9 +956,15 @@ async function runQueriesEspeculativas() {
       query: async () => {
         let from = 0; const PAGE = 1000; let n = 0; const sample = [];
         while (true) {
+          // ORDEM ESTAVEL: audit_v9_avista tem 23.879 linhas e PAGINA (24
+          // paginas). Sem ordem o range repete e pula linhas — a contagem
+          // continua batendo e so a soma denuncia. A tabela NAO tem `id`;
+          // contract_number foi medido UNICO nela (23879/23879) em 01/08/2026.
           const { data, error } = await sb.from("audit_v9_avista")
             .select("contract_number,mes,comissao_paga,comissao_devida")
-            .eq("status_fase1", "OK").range(from, from + PAGE - 1);
+            .eq("status_fase1", "OK")
+            .order("contract_number", { ascending: true })
+            .range(from, from + PAGE - 1);
           if (error) throw error;
           if (!data || !data.length) break;
           for (const r of data) {

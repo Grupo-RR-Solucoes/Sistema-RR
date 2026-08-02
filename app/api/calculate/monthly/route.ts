@@ -431,16 +431,39 @@ async function getLatestImportedPromoterRemuneration(
   );
 }
 
+/**
+ * ORDEM ESTAVEL — ESTA ROTA GRAVA promoter_monthly_results.
+ *
+ * `.range()` sem ORDER BY nao tem ordem definida: a mesma linha pode vir em
+ * duas paginas e outra em nenhuma. A CONTAGEM continua batendo (1000+1000+N),
+ * so a SOMA denuncia — foi assim que o defeito sobreviveu em 3 leituras deste
+ * repo ate 01/08/2026 (medido: 8 duplicadas em promoterAnalytics:973, 2.000 em
+ * closingAnalytics:1167, 3.000 em prtAgenda:221).
+ *
+ * Aqui o risco e MAIOR que nos outros: as leituras deste helper alimentam o
+ * calculo que e PERSISTIDO no PMR. Ler o conjunto errado nao produz numero de
+ * tela errado — produz COMISSAO GRAVADA errada.
+ *
+ * HOJE E NO-OP e foi consertado justamente por isso: as queries sao recortadas
+ * por competencia e nenhuma passa de 1000 linhas (medido em 01/08/2026:
+ * daily_production_records 814 em jun/2026 e 846 em jul/2026, contra o teto de
+ * 1000 — margem de ~15%). No primeiro mes que estourar os 1.000, o defeito
+ * nasce sozinho e em silencio.
+ *
+ * `.order("id")` vem DEPOIS do builder do chamador: e desempate, nao
+ * substituicao — PostgREST acumula clausulas de ordem, entao qualquer ordem
+ * primaria definida na query e preservada. Mesma disciplina de
+ * lib/queryHelpers.ts.
+ */
 async function fetchAllPaged<T = any>(baseQueryBuilder: () => any): Promise<T[]> {
   let from = 0;
   const pageSize = 1000;
   const all: T[] = [];
 
   while (true) {
-    const { data, error } = await baseQueryBuilder().range(
-      from,
-      from + pageSize - 1
-    );
+    const { data, error } = await baseQueryBuilder()
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
 
     if (error) throw error;
     if (!data || data.length === 0) break;

@@ -190,9 +190,13 @@ async function fetchAll() {
   // audit_v9_avista (paginado, full scan)
   let from = 0, PAGE = 1000;
   while (true) {
+    // ORDEM ESTAVEL: audit_v9_avista tem 23.879 linhas e PAGINA (24 paginas).
+    // Sem ordem o range repete e pula linhas. A tabela NAO tem `id`;
+    // contract_number foi medido UNICO nela (23879/23879) em 01/08/2026.
     const { data, error } = await sb.from("audit_v9_avista")
-      .select("mes,empresa,valor_liquido,status_fase1")
+      .select("mes,empresa,valor_liquido,status_fase1,contract_number")
       .neq("status_fase1", "SRCC")
+      .order("contract_number", { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw error;
     if (!data || !data.length) break;
