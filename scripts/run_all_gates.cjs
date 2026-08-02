@@ -329,6 +329,20 @@ const GATES = [
       "59s; createClient; monthly_closing_entries/leadership_rule_versions de PRODUCAO",
   },
   {
+    arquivo: "scripts/check_audit_v9_tables.cjs",
+    nome: "audit_v9: nenhuma das 4 tabelas esvaziou",
+    modo: "needs-db",
+    motivo:
+      "createClient; count nas 4 audit_v9_* de PRODUCAO. Assercao INVERTIDA em 01/08: vigiava 'ainda nao semeei', agora vigia 'nao pode esvaziar'",
+  },
+  {
+    arquivo: "scripts/trp_prazo_min_gate.cjs",
+    nome: "prazo_min: TRP vigente tem o campo e ninguem paga abaixo do piso",
+    modo: "needs-db",
+    motivo:
+      "createClient; trp_rule_versions + daily de PRODUCAO. INVERTIDO em 01/08: media o delta do conserto, agora assere a invariante + a causa raiz (campo ausente desliga a guarda)",
+  },
+  {
     arquivo: "scripts/gate_projecao_gestor.mts",
     nome: "/projecao do gestor (montagem + mascaramento)",
     modo: "needs-db",
