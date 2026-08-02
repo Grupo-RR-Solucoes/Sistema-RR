@@ -155,10 +155,20 @@ export default function FinanceiroPage() {
     return Array.from(map.values()).sort((a, b) => b.year - a.year || b.month - a.month);
   }, [fin]);
 
-  // default = mês de caixa mais recente disponível (ex.: jun/26 hoje).
+  // COMPETENCIA CANONICA — default = MES CORRENTE (decisao Diego, 01/08).
+  //
+  // Antes: `cashPeriods[0]`, o mes de caixa mais RECENTE. A lista ja garante o
+  // mes corrente (o add() logo acima), mas [0] nao e ele: cashPeriods vem de
+  // fechamentos deslocados em +1 mes e esta ordenada desc, entao assim que o
+  // fechamento do proprio mes corrente entra, o topo vira o mes SEGUINTE e a
+  // tela abriria no FUTURO. Fixar no corrente elimina a dependencia da ordem.
   useEffect(() => {
     if (selectedKey || cashPeriods.length === 0) return;
-    setSelectedKey(cashPeriods[0].key);
+    const now = new Date();
+    const corrente = cashPeriods.find(
+      (p) => p.year === now.getFullYear() && p.month === now.getMonth() + 1
+    );
+    setSelectedKey((corrente ?? cashPeriods[0]).key);
   }, [cashPeriods, selectedKey]);
 
   const periodKey = selectedKey || cashPeriods[0]?.key || fin?.selectedPeriod?.key || "";

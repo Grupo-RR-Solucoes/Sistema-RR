@@ -389,7 +389,21 @@ export async function GET(req: Request) {
 
     // total[m] = atribuído (PMR no fechado/histórico; daily-live no corrente aberto)
     // + master não-atribuído (daily).
+    // COMPETENCIA CANONICA — a lista SEMPRE tem a competencia renderizada.
+    //
+    // O QUE HAVIA: monthsSet saia so de PMR + daily master orfao. No dia 01/08
+    // agosto nao tinha nenhum dos dois (PMR agosto = 0, daily 31/07 = 0), entao
+    // o mes nao virava <option>, o `value` do <select> ("2026-8") nao casava com
+    // opcao nenhuma e o React selecionava a PRIMEIRA opcao da lista — jan/2026.
+    // A tela abria exibindo "jan" enquanto o payload era de agosto.
+    //
+    // Acrescentar o mes renderizado a lista, mesmo sem dado, e o que a
+    // lib/auditoria.ts:56-60 ja faz para o /fechamento ("mes corrente como em
+    // aberto no topo, se ainda nao fechou"). Vale para QUALQUER competencia
+    // pedida, nao so a corrente: navegar para um mes vazio tem de manter esse
+    // mes selecionavel, senao o seletor pula para outro sozinho.
     const monthsSet = new Set<number>([...byMonth.keys(), ...unassignedByMonth.keys()]);
+    monthsSet.add(month);
     const producaoMensal = Array.from(monthsSet)
       .sort((a, b) => a - b)
       .map((m) => ({

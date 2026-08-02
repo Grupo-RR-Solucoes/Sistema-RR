@@ -1104,6 +1104,15 @@ export async function loadPromoterAnalyticsBase(
     // DRE testava por comparacao de periodo — preservada bit a bit.
     temDado: encontrada !== null,
   };
+  // GUARDA DE SERVIDOR — a lista SEMPRE contem a competencia resolvida.
+  // Sem isto, /promotores e /relatorios montam o <select> a partir de `periods`
+  // e a competencia renderizada nao teria <option>: o React marcaria a primeira
+  // da lista e a tela exibiria um mes sob o rotulo de outro — o mesmo defeito
+  // que derrubou o Dashboard. A guarda de cliente correspondente vive em cada
+  // tela (modelo: EquipeVisao.tsx + teamProduction.ts, servidor e cliente).
+  if (!encontrada) {
+    periods.unshift(latestPeriod);
+  }
 
   const companyById = new Map(companies.map((company) => [company.id, company]));
   const promoterById = new Map(promoters.map((promoter) => [promoter.id, promoter]));

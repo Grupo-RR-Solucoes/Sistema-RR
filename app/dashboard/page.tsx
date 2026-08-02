@@ -147,6 +147,11 @@ const REGIME_LABEL: Record<string, string> = {
   open: "produção corrente",
 };
 
+// Rótulo curto do mês, para a guarda de reinserção do seletor: quando a
+// competência renderizada não vem na série, o label dela não vem junto. Mesma
+// grafia que a rota usa (app/api/dashboard/route.ts, const MES).
+const MES_CURTO = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
 function Header({
   data,
   comp,
@@ -187,11 +192,28 @@ function Header({
       ) : null}
     </>
   );
-  // MOV 2 (A): opções do seletor = os meses que a própria série já traz (não
-  // inventa lista: se o mês não tem dado, não aparece). O valor selecionado é a
-  // competência que a rota devolveu — assim o seletor reflete o que está na tela.
+  // COMPETENCIA CANONICA — opções do seletor.
+  //
+  // A regra antiga era "se o mês não tem dado, não aparece". Com a competência
+  // renderizada fora da lista, o `value` do <select> não casava com nenhuma
+  // <option> e o React (ReactDOMSelect: quando nada casa, marca a primeira
+  // <option> não desabilitada) exibia jan/2026 com o payload de agosto. Pior: a
+  // opção exibida já era a selecionada no DOM, então escolhê-la não disparava
+  // `change` e as demais competências ficavam inalcançáveis.
+  //
+  // Agora são DUAS guardas, como a /equipe já tem (EquipeVisao.tsx + o servidor
+  // em teamProduction.ts): a rota já inclui a competência renderizada em
+  // producaoMensal, e aqui reinserimos no topo caso ela ainda assim não venha.
+  // A guarda do cliente não é redundância decorativa — ela cobre payload antigo
+  // em cache e qualquer regressão futura do lado do servidor.
   const ano = data?.year ?? new Date().getFullYear();
-  const opcoes = (data?.producaoMensal || []).map((p) => ({ month: p.month, label: p.mes }));
+  const opcoes = (() => {
+    const base = (data?.producaoMensal || []).map((p) => ({ month: p.month, label: p.mes }));
+    if (data && !base.some((o) => o.month === data.month)) {
+      base.unshift({ month: data.month, label: MES_CURTO[data.month - 1] });
+    }
+    return base;
+  })();
   const selKey = data ? `${data.year}-${data.month}` : "";
   const regimeTxt = data ? REGIME_LABEL[data.regime] ?? data.regime : "—";
 
