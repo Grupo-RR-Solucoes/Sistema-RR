@@ -308,6 +308,19 @@ const GATES = [
       "44,9s; createClient; PRODUCAO",
   },
   {
+    arquivo: "scripts/pmr_aberto_sem_daily_gate.cjs",
+    nome: "PMR nao existe em competencia aberta",
+    modo: "needs-db-lento",
+    motivo:
+      "10,5s; createClient; PMR de PRODUCAO. NASCEU lento por MEDICAO, nao por " +
+      "escolha: entrou como needs-db em 03/08/2026 e a faixa deu 90,3s de 90s. " +
+      "O peso vem de buildLedgerHealth, que e o vigia INTEIRO (Camadas 1 e 2 + " +
+      "auditoria cms). Pagar esse preco e proposital: a alternativa era " +
+      "reimplementar a regra aqui e ter duas respostas para 'o PMR esta limpo?'. " +
+      "Os blocos 1 e 2 (stub, sem banco) provam que a guarda acende — sao eles " +
+      "que a impedem de passar por vacuidade quando o banco estiver limpo",
+  },
+  {
     arquivo: "scripts/mov1_ledger_gate.cjs",
     nome: "ledger MOV1 - PMR por rota",
     modo: "needs-db-lento",

@@ -189,8 +189,7 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
   //     competencia FECHADA. Protege o #13/Caixa por FILTRO (nao so por
   //     construcao da reconciliacao): quem soma o PMR sem filtrar source
   //     contaria a fatia diaria por cima da fechada. NAO tem piso — uma linha
-  //     errada e uma linha errada. Julho (open) com 'daily' e o estado CERTO,
-  //     nao acende.
+  //     errada e uma linha errada.
   // =========================================================================
   const bViol: Array<{ competencia: string; promoter_id: string }> = [];
   for (const row of pmr) {
@@ -198,6 +197,55 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
     const regime = await regimeOf(row.year, row.month);
     if (regime !== "open")
       bViol.push({ competencia: fmtComp(row.year, row.month), promoter_id: row.promoter_id });
+  }
+
+  // =========================================================================
+  // (c) aberto_com_daily (ERRO) — o IRMAO que faltava do (b). Linha de PMR em
+  //     competencia de regime 'open'. O (b) so olhava o lado fechado, e por
+  //     isso o comentario dele afirmava que "julho (open) com 'daily' e o
+  //     estado CERTO". NAO e — essa frase custou o fossil de 2026-07.
+  //
+  //     O QUE ELA PROIBE, e por que e ERRO e nao alerta:
+  //     mes aberto e do pipeline DIARIO; o PMR e o ledger do mes FECHADO. Uma
+  //     linha de PMR num mes aberto e um SNAPSHOT que nao se atualiza sozinho,
+  //     e quatro leitores a somam sem perguntar o regime:
+  //       lib/historicoMensal.ts:101-102   `if (pmr) return ...` — a linha
+  //                                        BLOQUEIA o fallback ao daily, entao
+  //                                        a serie de /projecao e /equipe passa
+  //                                        a mostrar o snapshot no lugar do
+  //                                        numero vivo (e some a producao da
+  //                                        OUTRA empresa do mesmo promotor);
+  //       app/api/dashboard/route.ts:360   soma production_value por mes, sem
+  //                                        filtro de source;
+  //       app/api/metas/route.ts:93        no regime 'open' le justamente
+  //                                        source='daily';
+  //       lib/projecaoMetas.ts:250         alimenta a media de 3 meses.
+  //
+  //     MEDIDO em 2026-08-03: 8 linhas source='daily' em 2026-07 (ADS),
+  //     gravadas em 20/07/2026 11:54 UTC pela rota diaria do RR, ~4h ANTES da
+  //     trava semAds (commit 4c064ee). A serie de julho mostrava R$ 400.228,79
+  //     onde o daily ao vivo dava R$ 753.955,30. Decisao Diego (2026-08-03):
+  //     apagar sem regravar — julho esta aberto, PMR e ledger de mes fechado.
+  //
+  //     SEM PISO e SEM filtro de source: qualquer source em mes aberto viola.
+  //     Gravar 'bbts'/'fechamento' num mes aberto seria PIOR que o 'daily' —
+  //     esses dois passam pelo `.neq("source","daily")` do Caixa
+  //     (lib/financialAnalytics.ts:486) e virariam comissao paga antes do
+  //     fechamento. Por isso a checagem olha a COMPETENCIA, nao o source.
+  //
+  //     ONDE ELA NAO ACENDE: competencia sem nenhuma linha de PMR. Mes aberto
+  //     sem PMR e o estado correto, e e o estado que o DELETE de 2026-07
+  //     produz.
+  // =========================================================================
+  const cViol: Array<{ competencia: string; promoter_id: string; source: string }> = [];
+  for (const row of pmr) {
+    const regime = await regimeOf(row.year, row.month);
+    if (regime === "open")
+      cViol.push({
+        competencia: fmtComp(row.year, row.month),
+        promoter_id: row.promoter_id,
+        source: String(row.source),
+      });
   }
 
   // =========================================================================
@@ -358,6 +406,14 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
       descricao:
         "Linha source='daily' sobrevivente em competencia fechada (contaria por cima da fatia fechada — #13/Caixa).",
       detalhe: bViol.slice(0, 50),
+    },
+    {
+      id: "aberto_com_daily",
+      severity: "erro",
+      count: cViol.length,
+      descricao:
+        "Linha de PMR em competencia de regime 'open'. Mes aberto e do pipeline diario; o PMR e o ledger do mes fechado. A linha vira snapshot congelado e bloqueia o fallback ao daily na serie hibrida (lib/historicoMensal.ts:101).",
+      detalhe: cViol.slice(0, 50),
     },
     {
       id: "master_com_comissao",
