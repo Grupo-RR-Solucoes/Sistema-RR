@@ -43,12 +43,54 @@ type Projecao = {
   mesLabel: string;
   show: boolean;
 };
+// COMPETENCIA CANONICA — a competência EFETIVA do payload. Toda etiqueta de
+// competência da tela sai daqui; nada é remontado de year/month nem escrito
+// como literal fixo. `divergente` é o canal de aviso: se algum dia o valor e a
+// competência renderizada se separarem, a tela tem como dizer, em vez de exibir
+// um mês sob o rótulo de outro (que foi exatamente o defeito de 01/08).
+type Competencia = {
+  year: number;
+  month: number;
+  key: string;
+  label: string;
+  regime: "cms" | "fechamento" | "open";
+  parcial: boolean;
+  divergente: boolean;
+};
+
+// RITMO DIARIO DO GRUPO — duas visoes que existem para DISCORDAR (decisao
+// Diego, 02/08). `promotores` = soma das metas cadastradas (consolidada, sem
+// promotor inativo nem chave master); `propria` = constante de R$ 250.000 por
+// dia util x dias uteis totais da competencia. As duas leem o MESMO acumulado.
+// A conta chega pronta de lib/ritmoNecessario.ts — a tela so desenha.
+type RitmoVisao = {
+  estado: "SEM_META" | "META_BATIDA" | "MES_FECHADO" | "SEM_DIAS" | "ULTIMO_DIA" | "NORMAL";
+  meta: number;
+  acumulado: number;
+  falta: number;
+  excedente: number;
+  diasRestantes: number;
+  diasTotais: number;
+  ritmoDiario: number | null;
+  percent: number | null;
+  semaforo: "verde" | "amarelo" | "vermelho" | "sem_meta";
+};
+type RitmoGrupo = {
+  diasTotais: number;
+  /** Zona das TRES faixas, decidida no servidor. A tela nao redecide cor. */
+  faixa: "verde" | "amarelo" | "vermelho" | "sem_meta";
+  piso: RitmoVisao;
+  alvo: RitmoVisao;
+};
+
 type Payload = {
   periodoLabel: string;
   // MOV 2 (A): competência renderizada + regime dela ('cms' | 'fechamento' | 'open').
   year: number;
   month: number;
   regime: "cms" | "fechamento" | "open";
+  competencia: Competencia;
+  ritmoGrupo: RitmoGrupo;
   producaoGrupoMes: number;
   producaoParcial: boolean;
   producaoNaoAtribuida: number;
@@ -130,6 +172,7 @@ export default function DashboardPage() {
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <Header data={data} comp={comp} onComp={setComp} />
+        <RitmoGrupoCard data={data} />
         <Seguridade data={data} />
         {data?.projecao?.show ? <AlertProjecao p={data.projecao} /> : null}
         <ChartCard data={data} error={error} />
@@ -146,6 +189,11 @@ const REGIME_LABEL: Record<string, string> = {
   cms: "fechado (cms)",
   open: "produção corrente",
 };
+
+// Rótulo curto do mês, para a guarda de reinserção do seletor: quando a
+// competência renderizada não vem na série, o label dela não vem junto. Mesma
+// grafia que a rota usa (app/api/dashboard/route.ts, const MES).
+const MES_CURTO = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
 function Header({
   data,
@@ -173,9 +221,13 @@ function Header({
   const prev = data ? brl0(data.previsaoReceita) : "—";
   const lim = data ? pct1(data.limiteSimples.pct) : "—";
   const limSub = data ? `${mm2(data.limiteSimples.rbt12)} / ${mm2(data.limiteSimples.teto)}` : "";
+  // COMPETENCIA CANONICA — este sub era o literal fixo "mês corrente · parcial".
+  // Ele mentia em QUALQUER competência que não fosse a corrente: navegando para
+  // um mês fechado, o cartão continuava anunciando "mês corrente · parcial".
+  // Agora sai da competência efetiva do payload, igual aos demais cartões.
   const prodSub = (
     <>
-      mês corrente · parcial
+      {data ? `${data.competencia.label} · ${data.competencia.parcial ? "parcial" : "fechado"}` : "—"}
       {data && data.producaoNaoAtribuidaCount > 0 ? (
         <>
           <br />
@@ -187,13 +239,36 @@ function Header({
       ) : null}
     </>
   );
-  // MOV 2 (A): opções do seletor = os meses que a própria série já traz (não
-  // inventa lista: se o mês não tem dado, não aparece). O valor selecionado é a
-  // competência que a rota devolveu — assim o seletor reflete o que está na tela.
-  const ano = data?.year ?? new Date().getFullYear();
-  const opcoes = (data?.producaoMensal || []).map((p) => ({ month: p.month, label: p.mes }));
-  const selKey = data ? `${data.year}-${data.month}` : "";
-  const regimeTxt = data ? REGIME_LABEL[data.regime] ?? data.regime : "—";
+  // COMPETENCIA CANONICA — opções do seletor.
+  //
+  // A regra antiga era "se o mês não tem dado, não aparece". Com a competência
+  // renderizada fora da lista, o `value` do <select> não casava com nenhuma
+  // <option> e o React (ReactDOMSelect: quando nada casa, marca a primeira
+  // <option> não desabilitada) exibia jan/2026 com o payload de agosto. Pior: a
+  // opção exibida já era a selecionada no DOM, então escolhê-la não disparava
+  // `change` e as demais competências ficavam inalcançáveis.
+  //
+  // Agora são DUAS guardas, como a /equipe já tem (EquipeVisao.tsx + o servidor
+  // em teamProduction.ts): a rota já inclui a competência renderizada em
+  // producaoMensal, e aqui reinserimos no topo caso ela ainda assim não venha.
+  // A guarda do cliente não é redundância decorativa — ela cobre payload antigo
+  // em cache e qualquer regressão futura do lado do servidor.
+  // COMPETENCIA CANONICA — UMA fonte para o badge inteiro.
+  // O `ano` das <option> e o `selKey` saíam de data.year/data.month enquanto o
+  // regime ao lado saía de data.regime: duas leituras do mesmo payload que
+  // podiam (e podem, num payload antigo em cache) discordar, produzindo
+  // "jan/2026 · produção corrente" — mês de uma fonte, estado de outra. Agora
+  // tudo desce de data.competencia.
+  const ano = data?.competencia.year ?? new Date().getFullYear();
+  const opcoes = (() => {
+    const base = (data?.producaoMensal || []).map((p) => ({ month: p.month, label: p.mes }));
+    if (data && !base.some((o) => o.month === data.competencia.month)) {
+      base.unshift({ month: data.competencia.month, label: MES_CURTO[data.competencia.month - 1] });
+    }
+    return base;
+  })();
+  const selKey = data ? `${data.competencia.year}-${data.competencia.month}` : "";
+  const regimeTxt = data ? REGIME_LABEL[data.competencia.regime] ?? data.competencia.regime : "—";
 
   return (
     <HeaderNavy
@@ -208,7 +283,8 @@ function Header({
               onChange={(e) => {
                 const [y, m] = e.target.value.split("-").map(Number);
                 // Voltar ao mês corrente = limpar a query (comp = null).
-                const corrente = !comp && data && y === data.year && m === data.month;
+                const corrente =
+                  !comp && data && y === data.competencia.year && m === data.competencia.month;
                 onComp(corrente ? null : { year: y, month: m });
               }}
               aria-label="Competência"
@@ -266,6 +342,117 @@ function Header({
         ]}
       />
     </HeaderNavy>
+  );
+}
+
+// ============================================================
+// RITMO DIARIO DO GRUPO — MINIMO e META, com hierarquia.
+//
+// NAO sao duas metas paralelas. O MINIMO (R$ 250.000 por dia util, calculo do
+// Diego) fica ABAIXO da META do grupo por construcao — julho/2026:
+// R$ 5.750.000 contra R$ 6.402.000. Ficar ENTRE os dois e estado legitimo, e e
+// essa faixa do meio que justifica o card existir.
+//
+// TRES FAIXAS: abaixo do minimo = vermelho; entre minimo e meta = amarelo; na
+// meta ou acima = verde. A zona chega DECIDIDA do servidor (semaforoPisoAlvo);
+// esta tela nao redecide cor nenhuma.
+//
+// SEM META NAO SOME DA TELA (decisao Diego). O intervalo entre a virada do mes
+// e o cadastro das metas e real e recorrente: em agosto/2026 durou ate
+// 03/08 02:47 UTC. Nesse intervalo a visao (a) exibe "sem meta cadastrada" e a
+// (b) segue funcionando — sumir em silencio esconderia a falha de cadastro
+// exatamente quando ela existe.
+//
+// A CONTA NAO MORA AQUI: os dois lados vem prontos de lib/ritmoNecessario.ts.
+// ============================================================
+const FAIXA_TXT: Record<string, { txt: string; tone: "g" | "a" | "r" | "n" }> = {
+  verde: { txt: "Na meta do grupo", tone: "g" },
+  amarelo: { txt: "Acima do mínimo, abaixo da meta", tone: "a" },
+  vermelho: { txt: "Abaixo do mínimo", tone: "r" },
+  sem_meta: { txt: "Meta do grupo sem cadastro", tone: "n" },
+};
+
+function RitmoGrupoCard({ data }: { data: Payload | null }) {
+  if (!data?.ritmoGrupo) return null;
+  const { piso, alvo, diasTotais, faixa } = data.ritmoGrupo;
+  const f = FAIXA_TXT[faixa] ?? FAIXA_TXT.sem_meta;
+  return (
+    <section className="card">
+      <div className="card-head">
+        <div>
+          <h2>Ritmo diário do grupo</h2>
+          <p className="csub">
+            {data.competencia.label} · {diasTotais} dias úteis · produção do grupo (4 CNPJs RR + ADS)
+          </p>
+        </div>
+        <span className={`faixa-chip ${f.tone}`}>{f.txt}</span>
+      </div>
+      {/* ORDEM = HIERARQUIA: o mínimo vem primeiro por ser o primeiro
+          obstáculo; a meta vem depois por ser onde se quer chegar. */}
+      <div className="ritmo-duo">
+        <RitmoVisaoBloco
+          titulo="Mínimo do grupo"
+          sub={`${brl0(250000)} por dia útil · piso`}
+          v={piso}
+          semCadastro="mínimo sem parâmetro"
+        />
+        <RitmoVisaoBloco
+          titulo="Meta do grupo"
+          sub="soma das metas dos promotores"
+          v={alvo}
+          semCadastro="meta do grupo sem cadastro"
+        />
+      </div>
+    </section>
+  );
+}
+
+function RitmoVisaoBloco({
+  titulo,
+  sub,
+  v,
+  semCadastro,
+}: {
+  titulo: string;
+  sub: string;
+  v: RitmoVisao;
+  semCadastro: string;
+}) {
+  const tone = v.semaforo === "verde" ? "g" : v.semaforo === "amarelo" ? "a" : v.semaforo === "vermelho" ? "r" : "n";
+  const plural = v.diasRestantes === 1 ? "dia útil restante" : "dias úteis restantes";
+
+  // Todo estado vira TEXTO. Nada de "R$ 0,00/dia" sem meta, nada de ritmo
+  // negativo com a meta batida, nada de divisao por zero sem dia restante.
+  const { valor, linha } = (() => {
+    switch (v.estado) {
+      case "SEM_META":
+        return { valor: "—", linha: semCadastro };
+      case "META_BATIDA":
+        return { valor: `+${brl0(v.excedente)}`, linha: `bateu a meta de ${brl0(v.meta)}` };
+      case "MES_FECHADO":
+        return { valor: `Faltou ${brl0(v.falta)}`, linha: `não bateu a meta de ${brl0(v.meta)}` };
+      case "SEM_DIAS":
+        return { valor: `Faltou ${brl0(v.falta)}`, linha: "janela encerrada · aguardando fechamento" };
+      case "ULTIMO_DIA":
+        return { valor: brl0(v.ritmoDiario ?? 0), linha: `último dia útil · falta isso para bater` };
+      default:
+        return {
+          valor: `${brl0(v.ritmoDiario ?? 0)}/dia`,
+          linha: `${v.diasRestantes} ${plural} · faltam ${brl0(v.falta)}`,
+        };
+    }
+  })();
+
+  return (
+    <div className="ritmo-bloco">
+      <p className="rk">{titulo}</p>
+      <p className="rks">{sub}</p>
+      <div className={`rnum num ${tone}`}>{valor}</div>
+      <p className="rsub">{linha}</p>
+      <p className="rmeta">
+        meta {v.meta > 0 ? brl0(v.meta) : "—"} · acumulado {brl0(v.acumulado)}
+      </p>
+    </div>
   );
 }
 
@@ -613,6 +800,26 @@ const CSS = `
 .rrdash .chart-foot b{color:var(--ink);font-weight:600;}
 /* lista "Simples por CNPJ" agora é <Table> do kit; só o espaçamento dentro do card */
 .rrdash .cnpj-table{margin-top:14px;}
+/* RITMO DIARIO — duas visoes lado a lado. minmax(0,1fr) e nao 1fr: sem o
+   min 0 o numero longo ("R$ 250.000/dia") impede a coluna de encolher e o
+   card estoura a largura no telefone. */
+.rrdash .ritmo-duo{margin-top:18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;}
+.rrdash .ritmo-bloco{border:1px solid var(--bd-soft);border-radius:var(--r-md);padding:18px 20px;display:flex;flex-direction:column;gap:3px;}
+.rrdash .ritmo-bloco .rk{font-size:12.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);margin:0;}
+.rrdash .ritmo-bloco .rks{font-size:11.5px;color:var(--ink-3);margin:0 0 8px;}
+.rrdash .ritmo-bloco .rnum{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1.1;color:var(--green);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
+.rrdash .ritmo-bloco .rnum.a{color:var(--amber);}
+.rrdash .ritmo-bloco .rnum.r{color:#B3261E;}
+.rrdash .ritmo-bloco .rnum.n{color:var(--ink-3);}
+.rrdash .ritmo-bloco .rsub{font-size:12.5px;color:var(--ink-2);margin:4px 0 0;}
+.rrdash .ritmo-bloco .rmeta{font-size:11.5px;color:var(--ink-3);margin:6px 0 0;font-variant-numeric:tabular-nums;}
+/* CHIP DA FAIXA — a leitura principal do card em uma linha. Cor decidida no
+   servidor; aqui so ha a paleta. */
+.rrdash .faixa-chip{font-size:12px;font-weight:600;padding:6px 12px;border-radius:999px;white-space:nowrap;border:1px solid;}
+.rrdash .faixa-chip.g{color:#1E7A4C;background:#E9F6EF;border-color:#BFE4D0;}
+.rrdash .faixa-chip.a{color:var(--amber);background:var(--amber-bg);border-color:var(--amber-bd);}
+.rrdash .faixa-chip.r{color:#B3261E;background:#FCECEA;border-color:#F2C7C2;}
+.rrdash .faixa-chip.n{color:var(--ink-3);background:#F1F3F7;border-color:var(--bd);}
 .rrdash .shortcuts{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
 .rrdash .sc{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);padding:18px;text-decoration:none;color:var(--ink);display:flex;flex-direction:column;gap:12px;transition:border-color .15s, box-shadow .15s, transform .15s;}
 .rrdash .sc:hover{border-color:#C7CEDA;box-shadow:var(--shadow);transform:translateY(-1px);}
@@ -632,5 +839,8 @@ const CSS = `
    quebra em tres linhas. */
 @media (max-width:560px){
   .rrdash .shortcuts{grid-template-columns:1fr;}
+  /* As duas visoes de meta EMPILHAM. Lado a lado a 356px uteis daria ~170px
+     por coluna, e "R$ 250.000/dia" nao cabe legivel nisso. */
+  .rrdash .ritmo-duo{grid-template-columns:1fr;}
 }
 `;

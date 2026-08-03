@@ -162,9 +162,36 @@ type ProductionRow = {
   raw_payload?: Record<string, unknown> | null;
 };
 
+/**
+ * COMPETENCIA CANONICA — a competencia que a base REALMENTE usou, mais a origem
+ * dela. Existe para que nenhum consumidor tenha de deduzir a resolucao
+ * comparando o que pediu com o que voltou (era assim que lib/dre.ts detectava
+ * "sem PMR", e era fragil: dependia de um efeito colateral do fallback).
+ *
+ *   origem 'pedida'      -> year/month vieram do chamador E existem na lista.
+ *   origem 'sintetizada' -> year/month vieram do chamador e NAO existem. A base
+ *                           responde vazia para ela; temDado=false.
+ *   origem 'corrente'    -> o chamador nao pediu competencia; usamos o mes
+ *                           corrente em America/Fortaleza.
+ *
+ * temDado=false NUNCA significa erro: significa "esta competencia nao tem linha
+ * nenhuma". Quem exibe numero derivado (DRE) deve recusar montar; quem exibe a
+ * propria producao (Dashboard) deve exibir zero.
+ */
+export type CompetenciaResolvida = {
+  key: string;
+  label: string;
+  year: number;
+  month: number;
+  origem: "pedida" | "sintetizada" | "corrente";
+  temDado: boolean;
+};
+
 export type PromoterAnalyticsPayload = {
   periods: Array<{ key: string; label: string; year: number; month: number }>;
   selectedPeriod: { key: string; label: string; year: number; month: number };
+  /** Competencia efetiva + origem. Ver CompetenciaResolvida. */
+  competencia: CompetenciaResolvida;
   selectedPromoterId: string;
   selectedCompanyId: string;
   /**
@@ -1022,15 +1049,70 @@ export async function loadPromoterAnalyticsBase(
   }
 
   const periods = Array.from(periodsMap.values()).sort((a, b) => comparePeriods(b, a));
-  const latestPeriod =
-    periods.find((period) => period.year === yearParam && period.month === monthParam) ||
-    periods[0] ||
-    {
-      key: getPeriodKey(new Date().getFullYear(), new Date().getMonth() + 1),
-      label: getPeriodLabel(new Date().getFullYear(), new Date().getMonth() + 1),
-      year: new Date().getFullYear(),
-      month: new Date().getMonth() + 1,
-    };
+
+  // ============================================================
+  // COMPETENCIA CANONICA — a competencia PEDIDA nunca e trocada em silencio.
+  //
+  // O QUE HAVIA AQUI: `periods.find(...) || periods[0]`. Quando o par
+  // year/month pedido nao existia na lista, a competencia mais RECENTE COM DADO
+  // entrava no lugar, sem nada no payload dizendo que houve troca. O rotulo da
+  // tela seguia montado do que foi PEDIDO e o numero vinha de OUTRO mes — dois
+  // cartoes do Dashboard (comissao bruta e comissao de seguro) exibiam julho sob
+  // a etiqueta "ago/2026". Sem year/month, o `|| periods[0]` fazia o mesmo pela
+  // porta dos fundos: abria no ultimo mes com dado, nunca no corrente.
+  //
+  // A REGRA AGORA, nesta ordem:
+  //   1. year/month informados -> e ESSA a competencia. Existindo na lista, sai
+  //      de la; nao existindo, e SINTETIZADA (key/label/year/month), e a base
+  //      responde vazia para ela. Vazio e a resposta certa: o mes nao tem dado.
+  //   2. year/month ausentes   -> mes CORRENTE em America/Fortaleza (nunca UTC:
+  //      as 21h BRT o mes ja virava o seguinte). Nunca "primeira da lista",
+  //      nunca "ultima com dado".
+  //
+  // Modelo ja existente no repo, replicado aqui: lib/equipe/teamProduction.ts
+  // (sintetiza o periodo pedido) e lib/financialAnalytics.ts (makeSelectedPeriod).
+  //
+  // QUEM DEPENDIA DA TROCA: lib/dre.ts usava a divergencia
+  // (`base.latestPeriod !== selected`) como DETECTOR de "nao ha PMR nesta
+  // competencia" para se recusar a montar. Como a divergencia deixa de existir,
+  // o detector passa a ser `competencia.temDado` abaixo — mesma condicao, agora
+  // dita em voz alta em vez de deduzida de um efeito colateral.
+  // ============================================================
+  const pedida =
+    yearParam && monthParam ? { year: yearParam, month: monthParam } : null;
+  const agoraFortaleza = nowInFortaleza();
+  const alvo = pedida ?? { year: agoraFortaleza.year, month: agoraFortaleza.month };
+  const encontrada =
+    periods.find((period) => period.year === alvo.year && period.month === alvo.month) ??
+    null;
+  const latestPeriod = encontrada ?? {
+    key: getPeriodKey(alvo.year, alvo.month),
+    label: getPeriodLabel(alvo.year, alvo.month),
+    year: alvo.year,
+    month: alvo.month,
+  };
+  // Competencia EFETIVAMENTE usada + de onde ela saiu. Viaja no payload para que
+  // nenhum consumidor precise inferir a resolucao por comparacao.
+  const competencia: CompetenciaResolvida = {
+    key: latestPeriod.key,
+    label: latestPeriod.label,
+    year: latestPeriod.year,
+    month: latestPeriod.month,
+    origem: pedida ? (encontrada ? "pedida" : "sintetizada") : "corrente",
+    // temDado = a competencia aparece em periodsMap, isto e, ha ao menos uma
+    // linha de PMR, meta ou daily nela. E EXATAMENTE a condicao que a guarda do
+    // DRE testava por comparacao de periodo — preservada bit a bit.
+    temDado: encontrada !== null,
+  };
+  // GUARDA DE SERVIDOR — a lista SEMPRE contem a competencia resolvida.
+  // Sem isto, /promotores e /relatorios montam o <select> a partir de `periods`
+  // e a competencia renderizada nao teria <option>: o React marcaria a primeira
+  // da lista e a tela exibiria um mes sob o rotulo de outro — o mesmo defeito
+  // que derrubou o Dashboard. A guarda de cliente correspondente vive em cada
+  // tela (modelo: EquipeVisao.tsx + teamProduction.ts, servidor e cliente).
+  if (!encontrada) {
+    periods.unshift(latestPeriod);
+  }
 
   const companyById = new Map(companies.map((company) => [company.id, company]));
   const promoterById = new Map(promoters.map((promoter) => [promoter.id, promoter]));
@@ -1577,6 +1659,7 @@ export async function loadPromoterAnalyticsBase(
   return {
     periods,
     latestPeriod,
+    competencia,
     companyId,
     companies,
     promoters,
@@ -1623,6 +1706,7 @@ export function selectPromoterView(
   const {
     periods,
     latestPeriod,
+    competencia,
     companyId,
     companies,
     promoters,
@@ -1983,6 +2067,11 @@ export function selectPromoterView(
           dia: agoraDelta.day,
           recorteIndisponivel: true,
         }),
+        // BORDA DE MES VAZIO — linhas do daily na competencia atual, inteira
+        // (somaRecordsRecortado conta antes do filtro de dia), no MESMO universo
+        // de promotores dos cards. Zero = nada importado: esconde em vez de
+        // comparar ausencia com mes cheio.
+        linhasOrigemAtual: at.linhas,
         fonteAtual: "daily-vivo",
         fonteAnterior: base.previousClosedSource,
       });
@@ -2017,6 +2106,9 @@ export function selectPromoterView(
   return {
     periods,
     selectedPeriod: latestPeriod,
+    // COMPETENCIA CANONICA — a efetiva + a origem dela, para a tela rotular do
+    // payload em vez de remontar de month/year da propria query.
+    competencia,
     selectedPromoterId,
     selectedCompanyId: companyId,
     // DELTA (Fase 3) — pronto, só para o <KpiBand delta=...> dos 2 cards de topo.

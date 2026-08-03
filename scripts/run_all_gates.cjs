@@ -397,6 +397,20 @@ const GATES = [
     motivo:
       "le 3 PDFs de C:/Users/diego/Downloads; o repo tem 0 PDFs versionados",
   },
+  {
+    arquivo: "scripts/gate_ritmo_diario.mts",
+    nome: "ritmo diario necessario (6 invariantes + dedup da meta)",
+    modo: "needs-db-lento",
+    motivo:
+      "24s; createClient; roda buildProjecaoMetas 2x (competencia medida + mes corrente). Assercoes por IDENTIDADE, nunca por valor absoluto. A (6) e a que pega o erro de R$ 1,16 milhao de somar monthly_targets na mao. Fora da --db pelo teto de 90s",
+  },
+  {
+    arquivo: "scripts/gate_competencia.mts",
+    nome: "competencia canonica (7 telas: lista, abertura, pedida, sem dado, rotulo)",
+    modo: "needs-db-lento",
+    motivo:
+      "33,1s; createClient; exercita 5 resolvedores de competencia (promoterAnalytics, closingAnalytics, financialAnalytics, projecaoMetas, getClosingPeriods) em 3 competencias cada. LENTO por isso, nao por ineficiencia: cortar competencia ou resolvedor e cortar cobertura. Fora da --db para nao estourar o teto de 90s, mesmo motivo do gate_projecao_gestor",
+  },
 ];
 
 // ---------------------------------------------------------------------------

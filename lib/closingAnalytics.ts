@@ -6,6 +6,11 @@ import { buildTrpCreditProvider } from "@/lib/trp/creditTrpProvider";
 import { getCompanyDisplayIdentity } from "@/lib/knownCompanies";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { fetchAllRows } from "@/lib/queryHelpers";
+import { nowInFortaleza } from "@/lib/dateFortaleza";
+// COMPETENCIA CANONICA — o contrato do campo mora em promoterAnalytics, onde a
+// regra nasceu. Importado (e nao redeclarado) de proposito: duas copias do tipo
+// divergiriam no primeiro ajuste, que e a raiz do problema que esta frente mata.
+import type { CompetenciaResolvida } from "@/lib/promoterAnalytics";
 
 const MONTH_NAMES = [
   "jan",
@@ -245,6 +250,15 @@ export type ClosingHighlight = {
 export type ClosingAnalyticsPayload = {
   periods: ClosingPeriodOption[];
   selectedPeriod: ClosingPeriodOption | null;
+  /**
+   * COMPETENCIA CANONICA — a competencia efetivamente somada em `summary` e
+   * `companyRows`, mais a origem dela. Mesmo contrato de
+   * CompetenciaResolvida em lib/promoterAnalytics.ts. Existe porque o
+   * Dashboard exibia "Previsao de receita" da ultima competencia com
+   * fechamento sob a etiqueta de outra: sem este campo, nada no payload
+   * permitia perceber a troca.
+   */
+  competencia: CompetenciaResolvida;
   summary: ClosingSummary;
   companyRows: ClosingCompanyAuditRow[];
   trend: ClosingTrendPoint[];
@@ -1594,10 +1608,50 @@ export async function buildClosingAnalytics(
     ).values()
   ).sort((a, b) => comparePeriods(a, b));
 
-  const selectedPeriod =
+  // ============================================================
+  // COMPETENCIA CANONICA — segunda ocorrencia do mesmo padrao que morreu em
+  // lib/promoterAnalytics.ts. O que havia aqui:
+  //
+  //   periods.find(... === filters?.year ...) || periods.at(-1) || null
+  //
+  // O Dashboard chama esta funcao SEM year/month (fastDashboardMode), entao o
+  // `find` falhava por construcao — comparava contra `undefined` — e o
+  // `periods.at(-1)` decidia sozinho: a ULTIMA competencia com fechamento.
+  // "Previsao de receita" no Dashboard nunca respondeu ao seletor por causa
+  // desta linha, em nenhum regime.
+  //
+  // Mesma regra da promoterAnalytics: pedida -> e ela (sintetizada se nao
+  // existir); nao pedida -> mes CORRENTE em America/Fortaleza.
+  // ============================================================
+  const agoraFortaleza = nowInFortaleza();
+  const alvoComp =
+    filters?.year && filters?.month
+      ? { year: filters.year, month: filters.month }
+      : { year: agoraFortaleza.year, month: agoraFortaleza.month };
+  const periodoEncontrado =
     periods.find(
-      (period) => period.year === filters?.year && period.month === filters?.month
-    ) || periods.at(-1) || null;
+      (period) => period.year === alvoComp.year && period.month === alvoComp.month
+    ) ?? null;
+  const selectedPeriod: ClosingPeriodOption =
+    periodoEncontrado ?? {
+      key: getPeriodKey(alvoComp.year, alvoComp.month),
+      label: getPeriodLabel(alvoComp.year, alvoComp.month),
+      year: alvoComp.year,
+      month: alvoComp.month,
+    };
+  const competencia: CompetenciaResolvida = {
+    key: selectedPeriod.key,
+    label: selectedPeriod.label,
+    year: selectedPeriod.year,
+    month: selectedPeriod.month,
+    origem:
+      filters?.year && filters?.month
+        ? periodoEncontrado
+          ? "pedida"
+          : "sintetizada"
+        : "corrente",
+    temDado: periodoEncontrado !== null,
+  };
 
   const selectedRows = selectedPeriod
     ? allCompanyRows
@@ -1748,7 +1802,10 @@ export async function buildClosingAnalytics(
 
   const alerts: string[] = [];
 
-  if (!selectedPeriod) {
+  // COMPETENCIA CANONICA: selectedPeriod nunca mais e null (sintetiza o pedido),
+  // entao o sinal "nao ha competencia nenhuma" passa a ser lido da LISTA, e nao
+  // da ausencia do selecionado. Sem esta troca o alerta morreria em silencio.
+  if (periods.length === 0) {
     alerts.push(
       "Ainda nao existem competencias suficientes para montar o fechamento mensal."
     );
@@ -1798,6 +1855,7 @@ export async function buildClosingAnalytics(
   return {
     periods: periods.sort((a, b) => comparePeriods(b, a)),
     selectedPeriod,
+    competencia,
     summary,
     companyRows: selectedRows,
     trend,

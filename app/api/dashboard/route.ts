@@ -13,6 +13,12 @@ import { buildClosingAnalytics } from "@/lib/closingAnalytics";
 import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { calcularRbt12 } from "@/lib/rbt12";
 import { buildProjecaoMetas, consolidarGrupo, consolidarGrupoEquipe } from "@/lib/projecaoMetas";
+import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
+import {
+  calcularRitmoNecessario,
+  metaPropriaDoGrupo,
+  semaforoPisoAlvo,
+} from "@/lib/ritmoNecessario";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
 import {
   buildPromoterAnalytics,
@@ -301,7 +307,13 @@ export async function GET(req: Request) {
             .from("promoter_monthly_results")
             .select("year, month, production_value, insured_production_value")
         ),
-        buildClosingAnalytics(supabase, { fastDashboardMode: true }),
+        // COMPETENCIA CANONICA — a competencia VAI junto. Antes esta chamada
+        // era a unica sem year/month, e por isso "Previsao de receita" nunca
+        // respondeu ao seletor em regime nenhum: o find() de closingAnalytics
+        // comparava contra undefined e o periods.at(-1) escolhia sozinho.
+        // Custo zero: sob fastDashboardMode os unicos consumidores de
+        // year/month sao as queries historicas, que o proprio modo ja pula.
+        buildClosingAnalytics(supabase, { year, month, fastDashboardMode: true }),
         calcularRbt12(supabase, { ano: year, mes: month }),
         buildProjecaoMetas(supabase, { year, month }),
         // motor: comissão bruta/seguro do grupo no mês corrente. closed=monthClosed
@@ -389,7 +401,21 @@ export async function GET(req: Request) {
 
     // total[m] = atribuído (PMR no fechado/histórico; daily-live no corrente aberto)
     // + master não-atribuído (daily).
+    // COMPETENCIA CANONICA — a lista SEMPRE tem a competencia renderizada.
+    //
+    // O QUE HAVIA: monthsSet saia so de PMR + daily master orfao. No dia 01/08
+    // agosto nao tinha nenhum dos dois (PMR agosto = 0, daily 31/07 = 0), entao
+    // o mes nao virava <option>, o `value` do <select> ("2026-8") nao casava com
+    // opcao nenhuma e o React selecionava a PRIMEIRA opcao da lista — jan/2026.
+    // A tela abria exibindo "jan" enquanto o payload era de agosto.
+    //
+    // Acrescentar o mes renderizado a lista, mesmo sem dado, e o que a
+    // lib/auditoria.ts:56-60 ja faz para o /fechamento ("mes corrente como em
+    // aberto no topo, se ainda nao fechou"). Vale para QUALQUER competencia
+    // pedida, nao so a corrente: navegar para um mes vazio tem de manter esse
+    // mes selecionavel, senao o seletor pula para outro sozinho.
     const monthsSet = new Set<number>([...byMonth.keys(), ...unassignedByMonth.keys()]);
+    monthsSet.add(month);
     const producaoMensal = Array.from(monthsSet)
       .sort((a, b) => a - b)
       .map((m) => ({
@@ -443,6 +469,40 @@ export async function GET(req: Request) {
       sinal: rbt12.grupo.sinal,
     };
 
+    // ============================================================
+    // COMPETENCIA CANONICA — FONTE UNICA DO ROTULO.
+    //
+    // Os rotulos eram remontados de `MES[month - 1]/year` em CINCO pontos desta
+    // rota, cada um repetindo a mesma expressao. Enquanto o VALOR vinha de um
+    // resolvedor que podia recuar para outra competencia, o rotulo seguia
+    // fielmente o que foi PEDIDO — e a tela exibia julho escrito "ago/2026".
+    // A fase 1 fez os dois convergirem; isto aqui torna a convergencia
+    // estrutural em vez de coincidente: existe UM label, e todo cartao o usa.
+    //
+    // `competenciaEfetiva` e a competencia que esta rota realmente somou. Vai
+    // inteira no payload para a tela rotular a partir dela, em vez de remontar
+    // do proprio parametro que enviou.
+    // ============================================================
+    const competenciaEfetiva = {
+      year,
+      month,
+      key: `${year}-${String(month).padStart(2, "0")}`,
+      label: `${MES[month - 1]}/${year}`,
+      regime,
+      // parcial = regime aberto. E o unico estado em que o numero ainda cresce.
+      parcial: regime === "open",
+      // Espelho do que o analytics resolveu. Depois da fase 1 os dois sao iguais
+      // por construcao; se algum dia divergirem, o payload DIZ, em vez de a tela
+      // exibir um mes sob o rotulo de outro em silencio.
+      analytics: promoterAnalytics.competencia,
+      divergente:
+        promoterAnalytics.competencia.year !== year ||
+        promoterAnalytics.competencia.month !== month,
+    };
+    const rotuloCompetencia = `${competenciaEfetiva.label} · ${
+      competenciaEfetiva.parcial ? "parcial" : "fechado"
+    }`;
+
     // ---- comissão bruta da EMPRESA · mês corrente (company_commission) ----
     // É o GANHO DA EMPRESA (o que a empresa recebe), NÃO o repasse do promotor.
     // Split cms/motor do resto do sistema: mês FECHADO = ground truth do cms (Σ
@@ -460,7 +520,7 @@ export async function GET(req: Request) {
       // jan-mai: seed do financeiro. Ground truth = COMISSÃO PF do cms. INALTERADO
       // (leitura extraída para lerComissaoEmpresaCreditoFechada, mesma query).
       comissaoBrutaEmpresa = await lerComissaoEmpresaCreditoFechada(supabase, "cms", year, month);
-      comissaoBrutaEmpresaLabel = `${MES[month - 1]}/${year} · fechado`;
+      comissaoBrutaEmpresaLabel = rotuloCompetencia;
     } else if (regime === "fechamento") {
       // jun+ (e abril): NÃO existe cms — o booleano antigo mandava ler cms aqui e
       // trazia 0. A comissão-EMPRESA de crédito também NÃO existe no PMR (o PMR
@@ -475,7 +535,7 @@ export async function GET(req: Request) {
         year,
         month
       );
-      comissaoBrutaEmpresaLabel = `${MES[month - 1]}/${year} · fechado`;
+      comissaoBrutaEmpresaLabel = rotuloCompetencia;
     } else {
       comissaoBrutaEmpresa = roundMoney(
         toNumber(promoterAnalytics.summary.companyGrossCommission)
@@ -486,7 +546,7 @@ export async function GET(req: Request) {
       comissaoBrutaEmpresaNaoAtribuidaCount = toNumber(
         promoterAnalytics.summary.unassignedCount
       );
-      comissaoBrutaEmpresaLabel = `${MES[month - 1]}/${year} · parcial`;
+      comissaoBrutaEmpresaLabel = rotuloCompetencia;
     }
 
     // ---- KPIs de SEGURO (DB-driven; NUNCA motor/closingAnalytics) ----
@@ -545,7 +605,7 @@ export async function GET(req: Request) {
         }
         penetracaoSeguroGrupo = penDen > 0 ? penNum / penDen : 0;
       }
-      seguroLabel = `${MES[month - 1]}/${year} · fechado`;
+      seguroLabel = rotuloCompetencia;
     } else {
       // ATRIBUÍDO: Σ summaryRows.insurance_commission_value (PMR via analytics;
       // ex-SRCC já filtrado no pipeline).
@@ -584,8 +644,69 @@ export async function GET(req: Request) {
       // ponderada pela produção, daily ao vivo), alinhando com a tela de projeção
       // (ex.: 19,1%) em vez do PMR snapshot defasado (18,0%). Fração 0..1.
       penetracaoSeguroGrupo = cons.seguro_penetracao ?? 0;
-      seguroLabel = `${MES[month - 1]}/${year} · parcial`;
+      seguroLabel = rotuloCompetencia;
     }
+
+    // ============================================================
+    // RITMO DIARIO DO GRUPO — PISO e ALVO, com hierarquia.
+    //
+    // NAO sao duas metas paralelas nem duas leituras que "discordam". Ha uma
+    // ordem: o piso fica ABAIXO do alvo por construcao, e ficar entre os dois
+    // e um estado legitimo — e a faixa do meio e a razao do card existir.
+    //
+    // ALVO = meta do GRUPO = consolidarGrupoEquipe(res).meta. NAO somar
+    //     monthly_targets na mao: a soma bruta de julho/2026 da R$ 7.562.000
+    //     contra R$ 6.402.000 do consolidado, porque o consolidado ignora
+    //     promotor inativo e chave master. Erro de R$ 1,16 milhao. O
+    //     consolidado tambem ja deduplica por promotor (promoterAnalytics faz
+    //     um `.find()` de UMA linha de meta por promotor, nao a soma delas).
+    //
+    // PISO = META_DIARIA_GRUPO x dias uteis TOTAIS da janela. E o MINIMO que
+    //     o grupo deve fazer (calculo do Diego). Constante NOMEADA em
+    //     lib/ritmoNecessario.ts; mudar exige deploy. Julho: R$ 5.750.000 de
+    //     piso contra R$ 6.402.000 de alvo — o piso ser menor e o desenho.
+    //
+    // ACUMULADO: o MESMO nos dois lados — consEquipe.producao_acumulada, que
+    // ja inclui a ADS (medido em 02/08: R$ 612.225,52 dentro dos
+    // R$ 6.426.690,15 de julho). Comparar meta de grupo inteiro com producao
+    // de meia empresa seria erro de universo.
+    //
+    // DIVIDA REGISTRADA (nao consertada nesta frente, decisao Diego): a ADS
+    // esta `active=false` em `companies`, e o filtro `activeIds` daqui de cima
+    // (usado por unassignedByMonth) exclui a producao ADS em chave MASTER no
+    // mes FECHADO. A producao ADS ATRIBUIDA entra nos dois regimes; so o balde
+    // master fica de fora, e so no fechado. Enquanto isso durar, o acumulado
+    // comparado com a meta propria nao e exatamente o mesmo universo nos dois
+    // regimes.
+    // ============================================================
+    const janelaRitmo = resolverJanelaRitmo(year, month, { closed: monthClosed });
+    const pisoGrupo = metaPropriaDoGrupo(janelaRitmo);
+    const alvoGrupo = consEquipe.meta;
+    const ritmoGrupo = {
+      diasTotais: janelaRitmo.total,
+      // A FAIXA e a leitura principal do card: em qual das tres zonas o grupo
+      // esta. Calculada UMA vez, no servidor, pela variante explicita do
+      // helper — a tela nao redecide cor.
+      faixa: semaforoPisoAlvo({
+        projecao: consEquipe.projecao,
+        piso: pisoGrupo,
+        alvo: alvoGrupo,
+      }),
+      piso: calcularRitmoNecessario({
+        meta: pisoGrupo,
+        acumulado: consEquipe.producao_acumulada,
+        projecao: consEquipe.projecao,
+        janela: janelaRitmo,
+        mesFechado: monthClosed,
+      }),
+      alvo: calcularRitmoNecessario({
+        meta: alvoGrupo,
+        acumulado: consEquipe.producao_acumulada,
+        projecao: consEquipe.projecao,
+        janela: janelaRitmo,
+        mesFechado: monthClosed,
+      }),
+    };
 
     // ---- alerta de projeção (só se houver risco: amarelo/vermelho) ----
     // cons já calculado acima (reusado na penetração de seguro do mês aberto).
@@ -594,7 +715,10 @@ export async function GET(req: Request) {
       semaforo: cons.semaforo,
       diasDecorridos: projecaoRes.janela.dias_uteis_decorridos,
       diasTotais: projecaoRes.janela.dias_uteis_totais,
-      mesLabel: `${MES[month - 1]}/${year}`,
+      // COMPETENCIA CANONICA — ultimo rotulo remontado da rota. O banner de
+      // projecao ("ritmo abaixo da meta de jul") passa a citar a MESMA
+      // competencia efetiva que os cartoes, e nao uma remontagem paralela.
+      mesLabel: competenciaEfetiva.label,
       show: cons.semaforo === "amarelo" || cons.semaforo === "vermelho",
     };
 
@@ -750,6 +874,16 @@ export async function GET(req: Request) {
           serie: serieProducaoCheia,
           competencia,
           janela: resolverJanela({ competencia, modo: "ate-dia-N", dia: agora.day, recorteIndisponivel: true }),
+          // BORDA DE MES VAZIO — quantas linhas a competencia atual tem no
+          // daily, INTEIRA (somaDailyRecortado conta antes de aplicar o corte
+          // por dia). Zero aqui = nada importado, e o helper esconde o delta em
+          // vez de exibir "-100%" contra o mes anterior cheio.
+          //
+          // Este ramo e justamente o que roda quando falta daily em alguma
+          // ponta, e desde que a competencia renderizada passou a existir em
+          // producaoMensal o ponto atual vem materializado em ZERO — sem esta
+          // contagem, ausencia de importacao viraria queda de desempenho.
+          linhasOrigemAtual: atual.linhas,
         });
       }
     } else {
@@ -980,12 +1114,18 @@ export async function GET(req: Request) {
     });
 
     return NextResponse.json({
-      periodoLabel: `${MES[month - 1]}/${year}`,
+      periodoLabel: competenciaEfetiva.label,
       // MOV 2 (A): a competência renderizada e o regime dela — a tela usa para
       // montar o seletor e para rotular a origem do número.
       year,
       month,
       regime,
+      // COMPETENCIA CANONICA — a competência EFETIVA inteira (key/label/regime/
+      // parcial) + o espelho do que o analytics resolveu. A tela rotula A PARTIR
+      // daqui, em vez de remontar de year/month ou de escrever literal fixo.
+      competencia: competenciaEfetiva,
+      // RITMO DIARIO DO GRUPO — duas metas. Ver o bloco de calculo acima.
+      ritmoGrupo,
       producaoGrupoMes,
       producaoParcial: true,
       producaoNaoAtribuida,

@@ -90,6 +90,9 @@ export default function RecebiveisPage() {
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // TOOLTIP do grafico de PRT — indice do mes sob o cursor (ou com foco de
+  // teclado). null = nenhum. Estado UNICO, igual ao do Dashboard.
+  const [hover, setHover] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -180,7 +183,33 @@ export default function RecebiveisPage() {
     const toPath = (pts: { x: number; y: number }[]) =>
       pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
     const labels = ms.map((m, i) => ({ x: fx(i), t: fmtComp(m.competencia).split("/")[0], cur: m.competencia === ag.snapshotPrt }));
-    return { W, H, x0, x1, y1, ticks, realizadoPath: toPath(realizado), previstoPath: toPath(previsto), realizado, labels };
+    // TOOLTIP — um ponto por MES, com os dois valores. Nao da para pendurar o
+    // hover em `realizado`: aquele array e FILTRADO (so os meses que tem
+    // recebido), entao o indice dele nao e o indice do mes. Aqui o indice E o
+    // mes, e o alvo existe mesmo onde nao ha circulo desenhado — que e o caso
+    // de toda a metade tracejada (previsto), sem ponto nenhum no desenho.
+    const pontos = ms.map((m, i) => ({
+      x: fx(i),
+      // ancora vertical do balao: o ponto que existir; sem nenhum, o meio.
+      y:
+        m.recebidoPrt != null
+          ? fy(m.recebidoPrt)
+          : m.previstoPrt != null
+            ? fy(m.previstoPrt)
+            : (y0 + y1) / 2,
+      comp: fmtComp(m.competencia),
+      recebido: m.recebidoPrt,
+      previsto: m.previstoPrt,
+    }));
+    // Largura da faixa de captura de cada mes: metade da distancia ate o
+    // vizinho de cada lado, entao as faixas ladrilham o grafico inteiro sem
+    // buraco e sem sobreposicao.
+    const faixa = n > 1 ? (x1 - x0) / (n - 1) : x1 - x0;
+    return {
+      W, H, x0, x1, y0, y1, ticks,
+      realizadoPath: toPath(realizado), previstoPath: toPath(previsto),
+      realizado, labels, pontos, faixa,
+    };
   }, [ag]);
 
   return (
@@ -254,6 +283,97 @@ export default function RecebiveisPage() {
                         {l.t}
                       </text>
                     ))}
+                    {/* ALVO DE HOVER invisivel, um por MES. O Dashboard usa um
+                        circulo r=18 sobre o ponto; aqui e uma FAIXA VERTICAL de
+                        largura inteira, porque metade do grafico (o previsto,
+                        tracejado) nao tem ponto desenhado para servir de alvo —
+                        e o mes futuro e justamente o que o usuario quer ler. A
+                        faixa cobre o mes inteiro, entao acertar independe de
+                        existir circulo. focusable p/ chegar por teclado. */}
+                    {chart.pontos.map((pt, i) => (
+                      <rect
+                        key={i}
+                        x={pt.x - chart.faixa / 2}
+                        y={chart.y0}
+                        width={chart.faixa}
+                        height={chart.y1 - chart.y0}
+                        fill="transparent"
+                        style={{ cursor: "pointer" }}
+                        tabIndex={0}
+                        role="button"
+                        aria-label={`${pt.comp}: ${
+                          pt.recebido != null ? `realizado ${brl2(pt.recebido)}` : "sem realizado"
+                        }, ${pt.previsto != null ? `previsto ${brl2(pt.previsto)}` : "sem previsto"}`}
+                        onMouseEnter={() => setHover(i)}
+                        onMouseLeave={() => setHover((h) => (h === i ? null : h))}
+                        onFocus={() => setHover(i)}
+                        onBlur={() => setHover((h) => (h === i ? null : h))}
+                        // TOQUE: o mouseenter emulado do navegador movel e
+                        // inconsistente entre engines; o onTouchStart torna o
+                        // toque deterministico em vez de depender da emulacao.
+                        onTouchStart={() => setHover(i)}
+                      />
+                    ))}
+                    {/* TOOLTIP — desenhado por ultimo para ficar acima de tudo.
+                        SVG puro pelo MESMO motivo do Dashboard: um balao em HTML
+                        precisaria converter coordenada de viewBox para pixel, e
+                        isso quebra quando o card muda de largura. */}
+                    {hover != null && chart.pontos[hover] ? (() => {
+                      const pt = chart.pontos[hover];
+                      // Só as linhas que EXISTEM. Mes sem realizado (futuro) nao
+                      // ganha "R$ 0" — zero e um numero, e ali nao ha numero.
+                      // brl2 (com centavos), nao brl: o eixo do grafico ja mostra
+                      // o valor arredondado em "k". O tooltip existe justamente
+                      // para dar o numero cheio — arredondar aqui anularia o
+                      // motivo dele. Mesma decisao do Dashboard (brlExato).
+                      const linhas: Array<{ rotulo: string; valor: string; cor: string }> = [];
+                      if (pt.recebido != null) {
+                        linhas.push({ rotulo: "Realizado", valor: brl2(pt.recebido), cor: "#FFFFFF" });
+                      }
+                      if (pt.previsto != null) {
+                        linhas.push({ rotulo: "Previsto", valor: brl2(pt.previsto), cor: "#E7BE6A" });
+                      }
+                      const maiorTexto = linhas.reduce(
+                        (max, l) => Math.max(max, l.rotulo.length + l.valor.length + 3),
+                        pt.comp.length
+                      );
+                      // Largura estimada pela contagem de caracteres (SVG nao
+                      // mede texto antes de renderizar), como no Dashboard.
+                      const w = Math.max(150, maiorTexto * 8.2 + 28);
+                      const h = 26 + linhas.length * 18;
+                      // Vira para dentro nas pontas, para nao sair do viewBox.
+                      const x = Math.min(Math.max(pt.x - w / 2, chart.x0 - 40), chart.x1 + 40 - w);
+                      // Acima do ponto; abaixo quando nao ha espaco em cima.
+                      const acima = pt.y - h - 14 > 0;
+                      const y = acima ? pt.y - h - 14 : pt.y + 14;
+                      return (
+                        <g pointerEvents="none">
+                          <rect x={x} y={y} width={w} height={h} rx={8} fill="#0F1F4A" opacity="0.96" />
+                          <text x={x + w / 2} y={y + 17} textAnchor="middle" fill="#9AA1B0" fontSize="11" fontWeight="600" letterSpacing="0.04em">
+                            {pt.comp.toUpperCase()}
+                          </text>
+                          {linhas.map((l, k) => (
+                            <text
+                              key={k}
+                              x={x + w / 2}
+                              y={y + 34 + k * 18}
+                              textAnchor="middle"
+                              fill={l.cor}
+                              fontSize="13.5"
+                              fontWeight="700"
+                              fontFamily="'IBM Plex Mono', monospace"
+                            >
+                              {`${l.rotulo} ${l.valor}`}
+                            </text>
+                          ))}
+                          {linhas.length === 0 ? (
+                            <text x={x + w / 2} y={y + 34} textAnchor="middle" fill="#9AA1B0" fontSize="12">
+                              sem dado
+                            </text>
+                          ) : null}
+                        </g>
+                      );
+                    })() : null}
                   </svg>
                   <div className="legend">
                     <span><i className="re" />Realizado (recebido)</span>

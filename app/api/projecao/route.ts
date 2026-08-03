@@ -16,6 +16,9 @@ import {
   consolidarGrupoEquipe,
   promotoresEmRisco,
 } from "@/lib/projecaoMetas";
+import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
+import { calcularRitmoNecessario, montarFarolPromotor } from "@/lib/ritmoNecessario";
+import { rankingDaRegional, REGIONAL_LABEL } from "@/lib/regionais";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -139,6 +142,75 @@ export async function GET(req: Request) {
         }));
       }
 
+      // RITMO DIARIO NECESSARIO — calculado AQUI, no ramo do promotor, e nao
+      // dentro de buildProjecaoMetas. E de proposito: assim ele nao existe no
+      // payload do gestor nem no da equipe, e nao ha como vazar para tabela
+      // nenhuma por descuido de quem for mexer na tela depois.
+      // DECISAO DIEGO (02/08): o ritmo por promotor aparece SO na tela do
+      // promotor.
+      //
+      // A projecao entra pronta (p.projecao, ja calculada por projetarPorRitmo
+      // dentro do motor) — o helper nao recalcula formula que tem dono.
+      const ritmo = promotor
+        ? calcularRitmoNecessario({
+            meta: promotor.meta,
+            acumulado: promotor.producao_acumulada,
+            projecao: promotor.projecao,
+            // MESMA fonte de dias do motor: resolverJanelaRitmo, com as mesmas
+            // entradas (year, month, closed) e o mesmo "hoje" de Fortaleza.
+            // Nao e contagem nova — e a funcao canonica chamada de novo, no
+            // mesmo request. `res.janela` nao serve aqui: e a forma
+            // serializada (dias_uteis_*), nao o JanelaRitmo que o helper pede.
+            janela: resolverJanelaRitmo(year, month, { closed: res.fechado }),
+            mesFechado: res.fechado,
+          })
+        : null;
+
+      // ---- FAROL: o que o card precisa alem do ritmo (Emenda B) ----
+      //
+      // RITMO REALIZADO — acumulado / dias_uteis_ritmo. NAO e calculo novo: e a
+      // mesma razao que projetarPorRitmo usa por dentro (projecao = realizado x
+      // total). O divisor e dias_uteis_ritmo (nao decorridos) porque a producao
+      // de hoje so entra amanha. Sem esta referencia o ritmo necessario e
+      // exigencia sem contexto: "R$ 21 mil por dia" so significa alguma coisa
+      // ao lado de "voce vem fazendo R$ 14 mil".
+      const ritmoRealizado =
+        promotor && promotor.dias_uteis_ritmo > 0
+          ? Math.round((promotor.producao_acumulada / promotor.dias_uteis_ritmo) * 100) / 100
+          : null;
+
+      // MES ANTERIOR do proprio promotor — alvo alternativo quando a meta fica
+      // inalcancavel (ver FAROL_MULTIPLO_INALCANCAVEL). `historico` acima ja
+      // traz os 3 meses anteriores em ordem; o ultimo e o M-1.
+      const producaoMesAnterior = historico.length > 0 ? historico[historico.length - 1].production : 0;
+
+      // ---- RANKING POR REGIONAL (Emenda C) ----
+      //
+      // CALCULADO AQUI, NO SERVIDOR, e o payload leva SO {regional, label,
+      // posicao, total}. Nenhum nome e nenhum valor de terceiro atravessa a
+      // fronteira: o que nao vai no payload nao aparece em inspecao de rede,
+      // em devtools, nem em log de proxy. `res.promotores` (que tem nome e
+      // producao de todo mundo) fica no servidor e morre aqui.
+      //
+      // A regua de regionais mora em lib/regionais.ts, um lugar so. Nao
+      // escreva `if (estado === "SE")` aqui nem em tela nenhuma.
+      const rk = myId
+        ? rankingDaRegional({ promotores: res.promotores, promoterId: myId })
+        : null;
+      const ranking = rk
+        ? { regional: rk.regional, label: REGIONAL_LABEL[rk.regional], posicao: rk.posicao, total: rk.total }
+        : null;
+
+      const farol = promotor
+        ? montarFarolPromotor({
+            ritmo: ritmo!,
+            ritmoRealizado,
+            producaoMesAnterior,
+            acumulado: promotor.producao_acumulada,
+            diasRestantes: ritmo!.diasRestantes,
+          })
+        : null;
+
       return Response.json({
         scope: "promotor",
         year,
@@ -147,6 +219,9 @@ export async function GET(req: Request) {
         fechado: res.fechado,
         janela: res.janela,
         promotor,
+        ritmo,
+        farol,
+        ranking,
         historico,
       });
     }

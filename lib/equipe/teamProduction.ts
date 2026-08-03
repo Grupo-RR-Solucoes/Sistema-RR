@@ -647,6 +647,14 @@ export function assembleTeamProduction(
           dia: agoraDelta.day,
           recorteIndisponivel: true,
         }),
+        // BORDA DE MES VAZIO — mesma correcao do Dashboard, e ela e NECESSARIA
+        // aqui pelo mesmo motivo, nao por simetria decorativa: serieCheia vem de
+        // monthlySeries, que sai de serieHibridaPorPromotor, cujo rangeMeses
+        // cobre jan/2026 ate o mes do refDate SEM BURACO. O mes corrente sem
+        // daily entra na serie com producao 0 e fonte "vazio" — ponto presente,
+        // valor zero. Sem a contagem, a /equipe exibiria o mesmo "-100%" que o
+        // Dashboard exibia.
+        linhasOrigemAtual: atual.linhas,
       });
     }
   } else {
