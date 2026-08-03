@@ -7,6 +7,8 @@ import { todayInFortaleza } from "@/lib/dateFortaleza";
 // divergiu; agora a janela RR + a aritmética de dias úteis + o ritmo linear vêm
 // todos de um lugar só.
 import { resolverJanelaRitmo, projetarPorRitmo } from "@/lib/janelaRitmo";
+// RECORTE do delta na MESMA familia da competencia (posicao na janela).
+import { posicoesComDado, recorteDaJanela, totaisDaJanela } from "@/lib/delta/recorteJanela";
 // MESMO serializador de data que a /projecao usa (lib/projecaoMetas.ts:38), para
 // a janela exposta sair byte-idêntica em formato à de ProjecaoResultado.janela.
 import { ymd } from "@/lib/trp/vigencia";
@@ -569,49 +571,51 @@ export function assembleTeamProduction(
   const compAtual = { year: period.year, month: period.month };
   const compAnt = competenciaAnterior(compAtual);
   const ehCorrente = period.year === agoraDelta.year && period.month === agoraDelta.month;
-  // FASE 2.1 — dias-do-mes com produção lançada na competência CORRENTE, para
-  // o corte virar min(hoje, último dia com dado). Mesmo predicado da soma
-  // abaixo, sobre a mesma vw_team_production.
-  // Só dias do MÊS-CALENDÁRIO da competência: o "dia-cabeça" herdado do mês
-  // anterior (30/06 na competência de julho) tem dia-do-mês alto e viraria o
-  // máximo, mascarando até onde a diária foi de fato carregada.
-  const prefixoMesCorrente = `${compAtual.year}-${String(compAtual.month).padStart(2, "0")}-`;
-  const diasComDadoCorrente = new Set<number>();
-  for (const r of rows) {
-    if (!r.assigned_promoter_id) continue;
-    if (!isEligible(r)) continue;
-    const p = extractYearMonth(r);
-    if (!p || p.year !== compAtual.year || p.month !== compAtual.month) continue;
-    const bruta = String(r.movement_date || r.contract_date || r.proposal_date || "");
-    if (!bruta.startsWith(prefixoMesCorrente)) continue;
-    const dia = Number(bruta.slice(8, 10));
-    if (dia >= 1 && dia <= 31) diasComDadoCorrente.add(dia);
-  }
+  // FASE 2.1 — POSICOES da janela com produção lançada na competência CORRENTE,
+  // para o corte virar min(N de hoje, última posição com dado). Mesmo predicado
+  // da soma abaixo, sobre a mesma vw_team_production.
+  //
+  // O filtro por prefixo de mês-calendário saiu: ele existia para o "dia-cabeça"
+  // (30/06 na competência de julho) não virar o máximo do conjunto por ter
+  // dia-do-mês alto. Em POSIÇÃO ele é o dia 1 e não mascara nada.
+  const diasComDadoCorrente = posicoesComDado(
+    rows.filter((r) => {
+      if (!r.assigned_promoter_id) return false;
+      if (!isEligible(r)) return false;
+      const p = extractYearMonth(r);
+      return !!p && p.year === compAtual.year && p.month === compAtual.month;
+    }),
+    compAtual
+  );
 
+  // N = dias de PRODUCAO decorridos da janela. Mesma fonte da /projecao.
+  const janelaRitmoDelta = resolverJanelaRitmo(compAtual.year, compAtual.month, {
+    closed: periodoFechado,
+  });
   const janelaPedida = resolverJanela({
     competencia: compAtual,
+    ...totaisDaJanela(compAtual),
     modo: !periodoFechado && ehCorrente ? "ate-dia-N" : "mes-cheio",
-    dia: agoraDelta.day,
-    diasComDadoNoMesCorrente: diasComDadoCorrente,
+    n: janelaRitmoDelta.diasDecorridos,
+    posicoesComDadoNaJanela: diasComDadoCorrente,
   });
 
   function somaTimeRecortado(comp: { year: number; month: number }, ateDia: number | null) {
     let total = 0;
     let linhas = 0;
+    let linhasSomadas = 0;
+    const recorte = recorteDaJanela(comp, ateDia);
     for (const r of rows) {
       if (!r.assigned_promoter_id) continue;
       if (!isEligible(r)) continue;
       const p = extractYearMonth(r);
       if (!p || p.year !== comp.year || p.month !== comp.month) continue;
       linhas += 1;
-      if (ateDia != null) {
-        const bruta = r.movement_date || r.contract_date || r.proposal_date;
-        const dia = Number(String(bruta ?? "").slice(8, 10));
-        if (!(dia >= 1 && dia <= ateDia)) continue;
-      }
+      if (!recorte.dentro(r)) continue;
+      linhasSomadas += 1;
       total += toNumber(r.net_value);
     }
-    return { total: Math.round(total * 100) / 100, linhas };
+    return { total: Math.round(total * 100) / 100, linhas, linhasSomadas };
   }
 
   // Série de MÊS CHEIO: monthlySeries já é a série canônica do time (híbrida
@@ -628,7 +632,9 @@ export function assembleTeamProduction(
     const atual = somaTimeRecortado(compAtual, janelaPedida.diaCorteAtual);
     const anterior = somaTimeRecortado(compAnt, janelaPedida.diaCorteAnterior);
     // O recorte exige daily nas DUAS pontas (jan/fev/mar/mai de 2026 não têm).
-    if (atual.linhas > 0 && anterior.linhas > 0) {
+    // DEPOIS do corte (03/08/2026): `linhas` conta a competência inteira e
+    // deixava passar ponta esvaziada pelo recorte. Mesma correção das outras.
+    if (atual.linhasSomadas > 0 && anterior.linhasSomadas > 0) {
       deltaProducao = deltaDaSerie({
         serie: [
           { year: compAnt.year, month: compAnt.month, valor: anterior.total, fonte: "daily" },
@@ -643,8 +649,9 @@ export function assembleTeamProduction(
         competencia: compAtual,
         janela: resolverJanela({
           competencia: compAtual,
+          ...totaisDaJanela(compAtual),
           modo: "ate-dia-N",
-          dia: agoraDelta.day,
+          n: janelaRitmoDelta.diasDecorridos,
           recorteIndisponivel: true,
         }),
         // BORDA DE MES VAZIO — mesma correcao do Dashboard, e ela e NECESSARIA

@@ -14,6 +14,8 @@ import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { calcularRbt12 } from "@/lib/rbt12";
 import { buildProjecaoMetas, consolidarGrupo, consolidarGrupoEquipe } from "@/lib/projecaoMetas";
 import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
+// RECORTE do delta na MESMA familia da competencia (posicao na janela).
+import { posicoesComDado, recorteDaJanela, totaisDaJanela } from "@/lib/delta/recorteJanela";
 import {
   calcularRitmoNecessario,
   metaPropriaDoGrupo,
@@ -850,30 +852,39 @@ export async function GET(req: Request) {
     // So dias do MES-CALENDARIO da competencia. O "dia-cabeca" que a janela
     // herda do mes anterior (30/06 na competencia de julho) tem dia-do-mes 30 e
     // viraria o maximo, mascarando que a diaria so foi carregada ate o dia 23.
-    const prefixoMesCorrente = `${competencia.year}-${String(competencia.month).padStart(2, "0")}-`;
-    const diasComDadoCorrente = new Set<number>();
-    for (const r of dailyRecorte || []) {
-      if (!r.company_id || !activeIds.has(r.company_id)) continue;
-      if (!isProductionStatus(r.status)) continue;
-      if (!isValidDailyRecord(r)) continue;
-      const period = getProductionPeriodFromValue(r.movement_date);
-      if (!period || period.year !== competencia.year || period.month !== competencia.month) continue;
-      const bruta = String(r.movement_date ?? "");
-      if (!bruta.startsWith(prefixoMesCorrente)) continue;
-      const dia = Number(bruta.slice(8, 10));
-      if (dia >= 1 && dia <= 31) diasComDadoCorrente.add(dia);
-    }
+    // POSICOES da janela com dado (nao dias-do-mes). O filtro por prefixo de mes
+    // saiu: ele existia so para o "dia-cabeca" (30/06 na competencia de julho)
+    // nao virar o maximo do conjunto por ter dia-do-mes alto. Em posicao ele e o
+    // dia 1, entao o remendo perdeu a razao de ser — e cobrava caro, descartando
+    // a producao real do primeiro dia da janela.
+    const diasComDadoCorrente = posicoesComDado(
+      (dailyRecorte || []).filter((r) => {
+        if (!r.company_id || !activeIds.has(r.company_id)) return false;
+        if (!isProductionStatus(r.status)) return false;
+        if (!isValidDailyRecord(r)) return false;
+        const period = getProductionPeriodFromValue(r.movement_date);
+        return !!period && period.year === competencia.year && period.month === competencia.month;
+      }),
+      competencia
+    );
 
+    // N = dias de PRODUCAO decorridos. Mesma fonte que a /projecao exibe.
+    const janelaRitmoDelta = resolverJanelaRitmo(competencia.year, competencia.month, {
+      closed: monthClosed,
+    });
     const janelaPedida = resolverJanela({
       competencia,
+      ...totaisDaJanela(competencia),
       modo: modoJanelaPedido,
-      dia: agora.day,
-      diasComDadoNoMesCorrente: diasComDadoCorrente,
+      n: janelaRitmoDelta.diasDecorridos,
+      posicoesComDadoNaJanela: diasComDadoCorrente,
     });
 
     function somaDailyRecortado(comp: { year: number; month: number }, ateDia: number | null) {
       let total = 0;
       let linhas = 0;
+      let linhasSomadas = 0;
+      const recorte = recorteDaJanela(comp, ateDia);
       for (const r of dailyRecorte || []) {
         if (!r.company_id || !activeIds.has(r.company_id)) continue;
         if (!isProductionStatus(r.status)) continue;
@@ -881,13 +892,11 @@ export async function GET(req: Request) {
         const period = getProductionPeriodFromValue(r.movement_date);
         if (!period || period.year !== comp.year || period.month !== comp.month) continue;
         linhas += 1;
-        if (ateDia != null) {
-          const dia = Number(String(r.movement_date).slice(8, 10));
-          if (!(dia >= 1 && dia <= ateDia)) continue;
-        }
+        if (!recorte.dentro(r)) continue;
+        linhasSomadas += 1;
         total += toNumber(r.net_value);
       }
-      return { total: roundMoney(total), linhas };
+      return { total: roundMoney(total), linhas, linhasSomadas };
     }
 
     // FASE 2.2 — o MESMO recorte, para a comissao de SEGURO. Mesma iteracao,
@@ -901,6 +910,8 @@ export async function GET(req: Request) {
     ) {
       let total = 0;
       let linhas = 0;
+      let linhasSomadas = 0;
+      const recorte = recorteDaJanela(comp, ateDia);
       for (const r of dailyRecorte || []) {
         if (!r.company_id || !activeIds.has(r.company_id)) continue;
         if (!isProductionStatus(r.status)) continue;
@@ -908,13 +919,11 @@ export async function GET(req: Request) {
         const period = getProductionPeriodFromValue(r.movement_date);
         if (!period || period.year !== comp.year || period.month !== comp.month) continue;
         linhas += 1;
-        if (ateDia != null) {
-          const dia = Number(String(r.movement_date).slice(8, 10));
-          if (!(dia >= 1 && dia <= ateDia)) continue;
-        }
+        if (!recorte.dentro(r)) continue;
+        linhasSomadas += 1;
         total += toNumber(r.insurance_commission_amount);
       }
-      return { total: roundMoney(total), linhas };
+      return { total: roundMoney(total), linhas, linhasSomadas };
     }
 
     let deltaProducao;
@@ -924,7 +933,10 @@ export async function GET(req: Request) {
       // O recorte exige daily nas DUAS pontas. jan/fev/mar/mai de 2026 nao tem
       // daily nenhum — ali o corte por dia e impossivel e o card cai para
       // mes-cheio ROTULADO, em vez de comparar contra um zero inventado.
-      const temDailyNasDuas = atual.linhas > 0 && anterior.linhas > 0;
+      // DEPOIS DO CORTE (03/08/2026), nao antes. `linhas` conta a competencia
+      // inteira; se o recorte esvazia uma ponta, o delta e publicado com um zero
+      // que nao e desempenho. Mesma correcao de promoterAnalytics.
+      const temDailyNasDuas = atual.linhasSomadas > 0 && anterior.linhasSomadas > 0;
       if (temDailyNasDuas) {
         deltaProducao = deltaDaSerie({
           serie: [
@@ -938,7 +950,13 @@ export async function GET(req: Request) {
         deltaProducao = deltaDaSerie({
           serie: serieProducaoCheia,
           competencia,
-          janela: resolverJanela({ competencia, modo: "ate-dia-N", dia: agora.day, recorteIndisponivel: true }),
+          janela: resolverJanela({
+            competencia,
+            ...totaisDaJanela(competencia),
+            modo: "ate-dia-N",
+            n: janelaRitmoDelta.diasDecorridos,
+            recorteIndisponivel: true,
+          }),
           // BORDA DE MES VAZIO — quantas linhas a competencia atual tem no
           // daily, INTEIRA (somaDailyRecortado conta antes de aplicar o corte
           // por dia). Zero aqui = nada importado, e o helper esconde o delta em
@@ -1001,8 +1019,9 @@ export async function GET(req: Request) {
     // ==========================================================================
     const janelaSemRecorte = resolverJanela({
       competencia,
+      ...totaisDaJanela(competencia),
       modo: modoJanelaPedido,
-      dia: agora.day,
+      n: janelaRitmoDelta.diasDecorridos,
       recorteIndisponivel: modoJanelaPedido === "ate-dia-N",
     });
 
@@ -1102,7 +1121,8 @@ export async function GET(req: Request) {
       );
       // Exige daily nas DUAS pontas — competencia sem daily (jan/fev/mar/mai de
       // 2026) cai para mes-cheio ROTULADO em vez de comparar contra zero.
-      if (seguroAtual.linhas > 0 && seguroAnterior.linhas > 0) {
+      // DEPOIS do corte, mesma correcao da producao e da comissao-empresa.
+      if (seguroAtual.linhasSomadas > 0 && seguroAnterior.linhasSomadas > 0) {
         deltaComissaoSeguro = calcularDelta({
           competencia,
           valorAtual: seguroAtual.total,

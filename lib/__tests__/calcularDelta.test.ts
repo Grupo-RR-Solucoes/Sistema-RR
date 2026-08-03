@@ -17,13 +17,46 @@ import {
   deltaDaSerie,
   formatarDelta,
   nomeMesExtenso,
-  resolverJanela,
+  resolverJanela as resolverJanelaRaw,
   rotuloComparacao,
   rotuloJanela,
-  ultimoDiaComDado,
+  ultimaPosicaoComDado,
   ultimoDiaDoMes,
   type PontoSerie,
 } from "../delta/calcularDelta.ts";
+
+// TOTAIS de DIAS DE PRODUCAO das janelas (productionBusinessWindow), MEDIDOS em
+// 03/08/2026. Ficam aqui como literais de propósito: este suite roda em
+// `node --test` puro, sem loader nem resolucao do alias "@/", e importar
+// lib/delta/recorteJanela.ts (que importa lib/trp/vigencia) quebraria isso com
+// ERR_MODULE_NOT_FOUND. As assercoes POSICIONAIS, que precisam do helper de
+// verdade, vivem no gate (scripts/recorte_familia_janela_gate.cjs), que roda
+// sob _ts_register e resolve o alias.
+const TOTAL_DIAS_PRODUCAO: Record<string, number> = {
+  "2025-12": 22,
+  "2026-1": 21,
+  "2026-2": 18,
+  "2026-3": 22,
+  "2026-6": 21,
+  "2026-7": 23,
+  "2026-8": 21,
+};
+const totalDe = (c: { year: number; month: number }) =>
+  TOTAL_DIAS_PRODUCAO[`${c.year}-${c.month}`] ?? 21;
+
+/**
+ * Wrapper local: preenche totalAtual/totalAnterior a partir da tabela medida
+ * acima, para os testes existentes seguirem legiveis (`{ competencia, modo, n }`)
+ * sem repetir dois numeros em cada chamada.
+ */
+const resolverJanela = (
+  p: Omit<Parameters<typeof resolverJanelaRaw>[0], "totalAtual" | "totalAnterior">
+) =>
+  resolverJanelaRaw({
+    ...p,
+    totalAtual: totalDe(p.competencia),
+    totalAnterior: totalDe(competenciaAnterior(p.competencia)),
+  });
 
 const JUL = { year: 2026, month: 7 };
 const JAN = { year: 2026, month: 1 };
@@ -239,40 +272,44 @@ test("22) mes FECHADO: janela mes-cheio, sem dias de corte", () => {
   assert.equal(j.recorteIndisponivel, false);
 });
 
-test("23) mes ABERTO dia 26: corta 1-26 nos DOIS lados, sem clamp", () => {
-  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 26 });
+// TOTAIS DE DIAS DE PRODUCAO das janelas usadas aqui (productionBusinessWindow,
+// medidos em 03/08/2026): jul/26 = 23, jun/26 = 21, mar/26 = 22, fev/26 = 18,
+// jan/26 = 21, dez/25 = 22. O clamp agora mede nessa unidade, e nao em dias do
+// mes-calendario.
+test("23) mes ABERTO no 20o dia de producao: corta 20 nos DOIS lados, sem clamp", () => {
+  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", n: 20 });
   assert.equal(j.modo, "ate-dia-N");
-  assert.equal(j.diaCorteAtual, 26);
-  assert.equal(j.diaCorteAnterior, 26); // junho tem 30 dias, 26 cabe
+  assert.equal(j.diaCorteAtual, 20);
+  assert.equal(j.diaCorteAnterior, 20); // junho tem 21 dias de producao, 20 cabe
   assert.equal(j.clampado, false);
 });
 
-test("24) CLAMP fim de mes: hoje 31/07 e junho tem 30 dias -> M-1 corta em 30", () => {
-  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 31 });
-  assert.equal(j.diaCorteAtual, 31);
-  assert.equal(j.diaCorteAnterior, 30); // junho inteiro
+test("24) CLAMP: julho tem 23 dias de producao e junho so 21 -> M-1 corta em 21", () => {
+  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", n: 23 });
+  assert.equal(j.diaCorteAtual, 23);
+  assert.equal(j.diaCorteAnterior, 21); // junho inteiro
   assert.equal(j.clampado, true);
 });
 
-test("25) CLAMP em fevereiro: hoje 31/03 -> M-1 (fev/2026) corta em 28", () => {
-  const j = resolverJanela({ competencia: { year: 2026, month: 3 }, modo: "ate-dia-N", dia: 31 });
-  assert.equal(j.diaCorteAtual, 31);
-  assert.equal(j.diaCorteAnterior, 28);
+test("25) CLAMP em fevereiro: marco tem 22 dias de producao, fev/2026 tem 18", () => {
+  const j = resolverJanela({ competencia: { year: 2026, month: 3 }, modo: "ate-dia-N", n: 22 });
+  assert.equal(j.diaCorteAtual, 22);
+  assert.equal(j.diaCorteAnterior, 18);
   assert.equal(j.clampado, true);
 });
 
-test("26) CLAMP com virada de ano: hoje 31/01 -> M-1 (dez) tem 31, sem clamp", () => {
-  const j = resolverJanela({ competencia: { year: 2026, month: 1 }, modo: "ate-dia-N", dia: 31 });
-  assert.equal(j.diaCorteAtual, 31);
-  assert.equal(j.diaCorteAnterior, 31);
+test("26) virada de ano: jan/26 tem 21 e dez/25 tem 22 -> sem clamp", () => {
+  const j = resolverJanela({ competencia: { year: 2026, month: 1 }, modo: "ate-dia-N", n: 21 });
+  assert.equal(j.diaCorteAtual, 21);
+  assert.equal(j.diaCorteAnterior, 21);
   assert.equal(j.clampado, false);
 });
 
-test("27) dia fora do intervalo e sanitizado ao mes corrente", () => {
-  // 31 de junho nao existe: o proprio mes atual limita.
-  const j = resolverJanela({ competencia: { year: 2026, month: 6 }, modo: "ate-dia-N", dia: 99 });
-  assert.equal(j.diaCorteAtual, 30);
-  const j2 = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 0 });
+test("27) N fora do intervalo e sanitizado ao total da janela atual", () => {
+  // junho/2026 tem 21 dias de producao: pedir 99 nao inventa dia nenhum.
+  const j = resolverJanela({ competencia: { year: 2026, month: 6 }, modo: "ate-dia-N", n: 99 });
+  assert.equal(j.diaCorteAtual, 21);
+  const j2 = resolverJanela({ competencia: JUL, modo: "ate-dia-N", n: 0 });
   assert.equal(j2.diaCorteAtual, 1);
 });
 
@@ -280,7 +317,7 @@ test("28) recorteIndisponivel forca mes-cheio e marca o motivo", () => {
   const j = resolverJanela({
     competencia: JUL,
     modo: "ate-dia-N",
-    dia: 26,
+    n: 20,
     recorteIndisponivel: true,
   });
   assert.equal(j.modo, "mes-cheio");
@@ -289,7 +326,7 @@ test("28) recorteIndisponivel forca mes-cheio e marca o motivo", () => {
 });
 
 test("29) a janela viaja no resultado e vira rotulo", () => {
-  const jRecorte = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 26 });
+  const jRecorte = resolverJanela({ competencia: JUL, modo: "ate-dia-N", n: 20 });
   const r = calcularDelta({
     competencia: JUL,
     valorAtual: 4_332_356.55,
@@ -297,22 +334,28 @@ test("29) a janela viaja no resultado e vira rotulo", () => {
     janela: jRecorte,
   });
   assert.equal(r.janela.modo, "ate-dia-N");
-  assert.equal(rotuloJanela(r), "1-26");
+  assert.equal(rotuloJanela(r), "20 dias");
   assert.equal(r.deltaPct, -10.6);
   assert.equal(r.direcao, "down");
 });
 
-test("30) rotulo mostra as duas janelas quando houve clamp", () => {
-  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 31 });
+test("29b) rotulo no singular quando o recorte tem 1 dia so", () => {
+  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", n: 1 });
   const r = calcularDelta({ competencia: JUL, valorAtual: 110, valorAnterior: 100, janela: j });
-  assert.equal(rotuloJanela(r), "1-31 x 1-30");
+  assert.equal(rotuloJanela(r), "1 dia");
+});
+
+test("30) rotulo mostra as duas janelas quando houve clamp", () => {
+  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", n: 23 });
+  const r = calcularDelta({ competencia: JUL, valorAtual: 110, valorAnterior: 100, janela: j });
+  assert.equal(rotuloJanela(r), "23 x 21 dias");
 });
 
 test("31) rotulo avisa 'mes cheio' quando o recorte nao foi possivel", () => {
   const j = resolverJanela({
     competencia: JUL,
     modo: "ate-dia-N",
-    dia: 26,
+    n: 20,
     recorteIndisponivel: true,
   });
   const r = calcularDelta({ competencia: JUL, valorAtual: 110, valorAnterior: 100, janela: j });
@@ -329,124 +372,126 @@ test("32) mes FECHADO nao ganha rotulo de janela (nao poluir o card)", () => {
 // FASE 2.1 — N = min(hoje, ultimo dia com dado)
 // ---------------------------------------------------------------------------
 
-test("34) ultimoDiaComDado devolve o MAIOR dia, nao o primeiro buraco", () => {
-  // buracos no meio (domingos/feriados) nao podem encurtar a janela
-  assert.equal(ultimoDiaComDado([1, 2, 3, 6, 7, 8, 13, 20, 23]), 23);
-  assert.equal(ultimoDiaComDado([5]), 5);
-  assert.equal(ultimoDiaComDado([]), null);
-  assert.equal(ultimoDiaComDado(null), null);
-  assert.equal(ultimoDiaComDado(undefined), null);
+test("34) ultimaPosicaoComDado devolve a MAIOR posicao, nao o primeiro buraco", () => {
+  // buracos no meio nao podem encurtar a janela
+  assert.equal(ultimaPosicaoComDado([1, 2, 3, 6, 7, 8, 13, 17]), 17);
+  assert.equal(ultimaPosicaoComDado([5]), 5);
+  assert.equal(ultimaPosicaoComDado([]), null);
+  assert.equal(ultimaPosicaoComDado(null), null);
+  assert.equal(ultimaPosicaoComDado(undefined), null);
 });
 
-test("35) ultimoDiaComDado ignora dias fora de 1..31", () => {
-  assert.equal(ultimoDiaComDado([10, 0, 32, -3, 99, 12]), 12);
+test("35) ultimaPosicaoComDado ignora posicoes fora de 1..31", () => {
+  assert.equal(ultimaPosicaoComDado([10, 0, 32, -3, 99, 12]), 12);
 });
 
-test("36) CASO REAL 26/07: dado ate 23 -> corta em 23 nos DOIS lados", () => {
+test("36) CASO REAL 26/07: dado ate o 17o dia -> corta em 17 nos DOIS lados", () => {
   const j = resolverJanela({
     competencia: JUL,
     modo: "ate-dia-N",
-    dia: 26,
-    diasComDadoNoMesCorrente: [1, 2, 3, 6, 7, 8, 9, 10, 13, 14, 15, 16, 17, 20, 21, 22, 23],
+    n: 20,
+    posicoesComDadoNaJanela: [1, 2, 3, 6, 7, 8, 9, 10, 13, 14, 15, 16, 17],
   });
-  assert.equal(j.diaCorteAtual, 23);
-  assert.equal(j.diaCorteAnterior, 23); // MESMO N na ponta anterior
-  assert.equal(j.diaHoje, 26);
+  assert.equal(j.diaCorteAtual, 17);
+  assert.equal(j.diaCorteAnterior, 17); // MESMO N na ponta anterior
+  assert.equal(j.diaHoje, 20);
   assert.equal(j.limitadoPorDado, true);
   assert.equal(j.clampado, false);
 });
 
-test("37) dado em dia igual/maior que hoje -> nao limita (vence o hoje)", () => {
+test("37) dado em posicao igual/maior que hoje -> nao limita (vence o hoje)", () => {
   const j = resolverJanela({
     competencia: JUL,
     modo: "ate-dia-N",
-    dia: 26,
-    diasComDadoNoMesCorrente: [20, 26],
+    n: 20,
+    posicoesComDadoNaJanela: [15, 20],
   });
-  assert.equal(j.diaCorteAtual, 26);
+  assert.equal(j.diaCorteAtual, 20);
   assert.equal(j.limitadoPorDado, false);
 });
 
-test("38) sem dado nenhum no mes corrente -> cai no comportamento da fase 2", () => {
+test("38) sem dado nenhum na janela corrente -> cai no comportamento da fase 2", () => {
   const j = resolverJanela({
     competencia: JUL,
     modo: "ate-dia-N",
-    dia: 26,
-    diasComDadoNoMesCorrente: [],
+    n: 20,
+    posicoesComDadoNaJanela: [],
   });
-  assert.equal(j.diaCorteAtual, 26);
+  assert.equal(j.diaCorteAtual, 20);
   assert.equal(j.limitadoPorDado, false);
 });
 
-test("39) o CLAMP de fim de mes continua valendo DEPOIS da limitacao 2.1", () => {
-  // hoje 31/07, dado ate 31, M-1 = junho (30 dias) -> clampa em 30
+test("39) o CLAMP continua valendo DEPOIS da limitacao 2.1", () => {
+  // julho no 23o dia, dado ate 23, M-1 = junho (21 dias de producao) -> clampa 21
   const j = resolverJanela({
     competencia: JUL,
     modo: "ate-dia-N",
-    dia: 31,
-    diasComDadoNoMesCorrente: [29, 30, 31],
+    n: 23,
+    posicoesComDadoNaJanela: [21, 22, 23],
   });
-  assert.equal(j.diaCorteAtual, 31);
-  assert.equal(j.diaCorteAnterior, 30);
+  assert.equal(j.diaCorteAtual, 23);
+  assert.equal(j.diaCorteAnterior, 21);
   assert.equal(j.clampado, true);
   assert.equal(j.limitadoPorDado, false);
 });
 
-test("40) limitacao 2.1 E clamp juntos: dado ate 31, hoje 31, M-1 fevereiro", () => {
+test("40) limitacao 2.1 E clamp juntos: marco no 22o, dado ate 20, M-1 fevereiro", () => {
   const j = resolverJanela({
     competencia: { year: 2026, month: 3 },
     modo: "ate-dia-N",
-    dia: 31,
-    diasComDadoNoMesCorrente: [30],
+    n: 22,
+    posicoesComDadoNaJanela: [20],
   });
-  assert.equal(j.diaCorteAtual, 30); // limitado pelo dado
+  assert.equal(j.diaCorteAtual, 20); // limitado pelo dado
   assert.equal(j.limitadoPorDado, true);
-  assert.equal(j.diaCorteAnterior, 28); // depois clampado por fevereiro
+  assert.equal(j.diaCorteAnterior, 18); // depois clampado por fevereiro (18 dias)
   assert.equal(j.clampado, true);
 });
 
-test("41) o rotulo mostra o N REAL, nao o dia de hoje", () => {
+test("41) o rotulo mostra o N REAL, nao o N de hoje", () => {
   const j = resolverJanela({
     competencia: JUL,
     modo: "ate-dia-N",
-    dia: 26,
-    diasComDadoNoMesCorrente: [23],
+    n: 20,
+    posicoesComDadoNaJanela: [17],
   });
   const r = calcularDelta({ competencia: JUL, valorAtual: 110, valorAnterior: 100, janela: j });
-  assert.equal(rotuloJanela(r), "1-23");
+  assert.equal(rotuloJanela(r), "17 dias");
 });
 
-test("42b) REGRESSAO — o dia-cabeca da competencia nao pode virar o maximo", () => {
+test("42b) REGRESSAO — o dia-cabeca da competencia CONTA, e conta como posicao 1", () => {
   // A janela de producao de julho comeca no ultimo dia util de JUNHO (30/06).
-  // Esse registro tem dia-do-mes 30. Se ele entrar no conjunto, max=30 e a
-  // limitacao 2.1 nao acontece — o card volta a ler atraso de importacao como
-  // queda. Quem monta o conjunto DEVE filtrar pelo mes-calendario (ver o
-  // contrato de diasComDadoNoMesCorrente).
-  const comCabeca = [30, 1, 2, 3, 23]; // 30 = 30/06, indevido
-  const semCabeca = [1, 2, 3, 23]; // so julho
-  assert.equal(ultimoDiaComDado(comCabeca), 30); // <- o que dava errado
-  assert.equal(ultimoDiaComDado(semCabeca), 23); // <- o correto
-
-  const errado = resolverJanela({
-    competencia: JUL, modo: "ate-dia-N", dia: 26,
-    diasComDadoNoMesCorrente: comCabeca,
+  //
+  // ATE 03/08/2026 este teste afirmava o CONTRARIO: que o dia-cabeca precisava
+  // ser EXCLUIDO do conjunto, porque com dia-do-mes 30 ele viraria o maximo e
+  // desligaria a limitacao 2.1. Isso era verdade enquanto o conjunto era de
+  // dias-do-mes — e era um remendo, nao uma regra: para nao deixar o numero 30
+  // enganar o maximo, jogava-se fora a producao real do primeiro dia da janela.
+  //
+  // Em POSICAO o problema nao existe: 30/06 e a posicao 1 na janela de julho, a
+  // MENOR de todas. O dia-cabeca deixa de precisar de excecao e volta a ser
+  // contado, que e o correto — producao dele e producao da competencia.
+  // As assercoes de POSICAO (30/06 -> 1, 01/07 -> 2, 29/06 -> 0) vivem no gate,
+  // que consegue importar o helper. Aqui fica o efeito observavel na janela.
+  //
+  // Com o dia-cabeca no conjunto, a limitacao 2.1 SEGUE funcionando: ele nao
+  // mascara mais nada porque nao e o maximo.
+  const comCabeca = [1, 2, 3, 17]; // 1 = 30/06
+  assert.equal(ultimaPosicaoComDado(comCabeca), 17);
+  const j = resolverJanela({
+    competencia: JUL, modo: "ate-dia-N", n: 20,
+    posicoesComDadoNaJanela: comCabeca,
   });
-  const certo = resolverJanela({
-    competencia: JUL, modo: "ate-dia-N", dia: 26,
-    diasComDadoNoMesCorrente: semCabeca,
-  });
-  assert.equal(errado.diaCorteAtual, 26);
-  assert.equal(errado.limitadoPorDado, false);
-  assert.equal(certo.diaCorteAtual, 23);
-  assert.equal(certo.limitadoPorDado, true);
+  assert.equal(j.diaCorteAtual, 17);
+  assert.equal(j.limitadoPorDado, true);
 });
 
-test("42) mes-cheio ignora diasComDado (nao vaza para competencia fechada)", () => {
+test("42) mes-cheio ignora posicoesComDado (nao vaza para competencia fechada)", () => {
   const j = resolverJanela({
     competencia: JUL,
     modo: "mes-cheio",
-    dia: 26,
-    diasComDadoNoMesCorrente: [23],
+    n: 20,
+    posicoesComDadoNaJanela: [17],
   });
   assert.equal(j.diaCorteAtual, null);
   assert.equal(j.limitadoPorDado, false);
@@ -454,13 +499,13 @@ test("42) mes-cheio ignora diasComDado (nao vaza para competencia fechada)", () 
 });
 
 test("33) deltaDaSerie repassa a janela intacta", () => {
-  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", dia: 26 });
+  const j = resolverJanela({ competencia: JUL, modo: "ate-dia-N", n: 20 });
   const serie: PontoSerie[] = [
     { year: 2026, month: 6, valor: 4_846_718.35, fonte: "daily" },
     { year: 2026, month: 7, valor: 4_332_356.55, fonte: "daily" },
   ];
   const r = deltaDaSerie({ serie, competencia: JUL, janela: j });
-  assert.equal(r.janela.diaCorteAtual, 26);
+  assert.equal(r.janela.diaCorteAtual, 20);
   assert.equal(r.fontesDivergentes, false); // recorte le a MESMA fonte dos 2 lados
   assert.equal(r.deltaPct, -10.6);
 });

@@ -51,14 +51,22 @@ export default function DeltaBadge({ delta, semRotulo }: DeltaBadgeProps) {
       `Comparacao de MES CHEIO: a competencia atual ainda esta aberta (parcial) e o mes anterior esta fechado (completo). Este indicador nao tem dado com data por linha nas duas pontas, entao nao da para recortar a janela.`
     );
   } else if (delta.janela.modo === "ate-dia-N") {
+    // "N primeiros dias de producao", nao "dias 1-N". O corte deixou de ser dia
+    // do mes em 03/08/2026 e virou POSICAO na janela; dizer "dias 1-3" com corte
+    // por posicao repetiria no rotulo a mesma mistura de familias que o codigo
+    // acabou de perder. "dias uteis da janela" seria correto e ilegivel — a tela
+    // fala "dias de producao" (decisao Diego).
+    const n = delta.janela.diaCorteAtual ?? 0;
+    const m = delta.janela.diaCorteAnterior ?? 0;
+    const dias = (q: number) => `${q} ${q === 1 ? "primeiro dia" : "primeiros dias"} de producao`;
     avisos.push(
       delta.janela.clampado
-        ? `Janela recortada: dias 1-${delta.janela.diaCorteAtual} da competencia atual contra 1-${delta.janela.diaCorteAnterior} de ${delta.labelAnterior} (o mes anterior tem menos dias).`
-        : `Janela recortada nos dois lados: dias 1-${delta.janela.diaCorteAtual} de cada competencia.`
+        ? `Janela recortada: ${dias(n)} da competencia atual contra ${m} de ${delta.labelAnterior} (a competencia anterior tem menos dias de producao).`
+        : `Janela recortada nos dois lados: ${dias(n)} de cada competencia.`
     );
     if (delta.janela.limitadoPorDado) {
       avisos.push(
-        `O corte parou no dia ${delta.janela.diaCorteAtual} (e nao no dia ${delta.janela.diaHoje}, hoje) porque a competencia atual so tem producao lancada ate ali. Comparar ate hoje leria o atraso de importacao como queda.`
+        `O corte parou no ${n}o dia de producao (e nao no ${delta.janela.diaHoje}o, o de hoje) porque a competencia atual so tem producao lancada ate ali. Comparar ate hoje leria o atraso de importacao como queda.`
       );
     }
   }
