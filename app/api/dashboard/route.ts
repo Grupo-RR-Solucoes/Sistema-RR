@@ -13,6 +13,8 @@ import { buildClosingAnalytics } from "@/lib/closingAnalytics";
 import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { calcularRbt12 } from "@/lib/rbt12";
 import { buildProjecaoMetas, consolidarGrupo, consolidarGrupoEquipe } from "@/lib/projecaoMetas";
+import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
+import { calcularRitmoNecessario, metaPropriaDoGrupo } from "@/lib/ritmoNecessario";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
 import {
   buildPromoterAnalytics,
@@ -641,6 +643,54 @@ export async function GET(req: Request) {
       seguroLabel = rotuloCompetencia;
     }
 
+    // ============================================================
+    // RITMO DIARIO DO GRUPO — DUAS METAS, de proposito discordantes.
+    //
+    // (a) META DOS PROMOTORES = consolidarGrupoEquipe(res).meta. NAO somar
+    //     monthly_targets na mao: a soma bruta de julho/2026 da R$ 7.562.000
+    //     contra R$ 6.402.000 do consolidado, porque o consolidado ignora
+    //     promotor inativo e chave master. Erro de R$ 1,16 milhao. O
+    //     consolidado tambem ja deduplica por promotor (promoterAnalytics faz
+    //     um `.find()` de UMA linha de meta por promotor, nao a soma delas).
+    //
+    // (b) META PROPRIA = META_DIARIA_GRUPO x dias uteis TOTAIS da janela.
+    //     Constante NOMEADA (lib/ritmoNecessario.ts), mudar exige deploy.
+    //     Decisao Diego (02/08): as duas visoes existem para DISCORDAR; se
+    //     concordassem, uma seria redundante. Em julho a propria fica ~11%
+    //     abaixo da soma das individuais, e isso e informacao, nao defeito.
+    //
+    // ACUMULADO: o MESMO nos dois lados — consEquipe.producao_acumulada, que
+    // ja inclui a ADS (medido em 02/08: R$ 612.225,52 dentro dos
+    // R$ 6.426.690,15 de julho). Comparar meta de grupo inteiro com producao
+    // de meia empresa seria erro de universo.
+    //
+    // DIVIDA REGISTRADA (nao consertada nesta frente, decisao Diego): a ADS
+    // esta `active=false` em `companies`, e o filtro `activeIds` daqui de cima
+    // (usado por unassignedByMonth) exclui a producao ADS em chave MASTER no
+    // mes FECHADO. A producao ADS ATRIBUIDA entra nos dois regimes; so o balde
+    // master fica de fora, e so no fechado. Enquanto isso durar, o acumulado
+    // comparado com a meta propria nao e exatamente o mesmo universo nos dois
+    // regimes.
+    // ============================================================
+    const janelaRitmo = resolverJanelaRitmo(year, month, { closed: monthClosed });
+    const ritmoGrupo = {
+      diasTotais: janelaRitmo.total,
+      promotores: calcularRitmoNecessario({
+        meta: consEquipe.meta,
+        acumulado: consEquipe.producao_acumulada,
+        projecao: consEquipe.projecao,
+        janela: janelaRitmo,
+        mesFechado: monthClosed,
+      }),
+      propria: calcularRitmoNecessario({
+        meta: metaPropriaDoGrupo(janelaRitmo),
+        acumulado: consEquipe.producao_acumulada,
+        projecao: consEquipe.projecao,
+        janela: janelaRitmo,
+        mesFechado: monthClosed,
+      }),
+    };
+
     // ---- alerta de projeção (só se houver risco: amarelo/vermelho) ----
     // cons já calculado acima (reusado na penetração de seguro do mês aberto).
     const projecao = {
@@ -1057,6 +1107,8 @@ export async function GET(req: Request) {
       // parcial) + o espelho do que o analytics resolveu. A tela rotula A PARTIR
       // daqui, em vez de remontar de year/month ou de escrever literal fixo.
       competencia: competenciaEfetiva,
+      // RITMO DIARIO DO GRUPO — duas metas. Ver o bloco de calculo acima.
+      ritmoGrupo,
       producaoGrupoMes,
       producaoParcial: true,
       producaoNaoAtribuida,

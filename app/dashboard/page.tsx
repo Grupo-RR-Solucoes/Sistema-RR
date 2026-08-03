@@ -58,6 +58,25 @@ type Competencia = {
   divergente: boolean;
 };
 
+// RITMO DIARIO DO GRUPO — duas visoes que existem para DISCORDAR (decisao
+// Diego, 02/08). `promotores` = soma das metas cadastradas (consolidada, sem
+// promotor inativo nem chave master); `propria` = constante de R$ 250.000 por
+// dia util x dias uteis totais da competencia. As duas leem o MESMO acumulado.
+// A conta chega pronta de lib/ritmoNecessario.ts — a tela so desenha.
+type RitmoVisao = {
+  estado: "SEM_META" | "META_BATIDA" | "MES_FECHADO" | "SEM_DIAS" | "ULTIMO_DIA" | "NORMAL";
+  meta: number;
+  acumulado: number;
+  falta: number;
+  excedente: number;
+  diasRestantes: number;
+  diasTotais: number;
+  ritmoDiario: number | null;
+  percent: number | null;
+  semaforo: "verde" | "amarelo" | "vermelho" | "sem_meta";
+};
+type RitmoGrupo = { diasTotais: number; promotores: RitmoVisao; propria: RitmoVisao };
+
 type Payload = {
   periodoLabel: string;
   // MOV 2 (A): competência renderizada + regime dela ('cms' | 'fechamento' | 'open').
@@ -65,6 +84,7 @@ type Payload = {
   month: number;
   regime: "cms" | "fechamento" | "open";
   competencia: Competencia;
+  ritmoGrupo: RitmoGrupo;
   producaoGrupoMes: number;
   producaoParcial: boolean;
   producaoNaoAtribuida: number;
@@ -146,6 +166,7 @@ export default function DashboardPage() {
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <main className="wrap">
         <Header data={data} comp={comp} onComp={setComp} />
+        <RitmoGrupoCard data={data} />
         <Seguridade data={data} />
         {data?.projecao?.show ? <AlertProjecao p={data.projecao} /> : null}
         <ChartCard data={data} error={error} />
@@ -315,6 +336,80 @@ function Header({
         ]}
       />
     </HeaderNavy>
+  );
+}
+
+// ============================================================
+// RITMO DIARIO DO GRUPO — duas metas lado a lado.
+//
+// Elas DISCORDAM de proposito. A meta dos promotores e a soma do que foi
+// cadastrado; a propria e a regua da casa (R$ 250.000 por dia util). Em
+// julho/2026 a propria fica ~11% abaixo da soma das individuais — se as duas
+// batessem, uma seria redundante.
+//
+// SEM META NAO SOME DA TELA (decisao Diego): agosto/2026 tem ZERO meta
+// cadastrada, e sumir em silencio esconderia a falha de cadastro. A visao (a)
+// exibe "sem meta cadastrada" e a (b) segue funcionando.
+//
+// A CONTA NAO MORA AQUI: os dois lados vem prontos de lib/ritmoNecessario.ts.
+// ============================================================
+function RitmoGrupoCard({ data }: { data: Payload | null }) {
+  if (!data?.ritmoGrupo) return null;
+  const { promotores, propria, diasTotais } = data.ritmoGrupo;
+  return (
+    <section className="card">
+      <div className="card-head">
+        <div>
+          <h2>Ritmo diário para bater a meta</h2>
+          <p className="csub">
+            {data.competencia.label} · {diasTotais} dias úteis · produção do grupo (4 CNPJs RR + ADS)
+          </p>
+        </div>
+      </div>
+      <div className="ritmo-duo">
+        <RitmoVisaoBloco titulo="Meta dos promotores" sub="soma das metas cadastradas" v={promotores} />
+        <RitmoVisaoBloco titulo="Meta própria" sub={`${brl0(250000)} por dia útil`} v={propria} />
+      </div>
+    </section>
+  );
+}
+
+function RitmoVisaoBloco({ titulo, sub, v }: { titulo: string; sub: string; v: RitmoVisao }) {
+  const tone = v.semaforo === "verde" ? "g" : v.semaforo === "amarelo" ? "a" : v.semaforo === "vermelho" ? "r" : "n";
+  const plural = v.diasRestantes === 1 ? "dia útil restante" : "dias úteis restantes";
+
+  // Todo estado vira TEXTO. Nada de "R$ 0,00/dia" sem meta, nada de ritmo
+  // negativo com a meta batida, nada de divisao por zero sem dia restante.
+  const { valor, linha } = (() => {
+    switch (v.estado) {
+      case "SEM_META":
+        return { valor: "Sem meta cadastrada", linha: "nenhuma meta lançada nesta competência" };
+      case "META_BATIDA":
+        return { valor: `+${brl0(v.excedente)}`, linha: `bateu a meta de ${brl0(v.meta)}` };
+      case "MES_FECHADO":
+        return { valor: `Faltou ${brl0(v.falta)}`, linha: `não bateu a meta de ${brl0(v.meta)}` };
+      case "SEM_DIAS":
+        return { valor: `Faltou ${brl0(v.falta)}`, linha: "janela encerrada · aguardando fechamento" };
+      case "ULTIMO_DIA":
+        return { valor: brl0(v.ritmoDiario ?? 0), linha: `último dia útil · falta isso para bater` };
+      default:
+        return {
+          valor: `${brl0(v.ritmoDiario ?? 0)}/dia`,
+          linha: `${v.diasRestantes} ${plural} · faltam ${brl0(v.falta)}`,
+        };
+    }
+  })();
+
+  return (
+    <div className="ritmo-bloco">
+      <p className="rk">{titulo}</p>
+      <p className="rks">{sub}</p>
+      <div className={`rnum num ${tone}`}>{valor}</div>
+      <p className="rsub">{linha}</p>
+      <p className="rmeta">
+        meta {v.meta > 0 ? brl0(v.meta) : "—"} · acumulado {brl0(v.acumulado)}
+      </p>
+    </div>
   );
 }
 
@@ -662,6 +757,19 @@ const CSS = `
 .rrdash .chart-foot b{color:var(--ink);font-weight:600;}
 /* lista "Simples por CNPJ" agora é <Table> do kit; só o espaçamento dentro do card */
 .rrdash .cnpj-table{margin-top:14px;}
+/* RITMO DIARIO — duas visoes lado a lado. minmax(0,1fr) e nao 1fr: sem o
+   min 0 o numero longo ("R$ 250.000/dia") impede a coluna de encolher e o
+   card estoura a largura no telefone. */
+.rrdash .ritmo-duo{margin-top:18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;}
+.rrdash .ritmo-bloco{border:1px solid var(--bd-soft);border-radius:var(--r-md);padding:18px 20px;display:flex;flex-direction:column;gap:3px;}
+.rrdash .ritmo-bloco .rk{font-size:12.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);margin:0;}
+.rrdash .ritmo-bloco .rks{font-size:11.5px;color:var(--ink-3);margin:0 0 8px;}
+.rrdash .ritmo-bloco .rnum{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1.1;color:var(--green);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
+.rrdash .ritmo-bloco .rnum.a{color:var(--amber);}
+.rrdash .ritmo-bloco .rnum.r{color:#B3261E;}
+.rrdash .ritmo-bloco .rnum.n{color:var(--ink-3);}
+.rrdash .ritmo-bloco .rsub{font-size:12.5px;color:var(--ink-2);margin:4px 0 0;}
+.rrdash .ritmo-bloco .rmeta{font-size:11.5px;color:var(--ink-3);margin:6px 0 0;font-variant-numeric:tabular-nums;}
 .rrdash .shortcuts{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
 .rrdash .sc{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);padding:18px;text-decoration:none;color:var(--ink);display:flex;flex-direction:column;gap:12px;transition:border-color .15s, box-shadow .15s, transform .15s;}
 .rrdash .sc:hover{border-color:#C7CEDA;box-shadow:var(--shadow);transform:translateY(-1px);}
@@ -681,5 +789,8 @@ const CSS = `
    quebra em tres linhas. */
 @media (max-width:560px){
   .rrdash .shortcuts{grid-template-columns:1fr;}
+  /* As duas visoes de meta EMPILHAM. Lado a lado a 356px uteis daria ~170px
+     por coluna, e "R$ 250.000/dia" nao cabe legivel nisso. */
+  .rrdash .ritmo-duo{grid-template-columns:1fr;}
 }
 `;
