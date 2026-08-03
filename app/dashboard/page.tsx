@@ -34,7 +34,17 @@ import type { ResultadoDelta } from "@/lib/delta/calcularDelta";
 // ============================================================
 
 type CnpjRow = { nome: string; faixa: string; rbt12: number; sinal: "verde" | "amarelo" | "acima" };
-type MesPonto = { mes: string; month: number; valor: number; parcial: boolean };
+// semConsolidacao: o mes TEM producao importada mas o valor sai do PMR e da 0,
+// porque a consolidacao nao rodou. O ponto existe no eixo (senao o mes sumiria
+// do grafico, que foi o defeito de 03/08/2026) e a tela marca a pendencia em
+// vez de exibir um zero mudo.
+type MesPonto = {
+  mes: string;
+  month: number;
+  valor: number;
+  parcial: boolean;
+  semConsolidacao?: boolean;
+};
 type Projecao = {
   percent: number | null;
   semaforo: "verde" | "amarelo" | "vermelho" | "sem_meta";
@@ -102,6 +112,10 @@ type Payload = {
   previsaoReceita: number;
   limiteSimples: { pct: number; rbt12: number; teto: number; sinal: string };
   producaoMensal: MesPonto[];
+  // Quantos CNPJs a serie soma. Derivado do dado na rota — o rodape dizia "4"
+  // fixo e o total ja incluia a ADS (5). Opcional para nao quebrar payload
+  // antigo em cache; o rodape omite o trecho quando vier ausente.
+  empresasNaSerie?: number;
   cnpjs: CnpjRow[];
   projecao: Projecao | null;
   // Seguridade (DB-driven). penetracaoSeguroGrupo = fração 0..1 (ponderada,
@@ -382,7 +396,11 @@ function RitmoGrupoCard({ data }: { data: Payload | null }) {
         <div>
           <h2>Ritmo diário do grupo</h2>
           <p className="csub">
-            {data.competencia.label} · {diasTotais} dias úteis · produção do grupo (4 CNPJs RR + ADS)
+            {/* Era o literal "(4 CNPJs RR + ADS)" — contagem fixa que já estava
+                errada (a ADS é a 5ª). Agora sai do mesmo empresasNaSerie
+                derivado do dado na rota; some quando o payload não o traz. */}
+            {data.competencia.label} · {diasTotais} dias úteis · produção do grupo
+            {data.empresasNaSerie ? ` (${data.empresasNaSerie} CNPJs)` : ""}
           </p>
         </div>
         <span className={`faixa-chip ${f.tone}`}>{f.txt}</span>
@@ -530,6 +548,8 @@ function AlertProjecao({ p }: { p: Projecao }) {
 function ChartCard({ data, error }: { data: Payload | null; error: string }) {
   const chart = useMemo(() => (data ? buildChart(data.producaoMensal) : null), [data]);
   const corrente = data?.producaoMensal.find((m) => m.parcial);
+  // Meses no eixo com produção importada e valor 0 (consolidação não rodou).
+  const pendentes = data?.producaoMensal.filter((m) => m.semConsolidacao) ?? [];
   // 4a — indice do ponto sob o cursor (ou com foco de teclado). null = nenhum.
   const [hover, setHover] = useState<number | null>(null);
   return (
@@ -570,7 +590,18 @@ function ChartCard({ data, error }: { data: Payload | null; error: string }) {
             {chart.dots.map((d, i) => (
               <g key={i}>
                 {d.parcial ? <circle cx={d.x} cy={d.y} r={9} fill="#D6A13F" opacity="0.18" /> : null}
-                <circle cx={d.x} cy={d.y} r={d.parcial ? 5.5 : 4.5} fill="#D6A13F" stroke="#FFFFFF" strokeWidth="2" />
+                {/* Mes com producao importada e valor 0 (consolidacao pendente):
+                    ponto OCO. Nao inventa numero — o ponto segue em 0, que e o
+                    que o PMR diz — mas deixa de parecer um mes sem venda. */}
+                <circle
+                  cx={d.x}
+                  cy={d.y}
+                  r={d.parcial ? 5.5 : 4.5}
+                  fill={d.semConsolidacao ? "#FFFFFF" : "#D6A13F"}
+                  stroke={d.semConsolidacao ? "#838B9C" : "#FFFFFF"}
+                  strokeWidth="2"
+                  strokeDasharray={d.semConsolidacao ? "2 2" : undefined}
+                />
                 {/* ALVO DE HOVER invisivel, r=18: o ponto desenhado tem 4,5px de
                     raio e acertar isso com o mouse e trabalhoso. O alvo grande
                     resolve sem mudar o desenho. focusable p/ chegar por teclado. */}
@@ -599,7 +630,7 @@ function ChartCard({ data, error }: { data: Payload | null; error: string }) {
               // Largura estimada pela contagem de caracteres (SVG nao mede texto
               // antes de renderizar). 8,2px por caractere na mono de 15px.
               const w = Math.max(132, texto.length * 8.2 + 28);
-              const h = d.parcial ? 54 : 40;
+              const h = d.parcial || d.semConsolidacao ? 54 : 40;
               // Vira para dentro nas pontas, para o balao nao sair do viewBox.
               const x = Math.min(Math.max(d.x - w / 2, chart.x0 - 40), chart.x1 + 40 - w);
               // Acima do ponto; abaixo quando nao ha espaco em cima.
@@ -618,6 +649,10 @@ function ChartCard({ data, error }: { data: Payload | null; error: string }) {
                     <text x={x + w / 2} y={y + 47} textAnchor="middle" fill="#D6A13F" fontSize="10" fontWeight="600">
                       parcial · mês em curso
                     </text>
+                  ) : d.semConsolidacao ? (
+                    <text x={x + w / 2} y={y + 47} textAnchor="middle" fill="#9AA1B0" fontSize="10" fontWeight="600">
+                      produção importada · falta consolidar
+                    </text>
                   ) : null}
                 </g>
               );
@@ -633,7 +668,12 @@ function ChartCard({ data, error }: { data: Payload | null; error: string }) {
       <div className="chart-foot">
         <span>Total do mês corrente ({corrente?.mes ?? "—"}):</span>
         <b className="num">{corrente ? brl0(corrente.valor) : "—"}</b>
-        <span>· parcial{data?.projecao ? `, ${data.projecao.diasDecorridos}/${data.projecao.diasTotais} dias úteis` : ""} · soma dos 4 CNPJs</span>
+        <span>· parcial{data?.projecao ? `, ${data.projecao.diasDecorridos}/${data.projecao.diasTotais} dias úteis` : ""}{data?.empresasNaSerie ? ` · soma de ${data.empresasNaSerie} CNPJs` : ""}</span>
+        {pendentes.length > 0 ? (
+          <span className="foot-pend">
+            · {pendentes.map((m) => m.mes).join(", ")} com produção importada e ainda não consolidada
+          </span>
+        ) : null}
       </div>
     </section>
   );
@@ -754,6 +794,7 @@ function buildChart(serie: MesPonto[]) {
     parcial: d.parcial,
     valor: d.valor,
     mes: d.mes,
+    semConsolidacao: d.semConsolidacao === true,
   }));
   const xlabels = serie.map((d, i) => ({ x: fx(i), label: d.mes, parcial: d.parcial }));
 
@@ -798,6 +839,9 @@ const CSS = `
 .rrdash .chart-empty{padding:48px 0;text-align:center;color:var(--ink-3);font-size:13.5px;}
 .rrdash .chart-foot{margin-top:14px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:12.5px;color:var(--ink-3);}
 .rrdash .chart-foot b{color:var(--ink);font-weight:600;}
+/* pendencia de consolidacao: mesma familia de cor do rodape, sem virar alerta —
+   o mes tem dado, so nao foi consolidado; nao e erro, e estado. */
+.rrdash .chart-foot .foot-pend{color:var(--ink-2);}
 /* lista "Simples por CNPJ" agora é <Table> do kit; só o espaçamento dentro do card */
 .rrdash .cnpj-table{margin-top:14px;}
 /* RITMO DIARIO — duas visoes lado a lado. minmax(0,1fr) e nao 1fr: sem o

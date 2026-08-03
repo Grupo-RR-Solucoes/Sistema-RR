@@ -26,6 +26,11 @@ import {
   calcularProducaoMensalDoGrupo,
 } from "@/lib/promoterAnalytics";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
+import {
+  isProductionStatus,
+  isValidDailyRecord,
+  competenciasComDailyElegivel,
+} from "@/lib/dashboard/serieEixo";
 import { buildTrpCreditProvider } from "@/lib/trp/creditTrpProvider";
 import { fetchAllRows } from "@/lib/queryHelpers";
 import {
@@ -73,6 +78,21 @@ type PmrRow = {
   month: number;
   production_value: number | null;
   insured_production_value: number | null;
+};
+
+// EIXO da serie: linha ENXUTA de proposito — 8 colunas, nenhuma de valor. Ela
+// so responde "esta competencia tem producao importada?", entao carregar
+// raw_payload/valores seria pagar caro por dado que ninguem le aqui. O valor do
+// ponto continua saindo do PMR (byMonth) e do balde master (unassignedByMonth).
+type DailyEixoRow = {
+  company_id: string | null;
+  assigned_promoter_id: string | null;
+  status: string | null;
+  is_srcc_restricted: boolean | null;
+  cancellation_date: string | null;
+  movement_date: string | null;
+  contract_date: string | null;
+  proposal_date: string | null;
 };
 
 type DailyUnassignedRow = {
@@ -135,41 +155,17 @@ type DailyRecorteRow = {
 };
 
 // Mesma regra de validade/produção do motor (app/api/calculate/monthly/route.ts):
-// PRODUCAO + não cancelado/pendente/SRCC-restrito. Usada só para somar a
-// produção em chave MASTER ainda não redistribuída (assigned_promoter_id null),
-// que o PMR não contabiliza. SRCC "consulta não realizada" NÃO é
-// is_srcc_restricted, então continua contando (decisão Diego).
-function normStatus(value: unknown) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .trim()
-    .toUpperCase();
-}
-function isProductionStatus(status: unknown) {
-  const s = normStatus(status);
-  return s === "PRODUCAO" || s === "PRODUCTION";
-}
-function isCancelledStatus(status: unknown) {
-  const s = normStatus(status);
-  return s.includes("CANCEL") || s.includes("ESTORN") || s.includes("RECUS");
-}
-function isPendingStatus(status: unknown) {
-  const s = normStatus(status);
-  return s.includes("PEND") || s.includes("ANALIS") || s.includes("PROCESS");
-}
-// Assinatura pelo que a funcao REALMENTE le (3 campos), e nao pela linha
-// inteira: assim serve tanto a DailyUnassignedRow quanto a DailyRecorteRow (o
-// recorte da Fase 2), que e um subconjunto enxuto da mesma tabela.
-function isValidDailyRecord(
-  r: Pick<DailyUnassignedRow, "cancellation_date" | "status" | "is_srcc_restricted">
-) {
-  if (r.cancellation_date) return false;
-  if (isCancelledStatus(r.status)) return false;
-  if (isPendingStatus(r.status)) return false;
-  if (r.is_srcc_restricted === true) return false;
-  return true;
-}
+// PRODUCAO + não cancelado/pendente/SRCC-restrito. SRCC "consulta não
+// realizada" NÃO é is_srcc_restricted, então continua contando (decisão Diego).
+//
+// MUDARAM DE CASA (03/08/2026) para lib/dashboard/serieEixo.ts, sem alteração
+// de semântica: o eixo da série precisa dos MESMOS dois testes, e deixá-los
+// aqui obrigaria a sexta cópia da elegibilidade do daily no repo. Os 5 pontos
+// de uso deste arquivo seguem chamando pelos mesmos nomes — só a definição
+// saiu. A assinatura de isValidDailyRecord ficou estrutural (LinhaDailyElegivel)
+// em vez de Pick<DailyUnassignedRow,...>; continua servindo DailyUnassignedRow
+// e DailyRecorteRow, que é o que ela já fazia. O import está no topo do arquivo,
+// junto dos demais.
 
 // ---------------------------------------------------------------------------
 // DELTA vs mes anterior — leitores de competencia FECHADA.
@@ -301,6 +297,7 @@ export async function GET(req: Request) {
       dailyUnassigned,
       insuranceSlipRules,
       dailyRecorte,
+      dailyEixo,
     ] = await Promise.all([
         fetchAllRows<PmrRow>(() =>
           supabase
@@ -351,6 +348,22 @@ export async function GET(req: Request) {
             )
             .gte("movement_date", recorteRange.inicio)
             .lt("movement_date", recorteRange.fim)
+        ),
+        // EIXO da serie: daily ATRIBUIDA do ano. Complementa a dailyUnassigned
+        // (que ja cobre o balde master) para que o eixo enxergue a producao
+        // INTEIRA. Mesma janela ampla por movement_date daquela query — a
+        // competencia e resolvida depois, na cascata de competenciaDaLinha.
+        // Sem filtro de empresa: o valor do ponto soma a ADS (byMonth do PMR
+        // nao filtra company_id), entao o eixo tambem tem de enxerga-la.
+        fetchAllRows<DailyEixoRow>(() =>
+          supabase
+            .from("daily_production_records")
+            .select(
+              "company_id, assigned_promoter_id, status, is_srcc_restricted, cancellation_date, movement_date, contract_date, proposal_date"
+            )
+            .not("assigned_promoter_id", "is", null)
+            .gte("movement_date", `${year - 1}-12-15`)
+            .lt("movement_date", `${year + 1}-01-10`)
         ),
       ]);
 
@@ -414,21 +427,73 @@ export async function GET(req: Request) {
     // aberto no topo, se ainda nao fechou"). Vale para QUALQUER competencia
     // pedida, nao so a corrente: navegar para um mes vazio tem de manter esse
     // mes selecionavel, senao o seletor pula para outro sozinho.
-    const monthsSet = new Set<number>([...byMonth.keys(), ...unassignedByMonth.keys()]);
+    //
+    // TERCEIRA FONTE — a daily ATRIBUIDA (03/08/2026). As duas de cima nao a
+    // olhavam, e por isso um mes so entrava no grafico depois de CONSOLIDADO.
+    // Ficou invisivel enquanto todo mes fechava; apareceu quando julho/2026
+    // perdeu as 8 linhas fosseis de PMR (frente feat/pmr-julho-ads) e sumiu do
+    // eixo com 873 linhas de daily elegivel na competencia. Medido no dia: o
+    // eixo dava [1,2,3,4,5,6,8] — e o unassignedByMonth estava VAZIO o ano
+    // inteiro, ou seja, na pratica a lista era "PMR + mes corrente".
+    // A regra vive em lib/dashboard/serieEixo.ts (mesma elegibilidade dos
+    // lacos deste arquivo, cascata de competencia do resto do sistema).
+    const mesesComDaily = competenciasComDailyElegivel(dailyEixo || [], year);
+    const monthsSet = new Set<number>([
+      ...byMonth.keys(),
+      ...unassignedByMonth.keys(),
+      ...mesesComDaily,
+    ]);
     monthsSet.add(month);
     const producaoMensal = Array.from(monthsSet)
       .sort((a, b) => a - b)
-      .map((m) => ({
-        mes: MES[m - 1],
-        month: m,
-        valor: roundMoney(
+      .map((m) => {
+        const valor = roundMoney(
           m === month
             ? producaoGrupoCorrente
             : toNumber(byMonth.get(m)) + toNumber(unassignedByMonth.get(m))
-        ),
-        // mês corrente = parcial (em andamento). Os anteriores são realizados.
-        parcial: m === month,
-      }));
+        );
+        return {
+          mes: MES[m - 1],
+          month: m,
+          valor,
+          // mês corrente = parcial (em andamento). Os anteriores são realizados.
+          parcial: m === month,
+          // ANTI-MENTIRA-POR-OMISSAO: o mes entrou no eixo porque tem producao
+          // IMPORTADA, mas o valor sai do PMR e da 0 porque a consolidacao nao
+          // rodou. NAO somamos o daily aqui de proposito — seria um terceiro
+          // caminho de valor, divergente do PMR, mascarando a pendencia real
+          // (a consolidacao diaria da RR nunca rodou; ver o registro da frente).
+          // O ponto fica no lugar certo do eixo, com valor honesto, e a tela
+          // marca que falta consolidar em vez de fingir que o mes nao existiu.
+          semConsolidacao: m !== month && valor === 0 && mesesComDaily.has(m),
+        };
+      });
+
+    // ROTULO DO RODAPE — quantos CNPJs a serie soma. Era o literal "soma dos 4
+    // CNPJs" em app/dashboard/page.tsx:636, e estava ERRADO desde que a ADS
+    // entrou: o total inclui a linha dela (o byMonth do PMR nao filtra
+    // company_id), entao sao 5, nao 4. Derivado do DADO e nao de texto fixo —
+    // CNPJ que entrar ou sair mexe no numero sozinho. A contagem sai das
+    // empresas com producao ELEGIVEL no ano (atribuida + balde master), que e
+    // exatamente o conjunto que alimenta a serie.
+    const empresasDaSerie = new Set<string>();
+    for (const r of dailyEixo || []) {
+      if (!r.company_id) continue;
+      if (!isProductionStatus(r.status)) continue;
+      if (!isValidDailyRecord(r)) continue;
+      const p = getProductionPeriodFromValue(r.movement_date);
+      if (!p || p.year !== year) continue;
+      empresasDaSerie.add(r.company_id);
+    }
+    for (const r of dailyUnassigned || []) {
+      if (!r.company_id || !activeIds.has(r.company_id)) continue;
+      if (!isProductionStatus(r.status)) continue;
+      if (!isValidDailyRecord(r)) continue;
+      const p = getProductionPeriodFromValue(r.movement_date);
+      if (!p || p.year !== year) continue;
+      empresasDaSerie.add(r.company_id);
+    }
+    const empresasNaSerie = empresasDaSerie.size;
 
     // KPI "Produção do grupo · mês" = total do mês corrente (atribuído + master
     // pendente), coerente com o ponto do gráfico, com o portal e com a tela
@@ -1137,6 +1202,7 @@ export async function GET(req: Request) {
       previsaoReceita,
       limiteSimples,
       producaoMensal,
+      empresasNaSerie,
       cnpjs,
       projecao,
       // Seguridade (DB-driven). penetracaoSeguroGrupo = fração 0..1 (ponderada,

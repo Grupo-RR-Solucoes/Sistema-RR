@@ -210,6 +210,14 @@ const GATES = [
       "createClient; daily_production_records de PRODUCAO",
   },
   {
+    arquivo: "scripts/serie_eixo_daily_gate.cjs",
+    nome: "mes com daily elegivel aparece no eixo da serie",
+    modo: "needs-db",
+    motivo:
+      "2,4s; createClient; daily_production_records de PRODUCAO. Barato porque " +
+      "so le 8 colunas sem valor; os blocos 1 e 2 sao puros (stub em memoria)",
+  },
+  {
     arquivo: "scripts/test_caixa_recebido_empresa.cjs",
     nome: "caixa - recebido empresa",
     modo: "needs-db",
@@ -247,9 +255,15 @@ const GATES = [
   {
     arquivo: "scripts/gate_regua_bbts_independe_do_client.ts",
     nome: "regua BBTS independe do client",
-    modo: "needs-db",
+    modo: "needs-db-lento",
     motivo:
-      "createClient; bbts_rule_versions de PRODUCAO",
+      "13,7s; createClient; bbts_rule_versions de PRODUCAO. PROMOVIDO em " +
+      "03/08/2026 por TETO: a faixa --db estava em 113,0s de 90s ANTES desta " +
+      "frente (medido com o gate novo fora, por git stash) e foi para 116,3s " +
+      "com ele. Promovidos os DOIS mais lentos que estavam VERDES — este e o " +
+      "mov3_equipe — em vez do mais lento de todos (ADS julho, 18,2s), que " +
+      "esta VERMELHO: tirar um gate que falha da faixa que se roda antes do PR " +
+      "e esconder a falha, nao pagar a divida. Faixa depois, MEDIDA: 78,0s",
   },
   {
     arquivo: "scripts/gate_ads_julho_dois_bugs.ts",
@@ -365,9 +379,12 @@ const GATES = [
   {
     arquivo: "scripts/mov3_equipe_gate.cjs",
     nome: "/equipe converge para o PMR em mes fechado (MOV 3)",
-    modo: "needs-db",
+    modo: "needs-db-lento",
     motivo:
-      "createClient; daily + PMR de PRODUCAO. 4 secoes vivo-x-vivo; a 5a (delta da SRCC 213615547) foi aposentada em 01/08",
+      "14,9s; createClient; daily + PMR de PRODUCAO. 4 secoes vivo-x-vivo; a 5a " +
+      "(delta da SRCC 213615547) foi aposentada em 01/08. PROMOVIDO em " +
+      "03/08/2026 por TETO, junto do gate_regua_bbts — ver o motivo de la para " +
+      "a medicao e o criterio de escolha",
   },
   {
     arquivo: "scripts/check_audit_v9_tables.cjs",
