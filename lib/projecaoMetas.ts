@@ -7,6 +7,7 @@ import {
   lookupInsuranceShareFromPenetration,
 } from "@/lib/insuranceCalculator";
 import { loadPromoterAnalyticsBase } from "@/lib/promoterAnalytics";
+import { semaforoFromPercent, type Semaforo } from "@/lib/semaforo";
 import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import {
   agregarSerieGrupo,
@@ -74,7 +75,9 @@ function isEligibleRecord(r: any): boolean {
 }
 
 // ---------- Tipos de saida ----------
-export type Semaforo = "verde" | "amarelo" | "vermelho" | "sem_meta";
+// Semaforo mora em lib/semaforo.ts junto da funcao que o produz (UMA escala).
+// Reexportado para nao quebrar quem ja importava daqui.
+export type { Semaforo };
 export type Tendencia = "crescimento" | "queda" | "estavel" | "sem_historico";
 
 // Estado gerencial do promotor (dimensao da hierarquia, ver migration
@@ -169,12 +172,14 @@ export type ProjecaoResultado = {
   perSupervisorMonthly?: SupervisorHistorico[];
 };
 
-export function semaforoFromPercent(percent: number | null): Semaforo {
-  if (percent === null) return "sem_meta";
-  if (percent >= 1) return "verde";
-  if (percent >= 0.8) return "amarelo";
-  return "vermelho";
-}
+// SEMAFORO — a implementacao MUDOU DE ARQUIVO, nao de comportamento. Foi para
+// lib/semaforo.ts (modulo puro, sem supabase/motor) para que helper puro,
+// client component e teste node:test possam usar a MESMA escala sem arrastar
+// este modulo inteiro junto. Reexportado aqui para nao quebrar consumidor
+// nenhum — `import { semaforoFromPercent } from "@/lib/projecaoMetas"` segue
+// valendo. NAO reintroduza uma copia local: duas escalas = dois veredictos
+// para a mesma verdade.
+export { semaforoFromPercent };
 
 // ---------- Motor ----------
 export async function buildProjecaoMetas(

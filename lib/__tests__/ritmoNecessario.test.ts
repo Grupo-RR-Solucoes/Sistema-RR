@@ -1,0 +1,225 @@
+/**
+ * Testes de lib/ritmoNecessario.ts — Frente RITMO DIARIO, Fase 1.
+ *
+ * Como rodar (Node 24, strip-types):
+ *   node --experimental-strip-types --test lib/__tests__/ritmoNecessario.test.ts
+ *
+ * Um teste por ESTADO, mais a identidade algebrica, a virada de cor e o caso
+ * REAL de julho/2026 (janela encerrada com regime ainda aberto).
+ */
+
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  calcularRitmoNecessario,
+  diasRestantesDe,
+  metaPropriaDoGrupo,
+  META_DIARIA_GRUPO,
+} from "../ritmoNecessario.ts";
+import type { JanelaRitmo } from "../janelaRitmo.ts";
+
+// Janela sintetica: os testes do helper de ritmo NAO devem depender do
+// calendario real (um feriado novo mudaria o numero e quebraria teste que nao
+// fala de feriado). A aritmetica de dia util tem os gates dela em
+// janela_ritmo_paridade_gate / projecao_dias_ritmo_gate.
+function janela(over: Partial<JanelaRitmo> = {}): JanelaRitmo {
+  return {
+    start: new Date(Date.UTC(2026, 6, 31)),
+    end: new Date(Date.UTC(2026, 7, 28)),
+    total: 21,
+    holidays: new Set<string>(),
+    refDate: new Date(Date.UTC(2026, 7, 10)),
+    diasDecorridos: 6,
+    diasParaRitmo: 5,
+    periodoCompleto: false,
+    ...over,
+  };
+}
+
+// Reproduz projetarPorRitmo SO para alimentar o parametro `projecao` nos
+// testes. A formula com dono vive em lib/janelaRitmo.ts; aqui ela e a ENTRADA
+// do helper, nunca a conta dele.
+function proj(j: JanelaRitmo, acum: number): number {
+  if (j.periodoCompleto) return acum;
+  return j.diasParaRitmo > 0 ? (acum / j.diasParaRitmo) * j.total : 0;
+}
+
+/** Atalho: monta os parametros com a projecao coerente com a janela. */
+function calc(meta: number | null, acumulado: number, j: JanelaRitmo, mesFechado = false) {
+  return calcularRitmoNecessario({ meta, acumulado, janela: j, projecao: proj(j, acumulado), mesFechado });
+}
+
+// --------------------------------------------------------------- DIAS
+test("1) dias restantes = total - diasParaRitmo (inclui HOJE em dia util)", () => {
+  // diasParaRitmo ja e diasDecorridos-1 em dia util aberto, entao o que sobra
+  // sao os dias futuros MAIS hoje.
+  assert.equal(diasRestantesDe(janela({ total: 21, diasParaRitmo: 5 })), 16);
+});
+
+test("2) dia NAO util: diasParaRitmo == diasDecorridos, sobra so o futuro", () => {
+  // 02/08/2026 e domingo: total=21, decorridos=1, diasParaRitmo=1 -> 20.
+  assert.equal(diasRestantesDe(janela({ total: 21, diasDecorridos: 1, diasParaRitmo: 1 })), 20);
+});
+
+test("3) dias restantes nunca e negativo", () => {
+  assert.equal(diasRestantesDe(janela({ total: 21, diasParaRitmo: 30 })), 0);
+});
+
+// ------------------------------------------------------------- ESTADOS
+test("4) SEM_META — meta zero nao vira ritmo, vira estado", () => {
+  const r = calc(0, 1_000_000, janela());
+  assert.equal(r.estado, "SEM_META");
+  assert.equal(r.ritmoDiario, null);
+  assert.equal(r.percent, null);
+  assert.equal(r.semaforo, "sem_meta");
+});
+
+test("4b) SEM_META — meta null (nao cadastrada): o caso REAL de ago/2026", () => {
+  const r = calc(null, 0, janela());
+  assert.equal(r.estado, "SEM_META");
+  assert.equal(r.ritmoDiario, null);
+  assert.equal(r.semaforo, "sem_meta");
+});
+
+test("5) META_BATIDA — mostra o excedente, NUNCA ritmo negativo", () => {
+  const r = calc(5_000_000, 5_400_000, janela());
+  assert.equal(r.estado, "META_BATIDA");
+  assert.equal(r.ritmoDiario, null); // <- o ponto: nada de "-X por dia"
+  assert.equal(r.excedente, 400_000);
+  assert.equal(r.falta, 0);
+});
+
+test("5b) META_BATIDA vence MES_FECHADO — num mes fechado que bateu, bateu E a retrospectiva", () => {
+  const r = calc(5_000_000, 5_400_000, janela({ periodoCompleto: true, diasParaRitmo: 21 }), true);
+  assert.equal(r.estado, "META_BATIDA");
+  assert.equal(r.excedente, 400_000);
+});
+
+test("6) MES_FECHADO — retrospectivo, com o quanto faltou e sem ritmo", () => {
+  const r = calc(5_000_000, 4_200_000, janela({ periodoCompleto: true, diasParaRitmo: 21 }), true);
+  assert.equal(r.estado, "MES_FECHADO");
+  assert.equal(r.ritmoDiario, null);
+  assert.equal(r.falta, 800_000);
+});
+
+test("7) julho/2026 REAL — total=23, diasParaRitmo=23, regime aberto, meta BATIDA", () => {
+  // Medido em 02/08/2026: a janela de julho encerrou (refDate > end) mas o
+  // fechamento nao foi importado, entao mesFechado=false. Nao pode dividir por
+  // zero nem exibir ritmo.
+  const j = janela({ total: 23, diasParaRitmo: 23, periodoCompleto: true });
+  const r = calc(6_402_000, 6_426_690.15, j);
+  assert.equal(r.estado, "META_BATIDA"); // julho bateu
+  assert.equal(r.diasRestantes, 0);
+  assert.equal(r.ritmoDiario, null);
+});
+
+test("7b) SEM_DIAS — janela encerrada, regime aberto e meta NAO batida", () => {
+  const j = janela({ total: 23, diasParaRitmo: 23, periodoCompleto: true });
+  const r = calc(7_000_000, 6_426_690.15, j);
+  assert.equal(r.estado, "SEM_DIAS");
+  assert.equal(r.diasRestantes, 0);
+  assert.equal(r.ritmoDiario, null); // <- NUNCA divide por zero
+  assert.equal(r.falta, 573_309.85);
+});
+
+test("8) ULTIMO_DIA — 1 dia restante: o ritmo E o que falta, sem dividir", () => {
+  const r = calc(5_000_000, 4_800_000, janela({ total: 21, diasParaRitmo: 20 }));
+  assert.equal(r.estado, "ULTIMO_DIA");
+  assert.equal(r.diasRestantes, 1);
+  assert.equal(r.ritmoDiario, 200_000);
+  assert.equal(r.ritmoDiario, r.falta);
+});
+
+test("9) NORMAL — (meta - acumulado) / dias restantes", () => {
+  const r = calc(5_250_000, 1_250_000, janela({ total: 21, diasParaRitmo: 5 }));
+  assert.equal(r.estado, "NORMAL");
+  assert.equal(r.diasRestantes, 16);
+  assert.equal(r.ritmoDiario, 250_000); // 4.000.000 / 16
+});
+
+// --------------------------------------------------------- IDENTIDADE
+test("10) IDENTIDADE — ritmo x dias restantes + acumulado == meta", () => {
+  for (const [meta, acum, total, dpr] of [
+    [5_250_000, 1_250_000, 21, 5],
+    [6_402_000, 2_000_000, 23, 9],
+    [1_000_000, 1, 20, 3],
+  ] as const) {
+    const r = calc(meta, acum, janela({ total, diasParaRitmo: dpr }));
+    assert.ok(r.ritmoDiario != null, `esperava ritmo em ${meta}/${acum}`);
+    const reconstruida = r.ritmoDiario! * r.diasRestantes + r.acumulado;
+    // Tolerancia: ritmoDiario e arredondado a 2 casas, entao o erro maximo da
+    // reconstrucao e meio centavo por dia restante.
+    assert.ok(
+      Math.abs(reconstruida - meta) <= 0.005 * r.diasRestantes + 0.01,
+      `identidade quebrou: ${reconstruida} vs ${meta}`,
+    );
+  }
+});
+
+test("10b) IDENTIDADE exata quando a divisao e inteira", () => {
+  const r = calc(5_250_000, 1_250_000, janela({ total: 21, diasParaRitmo: 5 }));
+  assert.equal(r.ritmoDiario! * r.diasRestantes + r.acumulado, 5_250_000);
+});
+
+// ------------------------------------------------------------------- COR
+test("11) VIRADA DE COR — o ponto exato em que amarelo vira vermelho (80%)", () => {
+  // Com total=20 e diasParaRitmo=10, projecao = acumulado x 2.
+  // meta 1.000.000 -> amarelo exige projecao >= 800.000 -> acumulado >= 400.000.
+  const j = janela({ total: 20, diasParaRitmo: 10 });
+
+  const amarelo = calc(1_000_000, 400_000, j);
+  assert.equal(amarelo.percent, 0.8);
+  assert.equal(amarelo.semaforo, "amarelo");
+
+  const vermelho = calc(1_000_000, 399_999, j);
+  assert.ok(vermelho.percent! < 0.8);
+  assert.equal(vermelho.semaforo, "vermelho");
+});
+
+test("12) VIRADA DE COR — 100% e verde; um passo abaixo e amarelo", () => {
+  const j = janela({ total: 20, diasParaRitmo: 10 });
+
+  const verde = calc(1_000_000, 500_000, j);
+  assert.equal(verde.percent, 1);
+  assert.equal(verde.semaforo, "verde");
+
+  const amarelo = calc(1_000_000, 499_999, j);
+  assert.equal(amarelo.semaforo, "amarelo");
+});
+
+test("13) EQUIVALENCIA — 'projecao >= meta' e 'ritmo realizado >= necessario'", () => {
+  // A demonstracao algebrica esta no cabecalho de calcularRitmoNecessario.
+  // Aqui ela e exercitada numericamente em varios pontos.
+  const j = janela({ total: 20, diasParaRitmo: 10 });
+  for (const acum of [100_000, 400_000, 499_999, 500_000, 900_000]) {
+    const r = calc(1_000_000, acum, j);
+    if (r.estado !== "NORMAL") continue;
+    const ritmoRealizado = acum / j.diasParaRitmo;
+    const baterPelaProjecao = r.percent! >= 1;
+    const baterPeloRitmo = ritmoRealizado >= r.ritmoDiario!;
+    assert.equal(
+      baterPelaProjecao,
+      baterPeloRitmo,
+      `divergiu em acumulado=${acum}: projecao=${baterPelaProjecao} ritmo=${baterPeloRitmo}`,
+    );
+  }
+});
+
+test("14) diasParaRitmo=0 (dia 1 do mes): projecao 0 e vermelho, mas o ritmo EXISTE", () => {
+  // Limite documentado: nao ha ritmo REALIZADO para comparar, entao a
+  // equivalencia nao tem os dois lados. Vermelho ali le "ainda nao produziu".
+  const r = calc(5_250_000, 0, janela({ total: 21, diasParaRitmo: 0, diasDecorridos: 0 }));
+  assert.equal(r.percent, 0);
+  assert.equal(r.semaforo, "vermelho");
+  assert.equal(r.estado, "NORMAL");
+  assert.equal(r.diasRestantes, 21);
+  assert.equal(r.ritmoDiario, 250_000); // 5.250.000 / 21
+});
+
+// -------------------------------------------------------- META PROPRIA
+test("15) META PROPRIA — constante NOMEADA x dias uteis TOTAIS da janela", () => {
+  assert.equal(META_DIARIA_GRUPO, 250_000);
+  assert.equal(metaPropriaDoGrupo(janela({ total: 21 })), 5_250_000); // agosto
+  assert.equal(metaPropriaDoGrupo(janela({ total: 23 })), 5_750_000); // julho
+});
