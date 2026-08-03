@@ -1131,6 +1131,13 @@ function PromotorView({ data }: { data: any }) {
 
   return (
     <>
+      {/* FAROL — PRIMEIRO elemento da tela, antes do hero. Ver RitmoFarol. */}
+      <RitmoFarol
+        ritmo={data.ritmo ?? null}
+        farol={data.farol ?? null}
+        ranking={data.ranking ?? null}
+      />
+
       {/* HERO */}
       <section className="card">
         <div className="phero">
@@ -1199,6 +1206,7 @@ function PromotorView({ data }: { data: any }) {
         />
       </div>
 
+
       {/* COMPARATIVO */}
       <section className="card">
         <div className="card-pad">
@@ -1229,6 +1237,205 @@ function PromotorView({ data }: { data: any }) {
         </div>
       </section>
     </>
+  );
+}
+
+// ============================================================
+// RITMO DIARIO NECESSARIO — SO na tela do promotor.
+//
+// DECISAO DIEGO (02/08): nao aparece em /equipe, nem na visao do gestor, nem
+// em tabela nenhuma. A rota so monta o campo no ramo `role === "promotor"`
+// (app/api/projecao/route.ts), entao nao ha como vazar por descuido de tela:
+// nos outros ramos o dado nem existe no payload.
+//
+// A CONTA NAO MORA AQUI. `ritmo` chega pronto de lib/ritmoNecessario.ts — se
+// voce precisou dividir algo antes de chegar neste componente, a conta esta no
+// lugar errado (mesma regra do delta em lib/delta/calcularDelta.ts).
+// ============================================================
+type RitmoPayload = {
+  estado: "SEM_META" | "META_BATIDA" | "MES_FECHADO" | "SEM_DIAS" | "ULTIMO_DIA" | "NORMAL";
+  meta: number;
+  acumulado: number;
+  falta: number;
+  excedente: number;
+  diasRestantes: number;
+  diasTotais: number;
+  ritmoDiario: number | null;
+  percent: number | null;
+  semaforo: "verde" | "amarelo" | "vermelho" | "sem_meta";
+};
+
+function toneDoSemaforo(s: RitmoPayload["semaforo"]): "g" | "a" | "r" | "n" {
+  return s === "verde" ? "g" : s === "amarelo" ? "a" : s === "vermelho" ? "r" : "n";
+}
+
+type FarolPayload = {
+  alvo: "meta" | "mes-anterior" | "nenhum";
+  ritmoRealizado: number | null;
+  diferencaRitmo: number | null;
+  inalcancavel: boolean;
+  mesAnterior: { producao: number; falta: number; ritmoDiario: number | null } | null;
+  ultrapassouPct: number | null;
+};
+
+// RANKING — SO a posicao e o total chegam aqui. Por desenho do payload
+// (app/api/projecao/route.ts) nao existe nome nem valor de terceiro para
+// exibir, mesmo que alguem quisesse. NAO acrescente "faltam R$ X para o 11o":
+// isso e o valor do vizinho por subtracao.
+type RankingPayload = {
+  regional: "ALAGOAS" | "PERNAMBUCO";
+  label: string;
+  posicao: number | null;
+  total: number;
+};
+
+function RitmoFarol({
+  ritmo,
+  farol,
+  ranking,
+}: {
+  ritmo: RitmoPayload | null;
+  farol: FarolPayload | null;
+  ranking: RankingPayload | null;
+}) {
+  if (!ritmo) return null;
+
+  const dias = ritmo.diasRestantes;
+  const plural = dias === 1 ? "dia útil restante" : "dias úteis restantes";
+  const realizado = farol?.ritmoRealizado ?? null;
+  const dif = farol?.diferencaRitmo ?? null;
+
+  // A LINHA PRINCIPAL E SEMPRE POR DIA UTIL. "Faltam R$ 340.000" nao cabe na
+  // cabeca de quem vende contrato a contrato; "R$ 21.250 por dia" cabe, e da
+  // para comparar com o que ele fez ontem. O total vai para o subtexto.
+  const { chapeu, valor, unidade, apoio, rodape, tone } = (() => {
+    switch (ritmo.estado) {
+      case "SEM_META":
+        // Neutro de proposito: meta nao cadastrada nao e culpa do promotor.
+        return {
+          chapeu: "Ritmo diário",
+          valor: "—",
+          unidade: "",
+          apoio: "sua meta desta competência ainda não foi cadastrada",
+          rodape: realizado != null ? `você vem fazendo ${brl(realizado)} por dia útil` : "",
+          tone: "n" as const,
+        };
+
+      case "META_BATIDA": {
+        // O estado que o Diego quer ESTIMULAR: nao some, nao fica neutro.
+        // Muda de alvo — o assunto agora e o quanto ultrapassou e seguir.
+        const pct = farol?.ultrapassouPct ?? null;
+        const pctTexto = pct != null ? ` (+${(pct * 100).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%)` : "";
+        return {
+          chapeu: "Meta batida",
+          valor: `+${brl(ritmo.excedente)}`,
+          unidade: pctTexto,
+          apoio: `você já passou a meta de ${brl(ritmo.meta)}`,
+          rodape:
+            realizado != null && dias > 0
+              ? `mantenha ${brl(realizado)} por dia e fecha o mês em ${brl(ritmo.acumulado + realizado * dias)}`
+              : "siga somando até o fim da janela",
+          tone: "g" as const,
+        };
+      }
+
+      case "MES_FECHADO":
+        return {
+          chapeu: "Competência fechada",
+          valor: `Faltou ${brl(ritmo.falta)}`,
+          unidade: "",
+          apoio: `de uma meta de ${brl(ritmo.meta)}`,
+          rodape: "",
+          tone: "r" as const,
+        };
+
+      case "SEM_DIAS":
+        return {
+          chapeu: "Janela encerrada",
+          valor: `Faltou ${brl(ritmo.falta)}`,
+          unidade: "",
+          apoio: "aguardando o fechamento da competência",
+          rodape: "",
+          tone: "r" as const,
+        };
+
+      case "ULTIMO_DIA":
+        return {
+          chapeu: "Hoje é o último dia útil",
+          valor: brl(ritmo.ritmoDiario ?? 0),
+          unidade: "",
+          apoio: `é o que falta para bater a meta de ${brl(ritmo.meta)}`,
+          rodape: realizado != null ? `seu ritmo no mês: ${brl(realizado)} por dia útil` : "",
+          tone: toneDoSemaforo(ritmo.semaforo),
+        };
+
+      default: {
+        // B.5 — FAROL INALCANCAVEL: quando o necessario passa de 3x o que ele
+        // vem fazendo, o vermelho vira ruido. Troca de ALVO (superar o proprio
+        // mes anterior), mas a meta continua visivel no rodape.
+        if (farol?.alvo === "mes-anterior" && farol.mesAnterior) {
+          const ma = farol.mesAnterior;
+          return {
+            chapeu: "Meta do mês fora de alcance · novo alvo",
+            valor: brl(ma.ritmoDiario ?? 0),
+            unidade: " por dia útil",
+            apoio: `para superar seus ${brl(ma.producao)} do mês passado · faltam ${brl(ma.falta)}`,
+            rodape: `meta da competência: ${brl(ritmo.meta)}${
+              realizado != null ? ` · seu ritmo hoje: ${brl(realizado)}/dia` : ""
+            }`,
+            tone: "a" as const,
+          };
+        }
+
+        // Verde / amarelo / vermelho normais. O que muda entre eles e o TOM da
+        // mensagem, nao so a cor.
+        const verde = ritmo.semaforo === "verde";
+        const apoioTom = verde
+          ? realizado != null
+            ? `mantenha o ritmo — você vem fazendo ${brl(realizado)} por dia útil`
+            : "mantenha o ritmo"
+          : dif != null && dif > 0
+            ? `são ${brl(dif)} a mais por dia do que os ${brl(realizado ?? 0)} que você vem fazendo`
+            : realizado != null
+              ? `seu ritmo hoje: ${brl(realizado)} por dia útil`
+              : "";
+        return {
+          chapeu: "Para bater sua meta você precisa de",
+          valor: brl(ritmo.ritmoDiario ?? 0),
+          unidade: " por dia útil",
+          apoio: apoioTom,
+          rodape: `${dias} ${plural} · faltam ${brl(ritmo.falta)} de ${brl(ritmo.meta)}`,
+          tone: toneDoSemaforo(ritmo.semaforo),
+        };
+      }
+    }
+  })();
+
+  return (
+    <section className={`card farol ${tone}`}>
+      <div className="card-pad">
+        <div className="fhead">
+          <p className="fk">{chapeu}</p>
+          {ranking ? (
+            <span className="frank">
+              {ranking.posicao != null ? (
+                <>
+                  <b>{ranking.posicao}º</b> de {ranking.total} · {ranking.label}
+                </>
+              ) : (
+                <>sem posição ainda · {ranking.label}</>
+              )}
+            </span>
+          ) : null}
+        </div>
+        <div className="fnum num">
+          {valor}
+          {unidade ? <span className="fun">{unidade}</span> : null}
+        </div>
+        {apoio ? <p className="fap">{apoio}</p> : null}
+        {rodape ? <p className="frd">{rodape}</p> : null}
+      </div>
+    </section>
   );
 }
 
@@ -1373,6 +1580,26 @@ const CSS = `
 .rrproj .bignum.a{color:var(--amber-tx);}
 .rrproj .bignum.r{color:var(--red-tx);}
 .rrproj .bignum.n{color:var(--ink-3);}
+/* FAROL — primeiro elemento da tela do promotor, largura cheia. Nao e um KPI
+   entre outros: a barra lateral colorida e o numero grande existem para ele
+   ser a primeira coisa que o olho pega. 42px = a escala do KpiHero do kit;
+   nao ha escala nova aqui. */
+.rrproj .farol{border-left:5px solid var(--ink-3);}
+.rrproj .farol.g{border-left-color:var(--green-tx);}
+.rrproj .farol.a{border-left-color:var(--amber-tx);}
+.rrproj .farol.r{border-left-color:var(--red-tx);}
+.rrproj .farol .fhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px;}
+.rrproj .farol .fk{font-size:12.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);margin:0;}
+.rrproj .farol .frank{font-size:12.5px;color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;}
+.rrproj .farol .frank b{font-size:15px;color:var(--ink);}
+.rrproj .farol .fnum{font-size:42px;font-weight:700;letter-spacing:-.025em;line-height:1.05;color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
+.rrproj .farol.g .fnum{color:var(--green-tx);}
+.rrproj .farol.a .fnum{color:var(--amber-tx);}
+.rrproj .farol.r .fnum{color:var(--red-tx);}
+.rrproj .farol.n .fnum{color:var(--ink-3);}
+.rrproj .farol .fnum .fun{font-size:19px;font-weight:600;letter-spacing:0;margin-left:6px;color:var(--ink-2);}
+.rrproj .farol .fap{font-size:14px;font-weight:500;color:var(--ink);margin:10px 0 0;}
+.rrproj .farol .frd{font-size:12.5px;color:var(--ink-3);margin:5px 0 0;}
 .rrproj .trendline{display:inline-flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;color:var(--ink-2);flex-wrap:wrap;}
 .rrproj .trendline .tag{display:inline-flex;align-items:center;gap:6px;font-weight:700;}
 .rrproj .trendline .tag.up{color:var(--green-tx);}
@@ -1431,6 +1658,14 @@ const CSS = `
    .pname: o min-width:150px travava a coluna do nome nas tabelas. */
 @media (max-width:560px){
   .rrproj .dw-kpis{grid-template-columns:1fr;}
+
+  /* FAROL no telefone (B.6 — funciona em 384px, que descontado o padding da
+     pagina da ~340px uteis). "R$ 21.250,00" a 42px nao cabe; 30px cabe e
+     continua sendo o maior elemento da tela. A unidade desce de linha para
+     nao competir com o numero. */
+  .rrproj .farol .fnum{font-size:30px;}
+  .rrproj .farol .fnum .fun{display:block;margin-left:0;font-size:15px;}
+  .rrproj .farol .fap{font-size:13.5px;}
 
   .rrproj .risk-row{grid-template-columns:auto 1fr auto;row-gap:10px;column-gap:12px;padding:14px 14px;}
   .rrproj .risk-row .rank{grid-area:1 / 1;}

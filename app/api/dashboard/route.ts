@@ -13,6 +13,12 @@ import { buildClosingAnalytics } from "@/lib/closingAnalytics";
 import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { calcularRbt12 } from "@/lib/rbt12";
 import { buildProjecaoMetas, consolidarGrupo, consolidarGrupoEquipe } from "@/lib/projecaoMetas";
+import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
+import {
+  calcularRitmoNecessario,
+  metaPropriaDoGrupo,
+  semaforoPisoAlvo,
+} from "@/lib/ritmoNecessario";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
 import {
   buildPromoterAnalytics,
@@ -641,6 +647,67 @@ export async function GET(req: Request) {
       seguroLabel = rotuloCompetencia;
     }
 
+    // ============================================================
+    // RITMO DIARIO DO GRUPO — PISO e ALVO, com hierarquia.
+    //
+    // NAO sao duas metas paralelas nem duas leituras que "discordam". Ha uma
+    // ordem: o piso fica ABAIXO do alvo por construcao, e ficar entre os dois
+    // e um estado legitimo — e a faixa do meio e a razao do card existir.
+    //
+    // ALVO = meta do GRUPO = consolidarGrupoEquipe(res).meta. NAO somar
+    //     monthly_targets na mao: a soma bruta de julho/2026 da R$ 7.562.000
+    //     contra R$ 6.402.000 do consolidado, porque o consolidado ignora
+    //     promotor inativo e chave master. Erro de R$ 1,16 milhao. O
+    //     consolidado tambem ja deduplica por promotor (promoterAnalytics faz
+    //     um `.find()` de UMA linha de meta por promotor, nao a soma delas).
+    //
+    // PISO = META_DIARIA_GRUPO x dias uteis TOTAIS da janela. E o MINIMO que
+    //     o grupo deve fazer (calculo do Diego). Constante NOMEADA em
+    //     lib/ritmoNecessario.ts; mudar exige deploy. Julho: R$ 5.750.000 de
+    //     piso contra R$ 6.402.000 de alvo — o piso ser menor e o desenho.
+    //
+    // ACUMULADO: o MESMO nos dois lados — consEquipe.producao_acumulada, que
+    // ja inclui a ADS (medido em 02/08: R$ 612.225,52 dentro dos
+    // R$ 6.426.690,15 de julho). Comparar meta de grupo inteiro com producao
+    // de meia empresa seria erro de universo.
+    //
+    // DIVIDA REGISTRADA (nao consertada nesta frente, decisao Diego): a ADS
+    // esta `active=false` em `companies`, e o filtro `activeIds` daqui de cima
+    // (usado por unassignedByMonth) exclui a producao ADS em chave MASTER no
+    // mes FECHADO. A producao ADS ATRIBUIDA entra nos dois regimes; so o balde
+    // master fica de fora, e so no fechado. Enquanto isso durar, o acumulado
+    // comparado com a meta propria nao e exatamente o mesmo universo nos dois
+    // regimes.
+    // ============================================================
+    const janelaRitmo = resolverJanelaRitmo(year, month, { closed: monthClosed });
+    const pisoGrupo = metaPropriaDoGrupo(janelaRitmo);
+    const alvoGrupo = consEquipe.meta;
+    const ritmoGrupo = {
+      diasTotais: janelaRitmo.total,
+      // A FAIXA e a leitura principal do card: em qual das tres zonas o grupo
+      // esta. Calculada UMA vez, no servidor, pela variante explicita do
+      // helper — a tela nao redecide cor.
+      faixa: semaforoPisoAlvo({
+        projecao: consEquipe.projecao,
+        piso: pisoGrupo,
+        alvo: alvoGrupo,
+      }),
+      piso: calcularRitmoNecessario({
+        meta: pisoGrupo,
+        acumulado: consEquipe.producao_acumulada,
+        projecao: consEquipe.projecao,
+        janela: janelaRitmo,
+        mesFechado: monthClosed,
+      }),
+      alvo: calcularRitmoNecessario({
+        meta: alvoGrupo,
+        acumulado: consEquipe.producao_acumulada,
+        projecao: consEquipe.projecao,
+        janela: janelaRitmo,
+        mesFechado: monthClosed,
+      }),
+    };
+
     // ---- alerta de projeção (só se houver risco: amarelo/vermelho) ----
     // cons já calculado acima (reusado na penetração de seguro do mês aberto).
     const projecao = {
@@ -1057,6 +1124,8 @@ export async function GET(req: Request) {
       // parcial) + o espelho do que o analytics resolveu. A tela rotula A PARTIR
       // daqui, em vez de remontar de year/month ou de escrever literal fixo.
       competencia: competenciaEfetiva,
+      // RITMO DIARIO DO GRUPO — duas metas. Ver o bloco de calculo acima.
+      ritmoGrupo,
       producaoGrupoMes,
       producaoParcial: true,
       producaoNaoAtribuida,
