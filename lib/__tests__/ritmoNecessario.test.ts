@@ -15,6 +15,7 @@ import {
   calcularRitmoNecessario,
   diasRestantesDe,
   metaPropriaDoGrupo,
+  semaforoPisoAlvo,
   META_DIARIA_GRUPO,
 } from "../ritmoNecessario.ts";
 import type { JanelaRitmo } from "../janelaRitmo.ts";
@@ -215,6 +216,102 @@ test("14) diasParaRitmo=0 (dia 1 do mes): projecao 0 e vermelho, mas o ritmo EXI
   assert.equal(r.estado, "NORMAL");
   assert.equal(r.diasRestantes, 21);
   assert.equal(r.ritmoDiario, 250_000); // 5.250.000 / 21
+});
+
+// ------------------------------------------------- PISO x ALVO (3 FAIXAS)
+// Numeros reais de julho/2026: piso 5.750.000 (250k x 23) e alvo 6.402.000.
+const PISO_JUL = 5_750_000;
+const ALVO_JUL = 6_402_000;
+
+test("16) TRES FAIXAS — abaixo do piso e VERMELHO", () => {
+  assert.equal(
+    semaforoPisoAlvo({ projecao: 5_000_000, piso: PISO_JUL, alvo: ALVO_JUL }),
+    "vermelho",
+  );
+});
+
+test("17) TRES FAIXAS — entre piso e alvo e AMARELO (a faixa do meio)", () => {
+  // E a razao do card existir: passou do minimo, ainda nao chegou na meta.
+  assert.equal(
+    semaforoPisoAlvo({ projecao: 6_000_000, piso: PISO_JUL, alvo: ALVO_JUL }),
+    "amarelo",
+  );
+});
+
+test("18) TRES FAIXAS — no alvo ou acima e VERDE", () => {
+  assert.equal(semaforoPisoAlvo({ projecao: ALVO_JUL, piso: PISO_JUL, alvo: ALVO_JUL }), "verde");
+  assert.equal(
+    semaforoPisoAlvo({ projecao: ALVO_JUL + 1, piso: PISO_JUL, alvo: ALVO_JUL }),
+    "verde",
+  );
+});
+
+test("19) LIMITES EXATOS das tres faixas", () => {
+  // No piso exato ja e amarelo; um centavo abaixo e vermelho.
+  assert.equal(semaforoPisoAlvo({ projecao: PISO_JUL, piso: PISO_JUL, alvo: ALVO_JUL }), "amarelo");
+  assert.equal(
+    semaforoPisoAlvo({ projecao: PISO_JUL - 0.01, piso: PISO_JUL, alvo: ALVO_JUL }),
+    "vermelho",
+  );
+  // Um centavo abaixo do alvo ainda e amarelo.
+  assert.equal(
+    semaforoPisoAlvo({ projecao: ALVO_JUL - 0.01, piso: PISO_JUL, alvo: ALVO_JUL }),
+    "amarelo",
+  );
+});
+
+test("20) VERDE nunca fica mais facil que na escala de uma meta so", () => {
+  // A decisao de verde e a MESMA: projecao >= alvo. O piso so desempata o
+  // resto. Varredura: em nenhum ponto a variante devolve verde onde a escala
+  // canonica nao devolveria.
+  for (const projecao of [0, 1_000_000, PISO_JUL, 6_000_000, ALVO_JUL - 1, ALVO_JUL, 9_000_000]) {
+    const tres = semaforoPisoAlvo({ projecao, piso: PISO_JUL, alvo: ALVO_JUL });
+    const uma = projecao / ALVO_JUL >= 1 ? "verde" : "nao-verde";
+    assert.equal(
+      tres === "verde" ? "verde" : "nao-verde",
+      uma,
+      `verde divergiu em projecao=${projecao}`,
+    );
+  }
+});
+
+test("21) o piso de julho e MAIS exigente que o 80% da escala de uma meta", () => {
+  // 5.750.000 / 6.402.000 = 89,8%. Enquanto essa relacao valer, a faixa de
+  // tres nunca e mais permissiva que a de uma. O gate mede isso em producao.
+  assert.ok(PISO_JUL / ALVO_JUL > 0.8, `piso/alvo=${(PISO_JUL / ALVO_JUL).toFixed(3)}`);
+  // Prova pratica: projecao a 85% do alvo e amarelo na escala de uma meta...
+  const projecao = ALVO_JUL * 0.85;
+  assert.equal(semaforoFromPercentLocal(projecao / ALVO_JUL), "amarelo");
+  // ...e VERMELHO na de tres, porque nao alcancou o piso.
+  assert.equal(semaforoPisoAlvo({ projecao, piso: PISO_JUL, alvo: ALVO_JUL }), "vermelho");
+});
+
+// copia local da escala canonica SO para o teste 21 comparar as duas leituras.
+function semaforoFromPercentLocal(p: number): string {
+  if (p >= 1) return "verde";
+  if (p >= 0.8) return "amarelo";
+  return "vermelho";
+}
+
+test("22) ALVO AUSENTE — tres faixas viram DUAS, e nao ha verde", () => {
+  // Verde e "bateu a meta"; sem meta cadastrada nao ha o que bater. Passar do
+  // piso vale amarelo (minimo feito, alvo faltando no CADASTRO).
+  assert.equal(semaforoPisoAlvo({ projecao: 6_000_000, piso: PISO_JUL, alvo: 0 }), "amarelo");
+  assert.equal(semaforoPisoAlvo({ projecao: 1_000_000, piso: PISO_JUL, alvo: 0 }), "vermelho");
+  assert.equal(
+    semaforoPisoAlvo({ projecao: 99_000_000, piso: PISO_JUL, alvo: 0 }),
+    "amarelo",
+    "sem alvo nao existe verde",
+  );
+});
+
+test("23) SEM piso e SEM alvo — sem_meta", () => {
+  assert.equal(semaforoPisoAlvo({ projecao: 1_000_000, piso: 0, alvo: 0 }), "sem_meta");
+});
+
+test("24) SEM piso mas COM alvo — cai na escala canonica de uma meta", () => {
+  assert.equal(semaforoPisoAlvo({ projecao: ALVO_JUL * 0.85, piso: 0, alvo: ALVO_JUL }), "amarelo");
+  assert.equal(semaforoPisoAlvo({ projecao: ALVO_JUL * 0.5, piso: 0, alvo: ALVO_JUL }), "vermelho");
 });
 
 // -------------------------------------------------------- META PROPRIA

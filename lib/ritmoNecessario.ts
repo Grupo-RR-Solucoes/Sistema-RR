@@ -234,11 +234,66 @@ export function calcularRitmoNecessario(params: ParametrosRitmo): ResultadoRitmo
   };
 }
 
-/** Constante da meta PROPRIA do grupo. Ver o comentario no ponto de uso. */
+// ============================================================================
+// PISO x ALVO — TRES FAIXAS. A do meio e a razao do card existir.
+//
+// Nao sao "duas metas paralelas". Ha uma hierarquia:
+//   PISO = R$ 250.000 por dia util. O MINIMO que o grupo deve fazer (calculo
+//          do Diego). Fica ABAIXO do alvo por construcao — julho/2026:
+//          R$ 5.750.000 de piso contra R$ 6.402.000 de alvo. Esperado.
+//   ALVO = soma das metas dos promotores. E a meta DO GRUPO.
+//
+//   abaixo do PISO         -> vermelho  (nem o minimo)
+//   entre o PISO e o ALVO  -> amarelo   (passou do minimo, falta a meta)
+//   no ALVO ou acima       -> verde     (bateu a meta)
+//
+// POR QUE ISTO NAO E UMA SEGUNDA ESCALA. A decisao de VERDE continua sendo a
+// de semaforoFromPercent sobre o ALVO — reusada, nao reescrita. O piso so
+// desempata o que sobrou (amarelo x vermelho). Verde continua significando
+// "bateu a meta" e nunca fica mais facil: exige projecao >= alvo nas duas.
+//
+// SOBRE O AMARELO. Na escala de uma meta so, amarelo comeca em 80% do alvo.
+// Aqui ele comeca no PISO. Com o piso medido em julho (5.750.000 / 6.402.000 =
+// 89,8% do alvo) a faixa de tres e MAIS EXIGENTE que a de uma. Se um dia o
+// piso cair abaixo de 80% do alvo, o amarelo desta variante ficaria mais facil
+// que o padrao — nao e o caso hoje, e o gate mede a relacao.
+// ============================================================================
+export function semaforoPisoAlvo(params: {
+  projecao: number;
+  /** Meta MINIMA (R$ 250.000 x dias uteis). <= 0 => sem piso. */
+  piso: number;
+  /** Meta do GRUPO (soma das metas dos promotores). <= 0 => sem alvo. */
+  alvo: number;
+}): Semaforo {
+  const { projecao, piso, alvo } = params;
+
+  // ALVO AUSENTE — as tres faixas viram DUAS (decisao Diego, A.4). O card nao
+  // some: exibe o piso normalmente e diz que a meta do grupo nao tem cadastro.
+  // NAO se pinta verde aqui: verde e "bateu a meta", e nao ha meta para bater.
+  // Passar do piso com o alvo desconhecido e amarelo — o minimo esta feito, o
+  // alvo e que esta faltando (no cadastro, nao na venda).
+  if (!(alvo > 0)) {
+    if (!(piso > 0)) return semaforoFromPercent(null); // "sem_meta"
+    return projecao >= piso ? "amarelo" : "vermelho";
+  }
+
+  // A decisao de VERDE e a da escala canonica, sobre o ALVO. Reuso, nao copia.
+  if (semaforoFromPercent(projecao / alvo) === "verde") return "verde";
+
+  // Nao bateu o alvo: o PISO decide se e amarelo ou vermelho. Sem piso, cai na
+  // escala de uma meta so (o 80% do alvo), que e o comportamento anterior.
+  if (!(piso > 0)) return semaforoFromPercent(projecao / alvo);
+  return projecao >= piso ? "amarelo" : "vermelho";
+}
+
+/** Constante do PISO do grupo. Ver o comentario no ponto de uso. */
 export const META_DIARIA_GRUPO = 250_000;
 
 /**
- * Meta propria do grupo na competencia = META_DIARIA_GRUPO x dias uteis TOTAIS.
+ * PISO do grupo na competencia = META_DIARIA_GRUPO x dias uteis TOTAIS.
+ *
+ * E a meta MINIMA que o grupo deve fazer, nao uma meta concorrente do alvo:
+ * fica ABAIXO da soma das metas dos promotores por construcao.
  *
  * DECISAO DIEGO (02/08/2026): constante FIXA, nomeada, e mudar exige deploy.
  * Ela cobre o GRUPO INTEIRO (4 CNPJs RR + ADS), nao so a RR.

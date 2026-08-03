@@ -14,7 +14,11 @@ import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { calcularRbt12 } from "@/lib/rbt12";
 import { buildProjecaoMetas, consolidarGrupo, consolidarGrupoEquipe } from "@/lib/projecaoMetas";
 import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
-import { calcularRitmoNecessario, metaPropriaDoGrupo } from "@/lib/ritmoNecessario";
+import {
+  calcularRitmoNecessario,
+  metaPropriaDoGrupo,
+  semaforoPisoAlvo,
+} from "@/lib/ritmoNecessario";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
 import {
   buildPromoterAnalytics,
@@ -644,20 +648,23 @@ export async function GET(req: Request) {
     }
 
     // ============================================================
-    // RITMO DIARIO DO GRUPO — DUAS METAS, de proposito discordantes.
+    // RITMO DIARIO DO GRUPO — PISO e ALVO, com hierarquia.
     //
-    // (a) META DOS PROMOTORES = consolidarGrupoEquipe(res).meta. NAO somar
+    // NAO sao duas metas paralelas nem duas leituras que "discordam". Ha uma
+    // ordem: o piso fica ABAIXO do alvo por construcao, e ficar entre os dois
+    // e um estado legitimo — e a faixa do meio e a razao do card existir.
+    //
+    // ALVO = meta do GRUPO = consolidarGrupoEquipe(res).meta. NAO somar
     //     monthly_targets na mao: a soma bruta de julho/2026 da R$ 7.562.000
     //     contra R$ 6.402.000 do consolidado, porque o consolidado ignora
     //     promotor inativo e chave master. Erro de R$ 1,16 milhao. O
     //     consolidado tambem ja deduplica por promotor (promoterAnalytics faz
     //     um `.find()` de UMA linha de meta por promotor, nao a soma delas).
     //
-    // (b) META PROPRIA = META_DIARIA_GRUPO x dias uteis TOTAIS da janela.
-    //     Constante NOMEADA (lib/ritmoNecessario.ts), mudar exige deploy.
-    //     Decisao Diego (02/08): as duas visoes existem para DISCORDAR; se
-    //     concordassem, uma seria redundante. Em julho a propria fica ~11%
-    //     abaixo da soma das individuais, e isso e informacao, nao defeito.
+    // PISO = META_DIARIA_GRUPO x dias uteis TOTAIS da janela. E o MINIMO que
+    //     o grupo deve fazer (calculo do Diego). Constante NOMEADA em
+    //     lib/ritmoNecessario.ts; mudar exige deploy. Julho: R$ 5.750.000 de
+    //     piso contra R$ 6.402.000 de alvo — o piso ser menor e o desenho.
     //
     // ACUMULADO: o MESMO nos dois lados — consEquipe.producao_acumulada, que
     // ja inclui a ADS (medido em 02/08: R$ 612.225,52 dentro dos
@@ -673,17 +680,27 @@ export async function GET(req: Request) {
     // regimes.
     // ============================================================
     const janelaRitmo = resolverJanelaRitmo(year, month, { closed: monthClosed });
+    const pisoGrupo = metaPropriaDoGrupo(janelaRitmo);
+    const alvoGrupo = consEquipe.meta;
     const ritmoGrupo = {
       diasTotais: janelaRitmo.total,
-      promotores: calcularRitmoNecessario({
-        meta: consEquipe.meta,
+      // A FAIXA e a leitura principal do card: em qual das tres zonas o grupo
+      // esta. Calculada UMA vez, no servidor, pela variante explicita do
+      // helper — a tela nao redecide cor.
+      faixa: semaforoPisoAlvo({
+        projecao: consEquipe.projecao,
+        piso: pisoGrupo,
+        alvo: alvoGrupo,
+      }),
+      piso: calcularRitmoNecessario({
+        meta: pisoGrupo,
         acumulado: consEquipe.producao_acumulada,
         projecao: consEquipe.projecao,
         janela: janelaRitmo,
         mesFechado: monthClosed,
       }),
-      propria: calcularRitmoNecessario({
-        meta: metaPropriaDoGrupo(janelaRitmo),
+      alvo: calcularRitmoNecessario({
+        meta: alvoGrupo,
         acumulado: consEquipe.producao_acumulada,
         projecao: consEquipe.projecao,
         janela: janelaRitmo,

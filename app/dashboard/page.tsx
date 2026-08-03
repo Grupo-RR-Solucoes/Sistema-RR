@@ -75,7 +75,13 @@ type RitmoVisao = {
   percent: number | null;
   semaforo: "verde" | "amarelo" | "vermelho" | "sem_meta";
 };
-type RitmoGrupo = { diasTotais: number; promotores: RitmoVisao; propria: RitmoVisao };
+type RitmoGrupo = {
+  diasTotais: number;
+  /** Zona das TRES faixas, decidida no servidor. A tela nao redecide cor. */
+  faixa: "verde" | "amarelo" | "vermelho" | "sem_meta";
+  piso: RitmoVisao;
+  alvo: RitmoVisao;
+};
 
 type Payload = {
   periodoLabel: string;
@@ -340,12 +346,16 @@ function Header({
 }
 
 // ============================================================
-// RITMO DIARIO DO GRUPO — duas metas lado a lado.
+// RITMO DIARIO DO GRUPO — MINIMO e META, com hierarquia.
 //
-// Elas DISCORDAM de proposito. A meta dos promotores e a soma do que foi
-// cadastrado; a propria e a regua da casa (R$ 250.000 por dia util). Em
-// julho/2026 a propria fica ~11% abaixo da soma das individuais — se as duas
-// batessem, uma seria redundante.
+// NAO sao duas metas paralelas. O MINIMO (R$ 250.000 por dia util, calculo do
+// Diego) fica ABAIXO da META do grupo por construcao — julho/2026:
+// R$ 5.750.000 contra R$ 6.402.000. Ficar ENTRE os dois e estado legitimo, e e
+// essa faixa do meio que justifica o card existir.
+//
+// TRES FAIXAS: abaixo do minimo = vermelho; entre minimo e meta = amarelo; na
+// meta ou acima = verde. A zona chega DECIDIDA do servidor (semaforoPisoAlvo);
+// esta tela nao redecide cor nenhuma.
 //
 // SEM META NAO SOME DA TELA (decisao Diego). O intervalo entre a virada do mes
 // e o cadastro das metas e real e recorrente: em agosto/2026 durou ate
@@ -355,28 +365,59 @@ function Header({
 //
 // A CONTA NAO MORA AQUI: os dois lados vem prontos de lib/ritmoNecessario.ts.
 // ============================================================
+const FAIXA_TXT: Record<string, { txt: string; tone: "g" | "a" | "r" | "n" }> = {
+  verde: { txt: "Na meta do grupo", tone: "g" },
+  amarelo: { txt: "Acima do mínimo, abaixo da meta", tone: "a" },
+  vermelho: { txt: "Abaixo do mínimo", tone: "r" },
+  sem_meta: { txt: "Meta do grupo sem cadastro", tone: "n" },
+};
+
 function RitmoGrupoCard({ data }: { data: Payload | null }) {
   if (!data?.ritmoGrupo) return null;
-  const { promotores, propria, diasTotais } = data.ritmoGrupo;
+  const { piso, alvo, diasTotais, faixa } = data.ritmoGrupo;
+  const f = FAIXA_TXT[faixa] ?? FAIXA_TXT.sem_meta;
   return (
     <section className="card">
       <div className="card-head">
         <div>
-          <h2>Ritmo diário para bater a meta</h2>
+          <h2>Ritmo diário do grupo</h2>
           <p className="csub">
             {data.competencia.label} · {diasTotais} dias úteis · produção do grupo (4 CNPJs RR + ADS)
           </p>
         </div>
+        <span className={`faixa-chip ${f.tone}`}>{f.txt}</span>
       </div>
+      {/* ORDEM = HIERARQUIA: o mínimo vem primeiro por ser o primeiro
+          obstáculo; a meta vem depois por ser onde se quer chegar. */}
       <div className="ritmo-duo">
-        <RitmoVisaoBloco titulo="Meta dos promotores" sub="soma das metas cadastradas" v={promotores} />
-        <RitmoVisaoBloco titulo="Meta própria" sub={`${brl0(250000)} por dia útil`} v={propria} />
+        <RitmoVisaoBloco
+          titulo="Mínimo do grupo"
+          sub={`${brl0(250000)} por dia útil · piso`}
+          v={piso}
+          semCadastro="mínimo sem parâmetro"
+        />
+        <RitmoVisaoBloco
+          titulo="Meta do grupo"
+          sub="soma das metas dos promotores"
+          v={alvo}
+          semCadastro="meta do grupo sem cadastro"
+        />
       </div>
     </section>
   );
 }
 
-function RitmoVisaoBloco({ titulo, sub, v }: { titulo: string; sub: string; v: RitmoVisao }) {
+function RitmoVisaoBloco({
+  titulo,
+  sub,
+  v,
+  semCadastro,
+}: {
+  titulo: string;
+  sub: string;
+  v: RitmoVisao;
+  semCadastro: string;
+}) {
   const tone = v.semaforo === "verde" ? "g" : v.semaforo === "amarelo" ? "a" : v.semaforo === "vermelho" ? "r" : "n";
   const plural = v.diasRestantes === 1 ? "dia útil restante" : "dias úteis restantes";
 
@@ -385,7 +426,7 @@ function RitmoVisaoBloco({ titulo, sub, v }: { titulo: string; sub: string; v: R
   const { valor, linha } = (() => {
     switch (v.estado) {
       case "SEM_META":
-        return { valor: "Sem meta cadastrada", linha: "nenhuma meta lançada nesta competência" };
+        return { valor: "—", linha: semCadastro };
       case "META_BATIDA":
         return { valor: `+${brl0(v.excedente)}`, linha: `bateu a meta de ${brl0(v.meta)}` };
       case "MES_FECHADO":
@@ -772,6 +813,13 @@ const CSS = `
 .rrdash .ritmo-bloco .rnum.n{color:var(--ink-3);}
 .rrdash .ritmo-bloco .rsub{font-size:12.5px;color:var(--ink-2);margin:4px 0 0;}
 .rrdash .ritmo-bloco .rmeta{font-size:11.5px;color:var(--ink-3);margin:6px 0 0;font-variant-numeric:tabular-nums;}
+/* CHIP DA FAIXA — a leitura principal do card em uma linha. Cor decidida no
+   servidor; aqui so ha a paleta. */
+.rrdash .faixa-chip{font-size:12px;font-weight:600;padding:6px 12px;border-radius:999px;white-space:nowrap;border:1px solid;}
+.rrdash .faixa-chip.g{color:#1E7A4C;background:#E9F6EF;border-color:#BFE4D0;}
+.rrdash .faixa-chip.a{color:var(--amber);background:var(--amber-bg);border-color:var(--amber-bd);}
+.rrdash .faixa-chip.r{color:#B3261E;background:#FCECEA;border-color:#F2C7C2;}
+.rrdash .faixa-chip.n{color:var(--ink-3);background:#F1F3F7;border-color:var(--bd);}
 .rrdash .shortcuts{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
 .rrdash .sc{background:var(--card);border:1px solid var(--bd);border-radius:var(--r-md);padding:18px;text-decoration:none;color:var(--ink);display:flex;flex-direction:column;gap:12px;transition:border-color .15s, box-shadow .15s, transform .15s;}
 .rrdash .sc:hover{border-color:#C7CEDA;box-shadow:var(--shadow);transform:translateY(-1px);}
