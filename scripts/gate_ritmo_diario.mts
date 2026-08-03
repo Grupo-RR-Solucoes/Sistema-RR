@@ -43,9 +43,11 @@ import { resolverJanelaRitmo, projetarPorRitmo } from "@/lib/janelaRitmo.ts";
 import {
   calcularRitmoNecessario,
   metaPropriaDoGrupo,
+  semaforoPisoAlvo,
   META_DIARIA_GRUPO,
   diasRestantesDe,
 } from "@/lib/ritmoNecessario.ts";
+import { rankingDaRegional, regionalDoEstado, REGIONAL_LABEL } from "@/lib/regionais.ts";
 import { nowInFortaleza } from "@/lib/dateFortaleza.ts";
 
 const linha = () => console.log("-".repeat(78));
@@ -271,6 +273,166 @@ console.log("\n[6] a meta consolidada difere da soma BRUTA de monthly_targets\n"
         ? "  <- ATENCAO: o .find() do analytics pega UMA e descarta as outras"
         : "  (nenhum — sem risco de meta descartada)"),
   );
+}
+
+// ------------------------------------------------------- 7. TRES FAIXAS
+console.log("\n[7] as tres faixas: abaixo do piso, entre piso e alvo, acima do alvo\n");
+{
+  const piso = metaPropriaDoGrupo(janela);
+  const alvo = cons.meta > 0 ? cons.meta : piso * 1.2; // sem alvo, sintetiza p/ o teste
+  assert(
+    semaforoPisoAlvo({ projecao: piso * 0.5, piso, alvo }) === "vermelho",
+    "abaixo do piso -> vermelho",
+    `projecao=${brl(piso * 0.5)} piso=${brl(piso)}`,
+  );
+  assert(
+    semaforoPisoAlvo({ projecao: (piso + alvo) / 2, piso, alvo }) === "amarelo",
+    "entre piso e alvo -> amarelo (a faixa do meio)",
+    `projecao=${brl((piso + alvo) / 2)} entre ${brl(piso)} e ${brl(alvo)}`,
+  );
+  assert(
+    semaforoPisoAlvo({ projecao: alvo, piso, alvo }) === "verde",
+    "no alvo -> verde",
+    `projecao=${brl(alvo)} alvo=${brl(alvo)}`,
+  );
+  assert(
+    semaforoPisoAlvo({ projecao: alvo * 2, piso, alvo }) === "verde",
+    "acima do alvo -> verde",
+    "",
+  );
+  // O piso PRECISA ficar abaixo do alvo, senao a faixa do meio some.
+  assert(
+    piso < alvo,
+    "o piso fica ABAIXO do alvo (senao nao ha faixa do meio)",
+    `piso=${brl(piso)} alvo=${brl(alvo)} | piso/alvo=${((piso / alvo) * 100).toFixed(1)}%`,
+  );
+}
+
+// -------------------------------------- 8. PAYLOAD DO PROMOTOR SEM TERCEIRO
+console.log("\n[8] o payload do promotor nao carrega nome nem valor de terceiro\n");
+{
+  // Reproduz o que a rota monta no ramo `role === "promotor"`. Se algum dia
+  // alguem acrescentar `res.promotores` ali, esta assercao cai.
+  const promotores = res.promotores as any[];
+  const eu = promotores.find((p) => Number(p.producao_acumulada) > 0) ?? promotores[0];
+  const rk = rankingDaRegional({ promotores, promoterId: eu.promoter_id });
+
+  const payloadRanking = rk
+    ? { regional: rk.regional, label: REGIONAL_LABEL[rk.regional], posicao: rk.posicao, total: rk.total }
+    : null;
+
+  const chaves = Object.keys(payloadRanking ?? {});
+  assert(
+    chaves.length === 4 && chaves.every((k) => ["regional", "label", "posicao", "total"].includes(k)),
+    "o objeto de ranking tem SO regional/label/posicao/total",
+    `chaves=[${chaves.join(", ")}]`,
+  );
+
+  // VARREDURA: serializa e procura nome de OUTRO promotor e producao de
+  // terceiro dentro do JSON. Nome proprio pode estar (e dele); de outro, nao.
+  const json = JSON.stringify(payloadRanking);
+  const outros = promotores.filter((p) => p.promoter_id !== eu.promoter_id);
+  const nomeVazado = outros.find(
+    (p) => p.promoter_name && json.includes(String(p.promoter_name)),
+  );
+  assert(!nomeVazado, "nenhum NOME de terceiro no payload", nomeVazado ? `vazou: ${nomeVazado.promoter_name}` : "0 nomes");
+
+  const valorVazado = outros.find((p) => {
+    const v = Number(p.producao_acumulada);
+    return v > 0 && json.includes(String(Math.round(v)));
+  });
+  assert(
+    !valorVazado,
+    "nenhuma PRODUCAO de terceiro no payload",
+    valorVazado ? `vazou o valor de ${valorVazado.promoter_name}` : "0 valores",
+  );
+
+  // O antivalor explicito: distancia para a proxima posicao NAO pode existir.
+  assert(
+    !("faltaProxima" in (payloadRanking ?? {})) && !("proximo" in (payloadRanking ?? {})),
+    "nao ha distancia para a proxima posicao (seria o vizinho por subtracao)",
+    "",
+  );
+}
+
+// ------------------------------------------------- 9. COBERTURA DAS REGIONAIS
+console.log("\n[9] as duas regionais cobrem todos os promotores ativos nao-master\n");
+{
+  const promotores = res.promotores as any[];
+  const porRegional = new Map<string, number>();
+  let semRegional = 0;
+  for (const p of promotores) {
+    const r = regionalDoEstado(p.estado);
+    if (!r) {
+      semRegional += 1;
+      continue;
+    }
+    porRegional.set(r, (porRegional.get(r) || 0) + 1);
+  }
+  const somaRegionais = [...porRegional.values()].reduce((a, b) => a + b, 0);
+
+  const { data: proms, error } = await sb
+    .from("promoters")
+    .select("id, active, is_master");
+  if (error) throw new Error(`promoters: ${error.message}`);
+  const ativosNaoMaster = (proms || []).filter((p: any) => p.active && !p.is_master).length;
+
+  console.log(
+    `        ${[...porRegional.entries()].map(([r, n]) => `${r}=${n}`).join("  ")}` +
+      `  | sem regional=${semRegional}  | ativos nao-master no banco=${ativosNaoMaster}`,
+  );
+  assert(
+    somaRegionais + semRegional === promotores.length,
+    "toda a lista cai numa regional ou em 'sem regional' (sem sumico)",
+    `${somaRegionais} + ${semRegional} == ${promotores.length}`,
+  );
+  assert(
+    somaRegionais === ativosNaoMaster,
+    "a soma das duas regionais == total de ativos nao-master",
+    `${somaRegionais} == ${ativosNaoMaster}`,
+  );
+  assert(semRegional === 0, "nenhum promotor ficou fora de regional", `sem regional=${semRegional}`);
+}
+
+// ------------------------------------------------- 10. POSICAO NO INTERVALO
+console.log("\n[10] a posicao esta sempre entre 1 e o total da regional\n");
+{
+  const promotores = res.promotores as any[];
+  let comPosicao = 0;
+  let semPosicao = 0;
+  let forasteira: string | null = null;
+  for (const p of promotores) {
+    const rk = rankingDaRegional({ promotores, promoterId: p.promoter_id });
+    if (!rk) continue;
+    if (rk.posicao == null) {
+      semPosicao += 1;
+      continue;
+    }
+    comPosicao += 1;
+    if (!(rk.posicao >= 1 && rk.posicao <= rk.total)) {
+      forasteira = `${p.promoter_id}: ${rk.posicao} de ${rk.total}`;
+    }
+  }
+  assert(
+    forasteira === null,
+    "toda posicao cai em [1, total da regional]",
+    `${comPosicao} com posicao, ${semPosicao} sem producao (posicao null)` +
+      (forasteira ? ` | FORA: ${forasteira}` : ""),
+  );
+  // Posicoes tem de ser UNICAS dentro da regional (o desempate por
+  // promoter_id garante isso; sem ele dois promotores empatados dividiriam o
+  // mesmo lugar e "12o de 39" perderia o sentido).
+  for (const reg of ["ALAGOAS", "PERNAMBUCO"] as const) {
+    const daReg = promotores.filter((p) => regionalDoEstado(p.estado) === reg);
+    const pos = daReg
+      .map((p) => rankingDaRegional({ promotores, promoterId: p.promoter_id })?.posicao)
+      .filter((n): n is number => n != null);
+    assert(
+      new Set(pos).size === pos.length,
+      `${reg}: nenhuma posicao repetida (desempate estavel)`,
+      `${pos.length} posicoes, ${new Set(pos).size} distintas`,
+    );
+  }
 }
 
 linha();

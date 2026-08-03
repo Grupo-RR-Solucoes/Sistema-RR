@@ -1132,7 +1132,11 @@ function PromotorView({ data }: { data: any }) {
   return (
     <>
       {/* FAROL — PRIMEIRO elemento da tela, antes do hero. Ver RitmoFarol. */}
-      <RitmoFarol ritmo={data.ritmo ?? null} farol={data.farol ?? null} />
+      <RitmoFarol
+        ritmo={data.ritmo ?? null}
+        farol={data.farol ?? null}
+        ranking={data.ranking ?? null}
+      />
 
       {/* HERO */}
       <section className="card">
@@ -1274,7 +1278,26 @@ type FarolPayload = {
   ultrapassouPct: number | null;
 };
 
-function RitmoFarol({ ritmo, farol }: { ritmo: RitmoPayload | null; farol: FarolPayload | null }) {
+// RANKING — SO a posicao e o total chegam aqui. Por desenho do payload
+// (app/api/projecao/route.ts) nao existe nome nem valor de terceiro para
+// exibir, mesmo que alguem quisesse. NAO acrescente "faltam R$ X para o 11o":
+// isso e o valor do vizinho por subtracao.
+type RankingPayload = {
+  regional: "ALAGOAS" | "PERNAMBUCO";
+  label: string;
+  posicao: number | null;
+  total: number;
+};
+
+function RitmoFarol({
+  ritmo,
+  farol,
+  ranking,
+}: {
+  ritmo: RitmoPayload | null;
+  farol: FarolPayload | null;
+  ranking: RankingPayload | null;
+}) {
   if (!ritmo) return null;
 
   const dias = ritmo.diasRestantes;
@@ -1391,7 +1414,20 @@ function RitmoFarol({ ritmo, farol }: { ritmo: RitmoPayload | null; farol: Farol
   return (
     <section className={`card farol ${tone}`}>
       <div className="card-pad">
-        <p className="fk">{chapeu}</p>
+        <div className="fhead">
+          <p className="fk">{chapeu}</p>
+          {ranking ? (
+            <span className="frank">
+              {ranking.posicao != null ? (
+                <>
+                  <b>{ranking.posicao}º</b> de {ranking.total} · {ranking.label}
+                </>
+              ) : (
+                <>sem posição ainda · {ranking.label}</>
+              )}
+            </span>
+          ) : null}
+        </div>
         <div className="fnum num">
           {valor}
           {unidade ? <span className="fun">{unidade}</span> : null}
@@ -1552,7 +1588,10 @@ const CSS = `
 .rrproj .farol.g{border-left-color:var(--green-tx);}
 .rrproj .farol.a{border-left-color:var(--amber-tx);}
 .rrproj .farol.r{border-left-color:var(--red-tx);}
-.rrproj .farol .fk{font-size:12.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);margin:0 0 6px;}
+.rrproj .farol .fhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px;}
+.rrproj .farol .fk{font-size:12.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);margin:0;}
+.rrproj .farol .frank{font-size:12.5px;color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;}
+.rrproj .farol .frank b{font-size:15px;color:var(--ink);}
 .rrproj .farol .fnum{font-size:42px;font-weight:700;letter-spacing:-.025em;line-height:1.05;color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
 .rrproj .farol.g .fnum{color:var(--green-tx);}
 .rrproj .farol.a .fnum{color:var(--amber-tx);}

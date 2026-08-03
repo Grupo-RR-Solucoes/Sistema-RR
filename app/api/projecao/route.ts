@@ -18,6 +18,7 @@ import {
 } from "@/lib/projecaoMetas";
 import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
 import { calcularRitmoNecessario, montarFarolPromotor } from "@/lib/ritmoNecessario";
+import { rankingDaRegional, REGIONAL_LABEL } from "@/lib/regionais";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -183,6 +184,23 @@ export async function GET(req: Request) {
       // traz os 3 meses anteriores em ordem; o ultimo e o M-1.
       const producaoMesAnterior = historico.length > 0 ? historico[historico.length - 1].production : 0;
 
+      // ---- RANKING POR REGIONAL (Emenda C) ----
+      //
+      // CALCULADO AQUI, NO SERVIDOR, e o payload leva SO {regional, label,
+      // posicao, total}. Nenhum nome e nenhum valor de terceiro atravessa a
+      // fronteira: o que nao vai no payload nao aparece em inspecao de rede,
+      // em devtools, nem em log de proxy. `res.promotores` (que tem nome e
+      // producao de todo mundo) fica no servidor e morre aqui.
+      //
+      // A regua de regionais mora em lib/regionais.ts, um lugar so. Nao
+      // escreva `if (estado === "SE")` aqui nem em tela nenhuma.
+      const rk = myId
+        ? rankingDaRegional({ promotores: res.promotores, promoterId: myId })
+        : null;
+      const ranking = rk
+        ? { regional: rk.regional, label: REGIONAL_LABEL[rk.regional], posicao: rk.posicao, total: rk.total }
+        : null;
+
       const farol = promotor
         ? montarFarolPromotor({
             ritmo: ritmo!,
@@ -203,6 +221,7 @@ export async function GET(req: Request) {
         promotor,
         ritmo,
         farol,
+        ranking,
         historico,
       });
     }
