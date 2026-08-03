@@ -17,7 +17,7 @@ import {
   promotoresEmRisco,
 } from "@/lib/projecaoMetas";
 import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
-import { calcularRitmoNecessario } from "@/lib/ritmoNecessario";
+import { calcularRitmoNecessario, montarFarolPromotor } from "@/lib/ritmoNecessario";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -165,6 +165,34 @@ export async function GET(req: Request) {
           })
         : null;
 
+      // ---- FAROL: o que o card precisa alem do ritmo (Emenda B) ----
+      //
+      // RITMO REALIZADO — acumulado / dias_uteis_ritmo. NAO e calculo novo: e a
+      // mesma razao que projetarPorRitmo usa por dentro (projecao = realizado x
+      // total). O divisor e dias_uteis_ritmo (nao decorridos) porque a producao
+      // de hoje so entra amanha. Sem esta referencia o ritmo necessario e
+      // exigencia sem contexto: "R$ 21 mil por dia" so significa alguma coisa
+      // ao lado de "voce vem fazendo R$ 14 mil".
+      const ritmoRealizado =
+        promotor && promotor.dias_uteis_ritmo > 0
+          ? Math.round((promotor.producao_acumulada / promotor.dias_uteis_ritmo) * 100) / 100
+          : null;
+
+      // MES ANTERIOR do proprio promotor — alvo alternativo quando a meta fica
+      // inalcancavel (ver FAROL_MULTIPLO_INALCANCAVEL). `historico` acima ja
+      // traz os 3 meses anteriores em ordem; o ultimo e o M-1.
+      const producaoMesAnterior = historico.length > 0 ? historico[historico.length - 1].production : 0;
+
+      const farol = promotor
+        ? montarFarolPromotor({
+            ritmo: ritmo!,
+            ritmoRealizado,
+            producaoMesAnterior,
+            acumulado: promotor.producao_acumulada,
+            diasRestantes: ritmo!.diasRestantes,
+          })
+        : null;
+
       return Response.json({
         scope: "promotor",
         year,
@@ -174,6 +202,7 @@ export async function GET(req: Request) {
         janela: res.janela,
         promotor,
         ritmo,
+        farol,
         historico,
       });
     }

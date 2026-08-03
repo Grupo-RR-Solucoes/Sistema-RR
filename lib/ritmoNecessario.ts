@@ -286,6 +286,126 @@ export function semaforoPisoAlvo(params: {
   return projecao >= piso ? "amarelo" : "vermelho";
 }
 
+// ============================================================================
+// FAROL DO PROMOTOR — o ritmo como ESTIMULO, nao como cobranca.
+//
+// A tela do promotor nao quer "faltam R$ 340.000". Quem vende contrato a
+// contrato nao mede 340 mil; mede R$ 21 mil contra o que fez ontem. Por isso a
+// linha principal e SEMPRE por dia util, e o ritmo REALIZADO dele viaja junto:
+// um numero de exigencia sem a referencia do proprio desempenho e so pressao.
+// ============================================================================
+
+/**
+ * B.5 — acima de quantas vezes o ritmo realizado a meta vira INALCANCAVEL.
+ *
+ * ESCOLHA: 3x. O raciocinio, e por que nao 2x nem 5x:
+ *
+ *   2x seria cedo demais. Dobrar o ritmo no meio do mes acontece — uma semana
+ *   boa, uma proposta grande, o fim de mes que concentra fechamento. Trocar o
+ *   alvo aos 2x tiraria a meta da frente de quem ainda ia bater.
+ *
+ *   5x ja teria perdido o proposito. A essa altura o vermelho ficou semanas na
+ *   tela sem chance real, que e exatamente o ruido que se quer evitar.
+ *
+ *   3x e o ponto em que "da para virar com esforco" vira "so com um evento
+ *   fora da curva". Ali o vermelho para de informar e passa a desmoralizar, e
+ *   e melhor apontar um alvo que ele PODE alcancar (superar o proprio mes
+ *   anterior) do que gritar um numero impossivel.
+ *
+ * A meta NAO some da tela nesse caso — continua no subtexto. Trocar o alvo e
+ * diferente de esconder a meta.
+ */
+export const FAROL_MULTIPLO_INALCANCAVEL = 3;
+
+export type AlvoFarol = "meta" | "mes-anterior" | "nenhum";
+
+export type FarolPromotor = {
+  /** Qual alvo o farol esta apontando AGORA. */
+  alvo: AlvoFarol;
+  /** acumulado / dias_uteis_ritmo. null quando nao ha dia vencido ainda. */
+  ritmoRealizado: number | null;
+  /**
+   * ritmo necessario - ritmo realizado. Positivo = precisa acelerar tanto por
+   * dia. null quando falta alguma das pontas.
+   */
+  diferencaRitmo: number | null;
+  /** true quando a meta passou do multiplo e o alvo foi trocado. */
+  inalcancavel: boolean;
+  /** Preenchido SO quando alvo === "mes-anterior". */
+  mesAnterior: {
+    producao: number;
+    falta: number;
+    ritmoDiario: number | null;
+  } | null;
+  /** META_BATIDA: fracao do quanto ultrapassou (0,12 = 12% acima). */
+  ultrapassouPct: number | null;
+};
+
+export function montarFarolPromotor(params: {
+  ritmo: ResultadoRitmo;
+  ritmoRealizado: number | null;
+  producaoMesAnterior: number | null | undefined;
+  acumulado: number;
+  diasRestantes: number;
+}): FarolPromotor {
+  const { ritmo, ritmoRealizado, acumulado, diasRestantes } = params;
+  const mesAnteriorProd = num(params.producaoMesAnterior);
+
+  const base: FarolPromotor = {
+    alvo: "meta",
+    ritmoRealizado,
+    diferencaRitmo:
+      ritmo.ritmoDiario != null && ritmoRealizado != null
+        ? round2(ritmo.ritmoDiario - ritmoRealizado)
+        : null,
+    inalcancavel: false,
+    mesAnterior: null,
+    ultrapassouPct: null,
+  };
+
+  if (ritmo.estado === "SEM_META") return { ...base, alvo: "nenhum" };
+
+  // META BATIDA — o alvo muda para "seguir crescendo". E o estado que se quer
+  // estimular, entao ele NAO fica neutro nem some.
+  if (ritmo.estado === "META_BATIDA") {
+    return {
+      ...base,
+      ultrapassouPct: ritmo.meta > 0 ? round4(ritmo.excedente / ritmo.meta) : null,
+    };
+  }
+
+  // So faz sentido trocar de alvo enquanto ainda ha dia para produzir.
+  const emCurso = ritmo.estado === "NORMAL" || ritmo.estado === "ULTIMO_DIA";
+  if (!emCurso || ritmo.ritmoDiario == null || ritmoRealizado == null || ritmoRealizado <= 0) {
+    return base;
+  }
+
+  const inalcancavel = ritmo.ritmoDiario > FAROL_MULTIPLO_INALCANCAVEL * ritmoRealizado;
+  if (!inalcancavel) return base;
+
+  // SEM mes anterior (promotor novo, ou M-1 zerado) nao ha alvo alternativo:
+  // cai no vermelho normal. Inventar um alvo aqui seria pior que o ruido.
+  if (!(mesAnteriorProd > acumulado)) {
+    return { ...base, inalcancavel: true };
+  }
+
+  const falta = round2(mesAnteriorProd - acumulado);
+  return {
+    ...base,
+    alvo: "mes-anterior",
+    inalcancavel: true,
+    mesAnterior: {
+      producao: round2(mesAnteriorProd),
+      falta,
+      ritmoDiario: diasRestantes > 0 ? round2(falta / diasRestantes) : null,
+    },
+  };
+}
+
+function round4(n: number): number {
+  return Math.round(n * 10_000) / 10_000;
+}
+
 /** Constante do PISO do grupo. Ver o comentario no ponto de uso. */
 export const META_DIARIA_GRUPO = 250_000;
 

@@ -15,7 +15,9 @@ import {
   calcularRitmoNecessario,
   diasRestantesDe,
   metaPropriaDoGrupo,
+  montarFarolPromotor,
   semaforoPisoAlvo,
+  FAROL_MULTIPLO_INALCANCAVEL,
   META_DIARIA_GRUPO,
 } from "../ritmoNecessario.ts";
 import type { JanelaRitmo } from "../janelaRitmo.ts";
@@ -312,6 +314,114 @@ test("23) SEM piso e SEM alvo — sem_meta", () => {
 test("24) SEM piso mas COM alvo — cai na escala canonica de uma meta", () => {
   assert.equal(semaforoPisoAlvo({ projecao: ALVO_JUL * 0.85, piso: 0, alvo: ALVO_JUL }), "amarelo");
   assert.equal(semaforoPisoAlvo({ projecao: ALVO_JUL * 0.5, piso: 0, alvo: ALVO_JUL }), "vermelho");
+});
+
+// ------------------------------------------------------------- FAROL
+function farolDe(meta: number, acumulado: number, j: JanelaRitmo, mesAnterior = 0, mesFechado = false) {
+  const r = calcularRitmoNecessario({
+    meta,
+    acumulado,
+    janela: j,
+    projecao: proj(j, acumulado),
+    mesFechado,
+  });
+  const realizado = j.diasParaRitmo > 0 ? acumulado / j.diasParaRitmo : null;
+  return {
+    ritmo: r,
+    farol: montarFarolPromotor({
+      ritmo: r,
+      ritmoRealizado: realizado,
+      producaoMesAnterior: mesAnterior,
+      acumulado,
+      diasRestantes: r.diasRestantes,
+    }),
+  };
+}
+
+test("25) FAROL — ritmo realizado entra como referencia em mes aberto", () => {
+  const j = janela({ total: 21, diasParaRitmo: 10 });
+  const { farol } = farolDe(1_000_000, 300_000, j);
+  assert.equal(farol.ritmoRealizado, 30_000); // 300.000 / 10
+  assert.equal(farol.alvo, "meta");
+});
+
+test("26) FAROL — diferenca entre necessario e realizado", () => {
+  const j = janela({ total: 21, diasParaRitmo: 10 });
+  const { ritmo, farol } = farolDe(1_000_000, 300_000, j);
+  // necessario = 700.000 / 11 = 63.636,36 ; realizado = 30.000
+  assert.equal(farol.diferencaRitmo, round2Local(ritmo.ritmoDiario! - 30_000));
+  assert.ok(farol.diferencaRitmo! > 0, "precisa acelerar");
+});
+
+function round2Local(n: number) {
+  return Math.round(n * 100) / 100;
+}
+
+test("27) FAROL — META_BATIDA traz o quanto ULTRAPASSOU em fracao", () => {
+  const j = janela({ total: 21, diasParaRitmo: 10 });
+  const { farol } = farolDe(1_000_000, 1_120_000, j);
+  assert.equal(farol.ultrapassouPct, 0.12); // 120.000 / 1.000.000
+  assert.equal(farol.alvo, "meta");
+  assert.equal(farol.inalcancavel, false);
+});
+
+test("28) FAROL INALCANCAVEL — acima de 3x troca o alvo para o mes anterior", () => {
+  // realizado = 100.000/10 = 10.000/dia. Meta 2.000.000 -> falta 1.900.000 em
+  // 11 dias = 172.727/dia = 17x o realizado. Inalcancavel.
+  const j = janela({ total: 21, diasParaRitmo: 10 });
+  const { ritmo, farol } = farolDe(2_000_000, 100_000, j, 400_000);
+  assert.ok(ritmo.ritmoDiario! > 3 * 10_000, "cenario e mesmo inalcancavel");
+  assert.equal(farol.inalcancavel, true);
+  assert.equal(farol.alvo, "mes-anterior");
+  assert.equal(farol.mesAnterior!.producao, 400_000);
+  assert.equal(farol.mesAnterior!.falta, 300_000);
+  assert.equal(farol.mesAnterior!.ritmoDiario, round2Local(300_000 / 11));
+});
+
+test("29) FAROL — no limite de 3x AINDA nao troca de alvo", () => {
+  // Necessario exatamente 3x o realizado: a troca so acontece ACIMA de 3x.
+  // realizado 10.000/dia (100.000 em 10 dias), 11 dias restantes.
+  // necessario = 30.000 -> meta = 100.000 + 30.000*11 = 430.000
+  const j = janela({ total: 21, diasParaRitmo: 10 });
+  const { ritmo, farol } = farolDe(430_000, 100_000, j, 999_999);
+  assert.equal(ritmo.ritmoDiario, 30_000);
+  assert.equal(farol.inalcancavel, false, "3x exato nao e inalcancavel");
+  assert.equal(farol.alvo, "meta");
+});
+
+test("30) FAROL INALCANCAVEL sem mes anterior — cai no vermelho normal", () => {
+  const j = janela({ total: 21, diasParaRitmo: 10 });
+  const { farol } = farolDe(2_000_000, 100_000, j, 0);
+  assert.equal(farol.inalcancavel, true);
+  assert.equal(farol.alvo, "meta", "sem alvo alternativo, mantem a meta");
+  assert.equal(farol.mesAnterior, null);
+});
+
+test("31) FAROL INALCANCAVEL com mes anterior JA superado — mantem a meta", () => {
+  // Nao adianta apontar um alvo que ele ja passou.
+  const j = janela({ total: 21, diasParaRitmo: 10 });
+  const { farol } = farolDe(2_000_000, 100_000, j, 90_000);
+  assert.equal(farol.inalcancavel, true);
+  assert.equal(farol.alvo, "meta");
+  assert.equal(farol.mesAnterior, null);
+});
+
+test("32) FAROL — SEM_META nao aponta alvo nenhum", () => {
+  const j = janela({ total: 21, diasParaRitmo: 10 });
+  const { farol } = farolDe(0, 300_000, j);
+  assert.equal(farol.alvo, "nenhum");
+});
+
+test("33) FAROL — sem dia vencido (diasParaRitmo=0) nao ha realizado nem troca", () => {
+  const j = janela({ total: 21, diasParaRitmo: 0, diasDecorridos: 0 });
+  const { farol } = farolDe(5_250_000, 0, j, 400_000);
+  assert.equal(farol.ritmoRealizado, null);
+  assert.equal(farol.inalcancavel, false, "sem realizado nao da para dizer que e inalcancavel");
+  assert.equal(farol.alvo, "meta");
+});
+
+test("34) o multiplo escolhido esta documentado e vale 3", () => {
+  assert.equal(FAROL_MULTIPLO_INALCANCAVEL, 3);
 });
 
 // -------------------------------------------------------- META PROPRIA
