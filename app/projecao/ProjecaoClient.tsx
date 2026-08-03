@@ -1199,6 +1199,9 @@ function PromotorView({ data }: { data: any }) {
         />
       </div>
 
+      {/* RITMO DIARIO — so aqui, na tela do promotor. Ver RitmoCard. */}
+      <RitmoCard ritmo={data.ritmo ?? null} />
+
       {/* COMPARATIVO */}
       <section className="card">
         <div className="card-pad">
@@ -1229,6 +1232,102 @@ function PromotorView({ data }: { data: any }) {
         </div>
       </section>
     </>
+  );
+}
+
+// ============================================================
+// RITMO DIARIO NECESSARIO — SO na tela do promotor.
+//
+// DECISAO DIEGO (02/08): nao aparece em /equipe, nem na visao do gestor, nem
+// em tabela nenhuma. A rota so monta o campo no ramo `role === "promotor"`
+// (app/api/projecao/route.ts), entao nao ha como vazar por descuido de tela:
+// nos outros ramos o dado nem existe no payload.
+//
+// A CONTA NAO MORA AQUI. `ritmo` chega pronto de lib/ritmoNecessario.ts — se
+// voce precisou dividir algo antes de chegar neste componente, a conta esta no
+// lugar errado (mesma regra do delta em lib/delta/calcularDelta.ts).
+// ============================================================
+type RitmoPayload = {
+  estado: "SEM_META" | "META_BATIDA" | "MES_FECHADO" | "SEM_DIAS" | "ULTIMO_DIA" | "NORMAL";
+  meta: number;
+  acumulado: number;
+  falta: number;
+  excedente: number;
+  diasRestantes: number;
+  diasTotais: number;
+  ritmoDiario: number | null;
+  percent: number | null;
+  semaforo: "verde" | "amarelo" | "vermelho" | "sem_meta";
+};
+
+function toneDoSemaforo(s: RitmoPayload["semaforo"]): "g" | "a" | "r" | "n" {
+  return s === "verde" ? "g" : s === "amarelo" ? "a" : s === "vermelho" ? "r" : "n";
+}
+
+function RitmoCard({ ritmo }: { ritmo: RitmoPayload | null }) {
+  if (!ritmo) return null;
+
+  // TODO ESTADO VIRA TEXTO, nunca numero estranho: sem meta nao exibe
+  // "R$ 0,00/dia", meta batida nao exibe ritmo negativo, e zero dia restante
+  // nao divide por zero (o helper ja devolveu ritmoDiario null nesses casos).
+  const dias = ritmo.diasRestantes;
+  const plural = dias === 1 ? "dia útil restante" : "dias úteis restantes";
+
+  const { titulo, valor, sub, tone } = (() => {
+    switch (ritmo.estado) {
+      case "SEM_META":
+        return {
+          titulo: "Ritmo diário necessário",
+          valor: "Sem meta cadastrada",
+          sub: "sua meta desta competência ainda não foi cadastrada",
+          tone: "n" as const,
+        };
+      case "META_BATIDA":
+        return {
+          titulo: "Meta batida",
+          valor: `+${brl(ritmo.excedente)}`,
+          sub: `acima da meta de ${brl(ritmo.meta)}`,
+          tone: "g" as const,
+        };
+      case "MES_FECHADO":
+        return {
+          titulo: "Competência fechada",
+          valor: `Faltou ${brl(ritmo.falta)}`,
+          sub: `de uma meta de ${brl(ritmo.meta)}`,
+          tone: "r" as const,
+        };
+      case "SEM_DIAS":
+        return {
+          titulo: "Janela encerrada",
+          valor: `Faltou ${brl(ritmo.falta)}`,
+          sub: "aguardando o fechamento da competência",
+          tone: "r" as const,
+        };
+      case "ULTIMO_DIA":
+        return {
+          titulo: "Último dia útil",
+          valor: brl(ritmo.ritmoDiario ?? 0),
+          sub: `é o que falta para bater a meta de ${brl(ritmo.meta)}`,
+          tone: toneDoSemaforo(ritmo.semaforo),
+        };
+      default:
+        return {
+          titulo: "Ritmo diário necessário",
+          valor: `${brl(ritmo.ritmoDiario ?? 0)}/dia`,
+          sub: `${dias} ${plural} · faltam ${brl(ritmo.falta)} de ${brl(ritmo.meta)}`,
+          tone: toneDoSemaforo(ritmo.semaforo),
+        };
+    }
+  })();
+
+  return (
+    <section className="card">
+      <div className="card-pad ritmo">
+        <p className="rk">{titulo}</p>
+        <div className={`rnum num ${tone}`}>{valor}</div>
+        <p className="rsub">{sub}</p>
+      </div>
+    </section>
   );
 }
 
@@ -1373,6 +1472,15 @@ const CSS = `
 .rrproj .bignum.a{color:var(--amber-tx);}
 .rrproj .bignum.r{color:var(--red-tx);}
 .rrproj .bignum.n{color:var(--ink-3);}
+/* RITMO DIARIO — reusa as MESMAS cores semanticas do bignum (uma escala so).
+   Sem largura fixa: o card ocupa a coluna e o numero encolhe no telefone. */
+.rrproj .ritmo{display:flex;flex-direction:column;gap:6px;}
+.rrproj .ritmo .rk{font-size:12.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);margin:0;}
+.rrproj .ritmo .rnum{font-size:40px;font-weight:700;letter-spacing:-.02em;line-height:1.05;color:var(--green-tx);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
+.rrproj .ritmo .rnum.a{color:var(--amber-tx);}
+.rrproj .ritmo .rnum.r{color:var(--red-tx);}
+.rrproj .ritmo .rnum.n{color:var(--ink-3);}
+.rrproj .ritmo .rsub{font-size:13px;color:var(--ink-2);margin:0;}
 .rrproj .trendline{display:inline-flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;color:var(--ink-2);flex-wrap:wrap;}
 .rrproj .trendline .tag{display:inline-flex;align-items:center;gap:6px;font-weight:700;}
 .rrproj .trendline .tag.up{color:var(--green-tx);}
@@ -1431,6 +1539,10 @@ const CSS = `
    .pname: o min-width:150px travava a coluna do nome nas tabelas. */
 @media (max-width:560px){
   .rrproj .dw-kpis{grid-template-columns:1fr;}
+
+  /* RITMO — a 356px uteis, "R$ 250.000,00/dia" a 40px estoura a linha. 28px
+     cabe inteiro; o overflow-wrap do bloco base cobre os valores maiores. */
+  .rrproj .ritmo .rnum{font-size:28px;}
 
   .rrproj .risk-row{grid-template-columns:auto 1fr auto;row-gap:10px;column-gap:12px;padding:14px 14px;}
   .rrproj .risk-row .rank{grid-area:1 / 1;}

@@ -16,6 +16,8 @@ import {
   consolidarGrupoEquipe,
   promotoresEmRisco,
 } from "@/lib/projecaoMetas";
+import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
+import { calcularRitmoNecessario } from "@/lib/ritmoNecessario";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -139,6 +141,30 @@ export async function GET(req: Request) {
         }));
       }
 
+      // RITMO DIARIO NECESSARIO — calculado AQUI, no ramo do promotor, e nao
+      // dentro de buildProjecaoMetas. E de proposito: assim ele nao existe no
+      // payload do gestor nem no da equipe, e nao ha como vazar para tabela
+      // nenhuma por descuido de quem for mexer na tela depois.
+      // DECISAO DIEGO (02/08): o ritmo por promotor aparece SO na tela do
+      // promotor.
+      //
+      // A projecao entra pronta (p.projecao, ja calculada por projetarPorRitmo
+      // dentro do motor) — o helper nao recalcula formula que tem dono.
+      const ritmo = promotor
+        ? calcularRitmoNecessario({
+            meta: promotor.meta,
+            acumulado: promotor.producao_acumulada,
+            projecao: promotor.projecao,
+            // MESMA fonte de dias do motor: resolverJanelaRitmo, com as mesmas
+            // entradas (year, month, closed) e o mesmo "hoje" de Fortaleza.
+            // Nao e contagem nova — e a funcao canonica chamada de novo, no
+            // mesmo request. `res.janela` nao serve aqui: e a forma
+            // serializada (dias_uteis_*), nao o JanelaRitmo que o helper pede.
+            janela: resolverJanelaRitmo(year, month, { closed: res.fechado }),
+            mesFechado: res.fechado,
+          })
+        : null;
+
       return Response.json({
         scope: "promotor",
         year,
@@ -147,6 +173,7 @@ export async function GET(req: Request) {
         fechado: res.fechado,
         janela: res.janela,
         promotor,
+        ritmo,
         historico,
       });
     }
