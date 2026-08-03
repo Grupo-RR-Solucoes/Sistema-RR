@@ -20,10 +20,16 @@ import { semaforoFromPercent, type Semaforo } from "./semaforo.ts";
 //   - exibir ritmo NEGATIVO quando a meta ja foi batida  -> META_BATIDA
 //   - exibir ritmo de um mes que ja acabou               -> MES_FECHADO
 //   - exibir "R$ 0,00/dia" quando nao ha meta cadastrada -> SEM_META
-// Nenhum deles e caso raro: SEM_DIAS e o estado REAL de julho/2026 hoje (a
-// janela de producao encerrou em 30/07, mas o regime segue 'open' porque o
-// fechamento nao foi importado), e SEM_META e o estado REAL de agosto/2026
-// (zero meta cadastrada, medido em 02/08).
+// Nenhum deles e caso raro. SEM_DIAS e o estado REAL de julho/2026 (a janela
+// de producao encerrou em 30/07, mas o regime segue 'open' porque o fechamento
+// nao foi importado).
+//
+// SEM_META foi o estado de agosto/2026 ate 03/08/2026 02:47 UTC, quando as 50
+// metas da competencia foram cadastradas (medido pelo created_at das linhas de
+// monthly_targets). Ou seja: e um estado que o sistema ATRAVESSA todo comeco de
+// mes, entre a virada e o cadastro das metas — nao uma hipotese de laboratorio.
+// NAO "simplifique" sumindo com o card nesse intervalo: e justamente quando a
+// ausencia de cadastro precisa ficar visivel (decisao Diego).
 // ============================================================================
 
 export type EstadoRitmo =

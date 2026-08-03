@@ -347,9 +347,11 @@ function Header({
 // julho/2026 a propria fica ~11% abaixo da soma das individuais — se as duas
 // batessem, uma seria redundante.
 //
-// SEM META NAO SOME DA TELA (decisao Diego): agosto/2026 tem ZERO meta
-// cadastrada, e sumir em silencio esconderia a falha de cadastro. A visao (a)
-// exibe "sem meta cadastrada" e a (b) segue funcionando.
+// SEM META NAO SOME DA TELA (decisao Diego). O intervalo entre a virada do mes
+// e o cadastro das metas e real e recorrente: em agosto/2026 durou ate
+// 03/08 02:47 UTC. Nesse intervalo a visao (a) exibe "sem meta cadastrada" e a
+// (b) segue funcionando — sumir em silencio esconderia a falha de cadastro
+// exatamente quando ela existe.
 //
 // A CONTA NAO MORA AQUI: os dois lados vem prontos de lib/ritmoNecessario.ts.
 // ============================================================
