@@ -26,16 +26,24 @@
 //     "havia algo aqui e nao sei o que");
 //   - devolve a LISTA de lacunas, para quem grava poder registrar.
 //
-// Ele NAO adivinha a letra. Escolher entre "ti", "fi", "fl", "ff" para gravar
-// uma string exigiria ou um dicionario de palavras (que o Diego vetou, e com
-// razao: vira lista que ninguem mantem) ou uma tabela largura->ligadura tirada
-// do nada. Um chute que acerta 4 vezes e erra na quinta e pior que uma lacuna
-// explicita, porque a lacuna se ve e o chute nao.
+// Ele NAO CHUTA a letra — mas ELEGE quando ha prova. A diferenca e o
+// vocabulario ATESTADO: se exatamente uma ligadura produz palavra que outra
+// fonte do sistema ja registrou, a lacuna vira letra e a fonte fica no
+// registro da decisao. Se duas produzem, ou nenhuma, a lacuna FICA. Ver o
+// bloco ELEICAO POR EVIDENCIA, mais abaixo, que e onde essa regra mora.
 //
-// QUEM RESOLVE A LACUNA E O CONSUMIDOR, na hora de COMPARAR — nao na hora de
-// gravar. `contemTermo` expande a lacuna sobre o conjunto FECHADO de ligaduras
-// latinas que um PDF pode engolir. Isso e um fato tipografico de 9 itens, nao um
-// vocabulario de produtos: nao cresce quando a BBTS lancar um produto novo.
+// ESTE PARAGRAFO JA DISSE O CONTRARIO, e o registro fica: ate 03/08/2026 o
+// modulo so marcava a lacuna e delegava TODA resolucao ao consumidor, na hora
+// de comparar. A medicao derrubou esse desenho — as palavras quebradas nunca
+// aparecem integras no proprio PDF, entao "deixa o consumidor resolver"
+// significava, na pratica, gravar "Corren<lacuna>sta" em 40 linhas e exibir
+// isso na tela. A eleicao por evidencia entrou para resolver na GRAVACAO o que
+// tem prova, mantendo a recusa para o que nao tem.
+//
+// O CONSUMIDOR CONTINUA TOLERANTE, para o que a eleicao recusou: `contemTermo`
+// e `casaExpressao` expandem a lacuna sobre o conjunto FECHADO de ligaduras
+// latinas. Isso e um fato tipografico de 9 itens, nao um vocabulario de
+// produtos: nao cresce quando a BBTS lancar um produto novo.
 //
 // APOSENTA o `.replace(/Corren\s*sta/gi, "Correntista")` que vivia em
 // bbtsPdfExtract.ts:116 — remendo manual para UMA palavra, enquanto outras 5
