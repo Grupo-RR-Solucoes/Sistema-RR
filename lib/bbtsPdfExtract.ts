@@ -132,6 +132,51 @@ export interface ColunasCredito {
   nome_convenio: string | null; // "Nome do Convênio"  — "INSS Novo" / "Não Consignado - 13º salário"
 }
 
+
+/**
+ * A LINHA a que um fragmento pertence, ou -1 quando ele nao pertence a nenhuma.
+ *
+ * REGRA: a ancora mais proxima em y, aceita se a distancia couber em METADE DO
+ * VAO ATE A ANCORA VIZINHA DAQUELE LADO. E o diagrama de Voronoi em 1D: o maior
+ * criterio que nunca deixa um fragmento cair na faixa de duas linhas.
+ *
+ * DUAS TENTATIVAS ANTERIORES ERRARAM, e ficam registradas porque o erro e
+ * instrutivo:
+ *
+ *   1. `dist > 20` — constante magica. Medido no fechamento de julho/2026: as
+ *      ancoras da tabela de credito distam 51,7 a 66,7 e as celulas de 5 linhas
+ *      do "Nome do Convenio" chegam a +-24. Morriam 28 fragmentos em silencio
+ *      ("Nao", "Bene", <NUL>, "cio" nos 7 contratos CDC) — e com o "Nao" ia
+ *      embora justamente o que distingue "Nao Consignado" de "Consignado".
+ *
+ *   2. metade do MENOR passo da PAGINA — pior que a constante. A pagina 5 tem a
+ *      secao PRT logo abaixo, com propostas espacadas ~19, e o menor passo
+ *      GLOBAL passou a sair de outra tabela: raio 9,4, perdas subiram de 28
+ *      para 46. Vao GLOBAL nao serve; o vao e LOCAL.
+ *
+ * Por que nao alargar mais: perda deixa a celula curta e visivel; contaminacao
+ * deixa a celula ERRADA e plausivel. Ver scripts/bbts_conservacao_celula_gate.cjs.
+ */
+export function linhaDoFragmento(y: number, ancoras: readonly PdfItem[]): number {
+  if (ancoras.length === 0) return -1;
+  let idx = -1;
+  let dist = Infinity;
+  for (let k = 0; k < ancoras.length; k++) {
+    const d = Math.abs(y - ancoras[k].y);
+    if (d < dist) { dist = d; idx = k; }
+  }
+  if (idx < 0) return -1;
+  if (ancoras.length === 1) return dist <= 20 ? idx : -1;   // sem vao para medir
+
+  // ancoras vem ordenadas por y DECRESCENTE (de cima para baixo na pagina).
+  const acima = y > ancoras[idx].y;
+  const vizinho = acima ? ancoras[idx - 1] : ancoras[idx + 1];
+  const vao = vizinho
+    ? Math.abs(vizinho.y - ancoras[idx].y)
+    : Math.abs((acima ? ancoras[idx + 1] : ancoras[idx - 1]).y - ancoras[idx].y);
+  return dist <= vao / 2 ? idx : -1;
+}
+
 /**
  * Lê, por geometria, as 3 colunas quebradas de cada proposta do PDF de crédito.
  * Retorna um mapa proposta -> colunas. Página sem cabeçalho reconhecível é pulada
@@ -169,19 +214,28 @@ export async function extractColunasCredito(data: Uint8Array): Promise<Map<strin
       .sort((a, b) => b.y - a.y);
     if (ancoras.length === 0) continue;
 
+    // RAIO DE ATRIBUICAO — derivado do PROPRIO espacamento das ancoras.
+    //
+    // Era `dist > 20`: constante magica, e errada. Medido no fechamento de
+    // julho/2026: as ancoras distam 51,7 a 66,7, e as celulas de 5 linhas do
+    // "Nome do Convenio" se estendem a +-24 — 4 unidades alem do corte. Morriam
+    // 28 fragmentos em silencio ("Nao", "Bene", <NUL>, "cio" nos 7 contratos
+    // CDC), e com eles o "Nao" que distingue "Nao Consignado" de "Consignado".
+    //
+    // O criterio agora e METADE DO MENOR PASSO entre ancoras vizinhas: e o maior
+    // raio que ainda torna IMPOSSIVEL um fragmento cair na faixa de duas linhas
+    // ao mesmo tempo. Alargar mais seria trocar perda por contaminacao, que e
+    // pior — perda deixa a celula curta e visivel, contaminacao deixa a celula
+    // errada e plausivel. Ver scripts/bbts_conservacao_celula_gate.cjs, que
+    // mede as duas coisas.
+
+
     // cada item pertence à âncora mais próxima em y
     const porAncora = new Map<string, PdfItem[]>();
     for (const it of itens) {
-      let melhor: PdfItem | null = null;
-      let dist = Infinity;
-      for (const a of ancoras) {
-        const d = Math.abs(it.y - a.y);
-        if (d < dist) {
-          dist = d;
-          melhor = a;
-        }
-      }
-      if (!melhor || dist > 20) continue; // fora de qualquer linha (cabeçalho/rodapé)
+      const idxLinha = linhaDoFragmento(it.y, ancoras);
+      if (idxLinha < 0) continue;            // fora de qualquer linha (cabeçalho/rodapé)
+      const melhor = ancoras[idxLinha];
       const arr = porAncora.get(melhor.str) ?? [];
       arr.push(it);
       porAncora.set(melhor.str, arr);

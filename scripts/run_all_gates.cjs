@@ -168,6 +168,18 @@ const GATES = [
       "puro sobre inadimplenciaAgregados",
   },
   {
+    arquivo: "scripts/bbts_conservacao_celula_gate.cjs",
+    nome: "celula do PDF BBTS: conservacao + anti-contaminacao",
+    modo: "needs-local",
+    motivo:
+      "le o PDF do fechamento da BBTS, que e dado de cliente e NAO e versionado " +
+      "(passe o caminho por argumento ou em BBTS_FECHAMENTO_PDF). UM arquivo com " +
+      "as DUAS invariantes: nenhum fragmento de celula se perde, e o total por " +
+      "pagina e conservado — separar em dois gates duplicaria a extracao inteira " +
+      "do PDF para medir o mesmo universo. ATENCAO: sem o PDF ele se declara " +
+      "PULADO e sai 0, entao no --full aparece como PASSOU sem ter medido nada",
+  },
+  {
     arquivo: "scripts/check_condicoes_seed.cjs",
     nome: "condicoes do seed (JSON curado)",
     modo: "needs-local",
