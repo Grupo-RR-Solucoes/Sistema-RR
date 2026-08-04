@@ -68,11 +68,20 @@ export type ModoJanela = "mes-cheio" | "ate-dia-N";
 
 export type Janela = {
   modo: ModoJanela;
-  /** Dia de corte na competencia ATUAL. null em "mes-cheio". */
+  /**
+   * Corte na competencia ATUAL, em DIAS DE PRODUCAO (posicao na janela), NAO em
+   * dia do mes. null em "mes-cheio".
+   *
+   * O NOME ficou: renomear para `corteAtual` alcancaria 8 arquivos, entre eles
+   * dois gates de outra frente (medida-c), e o ganho nao paga o risco agora.
+   * Fica registrado que o campo mudou de UNIDADE em 03/08/2026 — quem ler
+   * `diaCorteAtual: 2` deve entender "2 dias de producao", nao "dia 2".
+   */
   diaCorteAtual: number | null;
   /**
-   * Dia de HOJE, antes de qualquer limitacao (Fase 2.1). Guardado para dar
-   * para explicar a diferenca quando `limitadoPorDado` e true.
+   * N de HOJE (dias de producao decorridos) antes de qualquer limitacao
+   * (Fase 2.1). Guardado para dar para explicar a diferenca quando
+   * `limitadoPorDado` e true. Mesma unidade de diaCorteAtual.
    */
   diaHoje: number | null;
   /**
@@ -81,9 +90,10 @@ export type Janela = {
    */
   limitadoPorDado: boolean;
   /**
-   * Dia de corte na competencia ANTERIOR. Pode ser MENOR que o atual: se hoje e
-   * 31 e o mes anterior tem 30 dias, cortar em 31 la nao existe -- o corte e
-   * clampado para 30, que e o mes anterior inteiro. null em "mes-cheio".
+   * Corte na competencia ANTERIOR, em dias de producao. Pode ser MENOR que o
+   * atual: se o N de hoje e 21 e a janela anterior so tem 20 dias de producao,
+   * cortar em 21 la nao existe -- o corte e clampado para 20, que e a janela
+   * anterior inteira. null em "mes-cheio".
    */
   diaCorteAnterior: number | null;
   /** true quando o clamp acima reduziu o N da ponta anterior. */
@@ -229,10 +239,12 @@ export function ultimoDiaDoMes(comp: Competencia): number {
  *
  * `null` quando nao ha nenhum dia com dado (a competencia nao tem daily).
  */
-export function ultimoDiaComDado(dias: Iterable<number> | null | undefined): number | null {
-  if (!dias) return null;
+export function ultimaPosicaoComDado(
+  posicoes: Iterable<number> | null | undefined
+): number | null {
+  if (!posicoes) return null;
   let max: number | null = null;
-  for (const d of dias) {
+  for (const d of posicoes) {
     const n = Math.trunc(Number(d));
     if (!Number.isFinite(n) || n < 1 || n > 31) continue;
     if (max == null || n > max) max = n;
@@ -243,8 +255,22 @@ export function ultimoDiaComDado(dias: Iterable<number> | null | undefined): num
 export type ParametrosJanela = {
   competencia: Competencia;
   modo: ModoJanela;
-  /** Dia de hoje (1..31). Obrigatorio em "ate-dia-N". */
-  dia?: number | null;
+  /**
+   * N = quantos DIAS DE PRODUCAO da janela ja decorreram. Obrigatorio em
+   * "ate-dia-N".
+   *
+   * NAO e o dia do mes. E a POSICAO na janela de producao: 1 = primeiro dia
+   * util da janela (o ultimo dia util do mes ANTERIOR), 2 = o segundo, etc.
+   * Vem de resolverJanelaRitmo(...).diasDecorridos — a mesma aritmetica que a
+   * /projecao exibe como "N/total dias uteis".
+   *
+   * ATE 03/08/2026 este campo era o dia do mes, e o recorte comparava
+   * `Number(data.slice(8,10)) <= N`. Como a COMPETENCIA sempre saiu da janela,
+   * as duas coisas eram de familias diferentes: em ago/2026 as 32 linhas da
+   * competencia estavam em 2026-07-31 (dia 31) e o corte era 3, entao nenhuma
+   * sobrevivia e o card dava -100%. Ver lib/delta/recorteJanela.ts.
+   */
+  n?: number | null;
   /**
    * FASE 2.1 — dias-do-mes que TEM dado na competencia CORRENTE (>= 1 linha
    * cada). O corte vira min(hoje, maior dia com dado).
@@ -262,16 +288,35 @@ export type ParametrosJanela = {
    * e o rotulo mostra o N real — encurtar honestamente e melhor que comparar
    * janelas desiguais.
    *
-   * CONTRATO — passe SO os dias do MES-CALENDARIO da competencia. NAO inclua o
-   * "dia-cabeca" que a janela de producao herda do mes anterior: a competencia
-   * de julho comeca no ultimo dia util de junho (dia 30), e um 30 no conjunto
-   * viraria o maximo, mascarando que o dado real so vai ate o dia 23. A
-   * pergunta aqui e "ate que dia DESTE mes a diaria foi carregada" — o
-   * dia-cabeca e do mes passado e nao responde isso.
+   * CONTRATO — passe POSICOES da janela (1 = primeiro dia de producao), nao
+   * dias do mes. Use posicoesComDado() de lib/delta/recorteJanela.ts.
+   *
+   * O CONTRATO ANTIGO PEDIA O CONTRARIO, e a razao morreu com o conserto: ele
+   * exigia "SO os dias do MES-CALENDARIO, NAO o dia-cabeca", porque o
+   * dia-cabeca da competencia de julho e 30/06 — dia-do-mes 30, que viraria o
+   * maximo do conjunto e mascararia que a diaria so foi carregada ate o dia 23.
+   * Era um remendo contra a propria mistura de familias. Em posicao o
+   * dia-cabeca e 1, a MENOR de todas, e nao mascara nada: ele volta a poder ser
+   * contado, que e o correto — producao daquele dia e producao da competencia.
    *
    * Ausente/vazio => sem limitacao (comportamento da Fase 2).
    */
-  diasComDadoNoMesCorrente?: Iterable<number> | null;
+  posicoesComDadoNaJanela?: Iterable<number> | null;
+  /**
+   * Total de DIAS DE PRODUCAO da janela de cada ponta (totalDiasDeProducao de
+   * lib/delta/recorteJanela.ts). E o teto do clamp: pedir o 23o dia de producao
+   * numa janela que so tem 21 nao existe.
+   *
+   * POR QUE VEM DE FORA E NAO E CALCULADO AQUI. Este modulo e uma FOLHA sem
+   * imports, de proposito: e isso que permite `node --test` rodar
+   * lib/__tests__/calcularDelta.test.ts nativamente, sem loader nem resolucao
+   * de alias "@/". Importar recorteJanela (que importa trp/vigencia) quebrou o
+   * suite na primeira tentativa deste conserto — o erro foi
+   * ERR_MODULE_NOT_FOUND em '@/lib'. Quem chama ja tem a janela resolvida;
+   * passar dois numeros e mais barato que perder a testabilidade do modulo.
+   */
+  totalAtual: number;
+  totalAnterior: number;
   /**
    * true quando quem chama JA SABE que nao consegue recortar (falta dado com
    * data por linha em alguma das pontas). Forca mes-cheio e marca o motivo.
@@ -291,7 +336,14 @@ export type ParametrosJanela = {
  * `clampado` deixa explicito que a janela NAO e identica, e a tela pode dizer.
  */
 export function resolverJanela(params: ParametrosJanela): Janela {
-  const { competencia, modo, dia, recorteIndisponivel, diasComDadoNoMesCorrente } = params;
+  const {
+    modo,
+    n: nPedido,
+    recorteIndisponivel,
+    posicoesComDadoNaJanela,
+    totalAtual,
+    totalAnterior,
+  } = params;
 
   if (modo === "mes-cheio" || recorteIndisponivel) {
     return {
@@ -305,18 +357,23 @@ export function resolverJanela(params: ParametrosJanela): Janela {
     };
   }
 
-  const anterior = competenciaAnterior(competencia);
-  const maxAtual = ultimoDiaDoMes(competencia);
-  const maxAnterior = ultimoDiaDoMes(anterior);
+  // O TETO DE CADA PONTA agora e o total de DIAS DE PRODUCAO da janela dela, e
+  // nao o numero de dias do mes-calendario. Janelas de meses diferentes tem
+  // quantidades de dias uteis diferentes (jul/2026 tem 23, jun/2026 tem 21),
+  // exatamente como fev tem menos dias que jan — o clamp continua existindo, so
+  // passou a medir na unidade certa.
+  const maxAtual = Math.max(1, Math.trunc(totalAtual));
+  const maxAnterior = Math.max(1, Math.trunc(totalAnterior));
 
-  // 1) dia de hoje, sanitizado para o intervalo valido do mes corrente.
-  const hoje = Math.min(Math.max(Math.trunc(dia ?? 0), 1), maxAtual);
+  // 1) N de hoje (dias de producao decorridos), sanitizado para a janela atual.
+  const hoje = Math.min(Math.max(Math.trunc(nPedido ?? 0), 1), maxAtual);
 
-  // 2) FASE 2.1 — nao adianta cortar em 26 se o dado so vai ate 23.
-  const ultimoDado = ultimoDiaComDado(diasComDadoNoMesCorrente);
+  // 2) FASE 2.1 — nao adianta cortar no 18o dia de producao se o dado so vai
+  //    ate o 15o.
+  const ultimoDado = ultimaPosicaoComDado(posicoesComDadoNaJanela);
   const n = ultimoDado != null ? Math.min(hoje, ultimoDado) : hoje;
 
-  // 3) clamp de fim de mes (Fase 2) — aplicado DEPOIS, sobre o N ja limitado.
+  // 3) clamp (Fase 2) — aplicado DEPOIS, sobre o N ja limitado.
   const nAnterior = Math.min(n, maxAnterior);
 
   return {
@@ -601,16 +658,20 @@ export function rotuloComparacao(r: ResultadoDelta): string {
  * null = nao precisa dizer nada (competencia fechada comparando dois totais
  * finais e o caso normal; anotar "mes cheio" ali so poluiria).
  *
- *   "1-26"      -> recorte igual dos dois lados
- *   "1-26 x 30" -> clamp de fim de mes (o M-1 tinha menos dias)
- *   "mes cheio" -> o recorte foi pedido mas o dado nao sustenta
+ *   "3 dias"       -> recorte igual dos dois lados
+ *   "3 x 2 dias"   -> clamp (a janela do M-1 tinha menos dias de producao)
+ *   "mes cheio"    -> o recorte foi pedido mas o dado nao sustenta
+ *
+ * Deixou de ser "1-26" em 03/08/2026: aquele formato lia como intervalo de
+ * DIAS DO MES, e o corte agora e quantidade de DIAS DE PRODUCAO. "1-26" com
+ * corte por posicao seria a mesma mistura de familias, so que no rotulo.
  */
 export function rotuloJanela(r: ResultadoDelta): string | null {
   const j = r.janela;
   if (j.recorteIndisponivel) return "mes cheio";
   if (j.modo !== "ate-dia-N") return null;
-  if (j.clampado) return `1-${j.diaCorteAtual} x 1-${j.diaCorteAnterior}`;
-  return `1-${j.diaCorteAtual}`;
+  if (j.clampado) return `${j.diaCorteAtual} x ${j.diaCorteAnterior} dias`;
+  return `${j.diaCorteAtual} ${j.diaCorteAtual === 1 ? "dia" : "dias"}`;
 }
 
 // ============================================================================
@@ -620,27 +681,40 @@ export function rotuloJanela(r: ResultadoDelta): string | null {
 // de um mes aberto e parcial e a anterior e cheia, e o card mostra uma queda
 // que nao existe -- pior quanto mais cedo no mes.
 //
+// CORRIGE TAMBEM, desde 03/08/2026: o corte deixou de ser dia-do-mes e virou
+// POSICAO NA JANELA (N dias de producao decorridos), via
+// lib/delta/recorteJanela.ts. Isso fechou duas coisas de uma vez:
+//
+// 1) A MISTURA DE FAMILIAS, que era um defeito e nao um vies. A competencia
+//    sempre saiu da janela; o corte saia do calendario. Em ago/2026 as 32
+//    linhas elegiveis estavam em 2026-07-31 — competencia agosto pela janela,
+//    dia 31 pelo calendario — e com corte 3 nenhuma sobrevivia: ponta atual
+//    R$ 0,00, card anunciando -100% num mes com R$ 284.916,12 importados.
+//
+// 2) O VIES que esta nota ja media e classificava como aceitavel: 1..25 de
+//    junho tem 19 dias uteis e 1..25 de julho tem 18 (dia 25 caiu num sabado),
+//    ~5% na direcao do mes que comeca em dia pior. Comparar POSICAO contra
+//    POSICAO elimina isso por construcao.
+//
+// 3) O PRIMEIRO DIA DA JANELA passou a CONTAR. Esta nota dizia que o dia-cabeca
+//    (ultimo dia util do mes anterior, dia-do-mes 29/30/31) ficava de fora do
+//    recorte "nos DOIS lados, simetricamente". Ficava — e era justamente por
+//    ele ser lido no calendario. Em posicao ele e o dia 1. Simetria mantida,
+//    perda de dado eliminada: a producao do dia-cabeca e producao da
+//    competencia e agora entra no recorte como qualquer outra.
+//
+// CORRIGIDO ANTES, e continua valendo:
+//
+// 4) ATRASO DE IMPORTACAO — Fase 2.1. O corte e min(N de hoje, ultima posicao
+//    com dado na janela corrente), via `posicoesComDadoNaJanela` em
+//    resolverJanela. Fica o registro do que acontecia antes: em 26/07/2026 a
+//    diaria de julho estava carregada ate 23/07 e o card mostrava -10,6%; com
+//    as duas pontas na mesma janela curta, +3,0%. O sinal invertia por atraso
+//    de carga, nao por desempenho.
+//
 // NAO CORRIGE, e e bom saber:
 //
-// 1) DIA-DO-MES NAO E DIA UTIL. O corte e por dia do calendario (decisao
-//    Diego). Meses comecam em dias da semana diferentes, entao 1..N de um mes
-//    pode ter mais dias uteis que 1..N do outro. Medido em 2026: 1..25 de junho
-//    tem 19 dias uteis e 1..25 de julho tem 18 (dia 25 caiu num sabado) -- um
-//    vies residual de ~5% na direcao do mes com menos dias uteis. Um recorte
-//    por INDICE DE DIA UTIL (reusando productionBusinessWindow/countBusinessDays
-//    de lib/trp/vigencia.ts, ja holiday-aware) eliminaria isso; fica anotado
-//    como opcao, nao como pendencia.
-//
-// 2) ATRASO DE IMPORTACAO — CORRIGIDO na Fase 2.1. O corte agora e
-//    min(hoje, ultimo dia com dado na competencia corrente), via
-//    `diasComDadoNoMesCorrente` em resolverJanela. Fica o registro do que
-//    acontecia antes: em 26/07/2026 a diaria de julho estava carregada ate
-//    23/07 e o card mostrava -10,6%; com as duas pontas em 1-23, +3,0%.
-//    O sinal invertia por atraso de carga, nao por desempenho.
-//
-// 3) O PRIMEIRO DIA DA JANELA DE COMPETENCIA. A competencia do sistema comeca
-//    no ultimo dia util do mes anterior (getProductionWindow), cujo dia-do-mes
-//    e alto (29, 30, 31). Com corte <= N (N tipicamente < 29) esse dia fica de
-//    fora -- nos DOIS lados, simetricamente. Por isso o recorte nao reconcilia
-//    com o total "mes cheio" do mesmo card, e nao deveria mesmo.
+// 5) O RECORTE NAO RECONCILIA com o total "mes cheio" do mesmo card, e nao
+//    deveria: um compara N dias das duas pontas, o outro soma a competencia
+//    inteira. Numeros diferentes respondendo perguntas diferentes.
 // ============================================================================

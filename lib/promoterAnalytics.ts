@@ -18,6 +18,11 @@ import {
   resolverJanela,
   type ResultadoDelta,
 } from "@/lib/delta/calcularDelta";
+// RECORTE do delta na MESMA familia da competencia (posicao na janela, nao dia
+// do mes). Ver o cabecalho de lib/delta/recorteJanela.ts.
+import { posicoesComDado, recorteDaJanela, totaisDaJanela } from "@/lib/delta/recorteJanela";
+// N (dias de producao decorridos) — fonte unica da aritmetica de dias uteis.
+import { resolverJanelaRitmo } from "@/lib/janelaRitmo";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
 import {
   getAgencyCode as getAgencyCodeShared,
@@ -796,6 +801,11 @@ export function calcularComissaoEmpresaRecortada(
   let linhasNaCompetencia = 0;
   let linhasSomadas = 0;
   let linhasComDerive = 0;
+  // `ateDia` continua com o nome antigo na assinatura publica desta funcao, mas
+  // mudou de UNIDADE em 03/08/2026: agora e N dias de PRODUCAO (posicao na
+  // janela), nao dia do mes. Quem chama ja passa janelaProducao.diaCorteAtual,
+  // que resolverJanela produz na unidade nova.
+  const recorte = recorteDaJanela(competencia, ateDia);
 
   for (const record of records) {
     if (companyIds && !companyIds.includes(record.company_id || "")) continue;
@@ -810,13 +820,10 @@ export function calcularComissaoEmpresaRecortada(
     }
     linhasNaCompetencia += 1;
 
-    if (ateDia != null) {
-      // Mesma cadeia de datas do resto do modulo (movement -> contract ->
-      // proposal), para o corte cair no mesmo dia que a producao ja usa.
-      const bruta = record.movement_date || record.contract_date || record.proposal_date;
-      const dia = Number(String(bruta ?? "").slice(8, 10));
-      if (!(dia >= 1 && dia <= ateDia)) continue;
-    }
+    // MESMO recorte da producao: posicao na janela, nao dia do mes. A cascata
+    // de datas mora em recorteDaJanela (dataDoRegistro), a mesma que decide a
+    // competencia — corte e competencia na mesma familia.
+    if (!recorte.dentro(record)) continue;
 
     // A FAIXA usa a producao do mes INTEIRO — o recorte nao entra aqui.
     // Uma passada so devolve a taxa E o degrau: antes isto chamava a cascata
@@ -1993,35 +2000,50 @@ export function selectPromoterView(
     latestPeriod.year === agoraDelta.year && latestPeriod.month === agoraDelta.month;
   const universo = new Set(idsVisiveis);
 
-  // FASE 2.1 — dias-do-mes com produção lançada na competência CORRENTE, para o
-  // corte virar min(hoje, último dia com dado). Mesmo predicado e mesmo
-  // universo da soma abaixo.
-  // Só dias do MÊS-CALENDÁRIO da competência: o "dia-cabeça" herdado do mês
-  // anterior (30/06 na competência de julho) tem dia-do-mês alto e viraria o
-  // máximo, mascarando até onde a diária foi de fato carregada.
-  const prefixoMesCorrente = `${compAtualDelta.year}-${String(compAtualDelta.month).padStart(2, "0")}-`;
-  const diasComDadoCorrente = new Set<number>();
-  for (const record of base.records) {
-    const pid = record.assigned_promoter_id || "";
-    if (!universo.has(pid)) continue;
-    if (!isEligibleProductionRecord(record)) continue;
-    const p = extractYearMonth(record);
-    if (!p || p.year !== compAtualDelta.year || p.month !== compAtualDelta.month) continue;
-    const bruta = String(record.movement_date || record.contract_date || record.proposal_date || "");
-    if (!bruta.startsWith(prefixoMesCorrente)) continue;
-    const dia = Number(bruta.slice(8, 10));
-    if (dia >= 1 && dia <= 31) diasComDadoCorrente.add(dia);
-  }
+  // FASE 2.1 — POSICOES da janela com produção lançada na competência CORRENTE,
+  // para o corte virar min(N de hoje, última posição com dado). Mesmo predicado
+  // e mesmo universo da soma abaixo.
+  //
+  // Era filtrado por prefixo de mês-calendário para excluir o "dia-cabeça"
+  // (30/06 na competência de julho), cujo dia-do-mês alto viraria o máximo e
+  // mascararia até onde a diária foi carregada. Em POSIÇÃO o dia-cabeça é 1, a
+  // menor de todas — o remendo do prefixo deixou de ser necessário e sairia
+  // caro: ele descartava produção real do primeiro dia da janela.
+  const diasComDadoCorrente = posicoesComDado(
+    base.records.filter(
+      (record) =>
+        universo.has(record.assigned_promoter_id || "") &&
+        isEligibleProductionRecord(record) &&
+        (() => {
+          const p = extractYearMonth(record);
+          return !!p && p.year === compAtualDelta.year && p.month === compAtualDelta.month;
+        })()
+    ),
+    compAtualDelta
+  );
 
+  // N = dias de PRODUÇÃO decorridos da janela (não o dia do mês). Fonte única:
+  // resolverJanelaRitmo, o mesmo helper que a /projecao usa para exibir
+  // "N/total dias úteis".
+  const janelaRitmoDelta = resolverJanelaRitmo(compAtualDelta.year, compAtualDelta.month, {
+    closed: !!base.closedSourceAtual,
+  });
   const janelaProducao = resolverJanela({
     competencia: compAtualDelta,
+    ...totaisDaJanela(compAtualDelta),
     modo: !base.closedSourceAtual && ehCorrenteDelta ? "ate-dia-N" : "mes-cheio",
-    dia: agoraDelta.day,
-    diasComDadoNoMesCorrente: diasComDadoCorrente,
+    n: janelaRitmoDelta.diasDecorridos,
+    posicoesComDadoNaJanela: diasComDadoCorrente,
   });
   function somaRecordsRecortado(comp: { year: number; month: number }, ateDia: number | null) {
     let total = 0;
     let linhas = 0;
+    let linhasSomadas = 0;
+    // O recorte sai da MESMA janela que decide a competência (recorteDaJanela ->
+    // productionBusinessWindow). Antes o dia vinha de slice(8,10) — calendário —
+    // e uma linha aprovada na competência podia ser descartada por pertencer a
+    // "outro mês", que foi o defeito de 03/08/2026.
+    const recorte = recorteDaJanela(comp, ateDia);
     for (const record of base.records) {
       const pid = record.assigned_promoter_id || "";
       if (!universo.has(pid)) continue;
@@ -2029,14 +2051,11 @@ export function selectPromoterView(
       const p = extractYearMonth(record);
       if (!p || p.year !== comp.year || p.month !== comp.month) continue;
       linhas += 1;
-      if (ateDia != null) {
-        const bruta = record.movement_date || record.contract_date || record.proposal_date;
-        const dia = Number(String(bruta ?? "").slice(8, 10));
-        if (!(dia >= 1 && dia <= ateDia)) continue;
-      }
+      if (!recorte.dentro(record)) continue;
+      linhasSomadas += 1;
       total += toNumber(record.net_value);
     }
-    return { total: Math.round(total * 100) / 100, linhas };
+    return { total: Math.round(total * 100) / 100, linhas, linhasSomadas };
   }
 
   let deltaProducao;
@@ -2046,7 +2065,20 @@ export function selectPromoterView(
       base.competenciaAnteriorPmr,
       janelaProducao.diaCorteAnterior
     );
-    if (at.linhas > 0 && an.linhas > 0) {
+    // A GUARDA OLHA O QUE SOBROU DEPOIS DO CORTE (03/08/2026).
+    //
+    // Ela testava `at.linhas > 0 && an.linhas > 0`, e `linhas` conta ANTES do
+    // recorte. Em ago/2026 isso deu 32 linhas na competência e ZERO sobrevivendo
+    // ao corte: a condição passava, o ramo do fallback nunca rodava, e o card
+    // publicava valorAtual = 0 contra R$ 853.044,40 de julho — "-100%" de uma
+    // queda que não existiu. Contar antes do corte responde "o mês tem dado?";
+    // a pergunta do recorte é "sobrou dado NA JANELA COMPARADA?".
+    //
+    // Com o corte por posição o caso de ago/2026 deixa de existir, mas a guarda
+    // continua errada em qualquer futuro em que o recorte legitimamente esvazie
+    // uma ponta (competência nova cujo primeiro dia de produção ainda não veio).
+    // Corrigir a guarda é independente de corrigir o corte.
+    if (at.linhasSomadas > 0 && an.linhasSomadas > 0) {
       deltaProducao = calcularDelta({
         competencia: compAtualDelta,
         valorAtual: at.total,
@@ -2063,8 +2095,9 @@ export function selectPromoterView(
         valorAnterior: houveM1 ? producaoAnterior : null,
         janela: resolverJanela({
           competencia: compAtualDelta,
+          ...totaisDaJanela(compAtualDelta),
           modo: "ate-dia-N",
-          dia: agoraDelta.day,
+          n: janelaRitmoDelta.diasDecorridos,
           recorteIndisponivel: true,
         }),
         // BORDA DE MES VAZIO — linhas do daily na competencia atual, inteira
@@ -2095,8 +2128,9 @@ export function selectPromoterView(
     valorAnterior: houveM1 ? comissaoAnterior : null,
     janela: resolverJanela({
       competencia: compAtualDelta,
+      ...totaisDaJanela(compAtualDelta),
       modo: !base.closedSourceAtual && ehCorrenteDelta ? "ate-dia-N" : "mes-cheio",
-      dia: agoraDelta.day,
+      n: janelaRitmoDelta.diasDecorridos,
       recorteIndisponivel: !base.closedSourceAtual && ehCorrenteDelta,
     }),
     fonteAtual: base.closedSourceAtual ?? "motor-vivo",

@@ -210,6 +210,15 @@ const GATES = [
       "createClient; daily_production_records de PRODUCAO",
   },
   {
+    arquivo: "scripts/recorte_familia_janela_gate.cjs",
+    nome: "corte do delta e da MESMA familia da competencia",
+    modo: "needs-db",
+    motivo:
+      "3,6s; createClient; daily_production_records de PRODUCAO. Os blocos 1 a 3 " +
+      "sao puros (o 3 prova que a regra VELHA violava a invariante, para o gate " +
+      "nao passar por vacuidade)",
+  },
+  {
     arquivo: "scripts/serie_eixo_daily_gate.cjs",
     nome: "mes com daily elegivel aparece no eixo da serie",
     modo: "needs-db",
@@ -244,13 +253,6 @@ const GATES = [
     modo: "needs-db",
     motivo:
       "createClient; trp_rule_versions de PRODUCAO",
-  },
-  {
-    arquivo: "scripts/check_enquadramento.cjs",
-    nome: "enquadramento por faixa (audit_v9)",
-    modo: "needs-db",
-    motivo:
-      "createClient; audit_v9_avista de PRODUCAO",
   },
   {
     arquivo: "scripts/gate_regua_bbts_independe_do_client.ts",
@@ -363,11 +365,27 @@ const GATES = [
       "59s; createClient; monthly_closing_entries/leadership_rule_versions de PRODUCAO",
   },
   {
+    arquivo: "scripts/check_enquadramento.cjs",
+    nome: "enquadramento por faixa (audit_v9)",
+    modo: "needs-db-lento",
+    motivo:
+      "10,7s; createClient; audit_v9_avista de PRODUCAO. PROMOVIDO em 03/08/2026 " +
+      "por TETO, junto do gate-medida-c-rota — ver o motivo de la",
+  },
+  {
     arquivo: "scripts/gate-medida-c-rota.mts",
     nome: "MEDIDA C: a janela da rota nao decapita a competencia M-1",
-    modo: "needs-db",
+    modo: "needs-db-lento",
     motivo:
-      "createClient; daily de PRODUCAO. VIVO x VIVO: LADO A e a query da rota (com janela), LADO B e query PROPRIA sem janela — os dois deste run",
+      "19,5s; createClient; daily de PRODUCAO. VIVO x VIVO: LADO A e a query da " +
+      "rota (com janela), LADO B e query PROPRIA sem janela — os dois deste run. " +
+      "PROMOVIDO em 03/08/2026 por TETO, junto do check_enquadramento: a faixa " +
+      "deu 111,7s de 90s com o gate novo (que custa 2,1s). Escolhidos os dois " +
+      "mais lentos que estavam VERDES — o mais lento de todos (ADS julho, 18,5s) " +
+      "esta VERMELHO e tirar gate vermelho da faixa e esconder falha. ATENCAO: as " +
+      "medicoes desta faixa variam bastante entre execucoes (78s, 93,6s e 111,7s " +
+      "no mesmo dia, mesmo conjunto) — a variacao e de latencia do banco, nao de " +
+      "codigo; os numeros aqui sao de UMA execucao, nao media",
   },
   {
     arquivo: "scripts/gate-srcc-ads.mts",
