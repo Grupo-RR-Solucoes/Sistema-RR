@@ -16,6 +16,8 @@
 import { getDocumentProxy } from "unpdf";
 
 import { extractLinesFromPdf } from "@/lib/trp/parseTrpPdf";
+// JUNCAO dos fragmentos de uma celula, com a LACUNA de glifo preservada.
+import { juntarFragmentosPdf } from "@/lib/bbts/normalizarTextoPdf";
 import type {
   BbtsClosingInput,
   BbtsCreditoRow,
@@ -101,20 +103,27 @@ async function extractItemsByPage(data: Uint8Array): Promise<PdfItem[][]> {
   return pages;
 }
 
-/** Texto de uma coluna (x em [lo, hi)) dentro da linha de uma âncora, de cima p/ baixo. */
+/**
+ * Texto de uma coluna (x em [lo, hi)) dentro da linha de uma ancora, de cima p/
+ * baixo.
+ *
+ * A JUNCAO mora em lib/bbts/normalizarTextoPdf.ts. Aqui so ordenamos e
+ * entregamos os fragmentos CRUS — inclusive os itens de 1 caractere de controle,
+ * que sao o SINAL de ligadura perdida e NAO podem ser apagados antes da juncao.
+ *
+ * O QUE SAIU DAQUI (03/08/2026):
+ *   - a limpeza dos caracteres de controle APAGAVA o NUL, e o join(" ") ja
+ *     tinha metido um espaco no lugar dele: era dai que nascia "Automa co".
+ *   - o replace de Corren/sta -> Correntista era remendo manual para UMA
+ *     palavra. As outras 5 ocorrencias do MESMO fenomeno, no MESMO arquivo,
+ *     seguiam quebradas. Agora todas passam pelo helper.
+ */
 function textoDaColuna(itens: PdfItem[], lo: number, hi: number): string {
-  return itens
+  const fragmentos = itens
     .filter((i) => i.x >= lo && i.x < hi)
     .sort((a, b) => b.y - a.y || a.x - b.x)
-    .map((i) => i.str)
-    .join(" ")
-    // O PDF injeta caracteres de CONTROLE (NUL U+0000) e zero-width no meio das
-    // palavras quebradas; \s não casa com eles. Sem limpar, "Correntista" ficaria
-    // gravado como "Corren<NUL>sta" no product_description.
-    .replace(/[\u0000-\u001F\u200B-\u200D\uFEFF]/g, "")
-    .replace(/\s+/g, " ")
-    .replace(/Corren\s*sta/gi, "Correntista") // a palavra vem partida no PDF
-    .trim();
+    .map((i) => i.str);
+  return juntarFragmentosPdf(fragmentos).texto;
 }
 
 export interface ColunasCredito {

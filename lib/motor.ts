@@ -1,4 +1,7 @@
 import { resolvePromotivaCashPolicy } from "./promotivaCashPolicy.ts";
+// LACUNA DE GLIFO do PDF da BBTS: os matchers de product_description passam a
+// tolerar o glifo que o PDF engole. Ver lib/bbts/normalizarTextoPdf.ts.
+import { casaExpressao, contemTermo } from "./bbts/normalizarTextoPdf.ts";
 import type { RegraMes } from "./regrasData.ts";
 import {
   categoriasCandidatasFor,
@@ -386,9 +389,9 @@ export function inferCreditTable(op: Operation) {
 
   if (
     ["2991", "2992", "2996", "2997", "2889", "2890"].includes(productCode) ||
-    description.includes("CREDITO SALARIO") ||
-    description.includes("CREDITO BENEFICIO") ||
-    description.includes("CREDITO AUTOMATIC") ||
+    contemTermo(description, "CREDITO SALARIO") ||
+    contemTermo(description, "CREDITO BENEFICIO") ||
+    contemTermo(description, "CREDITO AUTOMATIC") ||
     // CORRECAO-2: familia "CDC Novo" (Automatico/Salario/Beneficio) e NAO_CONSIGNADO
     // pela DESCRICAO, mesmo com convenio_segment=PRIVADO (2 dos 6 casos ADS). O
     // fechamento ADS traz product_code NULL e nao "CREDITO AUTOMATIC", entao os
@@ -400,15 +403,26 @@ export function inferCreditTable(op: Operation) {
     //     consignado, mas 13) vai para ADIANTAMENTO_13 e NUNCA cai aqui;
     //   - "CONSIGNADO PRIVADO" (populacao da CORRECAO-1) nao tem \bCDC\b -> intacto.
     // Blast radius medido = 6 registros no banco (os unicos com \bCDC\b + familia).
-    (/\bCDC\b/.test(description) &&
-      (/AUTOMATIC/.test(description) ||
-        /\bSALARIO\b/.test(description) ||
-        /\bBENEFICIO\b/.test(description)))
+    // LACUNA DE GLIFO (03/08/2026): estes testes passaram a ser TOLERANTES.
+    // O PDF da BBTS engole a ligadura e entrega "CDC Novo Automa<U+FFFD>co" —
+    // /AUTOMATIC/ nao casava e os 5 contratos com "Automatico"/"Beneficio"
+    // caiam no fallback :427, que decide por segmento. Ver
+    // lib/bbts/normalizarTextoPdf.ts. casaExpressao expande a lacuna sobre o
+    // conjunto fechado de ligaduras; sem lacuna, e o mesmo test() de antes.
+    (casaExpressao(description, /\bCDC\b/) &&
+      (casaExpressao(description, /AUTOMATIC/) ||
+        casaExpressao(description, /\bSALARIO\b/) ||
+        casaExpressao(description, /\bBENEFICIO\b/)))
   ) {
     return "AUTOMATICO_SALARIO_BENEFICIO";
   }
 
-  if (productCode === "2787" || productCode === "2887" || description.includes("PORTABILIDADE")) {
+  if (
+    productCode === "2787" ||
+    productCode === "2887" ||
+    // "PORTABILIDADE" contem "ti": mesma exposicao a lacuna dos matchers acima.
+    contemTermo(description, "PORTABILIDADE")
+  ) {
     return privateConvenio ? "PORTABILIDADE_PRIVADO" : "PORTABILIDADE_PUBLICO";
   }
 
