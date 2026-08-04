@@ -1,4 +1,7 @@
 import { resolvePromotivaCashPolicy } from "./promotivaCashPolicy.ts";
+// LACUNA DE GLIFO do PDF da BBTS: os matchers de product_description passam a
+// tolerar o glifo que o PDF engole. Ver lib/bbts/normalizarTextoPdf.ts.
+import { casaExpressao, contemTermo } from "./bbts/normalizarTextoPdf.ts";
 import type { RegraMes } from "./regrasData.ts";
 import {
   categoriasCandidatasFor,
@@ -386,9 +389,9 @@ export function inferCreditTable(op: Operation) {
 
   if (
     ["2991", "2992", "2996", "2997", "2889", "2890"].includes(productCode) ||
-    description.includes("CREDITO SALARIO") ||
-    description.includes("CREDITO BENEFICIO") ||
-    description.includes("CREDITO AUTOMATIC") ||
+    contemTermo(description, "CREDITO SALARIO") ||
+    contemTermo(description, "CREDITO BENEFICIO") ||
+    contemTermo(description, "CREDITO AUTOMATIC") ||
     // CORRECAO-2: familia "CDC Novo" (Automatico/Salario/Beneficio) e NAO_CONSIGNADO
     // pela DESCRICAO, mesmo com convenio_segment=PRIVADO (2 dos 6 casos ADS). O
     // fechamento ADS traz product_code NULL e nao "CREDITO AUTOMATIC", entao os
@@ -400,15 +403,61 @@ export function inferCreditTable(op: Operation) {
     //     consignado, mas 13) vai para ADIANTAMENTO_13 e NUNCA cai aqui;
     //   - "CONSIGNADO PRIVADO" (populacao da CORRECAO-1) nao tem \bCDC\b -> intacto.
     // Blast radius medido = 6 registros no banco (os unicos com \bCDC\b + familia).
-    (/\bCDC\b/.test(description) &&
-      (/AUTOMATIC/.test(description) ||
-        /\bSALARIO\b/.test(description) ||
-        /\bBENEFICIO\b/.test(description)))
+    // LACUNA DE GLIFO (03/08/2026): estes testes passaram a ser TOLERANTES.
+    // O PDF da BBTS engole a ligadura e entrega "CDC Novo Automa<U+FFFD>co" —
+    // /AUTOMATIC/ nao casava e os 5 contratos com "Automatico"/"Beneficio"
+    // caiam no fallback :427, que decide por segmento. Ver
+    // lib/bbts/normalizarTextoPdf.ts. casaExpressao expande a lacuna sobre o
+    // conjunto fechado de ligaduras; sem lacuna, e o mesmo test() de antes.
+    (casaExpressao(description, /\bCDC\b/) &&
+      (casaExpressao(description, /AUTOMATIC/) ||
+        casaExpressao(description, /\bSALARIO\b/) ||
+        casaExpressao(description, /\bBENEFICIO\b/))) ||
+    // FASE C (04/08/2026): "Nao Consignado" pelo NOME DO CONVENIO da BBTS.
+    //
+    // A ORDEM NAO E PREFERENCIA, E A PARTICAO DA PROPRIA TABELA. O PDF da regua
+    // tem EXATAMENTE tres secoes "Nao Consignado -" (parseBbtsPdf.ts:109-111):
+    //   "Automatico, Salario e Beneficio" -> NAO_CONSIGNADO
+    //   "13o Salario"                     -> NAO_CONSIGNADO_13
+    //   "CDC FGTS"                        -> CDC_FGTS
+    // Duas delas ja foram decididas ACIMA: FGTS em :382 e o 13 em :386. Entao
+    // aqui "Nao Consignado" e o RESIDUAL, e o residual e exatamente a primeira
+    // secao. Nao ha terceira leitura possivel.
+    //
+    // POR ISSO ESTE MATCHER NAO PODE SUBIR. Antes de :386 ele roubaria o 13o:
+    // medido no fechamento de julho/2026, os 4 contratos 220187043, 220187219,
+    // 220722555 e 221118266 chegam como "Nao Consignado - 13o salario
+    // Correntista" e so continuam em ADIANTAMENTO_13 porque o check de "13"
+    // dispara primeiro.
+    //
+    // ANCORA EM "NAO CONSIGNADO", NUNCA EM "AUTOMATICO". A celula chega como
+    // "Nao Consignado - Novo Automa<lacuna>Salario e Beneficio": o fragmento
+    // "co," fica FORA da banda de x por 0,1 ponto (divida aceita, ver
+    // bbtsPdfExtract). Aquela lacuna e FRAGMENTO PERDIDO, nao glifo de ligadura
+    // — expandir sobre LIGADURAS nao a recupera, entao /AUTOMATIC/ nunca casa.
+    // "\bCDC\b" tambem nao alcanca: o CDC mora na "Linha do Produto", nao no
+    // "Nome do Convenio" que vira product_description (bbtsClosingImport:431).
+    // "Nao Consignado" e a unica parte que chega INTEIRA, e chega no comeco.
+    //
+    // contemTermo e nao includes: hoje includes bastaria (a lacuna cai fora da
+    // frase), mas a garantia nao pode depender de ONDE a lacuna cai.
+    //
+    // BLAST RADIUS MEDIDO: censo de inferCreditTable sobre TODAS as descricoes
+    // distintas do banco (11 do RR, 6 da ADS, 232 tuplas desc x codigo x
+    // convenio x segmento) = ZERO mudancas. Sobre o PDF de julho ja com as
+    // Fases A+B = 7 contratos, os da secao Automatico/Salario/Beneficio.
+    // "CONSIGNADO NAO CORRENTISTA" do RR nao casa: a ordem das palavras e outra.
+    contemTermo(description, "NAO CONSIGNADO")
   ) {
     return "AUTOMATICO_SALARIO_BENEFICIO";
   }
 
-  if (productCode === "2787" || productCode === "2887" || description.includes("PORTABILIDADE")) {
+  if (
+    productCode === "2787" ||
+    productCode === "2887" ||
+    // "PORTABILIDADE" contem "ti": mesma exposicao a lacuna dos matchers acima.
+    contemTermo(description, "PORTABILIDADE")
+  ) {
     return privateConvenio ? "PORTABILIDADE_PRIVADO" : "PORTABILIDADE_PUBLICO";
   }
 

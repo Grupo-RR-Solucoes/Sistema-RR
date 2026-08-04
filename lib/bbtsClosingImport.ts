@@ -5,6 +5,15 @@ import {
   traduzirValorFechamento,
   type ValorResolucao as ValorResolucaoSrcc,
 } from "./srccResolucao.ts";
+// LACUNA DE GLIFO: o PDF do fechamento engole ligaduras (ver
+// lib/bbts/normalizarTextoPdf.ts). A eleicao e feita AQUI, e nao no extrator,
+// porque so aqui ha banco para montar o vocabulario atestado.
+import {
+  construirVocabulario,
+  resolverLacunas,
+  type DecisaoLacuna,
+  type Vocabulario,
+} from "@/lib/bbts/normalizarTextoPdf";
 
 // ============================================================================
 // bbtsClosingImport — CARGA do FECHAMENTO BBTS (junho/2026) em
@@ -164,6 +173,63 @@ function parseDateBR(value: unknown): string | null {
 
 class BbtsAnchorError extends Error {}
 
+
+// ---------------------------------------------------------------------------
+// VOCABULARIO ATESTADO — as tres fontes, medidas em 03/08/2026:
+//   corpus-banco        product_description das linhas NAO-ADS (vem de XLSX,
+//                       nunca passou por PDF). 10 palavras, atesta CORRENTISTA
+//                       (1713x), AUTOMATICO (89x), BENEFICIO (105x).
+//   regua-competencia   titulos/celulas da tabela BBTS da competencia
+//                       (bbts_rule_versions). ZERO caractere de controle —
+//                       outro pipeline de geracao na BBTS.
+//   celula-integra-pdf  as celulas do proprio fechamento que vieram sem lacuna.
+//
+// Falhar aqui NAO derruba o import: sem vocabulario, as lacunas simplesmente se
+// mantem, que e o comportamento seguro.
+// ---------------------------------------------------------------------------
+async function montarVocabularioAtestado(
+  supabase: SupabaseClient,
+  competencia: string | null,
+  celulasIntegras: string[],
+): Promise<Vocabulario> {
+  const corpus: string[] = [];
+  try {
+    const { data } = await supabase
+      .from("daily_production_records")
+      .select("company_id, product_description")
+      .neq("company_id", BBTS_COMPANY_ID)
+      .limit(5000);
+    for (const r of data ?? []) if (r.product_description) corpus.push(String(r.product_description));
+  } catch {
+    // sem corpus: segue com as outras fontes
+  }
+
+  const regua: string[] = [];
+  try {
+    let q = supabase.from("bbts_rule_versions").select("regra_json").eq("is_active", true);
+    if (competencia) q = q.eq("competencia", competencia);
+    const { data } = await q.limit(3);
+    for (const v of data ?? []) {
+      const rj = (v as { regra_json?: Record<string, unknown> }).regra_json ?? {};
+      const grupos = (rj.grupos ?? {}) as Record<string, { titulo?: string; celulas?: Array<{ _origem?: string }> }>;
+      for (const g of Object.values(grupos)) {
+        if (g.titulo) regua.push(g.titulo);
+        for (const c of g.celulas ?? []) if (c._origem) regua.push(c._origem);
+      }
+      const convs = (rj.convenios ?? {}) as Record<string, { nome?: string }>;
+      for (const c of Object.values(convs)) if (c.nome) regua.push(c.nome);
+    }
+  } catch {
+    // sem regua: segue com as outras fontes
+  }
+
+  return construirVocabulario([
+    { textos: corpus, fonte: "corpus-banco" },
+    { textos: regua, fonte: "regua-competencia" },
+    { textos: celulasIntegras, fonte: "celula-integra-pdf" },
+  ]);
+}
+
 // ---- carga ------------------------------------------------------------------
 
 /**
@@ -178,6 +244,37 @@ export async function importBbtsClosing(
   opts?: { dryRun?: boolean; anchors?: typeof BBTS_JUNHO_ANCHORS; tolerance?: number; fileName?: string }
 ): Promise<BbtsClosingResult> {
   const dryRun = opts?.dryRun !== false; // default: dry-run
+
+  // ---- LACUNA DE GLIFO: eleicao por evidencia antes de mapear -------------
+  // As celulas do PDF chegam com U+FFFD onde a ligadura se perdeu. Aqui montamos
+  // o vocabulario ATESTADO (corpus do banco + regua da competencia + as celulas
+  // integras deste proprio arquivo) e resolvemos SO o que uma unica ligadura
+  // explica. O que ficar ambiguo ou sem atestacao MANTEM a lacuna — de proposito.
+  const celulasIntegras: string[] = [];
+  for (const r of input.credito ?? []) {
+    for (const t of [r.categoria, r.produto, r.linha_credito]) {
+      if (t && !String(t).includes("\uFFFD")) celulasIntegras.push(String(t));
+    }
+  }
+  const compVocab =
+    input.year && input.month
+      ? `${input.year}-${String(input.month).padStart(2, "0")}-01`
+      : null;
+  const vocabAtestado = await montarVocabularioAtestado(supabase, compVocab, celulasIntegras);
+  const decisoesGlifo: DecisaoLacuna[] = [];
+  const resolverTexto = (t: string | null | undefined): string | null => {
+    if (t == null) return null;
+    const s0 = String(t);
+    if (!s0.includes("\uFFFD")) return s0;
+    const r = resolverLacunas(s0, vocabAtestado);
+    decisoesGlifo.push(...r.decisoes);
+    return r.texto;
+  };
+  for (const r of input.credito ?? []) {
+    r.categoria = resolverTexto(r.categoria);
+    r.produto = resolverTexto(r.produto);
+    r.linha_credito = resolverTexto(r.linha_credito);
+  }
   // Precedência: opts.anchors > _ancoras do arquivo > const hardcoded.
   const fileAnchors = input._ancoras
     ? {

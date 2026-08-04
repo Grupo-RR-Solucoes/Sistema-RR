@@ -16,6 +16,8 @@
 import { getDocumentProxy } from "unpdf";
 
 import { extractLinesFromPdf } from "@/lib/trp/parseTrpPdf";
+// JUNCAO dos fragmentos de uma celula, com a LACUNA de glifo preservada.
+import { juntarFragmentosPdf } from "@/lib/bbts/normalizarTextoPdf";
 import type {
   BbtsClosingInput,
   BbtsCreditoRow,
@@ -101,26 +103,78 @@ async function extractItemsByPage(data: Uint8Array): Promise<PdfItem[][]> {
   return pages;
 }
 
-/** Texto de uma coluna (x em [lo, hi)) dentro da linha de uma âncora, de cima p/ baixo. */
+/**
+ * Texto de uma coluna (x em [lo, hi)) dentro da linha de uma ancora, de cima p/
+ * baixo.
+ *
+ * A JUNCAO mora em lib/bbts/normalizarTextoPdf.ts. Aqui so ordenamos e
+ * entregamos os fragmentos CRUS — inclusive os itens de 1 caractere de controle,
+ * que sao o SINAL de ligadura perdida e NAO podem ser apagados antes da juncao.
+ *
+ * O QUE SAIU DAQUI (03/08/2026):
+ *   - a limpeza dos caracteres de controle APAGAVA o NUL, e o join(" ") ja
+ *     tinha metido um espaco no lugar dele: era dai que nascia "Automa co".
+ *   - o replace de Corren/sta -> Correntista era remendo manual para UMA
+ *     palavra. As outras 5 ocorrencias do MESMO fenomeno, no MESMO arquivo,
+ *     seguiam quebradas. Agora todas passam pelo helper.
+ */
 function textoDaColuna(itens: PdfItem[], lo: number, hi: number): string {
-  return itens
+  const fragmentos = itens
     .filter((i) => i.x >= lo && i.x < hi)
     .sort((a, b) => b.y - a.y || a.x - b.x)
-    .map((i) => i.str)
-    .join(" ")
-    // O PDF injeta caracteres de CONTROLE (NUL U+0000) e zero-width no meio das
-    // palavras quebradas; \s não casa com eles. Sem limpar, "Correntista" ficaria
-    // gravado como "Corren<NUL>sta" no product_description.
-    .replace(/[\u0000-\u001F\u200B-\u200D\uFEFF]/g, "")
-    .replace(/\s+/g, " ")
-    .replace(/Corren\s*sta/gi, "Correntista") // a palavra vem partida no PDF
-    .trim();
+    .map((i) => i.str);
+  return juntarFragmentosPdf(fragmentos).texto;
 }
 
 export interface ColunasCredito {
   produto: string | null; // "Linha do Produto"  — "Consignado Novo Correntista"
   linha_credito: string | null; // "Linha do Crédito"  — "Crédito Novo" / "Crédito Renovação"
   nome_convenio: string | null; // "Nome do Convênio"  — "INSS Novo" / "Não Consignado - 13º salário"
+}
+
+
+/**
+ * A LINHA a que um fragmento pertence, ou -1 quando ele nao pertence a nenhuma.
+ *
+ * REGRA: a ancora mais proxima em y, aceita se a distancia couber em METADE DO
+ * VAO ATE A ANCORA VIZINHA DAQUELE LADO. E o diagrama de Voronoi em 1D: o maior
+ * criterio que nunca deixa um fragmento cair na faixa de duas linhas.
+ *
+ * DUAS TENTATIVAS ANTERIORES ERRARAM, e ficam registradas porque o erro e
+ * instrutivo:
+ *
+ *   1. `dist > 20` — constante magica. Medido no fechamento de julho/2026: as
+ *      ancoras da tabela de credito distam 51,7 a 66,7 e as celulas de 5 linhas
+ *      do "Nome do Convenio" chegam a +-24. Morriam 28 fragmentos em silencio
+ *      ("Nao", "Bene", <NUL>, "cio" nos 7 contratos CDC) — e com o "Nao" ia
+ *      embora justamente o que distingue "Nao Consignado" de "Consignado".
+ *
+ *   2. metade do MENOR passo da PAGINA — pior que a constante. A pagina 5 tem a
+ *      secao PRT logo abaixo, com propostas espacadas ~19, e o menor passo
+ *      GLOBAL passou a sair de outra tabela: raio 9,4, perdas subiram de 28
+ *      para 46. Vao GLOBAL nao serve; o vao e LOCAL.
+ *
+ * Por que nao alargar mais: perda deixa a celula curta e visivel; contaminacao
+ * deixa a celula ERRADA e plausivel. Ver scripts/bbts_conservacao_celula_gate.cjs.
+ */
+export function linhaDoFragmento(y: number, ancoras: readonly PdfItem[]): number {
+  if (ancoras.length === 0) return -1;
+  let idx = -1;
+  let dist = Infinity;
+  for (let k = 0; k < ancoras.length; k++) {
+    const d = Math.abs(y - ancoras[k].y);
+    if (d < dist) { dist = d; idx = k; }
+  }
+  if (idx < 0) return -1;
+  if (ancoras.length === 1) return dist <= 20 ? idx : -1;   // sem vao para medir
+
+  // ancoras vem ordenadas por y DECRESCENTE (de cima para baixo na pagina).
+  const acima = y > ancoras[idx].y;
+  const vizinho = acima ? ancoras[idx - 1] : ancoras[idx + 1];
+  const vao = vizinho
+    ? Math.abs(vizinho.y - ancoras[idx].y)
+    : Math.abs((acima ? ancoras[idx + 1] : ancoras[idx - 1]).y - ancoras[idx].y);
+  return dist <= vao / 2 ? idx : -1;
 }
 
 /**
@@ -160,19 +214,28 @@ export async function extractColunasCredito(data: Uint8Array): Promise<Map<strin
       .sort((a, b) => b.y - a.y);
     if (ancoras.length === 0) continue;
 
+    // RAIO DE ATRIBUICAO — derivado do PROPRIO espacamento das ancoras.
+    //
+    // Era `dist > 20`: constante magica, e errada. Medido no fechamento de
+    // julho/2026: as ancoras distam 51,7 a 66,7, e as celulas de 5 linhas do
+    // "Nome do Convenio" se estendem a +-24 — 4 unidades alem do corte. Morriam
+    // 28 fragmentos em silencio ("Nao", "Bene", <NUL>, "cio" nos 7 contratos
+    // CDC), e com eles o "Nao" que distingue "Nao Consignado" de "Consignado".
+    //
+    // O criterio agora e METADE DO MENOR PASSO entre ancoras vizinhas: e o maior
+    // raio que ainda torna IMPOSSIVEL um fragmento cair na faixa de duas linhas
+    // ao mesmo tempo. Alargar mais seria trocar perda por contaminacao, que e
+    // pior — perda deixa a celula curta e visivel, contaminacao deixa a celula
+    // errada e plausivel. Ver scripts/bbts_conservacao_celula_gate.cjs, que
+    // mede as duas coisas.
+
+
     // cada item pertence à âncora mais próxima em y
     const porAncora = new Map<string, PdfItem[]>();
     for (const it of itens) {
-      let melhor: PdfItem | null = null;
-      let dist = Infinity;
-      for (const a of ancoras) {
-        const d = Math.abs(it.y - a.y);
-        if (d < dist) {
-          dist = d;
-          melhor = a;
-        }
-      }
-      if (!melhor || dist > 20) continue; // fora de qualquer linha (cabeçalho/rodapé)
+      const idxLinha = linhaDoFragmento(it.y, ancoras);
+      if (idxLinha < 0) continue;            // fora de qualquer linha (cabeçalho/rodapé)
+      const melhor = ancoras[idxLinha];
       const arr = porAncora.get(melhor.str) ?? [];
       arr.push(it);
       porAncora.set(melhor.str, arr);
