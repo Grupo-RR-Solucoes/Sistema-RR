@@ -412,7 +412,42 @@ export function inferCreditTable(op: Operation) {
     (casaExpressao(description, /\bCDC\b/) &&
       (casaExpressao(description, /AUTOMATIC/) ||
         casaExpressao(description, /\bSALARIO\b/) ||
-        casaExpressao(description, /\bBENEFICIO\b/)))
+        casaExpressao(description, /\bBENEFICIO\b/))) ||
+    // FASE C (04/08/2026): "Nao Consignado" pelo NOME DO CONVENIO da BBTS.
+    //
+    // A ORDEM NAO E PREFERENCIA, E A PARTICAO DA PROPRIA TABELA. O PDF da regua
+    // tem EXATAMENTE tres secoes "Nao Consignado -" (parseBbtsPdf.ts:109-111):
+    //   "Automatico, Salario e Beneficio" -> NAO_CONSIGNADO
+    //   "13o Salario"                     -> NAO_CONSIGNADO_13
+    //   "CDC FGTS"                        -> CDC_FGTS
+    // Duas delas ja foram decididas ACIMA: FGTS em :382 e o 13 em :386. Entao
+    // aqui "Nao Consignado" e o RESIDUAL, e o residual e exatamente a primeira
+    // secao. Nao ha terceira leitura possivel.
+    //
+    // POR ISSO ESTE MATCHER NAO PODE SUBIR. Antes de :386 ele roubaria o 13o:
+    // medido no fechamento de julho/2026, os 4 contratos 220187043, 220187219,
+    // 220722555 e 221118266 chegam como "Nao Consignado - 13o salario
+    // Correntista" e so continuam em ADIANTAMENTO_13 porque o check de "13"
+    // dispara primeiro.
+    //
+    // ANCORA EM "NAO CONSIGNADO", NUNCA EM "AUTOMATICO". A celula chega como
+    // "Nao Consignado - Novo Automa<lacuna>Salario e Beneficio": o fragmento
+    // "co," fica FORA da banda de x por 0,1 ponto (divida aceita, ver
+    // bbtsPdfExtract). Aquela lacuna e FRAGMENTO PERDIDO, nao glifo de ligadura
+    // — expandir sobre LIGADURAS nao a recupera, entao /AUTOMATIC/ nunca casa.
+    // "\bCDC\b" tambem nao alcanca: o CDC mora na "Linha do Produto", nao no
+    // "Nome do Convenio" que vira product_description (bbtsClosingImport:431).
+    // "Nao Consignado" e a unica parte que chega INTEIRA, e chega no comeco.
+    //
+    // contemTermo e nao includes: hoje includes bastaria (a lacuna cai fora da
+    // frase), mas a garantia nao pode depender de ONDE a lacuna cai.
+    //
+    // BLAST RADIUS MEDIDO: censo de inferCreditTable sobre TODAS as descricoes
+    // distintas do banco (11 do RR, 6 da ADS, 232 tuplas desc x codigo x
+    // convenio x segmento) = ZERO mudancas. Sobre o PDF de julho ja com as
+    // Fases A+B = 7 contratos, os da secao Automatico/Salario/Beneficio.
+    // "CONSIGNADO NAO CORRENTISTA" do RR nao casa: a ordem das palavras e outra.
+    contemTermo(description, "NAO CONSIGNADO")
   ) {
     return "AUTOMATICO_SALARIO_BENEFICIO";
   }
