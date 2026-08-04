@@ -169,15 +169,22 @@ const GATES = [
   },
   {
     arquivo: "scripts/bbts_conservacao_celula_gate.cjs",
-    nome: "celula do PDF BBTS: conservacao + anti-contaminacao",
+    nome: "celula do PDF BBTS: piso + conservacao + anti-contaminacao",
     modo: "needs-local",
     motivo:
       "le o PDF do fechamento da BBTS, que e dado de cliente e NAO e versionado " +
       "(passe o caminho por argumento ou em BBTS_FECHAMENTO_PDF). UM arquivo com " +
       "as DUAS invariantes: nenhum fragmento de celula se perde, e o total por " +
       "pagina e conservado — separar em dois gates duplicaria a extracao inteira " +
-      "do PDF para medir o mesmo universo. ATENCAO: sem o PDF ele se declara " +
-      "PULADO e sai 0, entao no --full aparece como PASSOU sem ter medido nada",
+      "do PDF para medir o mesmo universo. " +
+      "DUAS AUSENCIAS DIFERENTES, e elas NAO tem o mesmo desfecho: " +
+      "SEM PDF ele se declara PULADO e sai 0 — e a regra do runner (pular nao " +
+      "pode reprovar), entao no --full aparece como PASSOU sem ter medido nada, " +
+      "e isso continua sendo verdade. " +
+      "COM PDF ERRADO ele REPROVA: desde a Fase D existe um piso (secao 0) que " +
+      "exige tabela resolvida, ancora, fragmentos >= ancoras e ao menos uma " +
+      "celula multifragmento. Antes disso um PDF sem a tabela dava " +
+      "'0 fragmentos, 0 perdidos, PASSOU' — verde por vacuidade",
   },
   {
     arquivo: "scripts/check_condicoes_seed.cjs",
