@@ -10,7 +10,10 @@ import { canManageCommissionRule } from "@/lib/auth/permissions";
 import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { carregarContextoTaxaAvista } from "@/lib/promoterAnalytics";
 import { recalculateSingleProposal } from "@/lib/proposalDetailing";
-import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
+import {
+  getProductionPeriodFromValue,
+  getProductionPeriodKey,
+} from "@/lib/productionPeriod";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 interface BulkBody {
@@ -444,9 +447,31 @@ export async function POST(req: Request) {
       .from("daily_production_records")
       .select("id, movement_date")
       .in("id", [...affectedProductionRecordIds]);
+    // A CHAVE E A COMPETENCIA PELA JANELA, NAO O PREFIXO DA DATA. Era
+    // `movement_date.slice(0,7)`, que devolve o mes de CALENDARIO. A chave
+    // escolhe o carregarContextoTaxaAvista, e o que esse contexto carrega e a
+    // producao do grupo NAQUELA competencia — a base da FAIXA da TRP. Chave
+    // errada = faixa de outro mes = outra taxa a vista = outro
+    // promoter_commission_amount gravado.
+    //
+    // O TAMANHO DISSO NAO SE MEDE NUM DIA. Em 18/08/2026 a chave errada custava
+    // R$ 17,20 sobre 133 linhas discordantes, e ZERO nas 68 de 30/06 e 31/07 —
+    // nao por robustez, por coincidencia: a producao de ago/2026 cruzou o piso
+    // de FAIXA_3 em 17/08, vespera da medicao, e passou a cair na mesma faixa
+    // de julho. Varrendo a janela de agosto dia a dia, 11 dos 12 dias com
+    // producao davam faixa DIFERENTE da chave velha; um lote rodado entre 03/08
+    // e 16/08 pegaria faixa cheia de diferenca sobre R$ 284.916,12 de valor
+    // liquido. Por isso o gate assere a EXISTENCIA do dia divergente, e nunca
+    // um delta congelado: o delta e funcao do dia em que se aperta o botao.
+    //
+    // getProductionPeriodKey devolve "YYYY-MM", a MESMA forma que o slice
+    // devolvia — o `comp.split("-")` logo abaixo continua valendo.
     const compPorId = new Map<string, string>();
     for (const r of datasDosAfetados ?? []) {
-      if (r.movement_date) compPorId.set(String(r.id), String(r.movement_date).slice(0, 7));
+      if (!r.movement_date) continue;
+      const periodo = getProductionPeriodFromValue(r.movement_date);
+      if (!periodo) continue;
+      compPorId.set(String(r.id), getProductionPeriodKey(periodo.year, periodo.month));
     }
     const ctxPorComp = new Map<string, Awaited<ReturnType<typeof carregarContextoTaxaAvista>>>();
     for (const dprId of affectedProductionRecordIds) {
