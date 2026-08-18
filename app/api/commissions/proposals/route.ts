@@ -29,6 +29,12 @@ import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { buildCmsProposalRows, buildCmsProposalRowsBatch } from "@/lib/promoterReportData";
 // A MESMA funcao que /api/promotores/route.ts:208 usa para as linhas do fechamento.
 import { buildClosingProposalRows } from "@/lib/closingProposalRows";
+// A regua de competencia da rota inteira — ver o bloco "A COMPETENCIA DESTA
+// ROTA E A JANELA DE PRODUCAO", mais abaixo.
+import {
+  getProductionPeriodFromValue,
+  getProductionWindow,
+} from "@/lib/productionPeriod";
 
 // Mês FECHADO (cms) — mapeia a CmsProposalRow (ground truth pago) para o shape
 // que a tela /comissoes/editar renderiza, em modo READ-ONLY. Sem chave de edição
@@ -156,14 +162,28 @@ type ManualRuleRow = {
   active: boolean | null;
 };
 
-function getMonthRange(year: number, month: number) {
-  const start = new Date(Date.UTC(year, month - 1, 1));
-  const end = new Date(Date.UTC(year, month, 1));
-  return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
-  };
-}
+/**
+ * A COMPETENCIA DESTA ROTA E A JANELA DE PRODUCAO, EM TODAS AS QUATRO PERGUNTAS.
+ *
+ * Ate 18/08/2026 esta rota tinha um `getMonthRange` local que devolvia o MES DE
+ * CALENDARIO, e mais TRES pontos que repetiam a mesma decisao por conta propria
+ * (compEdicao do POST, compEdicao do DELETE, e o (year,month) de
+ * recalculateSingleProposal). As quatro perguntas que a rota faz sao:
+ *
+ *   (a) QUAIS linhas listar         -> o range da consulta ao diario
+ *   (b) QUAL contexto de taxa usar  -> a chave da faixa da TRP
+ *   (c) A competencia esta ABERTA?  -> a trava de regime (403)
+ *   (d) Que (year,month) grava      -> recalculateSingleProposal
+ *
+ * As tres ultimas decidem VALOR GRAVADO. Consertar so a listagem deixaria a
+ * tela certa e a gravacao errada — pior do que a incoerencia inteira, porque o
+ * numero exibido passaria a divergir do numero salvo.
+ *
+ * A funcao local morreu: `getProductionWindow` ja e a regua canonica e nao
+ * precisa de embrulho. A homonima de /api/calculate/monthly, que sempre usou a
+ * janela, virou `rangeDaJanelaProducao` no mesmo commit.
+ */
+
 
 async function fetchAllPaged<T>(baseQueryBuilder: () => any): Promise<T[]> {
   let from = 0;
@@ -295,7 +315,12 @@ export async function GET(req: Request) {
       });
     }
 
-    const { start, end } = getMonthRange(year, month);
+    // (a) QUAIS linhas listar. Medido em 18/08/2026, competencia por competencia:
+    // 116 linhas entram e 116 saem em 2026-01..2026-08 (R$ 959.543,20 de cada
+    // lado). Em ago/2026, a unica com regime 'open' hoje, sao +32 linhas e
+    // +R$ 284.916,12 — as propostas de 2026-07-31, que sao producao de agosto e
+    // a tela nao mostrava em lugar nenhum.
+    const { start, endExclusive: end } = getProductionWindow(year, month);
 
     const records = await fetchAllPaged<ProductionRecord>(() => {
       let query = supabase
@@ -729,12 +754,29 @@ export async function POST(req: Request) {
           { status: 404 }
         );
       }
-      const d = new Date(rec.movement_date);
-      compEdicao = { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
+      // (b)+(c)+(d) A COMPETENCIA DA LINHA, PELA JANELA. Era
+      // `new Date(movement_date).getUTCMonth()+1`, isto e, calendario. Este
+      // unico valor alimenta as tres decisoes seguintes: a trava de regime logo
+      // abaixo, o contexto da taxa a vista (ctxRecalc) e, por
+      // recalculateSingleProposal, o (year,month) que grava.
+      compEdicao = getProductionPeriodFromValue(rec.movement_date);
+      if (!compEdicao) {
+        return NextResponse.json(
+          { error: "movement_date invalido: competencia nao resolvida." },
+          { status: 400 }
+        );
+      }
       // MOV 2: enum canonico. A pergunta e binaria — "da pra editar?" — e a resposta
       // e "so em mes ABERTO". Mes 'cms' e mes 'fechamento' bloqueiam igual, por isso
       // `!== 'open'`. Usar `=== 'fechamento'` aqui liberaria a edicao de jan-mai.
-      const regime = await detectMonthRegime(supabase, d.getUTCFullYear(), d.getUTCMonth() + 1).catch(
+      //
+      // A TRAVA JULGAVA O MES ERRADO. Com o calendario, uma proposta de
+      // 2026-07-31 — producao de AGOSTO, mes ABERTO — era consultada como
+      // julho, que esta em 'fechamento', e levava 403. Medido em 18/08/2026:
+      // 35 linhas nessa situacao. O inverso (abrir competencia fechada) NAO
+      // acontece em nenhum dia-cabeca de 2026 — ver o bloco 4 do gate
+      // scripts/competencia_janela_comissoes_gate.cjs, que assere isso vivo.
+      const regime = await detectMonthRegime(supabase, compEdicao.year, compEdicao.month).catch(
         () => "open" as const
       );
       if (regime !== "open") {
@@ -885,12 +927,18 @@ export async function DELETE(req: Request) {
           { status: 404 }
         );
       }
-      const d = new Date(rec.movement_date);
-      compEdicao = { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
+      // (b)+(c)+(d) A COMPETENCIA DA LINHA, PELA JANELA — identico ao POST.
+      compEdicao = getProductionPeriodFromValue(rec.movement_date);
+      if (!compEdicao) {
+        return NextResponse.json(
+          { error: "movement_date invalido: competencia nao resolvida." },
+          { status: 400 }
+        );
+      }
       // MOV 2: enum canonico. A pergunta e binaria — "da pra editar?" — e a resposta
       // e "so em mes ABERTO". Mes 'cms' e mes 'fechamento' bloqueiam igual, por isso
       // `!== 'open'`. Usar `=== 'fechamento'` aqui liberaria a edicao de jan-mai.
-      const regime = await detectMonthRegime(supabase, d.getUTCFullYear(), d.getUTCMonth() + 1).catch(
+      const regime = await detectMonthRegime(supabase, compEdicao.year, compEdicao.month).catch(
         () => "open" as const
       );
       if (regime !== "open") {

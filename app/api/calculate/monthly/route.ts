@@ -203,7 +203,18 @@ function deriveCompanyReceivedPercentFromMotor(
   return (avistaEmpresa / netValue) * 100;
 }
 
-function getMonthRange(year: number, month: number) {
+/**
+ * Range da JANELA DE PRODUCAO da competencia — ultimo dia util do mes anterior
+ * ate o ultimo dia util do mes vigente, fim EXCLUSIVO.
+ *
+ * O nome diz a REGUA de proposito. Ate 18/08/2026 esta funcao se chamava
+ * `getMonthRange`, e havia uma homonima em /api/commissions/proposals que
+ * devolvia o MES DE CALENDARIO. Duas funcoes com o mesmo nome e recortes
+ * diferentes em rotas que falam do mesmo dado: ler uma e achar que se conhece a
+ * outra era o passo natural, e errado. A homonima morreu; esta ficou com o nome
+ * da regua que usa.
+ */
+function rangeDaJanelaProducao(year: number, month: number) {
   const window = getProductionWindow(year, month);
   return {
     start: window.start,
@@ -639,7 +650,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const { start, end } = getMonthRange(year, month);
+    const { start, end } = rangeDaJanelaProducao(year, month);
 
     // ESCOPO — traduz "grupo:rr"/"grupo:ads" no conjunto de company_ids ANTES dos
     // filtros (sem isto, companyId cru caía num .eq(uuid) -> 22P02 "Erro interno").

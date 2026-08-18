@@ -10,6 +10,7 @@ import { canManageCommissionRule } from "@/lib/auth/permissions";
 import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { carregarContextoTaxaAvista } from "@/lib/promoterAnalytics";
 import { recalculateSingleProposal } from "@/lib/proposalDetailing";
+import { getProductionPeriodFromValue } from "@/lib/productionPeriod";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
 interface BulkBody {
@@ -71,10 +72,15 @@ async function fetchClosedDprIds(
   const regimeCache = new Map<string, MonthRegime>();
   for (const r of data) {
     if (!r.movement_date) continue;
-    const d = new Date(String(r.movement_date));
-    if (Number.isNaN(d.getTime())) continue;
-    const year = d.getUTCFullYear();
-    const month = d.getUTCMonth() + 1;
+    // A COMPETENCIA E A JANELA. Era `new Date(...).getUTCMonth()+1`, calendario:
+    // uma proposta de 2026-07-31 e producao de AGOSTO, mes aberto, e vinha aqui
+    // julgada como julho, que esta em 'fechamento' — entrava em
+    // `denied_closed` sem ser de competencia fechada. Medido em 18/08/2026: 35
+    // linhas. Mesma regua da trava unitaria em ../route.ts.
+    const periodo = getProductionPeriodFromValue(r.movement_date);
+    if (!periodo) continue;
+    const year = periodo.year;
+    const month = periodo.month;
     const key = `${year}-${month}`;
     let regime = regimeCache.get(key);
     if (regime === undefined) {
