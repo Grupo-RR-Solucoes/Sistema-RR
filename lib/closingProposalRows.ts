@@ -21,6 +21,7 @@ import {
 } from "./closingPromoterBase.ts";
 import { BBTS_COMPANY_ID } from "./bbtsMonthly.ts";
 import { getProductionPeriodFromValue, getProductionPeriodKey } from "./productionPeriod.ts";
+import { pertenceACompetencia } from "./herancaMaster.ts";
 import type { CmsProposalRow } from "./promoterReportData.ts";
 
 const BBTS_KEY = "JJ552710";
@@ -80,8 +81,28 @@ export async function buildClosingProposalRows(
   const rrContratos = base.contratos.filter((c) => normKey(c.chaveJ) !== BBTS_KEY);
   const rrRestritas = base.restritas.filter((c) => normKey(c.chaveJ) !== BBTS_KEY);
 
-  // Herança master p/ ESTE promotor: contratos do diário RR atribuídos a ele no mês
-  // (proposal_number) — casa o órfão do fechamento (sem promotor individual).
+  // Herança master p/ ESTE promotor: contratos do diário RR atribuídos a ele na
+  // COMPETÊNCIA (proposal_number) — casa o órfão do fechamento (sem promotor
+  // individual).
+  //
+  // A COMPETÊNCIA É A JANELA, NÃO O PREFIXO DO MÊS. Até 18/08/2026 este filtro
+  // era `movement_date.startsWith("2026-07")` e descartava o DIA-CABEÇA da
+  // janela — o último dia útil do mês anterior, que já é competência do mês
+  // seguinte. Mesma classe do defeito que o 5b7f229 fechou em closingMonthly e
+  // bbtsOrchestrator; esta era a terceira cópia, e ficou de fora porque mora no
+  // caminho de EXIBIÇÃO, não no de pagamento.
+  //
+  // O estrago era exibir MENOS do que o sistema paga. Medido em 18/08/2026, sem
+  // reimplementar nada (a base sai de loadClosingPromoterBase, a mesma da tela):
+  //   jul/2026  6 órfãos ganham dono, R$ 45.582,69 — JUSSARA 21.000,00,
+  //             CLEVITON 7.804,44, CAMILA 7.207,04, REBECA 7.100,00,
+  //             GLEICE 2.471,21 (as MESMAS 6 linhas de 30/06 do 5b7f229)
+  //   abr/2026  3 órfãos, R$ 6.069,56
+  //   jun e ago 0 (nenhum órfão do fechamento casa com o dia-cabeça)
+  //   NENHUM órfão PERDE dono em competência alguma.
+  //
+  // `pertenceACompetencia` é o helper de lib/herancaMaster.ts — a forma casou
+  // exatamente (movementDate, year, month), então não há régua nova aqui.
   const heirKeys = new Set<string>();
   {
     const daily = await fetchAllPaged<any>(() =>
@@ -92,7 +113,7 @@ export async function buildClosingProposalRows(
         .neq("company_id", BBTS_COMPANY_ID)
     );
     for (const d of daily) {
-      if (!String(d.movement_date || "").startsWith(`${year}-${String(month).padStart(2, "0")}`)) continue;
+      if (!pertenceACompetencia(d.movement_date, year, month)) continue;
       heirKeys.add(`${d.company_id}|${String(d.proposal_number || "").trim()}`);
     }
   }
