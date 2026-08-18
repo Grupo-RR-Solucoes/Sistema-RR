@@ -18,7 +18,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
+import { diffContraRef } from "./_diffContraRef.ts";
 
 import {
   tetoAvistaRR,
@@ -128,16 +128,22 @@ if (!/tetoAvistaRR/.test(motor)) ok("lib/motor.ts NAO importa a fonte do teto RR
 else fail("lib/motor.ts passou a importar tetoAvistaRR — conceitos misturados");
 if (/cashCapPercent/.test(motor)) ok("motor segue no cashCapPercent (teto Promotiva 6%)");
 else fail("motor perdeu o cashCapPercent");
-try {
-  const diff = execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], {
-    cwd: ROOT, encoding: "utf8",
-  }).split(/\r?\n/);
-  for (const f of ["lib/promotivaCashPolicy.ts", "lib/motor.ts"]) {
-    if (!diff.includes(f)) ok(f + " NAO foi alterado na branch");
-    else fail(f + " foi alterado");
+// A COMPARACAO DE BRANCH FALHA QUANDO NAO PODE SER FEITA — a regra, e o porque
+// dela, moram em scripts/_diffContraRef.ts, que este gate divide com o G6 de
+// bbts_seguro_regua_gate.cjs. Aqui so se decide o que fazer com o veredito:
+// sem medicao, REPROVA. O conserto do outro lado (fetch-depth: 0) esta em
+// .github/workflows/gates.yml.
+const REF_BASE = "origin/main";
+const ARQUIVOS_INTOCADOS = ["lib/promotivaCashPolicy.ts", "lib/motor.ts"];
+{
+  const r = diffContraRef({ cwd: ROOT, expr: REF_BASE + "...HEAD", arquivos: ARQUIVOS_INTOCADOS });
+  if (!r.comparou) fail(r.mensagem);
+  else {
+    for (const f of ARQUIVOS_INTOCADOS) {
+      if (!r.arquivos.includes(f)) ok(f + " NAO foi alterado na branch (vs " + REF_BASE + ")");
+      else fail(f + " foi alterado (vs " + REF_BASE + ")");
+    }
   }
-} catch (e) {
-  console.log("  (git diff indisponivel: " + (e as Error).message + ")");
 }
 
 console.log("\n=== RESULTADO: " +

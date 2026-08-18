@@ -27,8 +27,8 @@ process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANO
 
 require("./_ts_register.cjs");
 const path = require("path");
-const { execSync } = require("child_process");
 const ROOT = path.resolve(__dirname, "..");
+const { diffContraRef } = require(path.join(__dirname, "_diffContraRef.ts"));
 const { consolidateMonthlyFromBbts } = require(path.join(ROOT, "lib", "bbtsMonthly.ts"));
 const { seguroRateFromRegra } = require(path.join(ROOT, "lib", "bbts", "seguroBbts.ts"));
 const { resolveBbtsRegraDb } = require(path.join(ROOT, "lib", "bbts", "resolveBbtsRegra.ts"));
@@ -203,11 +203,22 @@ const seguroEmpDe = (res) => res.table.reduce((s, r) => s + r.seguro_comissao_em
 
   // ---------------- G6 RR INTOCADO ----------------
   console.log("\n=== G6 RR INTOCADO ===");
-  let changed = "";
-  try { changed = execSync("git diff --name-only origin/main", { cwd: ROOT }).toString(); } catch (e) { changed = "(git indisponível)"; }
+  // AUSENCIA DE MEDICAO NAO E APROVACAO. Ate 18/08/2026 o erro do git caia num
+  // catch que virava a string "(git indisponivel)" - que nao contem nome de
+  // arquivo nenhum, entao tocouRR saia VAZIO e este bloco anunciava "RR
+  // intocado" sem ter olhado os dois arquivos. Verde por vacuidade, e no CI
+  // (fetch-depth: 1, sem refs/remotes/origin/main) esse era o caso NORMAL, nao
+  // o raro. A regra, e o porque dela, moram em scripts/_diffContraRef.ts,
+  // dividido com o G5 de gate_teto_avista_rr.ts; aqui so se decide o que fazer
+  // com o veredito: sem comparacao, REPROVA dizendo que NAO comparou.
   const rrFiles = ["lib/insuranceCalculator.ts", "lib/insurancePenetration.ts"];
-  const tocouRR = rrFiles.filter((f) => changed.split(/\r?\n/).includes(f));
-  ok("nenhum arquivo RR de seguro no diff", tocouRR.length === 0, tocouRR.length ? "TOCOU: " + tocouRR.join(",") : "diff limpo p/ RR");
+  const diffRR = diffContraRef({ cwd: ROOT, expr: "origin/main", arquivos: rrFiles });
+  if (!diffRR.comparou) {
+    ok("comparacao de branch realizada (sem ela nada se prova sobre RR)", false, diffRR.mensagem);
+  } else {
+    const tocouRR = rrFiles.filter((f) => diffRR.arquivos.includes(f));
+    ok("nenhum arquivo RR de seguro no diff", tocouRR.length === 0, tocouRR.length ? "TOCOU: " + tocouRR.join(",") : "diff limpo p/ RR");
+  }
   const bbtsBands = { "0-36": 0.001, "37-60": 0.0015, "61-84": 0.0025, "85+": 0.0035 };
   const distintas = Object.keys(bbtsBands).every((k) => bbtsBands[k] !== RR_SLIP[k]);
   ok("faixas BBTS != faixas RR (fontes independentes)", distintas, `BBTS ${JSON.stringify(bbtsBands)} vs RR ${JSON.stringify(RR_SLIP)}`);

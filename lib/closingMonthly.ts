@@ -40,6 +40,7 @@ import {
   loadClosingPromoterBase,
   type ClosingContrato,
 } from "./closingPromoterBase.ts";
+import { buildMasterHeirMap } from "./herancaMaster.ts";
 import {
   fetchPromoterShareData,
   resolvePromoterShareSync,
@@ -115,45 +116,8 @@ async function fetchAllPaged<T = any>(build: () => any): Promise<T[]> {
   return all;
 }
 
-/**
- * Herança master: para cada contrato SEM promotor individual, busca no DIÁRIO a
- * linha cujo proposal_number == contract_number do fechamento, na MESMA empresa e
- * na competência do mês; usa o assigned_promoter_id (mais recente se houver mais
- * de uma). Devolve Map<`${companyId}|${contrato}`, promoterId>.
- */
-async function buildMasterHeirMap(
-  supabase: SupabaseLike,
-  orphans: Array<{ contrato: string | null; companyId: string | null }>,
-  year: number,
-  month: number
-): Promise<Map<string, string>> {
-  const contracts = [
-    ...new Set(orphans.map((c) => (c.contrato || "").trim()).filter(Boolean)),
-  ];
-  const heir = new Map<string, string>();
-  if (contracts.length === 0) return heir;
-
-  const prefix = `${year}-${String(month).padStart(2, "0")}`;
-  const best = new Map<string, { pid: string; updatedAt: string }>();
-  for (let i = 0; i < contracts.length; i += 300) {
-    const chunk = contracts.slice(i, i + 300);
-    const { data, error } = await supabase
-      .from("daily_production_records")
-      .select("proposal_number, company_id, assigned_promoter_id, movement_date, updated_at")
-      .in("proposal_number", chunk);
-    if (error) throw error;
-    for (const d of data || []) {
-      if (!d.assigned_promoter_id) continue;
-      if (!String(d.movement_date || "").startsWith(prefix)) continue; // competência do mês
-      const key = `${d.company_id}|${String(d.proposal_number || "").trim()}`;
-      const prev = best.get(key);
-      const upd = String(d.updated_at || "");
-      if (!prev || upd > prev.updatedAt) best.set(key, { pid: d.assigned_promoter_id, updatedAt: upd });
-    }
-  }
-  for (const [key, v] of best) heir.set(key, v.pid);
-  return heir;
-}
+// Herança master: EXTRAÍDA para lib/herancaMaster.ts (fonte única). Havia uma
+// cópia literal em bbtsOrchestrator.ts; as duas consomem o helper agora.
 
 type SupabaseLike = SupabaseClient;
 

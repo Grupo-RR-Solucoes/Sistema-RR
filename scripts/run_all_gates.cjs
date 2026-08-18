@@ -229,6 +229,36 @@ const GATES = [
       "createClient; daily_production_records de PRODUCAO",
   },
   {
+    arquivo: "scripts/heranca_master_janela_gate.cjs",
+    nome: "heranca master decide competencia pela janela",
+    modo: "needs-db",
+    motivo:
+      "2,4s; createClient; daily_production_records de PRODUCAO. Blocos 1 e 2 sao " +
+      "puros (o 2 prova que o criterio de CALENDARIO violava a invariante, para o " +
+      "gate nao passar por vacuidade); o 3 roda o helper de producao contra as 6 " +
+      "propostas medidas de 2026-06-30; o 4 impede a copia duplicada voltar",
+  },
+  {
+    arquivo: "scripts/competencia_janela_comissoes_gate.cjs",
+    nome: "competencia por janela em /commissions/proposals, bulk e closingProposalRows",
+    modo: "needs-db",
+    motivo:
+      "4,7-5,3s (2 execucoes); createClient; daily_production_records de PRODUCAO. " +
+      "A faixa --db estava em 47,0s de 90s ANTES deste gate. Os blocos 1 e 2 sao " +
+      "PUROS: o 2 reimplementa os QUATRO criterios de calendario que sairam do " +
+      "codigo (range por Date.UTC, slice(0,7), getUTCMonth, startsWith de prefixo) " +
+      "e prova que cada um violava a invariante — sem ele o gate nao distingue " +
+      "'esta certo' de 'nao ha o que testar'. O 3 varre os 7 sitios no fonte. O 4 " +
+      "e vivo-x-vivo e assere a guarda que importa: o conserto NAO abre para " +
+      "edicao nenhuma linha de competencia FECHADA. O 5 e o mais importante e o " +
+      "menos obvio — ele NAO assere um delta em R$. O delta da chave errada foi " +
+      "medido em R$ 17,20 em 18/08/2026 e seria uma CONSTANTE CONGELADA da " +
+      "coincidencia daquele dia: agosto cruzou o piso de FAIXA_3 em 17/08, e so " +
+      "por isso as 68 linhas de 30/06 e 31/07 deram zero. O bloco varre a janela " +
+      "dia a dia com os DOIS lados computados no mesmo run e exige que exista ao " +
+      "menos um dia em que as duas chaves dao faixas diferentes (medido: 11 de 12)",
+  },
+  {
     arquivo: "scripts/recorte_familia_janela_gate.cjs",
     nome: "corte do delta e da MESMA familia da competencia",
     modo: "needs-db",

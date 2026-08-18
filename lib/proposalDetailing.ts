@@ -20,7 +20,10 @@ import {
 // JANELA DE PRODUCAO (regra RR) — helper canonico, a MESMA primitiva sobre a qual
 // getProductionPeriodFromValue classifica cada linha. Ver o bloco "3. Volume
 // mensal por promotor" para o porque de nao ser mais mes de calendario.
-import { getProductionWindow } from "./productionPeriod.ts";
+import {
+  getProductionPeriodFromValue,
+  getProductionWindow,
+} from "./productionPeriod.ts";
 
 export type ProposalRecord = {
   raw_payload?: Record<string, unknown> | null;
@@ -1045,15 +1048,28 @@ export async function recalculateSingleProposal(
       return { ok: false, error: "record sem assigned_promoter_id" };
     }
 
+    // A COMPETENCIA E A JANELA, NAO O PREFIXO DA DATA. Ate 18/08/2026 esta
+    // linha era `movementDate.match(/^(\d{4})-(\d{2})-/)`, isto e, o mes do
+    // CALENDARIO — e este (year, month) e o que decide TUDO o que se grava
+    // logo abaixo: o monthlyVolumesMap e o frenteCProductionMap de
+    // fetchPromoterShareData (o sharePercent), o teto de capAvistaRRPercent e o
+    // regime de computeComissaoPromotor.
+    //
+    // A decisao e TOMADA AQUI e nao herdada do chamador de proposito: as tres
+    // rotas que chamam esta funcao passam apenas o recordId, e cada uma delas
+    // ja resolveu a competencia por conta propria para montar o
+    // ResolvedorTaxaAvista. Se este ponto lesse o calendario enquanto elas leem
+    // a janela, a taxa a vista viria de uma competencia e o sharePercent de
+    // outra — as duas metades do mesmo produto, de meses diferentes.
     const movementDate = String(
       (record as { movement_date: string | null }).movement_date ?? ""
     );
-    const m = movementDate.match(/^(\d{4})-(\d{2})-/);
-    if (!m) {
+    const periodo = getProductionPeriodFromValue(movementDate);
+    if (!periodo) {
       return { ok: false, error: "movement_date invalido" };
     }
-    const year = Number(m[1]);
-    const month = Number(m[2]);
+    const year = periodo.year;
+    const month = periodo.month;
 
     // Override atual em proposal_commissions (se houver).
     const { data: manual } = await supabase
