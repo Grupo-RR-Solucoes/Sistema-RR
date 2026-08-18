@@ -128,16 +128,49 @@ if (!/tetoAvistaRR/.test(motor)) ok("lib/motor.ts NAO importa a fonte do teto RR
 else fail("lib/motor.ts passou a importar tetoAvistaRR — conceitos misturados");
 if (/cashCapPercent/.test(motor)) ok("motor segue no cashCapPercent (teto Promotiva 6%)");
 else fail("motor perdeu o cashCapPercent");
-try {
-  const diff = execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], {
-    cwd: ROOT, encoding: "utf8",
-  }).split(/\r?\n/);
-  for (const f of ["lib/promotivaCashPolicy.ts", "lib/motor.ts"]) {
-    if (!diff.includes(f)) ok(f + " NAO foi alterado na branch");
-    else fail(f + " foi alterado");
+// A COMPARACAO DE BRANCH FALHA QUANDO NAO PODE SER FEITA.
+//
+// Ate 18/08/2026 este bloco engolia o erro do git num catch que so imprimia
+// "(git diff indisponivel)" e seguia — sem chamar fail(). No CI isso era
+// silencioso e permanente: actions/checkout@v4 usa fetch-depth: 1 por padrao,
+// `origin/main` nao vira ref no runner, o execFileSync lanca, e o gate imprimia
+// "GATE PASSOU (no-op provado)" tendo verificado ZERO sobre lib/motor.ts. Verde
+// que nao mediu nada — a mesma familia da vw_team_production que devolve 0
+// linhas para service_role e do gate de PDF que se declara pulado sem PDF.
+//
+// AUSENCIA DE MEDICAO NAO E APROVACAO. Se a ref nao resolve, isto REPROVA, e a
+// mensagem diz que a comparacao nao aconteceu — nunca que esta tudo certo.
+// O conserto do outro lado (fetch-depth: 0) esta em .github/workflows/gates.yml.
+const REF_BASE = "origin/main";
+const ARQUIVOS_INTOCADOS = ["lib/promotivaCashPolicy.ts", "lib/motor.ts"];
+{
+  let diff: string[] | null = null;
+  let erroGit = "";
+  try {
+    diff = execFileSync("git", ["diff", "--name-only", REF_BASE + "...HEAD"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).split(/\r?\n/);
+  } catch (e) {
+    const err = e as { message?: string; stderr?: string };
+    erroGit = String(err.stderr || err.message || e).trim().split(/\r?\n/)[0];
   }
-} catch (e) {
-  console.log("  (git diff indisponivel: " + (e as Error).message + ")");
+
+  if (diff === null) {
+    fail(
+      "COMPARACAO DE BRANCH NAO REALIZADA — a ref '" + REF_BASE + "' nao resolve " +
+      "neste checkout. NAO foi verificado se " + ARQUIVOS_INTOCADOS.join(" e ") +
+      " mudaram; este bloco nao mediu nada e por isso REPROVA. Isto NAO significa " +
+      "que os arquivos estao intactos. Causa tipica: checkout raso " +
+      "(actions/checkout com fetch-depth: 1) — use fetch-depth: 0. git: " + erroGit
+    );
+  } else {
+    for (const f of ARQUIVOS_INTOCADOS) {
+      if (!diff.includes(f)) ok(f + " NAO foi alterado na branch (vs " + REF_BASE + ")");
+      else fail(f + " foi alterado (vs " + REF_BASE + ")");
+    }
+  }
 }
 
 console.log("\n=== RESULTADO: " +

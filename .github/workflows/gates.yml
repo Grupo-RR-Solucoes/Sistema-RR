@@ -42,6 +42,24 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # HISTORICO COMPLETO, E ISSO E UMA ASSERCAO, NAO UMA PREFERENCIA.
+          #
+          # O padrao do checkout e fetch-depth: 1, que traz so o commit do
+          # merge do PR e NAO cria refs/remotes/origin/main. O G5 de
+          # scripts/gate_teto_avista_rr.ts compara `origin/main...HEAD` para
+          # provar que lib/motor.ts e lib/promotivaCashPolicy.ts nao foram
+          # tocados na branch — com profundidade 1 essa ref nao resolve, o git
+          # falha, e ate 18/08/2026 o gate ENGOLIA o erro e imprimia
+          # "GATE PASSOU". A assercao estava desligada em silencio desde sempre,
+          # exatamente no unico lugar onde ela deveria guardar.
+          #
+          # Os dois lados foram consertados juntos: o gate agora REPROVA quando
+          # a ref nao resolve (ausencia de medicao nao e aprovacao), e aqui a
+          # ref passa a existir. Baixar isto de volta para 1 nao "acelera o CI":
+          # devolve o gate ao estado de verde por vacuidade, agora com o efeito
+          # colateral de reprovar — o que e ruidoso, e de proposito.
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
