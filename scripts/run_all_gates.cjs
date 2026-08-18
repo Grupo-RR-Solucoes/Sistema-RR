@@ -229,6 +229,16 @@ const GATES = [
       "createClient; daily_production_records de PRODUCAO",
   },
   {
+    arquivo: "scripts/heranca_master_janela_gate.cjs",
+    nome: "heranca master decide competencia pela janela",
+    modo: "needs-db",
+    motivo:
+      "2,4s; createClient; daily_production_records de PRODUCAO. Blocos 1 e 2 sao " +
+      "puros (o 2 prova que o criterio de CALENDARIO violava a invariante, para o " +
+      "gate nao passar por vacuidade); o 3 roda o helper de producao contra as 6 " +
+      "propostas medidas de 2026-06-30; o 4 impede a copia duplicada voltar",
+  },
+  {
     arquivo: "scripts/recorte_familia_janela_gate.cjs",
     nome: "corte do delta e da MESMA familia da competencia",
     modo: "needs-db",

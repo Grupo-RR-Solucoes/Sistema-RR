@@ -20,6 +20,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // ============================================================================
 
 import { loadClosingPromoterBase } from "./closingPromoterBase.ts";
+import { buildMasterHeirMap } from "./herancaMaster.ts";
 import { consolidateMonthlyFromClosing } from "./closingMonthly.ts";
 import { consolidateMonthlyFromBbts, BBTS_COMPANY_ID } from "./bbtsMonthly.ts";
 import {
@@ -116,25 +117,9 @@ export async function consolidateMonthlyGroup(
   const contratos = base.contratos.filter((c) => normKey(c.chaveJ) !== BBTS_KEY);
   // herança master: contrato sem promotor individual -> assigned do diário (RR).
   const orphans = contratos.filter((c) => !c.promoterId && (c.contrato || "").trim());
-  const heir = new Map<string, string>();
-  {
-    const cs = [...new Set(orphans.map((c) => (c.contrato || "").trim()))];
-    const prefix = `${year}-${String(month).padStart(2, "0")}`;
-    for (let i = 0; i < cs.length; i += 300) {
-      const { data } = await supabase
-        .from("daily_production_records")
-        .select("proposal_number, company_id, assigned_promoter_id, movement_date, updated_at")
-        .in("proposal_number", cs.slice(i, i + 300));
-      const best = new Map<string, { pid: string; upd: string }>();
-      for (const d of data || []) {
-        if (!d.assigned_promoter_id || !String(d.movement_date || "").startsWith(prefix)) continue;
-        const k = `${d.company_id}|${String(d.proposal_number || "").trim()}`;
-        const prev = best.get(k); const upd = String(d.updated_at || "");
-        if (!prev || upd > prev.upd) best.set(k, { pid: d.assigned_promoter_id, upd });
-      }
-      for (const [k, v] of best) heir.set(k, v.pid);
-    }
-  }
+  // Era uma cópia literal do buildMasterHeirMap do closingMonthly (mesmo prefix,
+  // mesmo startsWith). Agora consome a fonte única: lib/herancaMaster.ts.
+  const heir = await buildMasterHeirMap(supabase, orphans, year, month);
   const rr = new Map<string, { net: number; liqSeg: number }>();
   for (const c of contratos) {
     const pid = c.promoterId || heir.get(`${c.companyId}|${(c.contrato || "").trim()}`) || null;
