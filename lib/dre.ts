@@ -485,16 +485,25 @@ export async function buildDre(
   // comissão.
   const regimeSources = regimeSel === "cms" ? ["cms"] : ["fechamento", "bbts"];
   const pmrRows = await fetchAllRows<{
+    promoter_id: string;
     company_id: string | null;
     source: string | null;
     final_commission_value: number | null;
+    piso_zerou: boolean | null;
   }>(() =>
     supabase
       .from("promoter_monthly_results")
-      .select("company_id, source, final_commission_value")
+      .select("promoter_id, company_id, source, final_commission_value, piso_zerou")
       .eq("year", selected.year)
       .eq("month", selected.month)
       .in("source", regimeSources)
+  );
+  // PISO DE REPASSE: promotores cuja linha foi zerada pelo piso. O desconto deles
+  // NAO acontece na competencia (ver a supressao em promoterAnalytics, "PISO
+  // ZEROU O REPASSE") — sem isto o custo do CNPJ ficaria NEGATIVO: comissao 0
+  // menos desconto. A MESMA formula tem que dar o MESMO numero nas duas telas.
+  const pisoZerouPromoters = new Set(
+    pmrRows.filter((row) => row.piso_zerou === true).map((row) => row.promoter_id)
   );
   const comissaoByCompany = new Map<string, number>();
   for (const row of pmrRows) {
@@ -504,19 +513,22 @@ export async function buildDre(
   }
 
   const descontoRows = await fetchAllRows<{
+    promoter_id: string | null;
     company_id: string | null;
     amount: number | null;
     apply_to_company: boolean | null;
   }>(() =>
     supabase
       .from("promoter_discounts")
-      .select("company_id, amount, apply_to_company")
+      .select("promoter_id, company_id, amount, apply_to_company")
       .eq("year", selected.year)
       .eq("month", selected.month)
   );
   let descontoSemEmpresa = 0;
   for (const row of descontoRows) {
     if (row.apply_to_company === true) continue; // não reduz o repasse do promotor
+    // piso zerou o repasse => o desconto NÃO acontece (não é absorvido).
+    if (row.promoter_id && pisoZerouPromoters.has(row.promoter_id)) continue;
     const cid = row.company_id || "";
     const amount = toNum(row.amount);
     if (!cid) {

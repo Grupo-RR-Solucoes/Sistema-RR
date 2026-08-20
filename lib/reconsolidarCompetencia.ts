@@ -157,7 +157,18 @@ export async function reconsolidarCompetenciaFechada(
   // recompoe o final dos promotores COM produto atribuido. Aditivo: quem nao tem
   // produto fica byte-identico. As chaves so-produto entram no novoSet para o
   // reconciliador NAO as apagar. Roda mesmo em dryRun (nesse caso nao grava).
-  const produtos = await applyProdutoRepasseAoPmr(supabase, { year, month, dryRun });
+  // O fator de PRODUTO vem do MESMO plano de piso que zerou credito/seguro no
+  // orquestrador — a regra e avaliada UMA vez, no bloco F, e viaja daqui para a
+  // Frente C. Hoje `zera` nao inclui PRODUTO, entao o mapa e todo 1 e isto e
+  // no-op; o encanamento existe para a decisao mudar por dado.
+  const produtos = await applyProdutoRepasseAoPmr(supabase, {
+    year,
+    month,
+    dryRun,
+    fatorProdutoByPromoter: grupo?.piso?.fator_produto_by_promoter as
+      | Map<string, number>
+      | undefined,
+  });
   for (const k of produtos.chaves) novoSet.add(k);
 
   // ---- VENDA PROPRIA DE GESTAO — o mesmo repasse, para quem NAO e promotor ----

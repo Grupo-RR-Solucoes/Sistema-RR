@@ -21,6 +21,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { loadClosingPromoterBase } from "./closingPromoterBase.ts";
 import { buildMasterHeirMap } from "./herancaMaster.ts";
+import { lerReguaPisoVigente, resolverPiso } from "./pisoProducao.ts";
 import { consolidateMonthlyFromClosing } from "./closingMonthly.ts";
 import { consolidateMonthlyFromBbts, BBTS_COMPANY_ID } from "./bbtsMonthly.ts";
 import {
@@ -215,7 +216,49 @@ export async function consolidateMonthlyGroup(
     consolid.set(pid, { prodRR, prodADS, prodTotal, pen, share, status });
   }
 
-  const inject = { statusMetaByPromoter, seguroShareByPromoter, volumeConsolidadoByPromoter, prodConsolidadoByPromoter };
+  // ---- F. PISO DE PRODUCAO PARA O REPASSE ----
+  // ESTE E O UNICO PONTO DO SISTEMA QUE AVALIA A REGRA DO PISO. Ele existe aqui, e
+  // nao dentro dos consolidadores, porque so aqui a producao CONSOLIDADA RR+ADS
+  // existe para as duas empresas ao mesmo tempo — em closingMonthly as injecoes
+  // sao opcionais e o fallback RR-puro zeraria quem produziu na ADS.
+  //
+  // Os consolidadores recebem FATORES (0|1), nunca a regra: eles nao sabem o piso,
+  // nem a base, nem quem e alcancado — exatamente como ja recebem
+  // seguroShareByPromoter sem saber o que e penetracao consolidada.
+  //
+  // POR QUE NAO ZERAR seguroShareByPromoter: funcionaria (o `??` preserva 0), mas
+  // seguro_share e exibido como FAIXA DE PENETRACAO (closingMonthly:465, :245
+  // abaixo). Faixa e piso sao duas regras; na mesma variavel, uma esconde a outra.
+  //
+  // UNIVERSO = pids UNIAO alcancados. Quem tem so seguro avulso nao entra em
+  // `pids` (:170, alimentado por contratos) mas entra no agregado do
+  // closingMonthly via addSeguroAvulso — sem a uniao, passaria batido pelo piso.
+  const alcancadosPiso = (await lerReguaPisoVigente(supabase, { year, month })).regua?.promoterIds ?? [];
+  const universoPiso = [...new Set([...pids, ...alcancadosPiso])];
+  const planoPiso = await resolverPiso(supabase, {
+    year,
+    month,
+    producoes: universoPiso.map((pid) => {
+      const r = rr.get(pid) || { net: 0, liqSeg: 0 };
+      const a = ads.get(pid) || { prod: 0, liqSeg: 0 };
+      return {
+        promoterId: pid,
+        // Base FECHAMENTO = o que vira production_value nas duas linhas do PMR.
+        fechamento: r.net + a.prod,
+        // Base DIARIO = producao valida na janela (a mesma da Frente C).
+        diario: (shareRR.frenteCProductionMap.get(pid) ?? 0) + (shareADS.frenteCProductionMap.get(pid) ?? 0),
+      };
+    }),
+  });
+
+  const inject = {
+    statusMetaByPromoter,
+    seguroShareByPromoter,
+    volumeConsolidadoByPromoter,
+    prodConsolidadoByPromoter,
+    fatorCreditoByPromoter: planoPiso.fatorCreditoByPromoter,
+    fatorSeguroByPromoter: planoPiso.fatorSeguroByPromoter,
+  };
 
   // ---- E. Consolidadores injetados (RR grava linha RR; ADS grava linha ADS) ----
   const rrRes: any = await consolidateMonthlyFromClosing(supabase, { year, month, dryRun, ...inject });
@@ -251,6 +294,19 @@ export async function consolidateMonthlyGroup(
   return {
     dry_run: dryRun,
     promotores: pids.length,
+    // PISO — o veredicto por alcancado, com o numero que decidiu. E o que o
+    // dry-run mostra e o que o gate compara; sem isto, "final = 0" seria
+    // indistinguivel de "nao produziu".
+    piso: {
+      regua_id: planoPiso.regua?.id ?? null,
+      piso: planoPiso.regua?.piso ?? null,
+      base_calculo: planoPiso.regua?.baseCalculo ?? null,
+      zera: planoPiso.regua?.zera ?? [],
+      veredictos: planoPiso.veredictos,
+      // Frente C: o mapa segue mesmo quando `zera` nao inclui PRODUTO (fator 1).
+      fator_produto_by_promoter: planoPiso.fatorProdutoByPromoter,
+      avisos: planoPiso.avisos,
+    },
     // Uniao do payload das DUAS linhas (RR + ADS) — o conjunto que DEFINE o PMR
     // fechado da competencia. A reconciliacao apaga o que sobrar fora daqui.
     payload: [...(rrRes.payload ?? []), ...(adsRes.payload ?? [])] as any[],

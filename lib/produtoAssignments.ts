@@ -244,6 +244,9 @@ export async function computeProductCommissionByBeneficiario(
 const chavePmr = (promoterId: string, companyId: string | null) =>
   `${promoterId}|${companyId ?? "NULL"}`;
 
+/** numeric(18,2) do PMR / gestao_venda_propria. */
+const round2Produto = (v: number) => Math.round(v * 100) / 100;
+
 // Aplica o repasse de produto ao PMR fechado: grava as colunas por produto e
 // RECOMPOE final = producao + seguro + bbcap + conta_corrente. Aditivo e
 // idempotente (recompoe do proprio row). So toca promotores COM produto atribuido
@@ -258,7 +261,19 @@ const chavePmr = (promoterId: string, companyId: string | null) =>
 // promotores que so tem produto (sem credito/seguro).
 export async function applyProdutoRepasseAoPmr(
   supabase: SupabaseLike,
-  params: { year: number; month: number; dryRun?: boolean }
+  params: {
+    year: number;
+    month: number;
+    dryRun?: boolean;
+    // PISO DE REPASSE — fator 0|1 por promotor, vindo do bloco F do
+    // bbtsOrchestrator via reconsolidarCompetencia. Esta funcao NAO conhece a
+    // regra. Ausente => `?? 1` => byte-identico ao comportamento anterior.
+    //
+    // HOJE E NO-OP: a regua vigente tem zera=[CREDITO,SEGURO], SEM PRODUTO, entao
+    // o fator sai 1 para todo mundo. O encanamento existe para a decisao poder
+    // mudar por DADO (uma linha no jsonb) em vez de commit.
+    fatorProdutoByPromoter?: Map<string, number>;
+  }
 ): Promise<{
   chaves: Set<string>;
   atualizadas: number;
@@ -315,18 +330,24 @@ export async function applyProdutoRepasseAoPmr(
     const base = existentes.get(k);
     const prod = base?.prod ?? 0;
     const ins = base?.ins ?? 0;
-    const final =
-      Math.round((prod + ins + v.bbcap + v.conta_corrente + v.consorcio + v.lob) * 100) / 100;
+    // PISO: zera as colunas de produto TAMBEM, nao so a contribuicao para o
+    // final. Coluna com valor e final sem ele seria um rastro que se contradiz.
+    const fator = params.fatorProdutoByPromoter?.get(v.promoter_id) ?? 1;
+    const bbcap = round2Produto(v.bbcap * fator);
+    const contaCorrente = round2Produto(v.conta_corrente * fator);
+    const consorcio = round2Produto(v.consorcio * fator);
+    const lob = round2Produto(v.lob * fator);
+    const final = round2Produto(prod + ins + bbcap + contaCorrente + consorcio + lob);
     if (base) {
       updates.push({
         promoter_id: v.promoter_id,
         company_id: v.company_id,
         year,
         month,
-        bbcap_commission_value: v.bbcap,
-        conta_corrente_commission_value: v.conta_corrente,
-        consorcio_commission_value: v.consorcio,
-        lob_commission_value: v.lob,
+        bbcap_commission_value: bbcap,
+        conta_corrente_commission_value: contaCorrente,
+        consorcio_commission_value: consorcio,
+        lob_commission_value: lob,
         final_commission_value: final,
       });
     } else {
@@ -338,10 +359,10 @@ export async function applyProdutoRepasseAoPmr(
         source: "fechamento",
         production_commission_value: 0,
         insurance_commission_value: 0,
-        bbcap_commission_value: v.bbcap,
-        conta_corrente_commission_value: v.conta_corrente,
-        consorcio_commission_value: v.consorcio,
-        lob_commission_value: v.lob,
+        bbcap_commission_value: bbcap,
+        conta_corrente_commission_value: contaCorrente,
+        consorcio_commission_value: consorcio,
+        lob_commission_value: lob,
         final_commission_value: final,
       });
     }

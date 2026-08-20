@@ -106,6 +106,9 @@ type MonthlyResultRow = {
   bbcap_commission_value?: number | null;
   conta_corrente_commission_value?: number | null;
   consorcio_commission_value?: number | null;
+  // PISO DE REPASSE: a linha foi zerada pelo piso de producao. Ver a supressao do
+  // desconto mais abaixo ("PISO ZEROU O REPASSE").
+  piso_zerou?: boolean | null;
 };
 
 type DiscountRow = {
@@ -987,7 +990,7 @@ export async function loadPromoterAnalyticsBase(
         supabase
           .from("promoter_monthly_results")
           .select(
-            "promoter_id, company_id, year, month, production_value, proposal_count, insured_proposal_count, insured_production_value, insurance_penetration_percent, production_commission_value, insurance_commission_value, agreement_adjustment_value, final_commission_value, discount_value, target_status, source, bbcap_commission_value, conta_corrente_commission_value, consorcio_commission_value"
+            "promoter_id, company_id, year, month, production_value, proposal_count, insured_proposal_count, insured_production_value, insurance_penetration_percent, production_commission_value, insurance_commission_value, agreement_adjustment_value, final_commission_value, discount_value, target_status, source, bbcap_commission_value, conta_corrente_commission_value, consorcio_commission_value, piso_zerou"
           )
       ),
       fetchAllRows<DiscountRow>(() =>
@@ -1410,6 +1413,7 @@ export async function loadPromoterAnalyticsBase(
           consorcio_commission_value: number;
           final_commission_value: number;
           discount_value: number;
+          piso_zerou: boolean; // qualquer linha zerada pelo piso marca o promotor
           target_status: string | null;
           company_id: string | null;
           best_production: number; // p/ escolher company_id/status da linha dominante
@@ -1433,6 +1437,7 @@ export async function loadPromoterAnalyticsBase(
               consorcio_commission_value: 0,
               final_commission_value: 0,
               discount_value: 0,
+              piso_zerou: false,
               target_status: null,
               company_id: null,
               best_production: -1,
@@ -1451,6 +1456,7 @@ export async function loadPromoterAnalyticsBase(
           a.consorcio_commission_value += toNumber(row.consorcio_commission_value);
           a.final_commission_value += toNumber(row.final_commission_value);
           a.discount_value += toNumber(row.discount_value);
+          if (row.piso_zerou === true) a.piso_zerou = true;
           // company_id/status representativos = os da linha de MAIOR produção
           // (a RR/fechamento domina; a linha ADS não rouba o rótulo).
           if (prod > a.best_production) {
@@ -1473,7 +1479,36 @@ export async function loadPromoterAnalyticsBase(
                 d.apply_to_company !== true
             )
             .reduce((sum, d) => sum + toNumber(d.amount), 0);
-          const discountValue = manualDiscount || a.discount_value;
+          // ================================================================
+          // PISO ZEROU O REPASSE -> O DESCONTO NAO ACONTECE.
+          //
+          // Decisao Diego (20/08/2026): quando o piso de producao zera o
+          // repasse, payable = 0 e a parcela de desconto da competencia NAO e
+          // consumida. NAO e `max(0, final - desconto)`: isso mascararia. Um
+          // desconto de 514,59 num mes zerado nao vira zero — ele NAO ACONTECE.
+          // Por isso se zera o DESCONTO, e nao se corta o resultado.
+          //
+          // >>> AVISO PARA QUEM LER ISTO DEPOIS — A PARCELA PULADA NAO VOLTA. <<<
+          //
+          // promoter_discounts NAO tem contador. Sao linhas independentes, uma
+          // por competencia, criadas todas de uma vez em debitsData.ts:153-179,
+          // cada uma ja carimbada com year/month e installment_number fixo.
+          // Nenhum caminho da aplicacao escreve status='APPLIED'; os leitores de
+          // dinheiro ignoram o status e amarram por (year, month). Nao existe,
+          // em lugar nenhum, quem crie uma parcela a mais no fim do plano.
+          //
+          // CONSEQUENCIA: um ADIANTAMENTO 3/9 numa competencia zerada pelo piso
+          // vira 8 parcelas pagas de 9. A empresa perde aquela parcela, e NAO HA
+          // ERRO VISIVEL — nenhuma tela acusa, nenhum gate reprova; so uma
+          // parcela que sumiu. Se um dia o negocio quiser que ela volte, e
+          // preciso DESLOCAR A CAUDA (as PENDING seguintes +1 mes cada, para o
+          // 3/9 continuar 3/9 na competencia seguinte), e isso e escrita em
+          // promoter_discounts disparada pela consolidacao — nao existe hoje.
+          //
+          // HOJE E HIPOTETICO: as duas promotoras alcancadas pelo piso nao tem
+          // desconto em competencia nenhuma da vigencia (medido em 20/08/2026).
+          // ================================================================
+          const discountValue = a.piso_zerou ? 0 : manualDiscount || a.discount_value;
           const targetValue = toNumber(target?.meta);
           const target1Value = toNumber(target?.meta_1);
           const target2Value = toNumber(target?.meta_2);

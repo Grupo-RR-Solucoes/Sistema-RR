@@ -266,18 +266,37 @@ function prevCompetencia(year: number, month: number) {
 // promoter_discounts (com debit_id). Helper LEVE: opera sobre os dados JA carregados
 // (pmrRows) + a query de promoter_discounts, sem chamar loadPromoterAnalyticsBase.
 function payableByCompetencia(
-  pmrRows: Array<{ year: number; month: number; final_commission_value: number | null }>,
-  discountRows: Array<{ year: number; month: number; amount: number | null; apply_to_company: boolean | null }>
+  pmrRows: Array<{
+    year: number;
+    month: number;
+    final_commission_value: number | null;
+    promoter_id?: string | null;
+    piso_zerou?: boolean | null;
+  }>,
+  discountRows: Array<{
+    year: number;
+    month: number;
+    amount: number | null;
+    apply_to_company: boolean | null;
+    promoter_id?: string | null;
+  }>
 ): { payableByPeriod: Map<string, number>; finalByPeriod: Map<string, number>; discountByPeriod: Map<string, number> } {
   const finalByPeriod = new Map<string, number>();
+  // PISO DE REPASSE, por (promotor, competencia): quando o piso zera o repasse, o
+  // desconto NAO acontece (ver promoterAnalytics, "PISO ZEROU O REPASSE"). Sem
+  // isto o Caixa pagaria um liquido NEGATIVO — e o DRE, que ja suprime, diria
+  // outro numero.
+  const pisoZerouPorCompetencia = new Set<string>();
   for (const r of pmrRows) {
     const k = getPeriodKey(r.year, r.month);
     finalByPeriod.set(k, toNumber(finalByPeriod.get(k)) + toNumber(r.final_commission_value));
+    if (r.piso_zerou === true && r.promoter_id) pisoZerouPorCompetencia.add(`${r.promoter_id}|${k}`);
   }
   const discountByPeriod = new Map<string, number>();
   for (const d of discountRows) {
     if (d.apply_to_company === true) continue; // debito da EMPRESA nao abate o repasse
     const k = getPeriodKey(d.year, d.month);
+    if (d.promoter_id && pisoZerouPorCompetencia.has(`${d.promoter_id}|${k}`)) continue;
     discountByPeriod.set(k, toNumber(discountByPeriod.get(k)) + toNumber(d.amount));
   }
   const payableByPeriod = new Map<string, number>();
@@ -470,13 +489,15 @@ export async function buildFinancialAnalytics(
         year: number;
         month: number;
         company_id: string | null;
+        promoter_id: string | null;
         final_commission_value: number | null;
         discount_value: number | null;
         insurance_commission_value: number | null;
+        piso_zerou: boolean | null;
       }>(() =>
         supabase
           .from("promoter_monthly_results")
-          .select("year, month, company_id, final_commission_value, discount_value, insurance_commission_value")
+          .select("year, month, company_id, promoter_id, final_commission_value, discount_value, insurance_commission_value, piso_zerou")
           // DEFESA EM PROFUNDIDADE (#13): exclui source='daily'. O Caixa e o DRE
           // devem ver o MESMO conjunto (o DRE ja filtra source IN ('fechamento',
           // 'bbts')). 'daily' so existe no mes ABERTO e nunca e caixa pago; se um
@@ -495,10 +516,10 @@ export async function buildFinancialAnalytics(
       // DEBITOS do repasse (adiantamento/cancelamento seguro/etc.) — parcelas em
       // promoter_discounts. Abatidos do LIQUIDO por competencia (correcao B do caixa:
       // comissoes pagas do mes M = liquido da competencia M-1). apply_to_company !== true.
-      fetchAllRows<{ year: number; month: number; amount: number | null; apply_to_company: boolean | null }>(() =>
+      fetchAllRows<{ year: number; month: number; amount: number | null; apply_to_company: boolean | null; promoter_id: string | null }>(() =>
         supabase
           .from("promoter_discounts")
-          .select("year, month, amount, apply_to_company")
+          .select("year, month, amount, apply_to_company, promoter_id")
       ),
     ]);
 
