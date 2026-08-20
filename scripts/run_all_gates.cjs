@@ -63,6 +63,13 @@ const GATES = [
       "Supabase falso em memoria + funcoes reais do repo",
   },
   {
+    arquivo: "scripts/piso_producao_regua_gate.cjs",
+    nome: "piso de producao (leitor da regua + ainda desligado)",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria + lib/pisoProducao.ts real; varredura so em lib/ e app/ do repo",
+  },
+  {
     arquivo: "scripts/no_brand_hardcoded_gate.cjs",
     nome: "marca institucional so na barra",
     modo: "self-contained",
