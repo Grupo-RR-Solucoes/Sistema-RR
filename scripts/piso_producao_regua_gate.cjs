@@ -34,9 +34,9 @@
  *      LANCA quando ha regua e o fator nao foi injetado.
  *   K) NO-OP: sem regua vigente os mapas saem VAZIOS, e `map.get(pid) ?? 1` da
  *      1 — que e exatamente o que os consolidadores farao.
- *   L) AINDA DESLIGADO: nenhum arquivo de lib/ ou app/ importa lib/pisoProducao.
- *      O modulo existe para ser revisado, nao para estar em producao. Este teste
- *      deve ser APAGADO no commit que ligar o piso.
+ *   L) LIGADO: os 11 sitios que decidem dinheiro consomem o piso. Se alguem
+ *      remover uma ligacao, o piso vira decoracao e o numero volta a ser pago
+ *      sem ninguem perceber.
  */
 require("./_ts_register.cjs");
 
@@ -345,6 +345,35 @@ async function main() {
     !!(await resolverReguaPisoVigente(sbEncerrada, { year: 2026, month: 9 }))
   );
 
+  // DEFESA EM PROFUNDIDADE DA VIGENCIA — regressao de um defeito REAL.
+  // Em 20/08/2026 o dry-run aplicou a regua de 2026-08 em jun e abr porque o
+  // resolvedor confiava no `.lte()` do banco e so conferia o FIM da vigencia.
+  // Qualquer camada que devolva linha a mais (stub, cache, proxy) reabria mes
+  // FECHADO e zerava repasse ja pago, sem erro nenhum. Este stub ignora `lte` de
+  // proposito: se o filtro voltar a depender so do banco, o gate reprova.
+  const sbSemLte = {
+    from(tabela) {
+      const api = {
+        select: () => api,
+        eq: () => api,
+        in: () => api,
+        lte: () => api, // IGNORA o filtro, de proposito
+        order: () => api,
+        then: (resolve) =>
+          resolve({ data: tabela === PISO_TABELA ? [LINHA_SEEDADA] : PROMOTERS_OK, error: null }),
+      };
+      return api;
+    },
+  };
+  ok(
+    "regua de 2026-08 NAO alcanca 2026-06 mesmo se a query devolver a linha",
+    (await resolverReguaPisoVigente(sbSemLte, { year: 2026, month: 6 })) === null
+  );
+  ok(
+    "a mesma regua alcanca 2026-08 (o filtro nao virou negacao geral)",
+    !!(await resolverReguaPisoVigente(sbSemLte, { year: 2026, month: 8 }))
+  );
+
   const sbDuas = fakeSupabase({
     [PISO_TABELA]: [LINHA_SEEDADA, { ...LINHA_SEEDADA, id: "regua-2", competencia_inicio: "2026-06-01" }],
     promoters: PROMOTERS_OK,
@@ -421,42 +450,36 @@ async function main() {
   );
 
   // =========================================================================
-  console.log("\nL) o piso ainda esta DESLIGADO no caminho de producao");
+  console.log("\nL) o piso esta LIGADO nos sitios que decidem dinheiro");
   // =========================================================================
-  // APAGAR ESTE BLOCO no commit que ligar o piso — ele prova o contrario do que
-  // aquele commit vai fazer, e um gate que sobrevive a propria premissa vira
-  // ruido vermelho.
-  const importadores = [];
-  const varrer = (dir) => {
-    for (const nome of fs.readdirSync(dir)) {
-      const p = path.join(dir, nome);
-      const st = fs.statSync(p);
-      if (st.isDirectory()) {
-        if (nome === "node_modules" || nome === ".next") continue;
-        varrer(p);
-        continue;
-      }
-      if (!/\.(ts|tsx)$/.test(nome)) continue;
-      if (p.endsWith(path.join("lib", "pisoProducao.ts"))) continue;
-      if (fs.readFileSync(p, "utf8").includes("pisoProducao")) {
-        importadores.push(path.relative(ROOT, p));
-      }
-    }
-  };
-  for (const dir of ["lib", "app"]) {
-    const alvo = path.join(ROOT, dir);
-    if (fs.existsSync(alvo)) varrer(alvo);
-  }
-  ok(
-    "nenhum arquivo de lib/ ou app/ importa lib/pisoProducao",
-    importadores.length === 0,
-    importadores.join(", ")
-  );
+  // Este bloco SUBSTITUIU o "ainda desligado" do commit anterior. A regra e a
+  // mesma dos outros gates de fiacao do repo: a regua so vale se estiver
+  // CONECTADA. Se alguem remover uma dessas ligacoes, o piso vira decoracao e
+  // ninguem percebe — o numero simplesmente volta a ser pago.
+  const leitorDe = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
+  const exige = (rel, agulha, oQuePerde) =>
+    ok(`${rel} consome o piso (${agulha})`, leitorDe(rel).includes(agulha), `PERDE: ${oQuePerde}`);
+
+  exige("lib/bbtsOrchestrator.ts", "resolverPiso", "o unico ponto que AVALIA a regra");
+  exige("lib/closingMonthly.ts", "fatorCreditoByPromoter", "credito da RR nao zera");
+  exige("lib/closingMonthly.ts", "fatorSeguroByPromoter", "seguro da RR nao zera");
+  exige("lib/bbtsMonthly.ts", "fatorCreditoByPromoter", "credito da ADS nao zera");
+  exige("lib/bbtsMonthly.ts", "fatorSeguroByPromoter", "seguro da ADS nao zera");
+  exige("lib/reconsolidarCompetencia.ts", "fatorProdutoByPromoter", "Frente C fica fora do piso");
+  exige("lib/produtoAssignments.ts", "fatorProdutoByPromoter", "Frente C fica fora do piso");
+  exige("lib/promoterAnalytics.ts", "PISO ZEROU O REPASSE", "payable negativo na /promotores");
+  exige("lib/dre.ts", "pisoZerouPromoters", "custo NEGATIVO no DRE do CNPJ");
+  exige("lib/financialAnalytics.ts", "pisoZerouPorCompetencia", "liquido NEGATIVO no Caixa");
+  exige("app/api/calculate/monthly/route.ts", "PISO_ALLOW_RR_PURE", "valvula sem aviso na rota");
+
+  // Os dois consolidadores tem que AFIRMAR o contrato, nao so aceitar o fator.
+  exige("lib/closingMonthly.ts", "assertPisoInjetado", "rodarClosingMonthly grava sem piso, calado");
+  exige("lib/bbtsMonthly.ts", "assertPisoInjetado", "consolidador da ADS grava sem piso, calado");
 
   // =========================================================================
   console.log(
     falhas === 0
-      ? "\nGATE OK — o leitor do piso esta provado e AINDA nao ligado."
+      ? "\nGATE OK — o leitor do piso esta provado e LIGADO nos sitios que pagam."
       : `\nGATE REPROVADO — ${falhas} falha(s).`
   );
   process.exit(falhas === 0 ? 0 : 2);

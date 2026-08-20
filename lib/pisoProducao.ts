@@ -8,11 +8,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // EMPRESA NAO muda: a RR recebe da Promotiva pela producao, independente de
 // repassar. Piso e regra de REPASSE, nao de receita.
 //
-// ESTE MODULO NAO ESTA LIGADO A NADA. Nenhum consolidador, orquestrador ou rota
-// o importa hoje — de proposito. Ele existe para ser revisado ANTES de morder
-// qualquer numero. Quem ligar precisa fazer as tres coisas da secao COMO LIGAR.
+// LIGADO desde 20/08/2026. Consumidores: lib/bbtsOrchestrator.ts (bloco F, o
+// UNICO ponto que avalia a regra), lib/closingMonthly.ts e lib/bbtsMonthly.ts
+// (recebem FATORES, nunca a regra), lib/produtoAssignments.ts (Frente C) e os
+// tres leitores de payable. O piso so morde de verdade quando a tabela existir e
+// tiver regua vigente — sem isso, todos os mapas saem vazios e cada motor cai no
+// `?? 1`, byte-identico ao comportamento anterior.
 //
-// ONDE O PISO VAI SER APLICADO — lib/bbtsOrchestrator.ts, entre :216 e :218.
+// ONDE O PISO E APLICADO — lib/bbtsOrchestrator.ts, bloco F.
 // E o UNICO ponto do sistema onde a producao consolidada RR+ADS existe para as
 // duas empresas ao mesmo tempo:
 //     :195        prodTotal = prodRR + prodADS        -> base do DIARIO
@@ -29,20 +32,25 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // closingMonthly:465 e bbtsOrchestrator:245 exibem seguro_share como "faixa de
 // penetracao". Faixa e piso sao duas regras; no mesmo campo, uma esconde a outra.
 //
-// COMO LIGAR (checklist para o commit seguinte, que NAO e este):
-//   1. bbtsOrchestrator, bloco novo entre :216 e :218: resolver a regua, montar
-//      o plano com as DUAS bases ja disponiveis, e por os fatores em `inject`.
-//      O universo do piso e `pids` UNIAO os alcancados: quem tem so seguro
-//      avulso nao entra em pids (:170) e passaria batido.
-//   2. closingMonthly:418-419 e bbtsMonthly:336-337 multiplicam por
-//      `params.fatorCreditoByPromoter?.get(pid) ?? 1` (e o de seguro). `?? 1` e
+// O CAMINHO COMPLETO (os 3 alvos do piso):
+//   1. bbtsOrchestrator, bloco F: resolve a regua, monta o plano com as DUAS
+//      bases e poe os fatores em `inject`. O universo e `pids` UNIAO os
+//      alcancados — quem tem so seguro avulso nao entra em pids e passaria
+//      batido.
+//   2. CREDITO e SEGURO: closingMonthly e bbtsMonthly multiplicam por
+//      `params.fatorCreditoByPromoter?.get(pid) ?? 1` (idem seguro). `?? 1` e
 //      neutro: todo chamador existente fica byte-identico.
-//   3. reconsolidarCompetencia:160 repassa fatorProdutoByPromoter para
-//      applyProdutoRepasseAoPmr (produtoAssignments:318). Hoje `zera` nao inclui
-//      PRODUTO, entao esse fator sai 1 e o caminho e no-op — mas o encanamento
-//      precisa existir antes de a regra mudar.
-//   4. assertPisoInjetado nos dois consolidadores, logo apos o `dryRun` ser
-//      resolvido (closingMonthly:230, bbtsMonthly:118).
+//   3. FRENTE C: reconsolidarCompetencia repassa fatorProdutoByPromoter para
+//      applyProdutoRepasseAoPmr. Hoje `zera` NAO inclui PRODUTO, entao o fator
+//      sai 1 e este caminho e no-op — o encanamento existe para a regra poder
+//      mudar sem commit.
+//   4. assertPisoInjetado nos dois consolidadores, com a valvula
+//      PISO_ALLOW_RR_PURE=1.
+//   5. RASTRO: a linha zerada grava piso_zerou=true e discount_value=0, e e por
+//      esse flag que os leitores sabem suprimir o desconto. NAO da para o leitor
+//      reavaliar o piso: promoterAnalytics.ts:1421 filtra o agregado por
+//      empresa, entao sob filtro de CNPJ a producao sairia PARCIAL e zeraria
+//      quem esta acima do piso.
 //
 // CHAMADOR DIRETO QUE GRAVA — o motivo do assertPisoInjetado. Medido:
 //   scripts/rodarClosingMonthly.ts:52 chama consolidateMonthlyFromClosing SEM
@@ -51,33 +59,27 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //   nenhum e desfaz o zeramento da rodada anterior, em silencio.
 //
 // ============================================================================
-// TODO — PENDENTE DE DECISAO DO DIEGO. NAO RESOLVER SOZINHO.
+// DESCONTO NA COMPETENCIA ZERADA — decisao Diego (20/08/2026): FICA PENDENTE.
+// Quando o piso zera o repasse, payable = 0 e o desconto NAO e aplicado. NAO e
+// `max(0, final - desconto)`: isso mascararia: um desconto de 514,59 num mes
+// zerado nao vira zero, ele NAO ACONTECE.
 //
-// PAYABLE NEGATIVO. O desconto (promoter_discounts) e lancado ANTES do repasse
-// ser calculado, e o payable e uma SUBTRACAO:
-//     lib/promoterAnalytics.ts:1507      payable = final - discountValue   (mes fechado)
-//     lib/promoterAnalytics.ts:1385-1386 idem, ramo nao-consolidado
-//     lib/dre.ts:476-477                 "payable = comissao - DESCONTOS"
-//     lib/financialAnalytics.ts:466-468  mesma base no Caixa
-// Com o piso zerando o final, quem tiver desconto na competencia fica com
-// payable NEGATIVO — a pessoa "deve" para a empresa um dinheiro que ela nunca
-// recebeu. Medido nas duas alcancadas:
-//     2026-06 LILIAN  3,75  (final hoje 582,09)  -> payable -3,75
-//     2026-06 MARIA 166,34  (final hoje 778,51)  -> payable -166,34
-//     2026-07 MARIA  24,51  (final hoje 382,49)  -> payable -24,51
-// Com a vigencia 2026-08 da regua seedada isto e LATENTE (as duas nao tem
-// desconto de 2026-08 em diante). Retroagindo para 2026-04 vira VIVO: -194,60.
+// COMO ISSO E IMPLEMENTAVEL (medido em 20/08/2026, ver REGISTRO abaixo):
+// promoter_discounts nao tem contador. Sao linhas INDEPENDENTES, uma por
+// competencia, criadas todas de uma vez em lib/debitsData.ts:153-179, cada uma
+// ja carimbada com year/month e installment_number fixo. Nada "avanca": nenhum
+// caminho da aplicacao escreve status='APPLIED' (o unico que escreveu foi o seed
+// scripts/seed_debitos_junho.cjs:69,75). E os leitores de dinheiro IGNORAM o
+// status e amarram por (year, month) — promoterAnalytics.ts:1467-1476,
+// dre.ts:506-520, financialAnalytics.ts:498-502. Entao "nao consumir" e
+// simplesmente NAO APLICAR a linha daquela competencia.
 //
-// AS DUAS SAIDAS POSSIVEIS (nenhuma implementada, nenhuma recomendada aqui):
-//   (a) PERDOAR NA COMPETENCIA — piso zerou => desconto da competencia nao e
-//       cobrado; payable piso 0. Simples de ler, mas a empresa PERDE o
-//       adiantamento/estorno que ja saiu do caixa.
-//   (b) MANTER PENDENTE — o desconto sobrevive e rola para a competencia
-//       seguinte (ou fica em aberto no ledger de debitos). Preserva o valor, mas
-//       exige onde guardar o saldo: promoter_discounts nao tem "nao cobrado
-//       ainda", e a fila de debitos tem regua propria (lib/debitRules).
-// Enquanto nao houver decisao, o piso NAO deve ser ligado em competencia com
-// desconto lancado para um alcancado — ou o payable sai negativo em tela.
+// O sitio da supressao, com o aviso completo, esta em promoterAnalytics (busque
+// por "PISO ZEROU O REPASSE"). Ver tambem dre.ts e financialAnalytics.ts.
+//
+// FRENTE SEPARADA, NAO E DESTE PISO: payable_commission_value JA pode ser
+// negativo hoje, sem piso nenhum — medido em 2026-08, EDUARDA MANOELA tem
+// desconto de 234,59 contra comissao 0,00. Nao consertar aqui.
 // ============================================================================
 
 type SupabaseLike = SupabaseClient;
@@ -159,6 +161,8 @@ export type PlanoPiso = {
   fatorProdutoByPromoter: Map<string, number>;
   /** Um por alcancado, com o numero que decidiu — e o que o dry-run mostra. */
   veredictos: VeredictoPiso[];
+  /** Ruido que precisa chegar na tela/no log (ex.: tabela ainda nao criada). */
+  avisos: string[];
 };
 
 function competenciaLabel(year: number, month: number): string {
@@ -300,7 +304,41 @@ export function planoPisoVazio(): PlanoPiso {
     fatorSeguroByPromoter: new Map<string, number>(),
     fatorProdutoByPromoter: new Map<string, number>(),
     veredictos: [],
+    avisos: [],
   };
+}
+
+/**
+ * A tabela da regua ainda nao existe no banco? PostgREST responde PGRST205
+ * ("Could not find the table ... in the schema cache"), nao 500.
+ *
+ * POR QUE ISTO E TOLERADO, contra o instinto de nunca engolir ausencia: entre o
+ * merge do codigo e o Diego rodar o SQL no Studio ha uma janela em que a tabela
+ * NAO existe. Lancar nessa janela derrubaria TODA consolidacao de mes fechado —
+ * import de fechamento, /api/calculate/monthly, /api/pmr/reconsolidar. E a
+ * ausencia da tabela e, nessa janela, a verdade: o piso ainda nao esta em vigor.
+ * Por isso a tolerancia e ESTREITA (so este codigo de erro) e BARULHENTA (vira
+ * aviso no retorno). Qualquer outro erro de leitura LANCA.
+ * Remover quando a migration estiver aplicada em producao.
+ */
+function ehTabelaInexistente(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  if (String(error.code ?? "") === "PGRST205") return true;
+  return /Could not find the table/i.test(String(error.message ?? ""));
+}
+
+const AVISO_TABELA_AUSENTE =
+  `${PISO_TABELA} ainda NAO existe no banco: o piso de repasse esta INATIVO nesta ` +
+  `execucao. Rode scripts/sql/2026-08-18_piso_producao_repasse.sql no Studio.`;
+
+/**
+ * Valvula de escape do fail-loud: PISO_ALLOW_RR_PURE=1 deixa uma execucao RR-pura
+ * seguir mesmo com regua vigente. Existe para diagnostico e para o dia em que um
+ * script precise rodar o consolidador solto — NUNCA para producao. Quando ligada,
+ * o resultado sai com aviso.
+ */
+export function pisoRrPuroPermitido(): boolean {
+  return String(process.env.PISO_ALLOW_RR_PURE ?? "").trim() === "1";
 }
 
 /**
@@ -388,10 +426,10 @@ export function montarPlanoPiso(
  * unico jeito de o piso sumir calado — se aparecer, o gate de chamadores tem de
  * vir junto.
  */
-export async function resolverReguaPisoVigente(
+export async function lerReguaPisoVigente(
   supabase: SupabaseLike,
   params: { year: number; month: number }
-): Promise<ReguaPiso | null> {
+): Promise<{ regua: ReguaPiso | null; avisos: string[] }> {
   const { year, month } = params;
   const dia = competenciaParaData(year, month);
   const comp = competenciaLabel(year, month);
@@ -403,15 +441,26 @@ export async function resolverReguaPisoVigente(
     .order("competencia_inicio", { ascending: false });
 
   if (error) {
+    // ver ehTabelaInexistente: tolerancia ESTREITA e BARULHENTA.
+    if (ehTabelaInexistente(error)) return { regua: null, avisos: [AVISO_TABELA_AUSENTE] };
     throw new Error(`${PISO_TABELA} (${comp}): ${error.message}`);
   }
 
+  // VIGENCIA CONFERIDA NOS DOIS EXTREMOS, EM CODIGO. O `.lte()` acima ja recorta
+  // o inicio no banco — mas confiar so nele deixa a retroatividade a UMA linha de
+  // distancia: qualquer camada que devolva linha a mais (stub, cache, proxy de
+  // diagnostico, um select reescrito) faria a regua alcancar competencia FECHADA
+  // e zerar repasse ja pago, sem erro nenhum. Medido em 20/08/2026: um dry-run
+  // com proxy que nao implementava `lte` aplicou a regua de 2026-08 em jun e abr.
+  // O filtro do banco e otimizacao; a decisao de vigencia e daqui.
   const vigentes = (data ?? []).filter((linha: Record<string, unknown>) => {
+    const inicio = linha.competencia_inicio;
+    if (!ehTexto(inicio) || String(inicio).slice(0, 10) > dia) return false;
     const fim = linha.competencia_fim;
     return !ehTexto(fim) || fim.slice(0, 10) >= dia;
   });
 
-  if (vigentes.length === 0) return null;
+  if (vigentes.length === 0) return { regua: null, avisos: [] };
   if (vigentes.length > 1) {
     throw new Error(
       `${PISO_TABELA} (${comp}): ${vigentes.length} vigencias SIMULTANEAS ` +
@@ -423,7 +472,44 @@ export async function resolverReguaPisoVigente(
 
   const regua = parseReguaPiso(vigentes[0]);
   await validarAlcance(supabase, regua, comp);
-  return regua;
+  return { regua, avisos: [] };
+}
+
+/** Atalho fino de lerReguaPisoVigente, para quem so quer a regua. */
+export async function resolverReguaPisoVigente(
+  supabase: SupabaseLike,
+  params: { year: number; month: number }
+): Promise<ReguaPiso | null> {
+  return (await lerReguaPisoVigente(supabase, params)).regua;
+}
+
+/**
+ * A ENTRADA QUE O ORQUESTRADOR CONSOME. Resolve a regua da competencia e aplica
+ * sobre a producao consolidada, devolvendo os fatores prontos para injecao.
+ *
+ * `producoes` tem que trazer uma entrada por promotor do universo — e o universo
+ * e `pids UNIAO alcancados pela regua`, nunca so `pids`: quem tem apenas seguro
+ * avulso nao entra em bbtsOrchestrator:170 e passaria batido pelo piso.
+ */
+export async function resolverPiso(
+  supabase: SupabaseLike,
+  params: { year: number; month: number; producoes: ProducaoConsolidada[] }
+): Promise<PlanoPiso> {
+  const { regua, avisos } = await lerReguaPisoVigente(supabase, {
+    year: params.year,
+    month: params.month,
+  });
+  const plano = montarPlanoPiso(regua, params.producoes);
+  plano.avisos.push(...avisos);
+  if (regua) {
+    const zerados = plano.veredictos.filter((v) => v.abaixoDoPiso).length;
+    plano.avisos.push(
+      `PISO DE REPASSE ativo (${competenciaLabel(params.year, params.month)}): piso ` +
+        `${regua.piso.toFixed(2)} sobre ${regua.baseCalculo}, zera ${regua.zera.join("+")}; ` +
+        `${plano.veredictos.length} alcancado(s), ${zerados} abaixo do piso.`
+    );
+  }
+  return plano;
 }
 
 /**
@@ -475,6 +561,7 @@ export async function competenciaExigePiso(
     .order("competencia_inicio", { ascending: false });
 
   if (error) {
+    if (ehTabelaInexistente(error)) return false; // ver ehTabelaInexistente
     throw new Error(
       `${PISO_TABELA} (${competenciaLabel(params.year, params.month)}): ${error.message}`
     );
@@ -499,14 +586,24 @@ export function assertPisoInjetado(params: {
   month: number;
   temRegua: boolean;
   fatorInjetado: boolean;
-}): void {
+  /** PISO_ALLOW_RR_PURE=1 — ver pisoRrPuroPermitido. Devolve aviso em vez de lancar. */
+  permitirRrPuro?: boolean;
+}): string | null {
   const { funcao, year, month, temRegua, fatorInjetado } = params;
-  if (!temRegua || fatorInjetado) return;
+  if (!temRegua || fatorInjetado) return null;
+  if (params.permitirRrPuro === true) {
+    return (
+      `PISO IGNORADO por PISO_ALLOW_RR_PURE=1 em ${funcao} ` +
+      `${competenciaLabel(year, month)}: ha regua de piso vigente e o fator NAO foi ` +
+      `injetado. O numero desta execucao NAO e o que a producao paga.`
+    );
+  }
   throw new Error(
     `${funcao} ${competenciaLabel(year, month)}: existe REGUA DE PISO DE REPASSE ` +
       `vigente e o fator NAO foi injetado. Chame via consolidateMonthlyGroup ` +
       `(lib/bbtsOrchestrator.ts): o piso depende da producao CONSOLIDADA RR+ADS, ` +
       `que NAO existe dentro desta funcao — o fallback RR-puro zeraria quem tem ` +
-      `producao na ADS.`
+      `producao na ADS. Valvula de escape (diagnostico, NUNCA producao): ` +
+      `PISO_ALLOW_RR_PURE=1.`
   );
 }

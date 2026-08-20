@@ -7,6 +7,7 @@ import { resolveCompanyScope } from "@/lib/companyScope";
 import { BBTS_COMPANY_ID } from "@/lib/bbtsCompanyId";
 import { detectMonthRegime } from "@/lib/cmsMonthly";
 import { reconsolidarCompetenciaFechada } from "@/lib/reconsolidarCompetencia";
+import { competenciaExigePiso, pisoRrPuroPermitido } from "@/lib/pisoProducao";
 import { findImportedProductionRule } from "@/lib/promoterRemuneration";
 import { calcularOperacao, getProductionBandByValue } from "@/lib/motor";
 import type { TrpRegraProvider } from "@/lib/motor";
@@ -748,6 +749,24 @@ export async function POST(req: Request) {
     // ja gravado (399 linhas), e nao se recalcula. O historico fica intacto.
     const regime = await detectMonthRegime(supabase, year, month);
     if (regime !== "open") {
+      // PISO DE REPASSE — FAIL-LOUD. Esta rota GRAVA o PMR fechado. O piso so
+      // pode ser avaliado no orquestrador (unico ponto com a producao
+      // CONSOLIDADA RR+ADS); reconsolidarCompetenciaFechada passa por la, entao o
+      // caminho normal esta correto. O que a guarda impede e o caminho normal ser
+      // trocado por um RR-puro sem ninguem perceber: se houver regua vigente e a
+      // valvula PISO_ALLOW_RR_PURE=1 estiver ligada, a resposta DIZ que o numero
+      // gravado nao e o que a producao paga, em vez de gravar calado.
+      const pisoVigente = await competenciaExigePiso(supabase, { year, month });
+      const pisoAvisos: string[] = [];
+      if (pisoVigente && pisoRrPuroPermitido()) {
+        pisoAvisos.push(
+          `ATENCAO: PISO_ALLOW_RR_PURE=1 esta LIGADO e ha regua de piso vigente em ` +
+            `${year}-${String(month).padStart(2, "0")}. A valvula existe para DIAGNOSTICO; ` +
+            `com ela ligada o PMR pode ser gravado sem o piso aplicado. Desligue antes de ` +
+            `usar este numero para pagar.`
+        );
+      }
+
       const res = await reconsolidarCompetenciaFechada(supabase, {
         year,
         month,
@@ -766,6 +785,9 @@ export async function POST(req: Request) {
         source: regime,
         promoters_calculated: res.gravadas ?? 0,
         reconciliacao: res.reconciliacao ?? null,
+        // Piso: veredicto por alcancado + avisos (regua ausente, valvula ligada).
+        piso: res.grupo?.piso ?? null,
+        avisos: [...pisoAvisos, ...((res.grupo?.piso?.avisos as string[] | undefined) ?? [])],
         message: res.ran
           ? `Mês fechado (regime '${regime}'): PMR consolidado do fechamento (RR+ADS) e fatia reconciliada.`
           : `Mês fechado (regime '${regime}'): ${res.motivo}`,

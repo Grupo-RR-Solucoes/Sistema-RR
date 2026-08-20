@@ -51,6 +51,11 @@ import { resolveBbtsRegraDb } from "./bbts/resolveBbtsRegra.ts";
 import { seguroRateFromRegra } from "./bbts/seguroBbts.ts";
 import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
 import { getPrazoTrp } from "./prazoTrp.ts";
+import {
+  assertPisoInjetado,
+  competenciaExigePiso,
+  pisoRrPuroPermitido,
+} from "./pisoProducao.ts";
 
 export { BBTS_COMPANY_ID } from "./bbtsCompanyId.ts";
 import { BBTS_COMPANY_ID } from "./bbtsCompanyId.ts";
@@ -112,6 +117,10 @@ export async function consolidateMonthlyFromBbts(
     seguroShareByPromoter?: Map<string, number>; // penetração consolidada -> share seguro
     // volume consolidado p/ a escala ENTRANTE (sem ele, volume ADS-isolado dá 0%).
     volumeConsolidadoByPromoter?: Map<string, number>;
+    // PISO DE REPASSE — fatores 0|1. ESTA FUNÇÃO NÃO CONHECE A REGRA: quem avalia
+    // piso/base/alcance é o bloco F do bbtsOrchestrator. Ausentes => `?? 1`.
+    fatorCreditoByPromoter?: Map<string, number>;
+    fatorSeguroByPromoter?: Map<string, number>;
   }
 ) {
   const { year, month } = params;
@@ -123,6 +132,19 @@ export async function consolidateMonthlyFromBbts(
   // cai na REDE (literal) silenciosamente.
   await primeInsuranceShareTiers(supabase);
   const avisos: string[] = [];
+
+  // CONTRATO DE INJEÇÃO DO PISO — ver o bloco gêmeo em closingMonthly.
+  {
+    const aviso = assertPisoInjetado({
+      funcao: "consolidateMonthlyFromBbts",
+      year,
+      month,
+      temRegua: await competenciaExigePiso(supabase, { year, month }),
+      fatorInjetado: params.fatorCreditoByPromoter !== undefined,
+      permitirRrPuro: pisoRrPuroPermitido(),
+    });
+    if (aviso) avisos.push(aviso);
+  }
 
   // 1. Linhas ADS da competência, com promotor atribuído.
   const rows = await fetchAllPaged<any>(() =>
@@ -333,8 +355,15 @@ export async function consolidateMonthlyFromBbts(
     const seguroShare =
       params.seguroShareByPromoter?.get(pid) ?? insuranceShareForPenetration(penetracao);
 
-    const comPromotorCredito = a.comEmpAvista * acordo;
-    const comPromotorSeguro = a.comEmpSeguro * seguroShare;
+    // PISO DE REPASSE (bloco F do bbtsOrchestrator). Multiplica SÓ o repasse:
+    // a.comEmpAvista e a.comEmpSeguro (comissão da EMPRESA) ficam intactas, e
+    // a.prod (produção) também.
+    const fatorCredito = params.fatorCreditoByPromoter?.get(pid) ?? 1;
+    const fatorSeguro = params.fatorSeguroByPromoter?.get(pid) ?? 1;
+    const pisoZerou = fatorCredito === 0 || fatorSeguro === 0;
+
+    const comPromotorCredito = a.comEmpAvista * acordo * fatorCredito;
+    const comPromotorSeguro = a.comEmpSeguro * seguroShare * fatorSeguro;
     const final = comPromotorCredito + comPromotorSeguro;
 
     table.push({
@@ -369,7 +398,10 @@ export async function consolidateMonthlyFromBbts(
       production_commission_value: comPromotorCredito,
       insurance_commission_value: comPromotorSeguro,
       agreement_adjustment_value: 0,
+      // discount_value 0 = RASTRO: o desconto NÃO aconteceu nesta competência
+      // quando o piso zerou (não "aconteceu e foi absorvido").
       discount_value: 0,
+      piso_zerou: pisoZerou, // ver closingMonthly: é o flag que os leitores usam
       final_commission_value: final,
       target_status: params.statusMetaByPromoter?.get(pid) ?? "BELOW_META",
       source: "bbts",

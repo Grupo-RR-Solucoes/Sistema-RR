@@ -42,6 +42,11 @@ import {
 } from "./closingPromoterBase.ts";
 import { buildMasterHeirMap } from "./herancaMaster.ts";
 import {
+  assertPisoInjetado,
+  competenciaExigePiso,
+  pisoRrPuroPermitido,
+} from "./pisoProducao.ts";
+import {
   fetchPromoterShareData,
   resolvePromoterShareSync,
   readRawPayloadValue,
@@ -221,12 +226,37 @@ export async function consolidateMonthlyFromClosing(
     // (3b) produção VÁLIDA CONSOLIDADA (RR+ADS) da Frente C (frenteCProductionMap).
     //      Separada do volume: ENTRANTE usa TODOS os records; Frente C só válidos.
     prodConsolidadoByPromoter?: Map<string, number>;
+    // (4) PISO DE REPASSE — fatores 0|1 por promotor. ESTA FUNÇÃO NÃO CONHECE A
+    //     REGRA: quem avalia piso/base/alcance é o bloco F do bbtsOrchestrator,
+    //     onde a produção CONSOLIDADA RR+ADS existe. Aqui só se multiplica.
+    //     Ausentes => `?? 1` => byte-idêntico ao comportamento anterior.
+    fatorCreditoByPromoter?: Map<string, number>;
+    fatorSeguroByPromoter?: Map<string, number>;
   }
 ) {
   const { year, month } = params;
   const companyId = params.companyId ?? null;
   const promoterId = params.promoterId ?? null;
   const dryRun = params.dryRun === true;
+
+  // CONTRATO DE INJEÇÃO DO PISO. Não é a regra — é a AFIRMAÇÃO de que, se esta
+  // competência tem piso, alguém tinha que ter passado o fator. Sem isto,
+  // scripts/rodarClosingMonthly.ts:52 (que chama sem dryRun, e :230 faz o default
+  // ser GRAVAR) reescreveria o PMR sem piso e desfaria o zeramento, em silêncio.
+  // Lança TAMBÉM em dryRun: dry-run com número errado é como número errado vira
+  // verdade. Válvula de escape, só diagnóstico: PISO_ALLOW_RR_PURE=1.
+  const avisosPiso: string[] = [];
+  {
+    const aviso = assertPisoInjetado({
+      funcao: "consolidateMonthlyFromClosing",
+      year,
+      month,
+      temRegua: await competenciaExigePiso(supabase, { year, month }),
+      fatorInjetado: params.fatorCreditoByPromoter !== undefined,
+      permitirRrPuro: pisoRrPuroPermitido(),
+    });
+    if (aviso) avisosPiso.push(aviso);
+  }
 
   // Escala de seguro: fonte canônica é a TABELA (share_scale SEGURO_SLIP).
   // Prime ANTES de qualquer insuranceShareForPenetration; sem isto o resolvedor
@@ -415,8 +445,16 @@ export async function consolidateMonthlyFromClosing(
       params.seguroShareByPromoter?.get(pid) ?? insuranceShareForPenetration(penetracao);
     const seguroEmpresa = a.seguroEmpresaEmbutido + a.seguroEmpresaAvulso;
 
-    const productionCommission = a.avista;
-    const insuranceCommission = seguroEmpresa * seguroShare;
+    // PISO DE REPASSE — fatores injetados pelo bloco F do bbtsOrchestrator.
+    // Multiplicam SÓ o repasse: `seguroEmpresa` (comissão da EMPRESA) fica
+    // intacta acima, e `a.net` (produção) também. A RR recebe da Promotiva pela
+    // produção, independente de repassar — se companyGross cair, o DRE mente.
+    const fatorCredito = params.fatorCreditoByPromoter?.get(pid) ?? 1;
+    const fatorSeguro = params.fatorSeguroByPromoter?.get(pid) ?? 1;
+    const pisoZerou = fatorCredito === 0 || fatorSeguro === 0;
+
+    const productionCommission = a.avista * fatorCredito;
+    const insuranceCommission = seguroEmpresa * seguroShare * fatorSeguro;
     const finalCommission = productionCommission + insuranceCommission;
 
     const t = targetByPromoter.get(pid);
@@ -441,7 +479,14 @@ export async function consolidateMonthlyFromClosing(
       production_commission_value: productionCommission,
       insurance_commission_value: insuranceCommission,
       agreement_adjustment_value: 0,
+      // discount_value SEMPRE 0 nesta consolidação (o desconto real vive em
+      // promoter_discounts). Com o piso ativo isso vira RASTRO: a linha diz que o
+      // desconto NÃO aconteceu, não que aconteceu e foi absorvido.
       discount_value: 0,
+      // RASTRO DO PISO. É por este flag que os leitores de payable sabem suprimir
+      // o desconto da competência — eles NÃO podem reavaliar o piso sozinhos
+      // (promoterAnalytics:1421 filtra por empresa e a produção sairia parcial).
+      piso_zerou: pisoZerou,
       final_commission_value: finalCommission,
       // Meta CONSOLIDADA (RR+ADS) injetada pelo orquestrador; senão RR-pura.
       target_status:
@@ -487,7 +532,7 @@ export async function consolidateMonthlyFromClosing(
   // aplicado aqui (agreement_adjustment_value fica 0). Se houver SPECIAL ativo na
   // competencia, avisa em vez de gravar 0 mudo. NO-OP hoje (0 SPECIAL em prod).
   // Ver lib/agreements/specialFechadoAviso.ts para a decisao AVISAR-vs-HONRAR.
-  const avisos: string[] = [];
+  const avisos: string[] = [...avisosPiso];
   const specialFechado = await detectSpecialAgreementsMesFechado(supabase, {
     year,
     month,

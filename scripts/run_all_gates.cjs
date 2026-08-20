@@ -64,10 +64,17 @@ const GATES = [
   },
   {
     arquivo: "scripts/piso_producao_regua_gate.cjs",
-    nome: "piso de producao (leitor da regua + ainda desligado)",
+    nome: "piso de producao (leitor da regua + fiacao ligada)",
     modo: "self-contained",
     motivo:
-      "Supabase falso em memoria + lib/pisoProducao.ts real; varredura so em lib/ e app/ do repo",
+      "Supabase falso em memoria + lib/pisoProducao.ts real; o bloco L le os fontes do repo",
+  },
+  {
+    arquivo: "scripts/piso_producao_motor_gate.cjs",
+    nome: "piso de producao no motor (zera repasse, nao toca a empresa)",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria + consolidateMonthlyFromClosing real, rodado 2x (sem piso x com piso)",
   },
   {
     arquivo: "scripts/no_brand_hardcoded_gate.cjs",

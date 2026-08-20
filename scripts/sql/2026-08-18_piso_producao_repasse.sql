@@ -216,6 +216,36 @@ COMMENT ON COLUMN piso_producao_rule_versions.scope IS
   'nunca e ignorada.';
 
 -- ---------------------------------------------------------------------------
+-- 2b. RASTRO NO PMR — a coluna que diz "esta linha foi zerada pelo piso"
+-- ---------------------------------------------------------------------------
+-- POR QUE A COLUNA E OBRIGATORIA (e nao da para o leitor deduzir):
+--   Quando o piso zera o repasse, o desconto da competencia NAO e aplicado
+--   (decisao Diego: fica pendente, nao vira zero absorvido). Quem aplica o
+--   desconto sao os leitores de payable — promoterAnalytics, dre e
+--   financialAnalytics — e eles PRECISAM saber que a linha foi zerada pelo piso.
+--   Reavaliar o piso no leitor NAO funciona: promoterAnalytics.ts:1421 filtra o
+--   agregado por empresa, entao sob filtro de CNPJ a producao sairia PARCIAL e
+--   zeraria quem esta ACIMA do piso.
+--   Deduzir por "final = 0" tambem nao serve: chave master tem final 0 por outro
+--   motivo (cmsMonthly.ts:270-275) e promotor sem producao tambem.
+--
+-- discount_value CONTINUA 0 nas linhas do fechamento (ja era: closingMonthly e
+-- bbtsMonthly gravam 0 sempre). Com o piso ativo isso vira RASTRO deliberado: a
+-- linha diz que o desconto NAO aconteceu, nao que aconteceu e foi absorvido.
+--
+-- DEFAULT false => toda linha existente continua exatamente como esta. Nenhum
+-- numero muda por causa desta coluna.
+ALTER TABLE promoter_monthly_results
+  ADD COLUMN IF NOT EXISTS piso_zerou boolean NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN promoter_monthly_results.piso_zerou IS
+  'TRUE quando o PISO DE PRODUCAO zerou o repasse desta linha (ver '
+  'piso_producao_rule_versions e lib/pisoProducao.ts). E o flag que autoriza os '
+  'leitores de payable a SUPRIMIR o desconto da competencia: piso zerou => '
+  'payable 0 E o desconto nao acontece. NAO deduzir isto de final = 0 — chave '
+  'master e promotor sem producao tambem tem final 0, por outros motivos.';
+
+-- ---------------------------------------------------------------------------
 -- 3. SEED DA REGUA VIGENTE (a partir de 2026-08; NAO retroage)
 -- ---------------------------------------------------------------------------
 INSERT INTO piso_producao_rule_versions
