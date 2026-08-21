@@ -49,6 +49,7 @@
     "scripts/gate_regua_bbts_independe_do_client.ts",
     "scripts/gate_remuneracao_lideranca.mts",
     "scripts/gate_ritmo_diario.mts",
+    "scripts/gate_schema_colunas.mts",
     "scripts/gate_teto_avista_rr.ts",
     "scripts/golden_carteira_vs_metadata.ts",
     "scripts/test_equipe_dashboard.ts",

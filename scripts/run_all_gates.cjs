@@ -77,6 +77,20 @@ const GATES = [
       "Supabase falso em memoria + consolidateMonthlyFromClosing real, rodado 2x (sem piso x com piso)",
   },
   {
+    arquivo: "scripts/gate_schema_colunas.mts",
+    nome: "schema: toda coluna que o codigo pede existe no banco",
+    modo: "needs-db",
+    motivo:
+      "createClient/.env: compara o codigo com o BANCO REAL, nao com supabase/migrations — " +
+      "e essa e a razao de existir. No incidente de 21/08 (PR #174) o DDL de piso_zerou " +
+      "estava em scripts/sql/, fora de migrations, entao um gate que lesse migrations teria " +
+      "passado verde enquanto 6 telas caiam com 42703. Medido em 21/08, 3 execucoes: " +
+      "2,3s / 2,6s / 2,3s — 1 requisicao OpenAPI (0,8s) mais a varredura de app+lib. A " +
+      "faixa --db foi de 53,6s para 55,2s de 90s. NAO e self-contained e por isso NAO entra no " +
+      "npm run gates do CI — ver o bloco FAIXA no fim do proprio gate, que registra o que " +
+      "falta para ele ser CI-avel (so a chave ANON basta; a service_role nao e necessaria).",
+  },
+  {
     arquivo: "scripts/no_brand_hardcoded_gate.cjs",
     nome: "marca institucional so na barra",
     modo: "self-contained",
