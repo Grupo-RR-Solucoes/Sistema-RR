@@ -34,6 +34,8 @@ const { calcularComissaoEmpresaRecortada, calcularProducaoMensalDoGrupo } = awai
 const { buildTrpCreditProvider } = await import("../lib/trp/creditTrpProvider.ts");
 const { getProductionPeriodFromValue } = await import("../lib/productionPeriod.ts");
 const { resolverJanela, competenciaAnterior } = await import("../lib/delta/calcularDelta.ts");
+const { posicoesComDado, totaisDaJanela } = await import("../lib/delta/recorteJanela.ts");
+const { resolverJanelaRitmo } = await import("../lib/janelaRitmo.ts");
 const { nowInFortaleza } = await import("../lib/dateFortaleza.ts");
 
 const supabase = createClient(
@@ -97,23 +99,40 @@ const valido = (r: any) =>
   !/PEND|ANALIS|PROCESS/.test(norm(r.status)) &&
   r.is_srcc_restricted !== true;
 
-const prefixo = `${competencia.year}-${String(competencia.month).padStart(2, "0")}-`;
-const diasComDado = new Set<number>();
-for (const r of dailyRecorte) {
-  if (!r.company_id || !idsAtivas.has(r.company_id)) continue;
-  if (!emProducao(r.status) || !valido(r)) continue;
-  const p = getProductionPeriodFromValue(r.movement_date);
-  if (!p || p.year !== competencia.year || p.month !== competencia.month) continue;
-  const b = String(r.movement_date ?? "");
-  if (!b.startsWith(prefixo)) continue;
-  const d = Number(b.slice(8, 10));
-  if (d >= 1 && d <= 31) diasComDado.add(d);
-}
+// POSICAO NA JANELA, NAO DIA DO MES — e a API mudou embaixo deste gate.
+//
+// Ate 03/08/2026 resolverJanela recebia `dia` (dia do mes) e
+// `diasComDadoNoMesCorrente` (dias do mes com dado). As duas viraram `n`
+// (POSICAO na janela de producao: 1 = primeiro dia util, que e o ultimo dia util
+// do mes ANTERIOR) e `posicoesComDadoNaJanela`, e `totalAtual`/`totalAnterior`
+// passaram a ser obrigatorios. Este gate ficou para tras e passou a nao compilar
+// (TS2353 em `dia`) — morto por TypeError, exatamente o motivo pelo qual o
+// tsconfig.gates.json existe.
+//
+// O CONSERTO ESPELHA A ROTA, e isso e o ponto do gate: app/api/dashboard/route.ts
+// :860-881 monta posicoesComDado(...) + resolverJanelaRitmo(...).diasDecorridos +
+// totaisDaJanela(...). Reimplementar a aritmetica aqui seria comparar a rota com
+// uma copia da rota, que e o defeito que este gate existe para pegar.
+//
+// NENHUMA ASSERCAO MUDA. `janela` alimenta so os numeros de DIAGNOSTICO
+// (producao/comissao recortadas, impressas abaixo). As 4 conferencias que
+// decidem o exit usam idsRotaM1 / idsIndepM1 / faltamNaRota / sobramNaRota /
+// liqPerdido, nenhum deles derivado de `janela`.
+const posicoesComDadoNaJanela = posicoesComDado(
+  dailyRecorte.filter((r: any) => {
+    if (!r.company_id || !idsAtivas.has(r.company_id)) return false;
+    if (!emProducao(r.status) || !valido(r)) return false;
+    const p = getProductionPeriodFromValue(r.movement_date);
+    return !!p && p.year === competencia.year && p.month === competencia.month;
+  }),
+  competencia
+);
 const janela = resolverJanela({
   competencia,
+  ...totaisDaJanela(competencia),
   modo: "ate-dia-N",
-  dia: agora.day,
-  diasComDadoNoMesCorrente: diasComDado,
+  n: resolverJanelaRitmo(competencia.year, competencia.month, { closed: false }).diasDecorridos,
+  posicoesComDadoNaJanela,
 });
 
 // O PULO POR N<3 FOI REMOVIDO em 01/08/2026, junto com as ancoras congeladas.

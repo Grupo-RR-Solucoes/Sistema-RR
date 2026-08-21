@@ -73,5 +73,27 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      # ---------------------------------------------------------------------
+      # TIPAGEM DOS GATES — projeto SEPARADO, e por isso precisa de passo proprio
+      # ---------------------------------------------------------------------
+      # O passo acima roda o tsconfig.json principal, que EXCLUI scripts/ (decisao
+      # de 27/06/2026, para o next build do Vercel nao compilar os diag-* de
+      # scratch). Consequencia: ate 21/08/2026 a tipagem dos gates so era exercida
+      # por quem rodasse `npm run typecheck:gates` a mao — e ninguem rodava.
+      #
+      # O QUE ISSO CUSTOU, medido: scripts/gate-medida-c-rota.mts estava com
+      # TS2353 em origin/main. A API de resolverJanela mudou em 03/08 (`dia` ->
+      # `n`, dia-do-mes -> posicao na janela) e o gate ficou para tras. Gate que
+      # nao compila e gate MORTO, e morto reporta verde por AUSENCIA de falha —
+      # foi assim que o gate_projecao_gestor morreu antes dele.
+      #
+      # O runner ja cobra que todo gate rastreado esteja no include do
+      # tsconfig.gates.json (bloco COBERTURA DA TIPAGEM em run_all_gates.cjs).
+      # Faltava o outro lado: alguem COMPILAR o que esta no include. E este passo.
+      #
+      # Self-contained: tsc sobre arquivo do repo, sem banco e sem secret.
+      - name: Typecheck dos gates
+        run: npm run typecheck:gates
+
       - name: Gates
         run: npm run gates
