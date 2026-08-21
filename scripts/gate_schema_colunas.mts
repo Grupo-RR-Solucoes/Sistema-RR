@@ -608,6 +608,26 @@ console.log(`    tabelas distintas resolvidas ........ ${tabelasVistas.size}`);
 console.log(`    pedidos de coluna (tabela,coluna,sitio) ${pedidos.length}`);
 console.log(`    ancora ${ANCORA} ...... ${colunasDaAncora.length} pedidos`);
 
+// `--listar <tabela>` imprime o que o extrator VIU nessa tabela. Existe para o
+// verde ser auditavel: sem isto, "0 divergencias" e indistinguivel de "o
+// extrator perdeu a coluna e ninguem viu". Nao altera o veredito.
+const idxListar = process.argv.indexOf("--listar");
+if (idxListar >= 0) {
+  const alvo = process.argv[idxListar + 1] || ANCORA;
+  const doAlvo = pedidos.filter((p) => p.tabela === alvo);
+  const porColuna = new Map<string, Pedido[]>();
+  for (const p of doAlvo) {
+    const l = porColuna.get(p.coluna);
+    if (l) l.push(p); else porColuna.set(p.coluna, [p]);
+  }
+  console.log(`
+>>> EXTRAIDO DE ${alvo}  (${porColuna.size} coluna(s) distinta(s))`);
+  for (const [col, ps] of [...porColuna.entries()].sort()) {
+    const vias = [...new Set(ps.map((x) => x.via))].sort().join("+");
+    console.log(`    ${col.padEnd(36)} ${String(ps.length).padStart(3)} sitio(s)  [${vias}]`);
+  }
+}
+
 const vacuidade: string[] = [];
 if (pedidos.length === 0) vacuidade.push("nenhuma coluna extraida do codigo");
 if (tabelasVistas.size === 0) vacuidade.push("nenhuma tabela extraida do codigo");
