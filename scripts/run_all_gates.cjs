@@ -84,8 +84,9 @@ const GATES = [
       "createClient/.env: compara o codigo com o BANCO REAL, nao com supabase/migrations — " +
       "e essa e a razao de existir. No incidente de 21/08 (PR #174) o DDL de piso_zerou " +
       "estava em scripts/sql/, fora de migrations, entao um gate que lesse migrations teria " +
-      "passado verde enquanto 6 telas caiam com 42703. Medido em 21/08: 3,3s (1 requisicao " +
-      "OpenAPI de 0,9s + varredura de app/lib). NAO e self-contained e por isso NAO entra no " +
+      "passado verde enquanto 6 telas caiam com 42703. Medido em 21/08, 3 execucoes: " +
+      "2,3s / 2,6s / 2,3s — 1 requisicao OpenAPI (0,8s) mais a varredura de app+lib. A " +
+      "faixa --db foi de 53,6s para 55,2s de 90s. NAO e self-contained e por isso NAO entra no " +
       "npm run gates do CI — ver o bloco FAIXA no fim do proprio gate, que registra o que " +
       "falta para ele ser CI-avel (so a chave ANON basta; a service_role nao e necessaria).",
   },
