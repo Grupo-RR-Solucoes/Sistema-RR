@@ -14,6 +14,49 @@
 # passar - e o sinal de que a classificacao no runner esta errada, nao um
 # convite para adicionar a service role de producao como secret.
 #
+# ============================================================================
+# GATE DE SCHEMA — O UNICO PASSO QUE FALA COM O BANCO VIVO, E POR QUE
+# ============================================================================
+# O paragrafo acima continua valendo para `npm run gates`: aquele passo roda so
+# os self-contained e NAO toca banco. O passo "Gate de schema" e a excecao
+# DELIBERADA, e a razao e que a pergunta dele nao tem resposta dentro do repo.
+#
+# A PERGUNTA: "a coluna que o codigo faz SELECT/UPSERT existe ONDE ELE VAI LER?"
+# Isso e estado do BANCO, nao do repositorio. Conferir contra supabase/migrations/
+# responderia outra pergunta ("alguem escreveu o DDL?") e teria passado VERDE no
+# incidente de 21/08/2026 (PR #174): o DDL de piso_zerou foi mergeado em
+# scripts/sql/, fora de migrations, e 6 telas cairam com 42703 mais o fechamento
+# e a reconsolidacao junto. Passaria verde tambem no caso inverso, medido na
+# mesma varredura: a migration 20260712_000002 de bbts_rule_uploads existe e
+# nunca foi aplicada. As duas falhas divergem no repo e convergem no banco.
+#
+# POR QUE A CHAVE ANON BASTA — E POR QUE ISSO NAO E BRECHA. Medido em 21/08/2026
+# contra este projeto:
+#   coluna INEXISTENTE  -> 42703 "column ... does not exist"
+#   coluna que EXISTE   -> 42501 "permission denied for table ..."
+# O PostgREST resolve NOME DE COLUNA antes de aplicar permissao, entao o 42703
+# aparece mesmo sem grant nenhum — inclusive misturando coluna existente e
+# inexistente na MESMA consulta, nas duas ordens (testado). A anon deste projeto
+# nao tem grant em NENHUMA das 62 tabelas: ela nunca le uma linha de dado. O gate
+# so consegue perguntar "este nome resolve?", que e exatamente o que ele precisa.
+#
+# A SERVICE_ROLE NAO ENTRA AQUI, NEM COMO SECRET. Ela ignora RLS; um runner
+# publico com ela vira porta de entrada para o banco inteiro. A anon e
+# `sb_publishable_`, ja viaja no bundle do browser e nao amplia superficie
+# nenhuma ao ser exposta como repository VARIABLE (nao secret).
+#
+# O QUE MUDA COM A ANON (nao ha paridade total, e o gate diz isso na saida): a
+# raiz OpenAPI do PostgREST exige chave secreta (401 com a anon), entao o
+# caminho de 1 requisicao nao existe aqui — a anon sonda tabela por tabela, 62
+# requisicoes, ~10,7s medidos. E o gate perde a LISTA do que existe, entao nao
+# sugere "voce quis dizer X?". O VEREDITO falta/nao-falta e identico: verificado
+# por diff das duas saidas, byte a byte.
+#
+# SE ESTE PASSO FALHAR COM "ABORTADO — SEM CREDENCIAL": as repository variables
+# NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY nao chegaram. Elas
+# nao existem em PR vindo de fork (por desenho do GitHub). O gate ABORTA em vez
+# de passar, porque ausencia de medicao nao e aprovacao.
+#
 # NAO CONFLITA COM O VERCEL: o Vercel dispara no push/deploy e faz o build;
 # este workflow dispara no pull_request e nao builda nem publica nada. Sao dois
 # checks independentes no mesmo PR.
@@ -75,3 +118,22 @@ jobs:
 
       - name: Gates
         run: npm run gates
+
+      # ---------------------------------------------------------------------
+      # UNICO PASSO QUE FALA COM O BANCO VIVO. Ver o bloco "GATE DE SCHEMA" no
+      # cabecalho deste arquivo antes de mexer.
+      # ---------------------------------------------------------------------
+      # --anon e EXPLICITO, nao decorativo. O gate ja escolheria a anon sozinho
+      # aqui (nao existe SUPABASE_SERVICE_ROLE_KEY neste ambiente), mas a flag
+      # trava a escolha: se um dia alguem adicionar a service_role como secret
+      # do repositorio, este passo continua usando a anon em vez de silenciosa-
+      # mente promover o CI a cliente privilegiado do banco de producao.
+      #
+      # SEM continue-on-error e SEM `|| true`: gate que reprova tem de deixar o
+      # check VERMELHO. Se este passo comecar a incomodar, a resposta e rodar o
+      # DDL que falta, nao afrouxar o passo.
+      - name: Gate de schema (coluna pedida pelo codigo existe no banco?)
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: npx tsx scripts/gate_schema_colunas.mts --anon
