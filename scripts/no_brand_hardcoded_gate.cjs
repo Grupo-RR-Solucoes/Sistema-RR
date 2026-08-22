@@ -61,11 +61,27 @@ const PERMITIDOS = new Map([
 // e colar de um texto em caixa mista.
 const MARCA = /grupo\s+rr\s+cred/gi;
 
+// DIRETORIO QUE NAO PODE SER LIDO NAO E DIRETORIO VAZIO.
+//
+// Ate 21/08/2026 este catch fazia `return saida` calado. O efeito era o pior
+// possivel para um gate de VARREDURA: o diretorio inteiro sumia da lista, menos
+// arquivos eram lidos, menos achados apareciam — e MENOS ACHADO E VERDE. Uma
+// raiz renomeada, um EACCES, um link quebrado, e o gate anunciava "nenhuma marca
+// fora dos lugares permitidos" tendo varrido metade do repo.
+//
+// Mesma regra do scripts/_diffContraRef.ts: ausencia de medicao nao e
+// aprovacao. As falhas sao COLETADAS e REPROVAM, com caminho e erro.
+const falhasDeLeitura = [];
+
 function listar(dir, saida) {
   let entradas;
   try {
     entradas = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (e) {
+    falhasDeLeitura.push({
+      dir: path.relative(ROOT, dir).split(path.sep).join("/") || dir,
+      erro: String((e && e.message) || e).split("\n")[0],
+    });
     return saida;
   }
   for (const e of entradas) {
@@ -113,8 +129,43 @@ for (const [rel, motivo] of PERMITIDOS) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// O QUE NAO FOI VARRIDO REPROVA ANTES DE QUALQUER VEREDITO SOBRE A MARCA
+// ---------------------------------------------------------------------------
+if (falhasDeLeitura.length > 0) {
+  console.log("\n  VARREDURA INCOMPLETA: " + falhasDeLeitura.length + " diretorio(s) nao puderam ser lidos.\n");
+  for (const f of falhasDeLeitura) console.log("    " + f.dir + "  ->  " + f.erro);
+  console.log(
+    "\n  ESTE GATE NAO MEDIU o conteudo desses diretorios. Qualquer veredito sobre" +
+    "\n  a marca valeria so para o que FOI lido — e nao ha como afirmar que ela esta" +
+    "\n  ausente de onde a varredura nem chegou. Isto NAO significa que os" +
+    "\n  diretorios estao limpos." +
+    "\n" +
+    "\n  Causa tipica: raiz renomeada/removida (RAIZES = " + JSON.stringify(RAIZES) + ")," +
+    "\n  permissao, ou link quebrado. Conserte a causa, ou mude RAIZES de proposito.\n"
+  );
+  console.log(">>> PORTAO REPROVADO (varredura incompleta).");
+  process.exit(3);
+}
+
+// GUARDA DE VACUIDADE: zero arquivo varrido e extrator/raizes quebrados, nao
+// repo limpo. Sem isto "nenhuma marca encontrada" seria verde para sempre.
+if (arquivos.length === 0) {
+  console.log(
+    "\n  NENHUM ARQUIVO VARRIDO. As raizes " + JSON.stringify(RAIZES) + " nao produziram" +
+    "\n  um unico arquivo com extensao " + JSON.stringify([...EXTENSOES]) + "." +
+    "\n" +
+    "\n  Isto NAO e 'repo sem marca': e varredura que nao aconteceu, e por isso REPROVA.\n"
+  );
+  console.log(">>> PORTAO REPROVADO (nada varrido).");
+  process.exit(3);
+}
+
 if (achados.length === 0) {
-  console.log("\n  Nenhuma marca fora dos lugares permitidos.");
+  console.log(
+    "\n  Nenhuma marca fora dos lugares permitidos." +
+    "  (" + arquivos.length + " arquivos varridos, 0 diretorio ilegivel)"
+  );
   console.log("\n>>> PORTAO OK.");
   process.exit(0);
 }

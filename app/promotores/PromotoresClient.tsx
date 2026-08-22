@@ -49,6 +49,47 @@ type PromoterSummaryRow = {
   result_source: string;
 };
 
+// ===========================================================================
+// CONTEXTO DO LIQUIDO NEGATIVO — o numero esta CERTO; o rotulo e que mentia.
+// ===========================================================================
+// "liquido a repassar" negativo sugere DIVIDA do promotor. Em competencia ABERTA
+// que ainda nao consolidou, o negativo e outra coisa: e o desconto da competencia
+// SEM a comissao correspondente, porque a comissao ainda nao foi calculada.
+//
+// MEDIDO EM 21/08/2026, e a medicao e o motivo deste bloco existir: THAYNARA e
+// EDUARDA apareciam com -280,00 e -234,59 em 2026-08 pelo caminho do PMR (que nao
+// tem linha `daily` porque ninguem consolidou), e +6.008,40 / +5,01 pelo caminho
+// da TELA, que recalcula do diario. Mesma competencia, mesmo promotor, sinal
+// oposto — a diferenca era so a consolidacao.
+//
+// AS TRES CONDICOES JUNTAS, nunca uma sozinha:
+//   (1) payable < 0
+//   (2) competencia ABERTA — result_source === "LIVE_BASE"
+//       (ver loadPromoterAnalyticsBase: aberto = LIVE_BASE, fechado = CALCULATED)
+//   (3) comissao de producao ZERO — a consolidacao nao produziu numero
+//
+// A (3) e o que separa os dois casos. Competencia aberta que JA consolidou
+// (producao > 0) e mesmo assim deu negativo E DIVIDA, e ai o rotulo normal vale:
+// adiantamento e divida real, o promotor deve, e mascarar seria perdoar (decisao
+// Diego, 21/08/2026). Por isso a condicao NAO pode ser so "aberta e negativo".
+//
+// SO TEXTO. Nenhum valor e alterado, mascarado, suprimido ou recalculado.
+const SUB_LIQUIDO_NORMAL = "líquido a repassar";
+const SUB_LIQUIDO_SEM_CONSOLIDACAO = "competência em aberto — comissão ainda não consolidada";
+
+/**
+ * As linhas recebidas sao as MESMAS que o summary agrega (promoterAnalytics:2204
+ * manda `visibleSummaryRows`, ja recortadas ao promotor selecionado quando ha um).
+ * Entao o predicado vale tanto para o card do grupo quanto para o do promotor.
+ */
+function liquidoSemConsolidacao(payable: number, linhas: PromoterSummaryRow[]): boolean {
+  if (!(payable < 0)) return false;
+  if (linhas.length === 0) return false;
+  const todasAbertas = linhas.every((r) => r.result_source === "LIVE_BASE");
+  const comissaoProducao = linhas.reduce((a, r) => a + Number(r.production_commission_value ?? 0), 0);
+  return todasAbertas && comissaoProducao === 0;
+}
+
 type ProposalRow = {
   id: string;
   contract_number: string;
@@ -1148,7 +1189,15 @@ function PromotoresFullPage() {
                 // ha dia para cortar no M-1. Em mes aberto o badge rotula.
                 delta: data.deltaComissao,
               },
-              { label: "Comissão a pagar", value: formatCurrency(data.summary.payableCommission), sub: "líquido a repassar", subTone: "gold" },
+              {
+                label: "Comissão a pagar",
+                value: formatCurrency(data.summary.payableCommission),
+                // Ver liquidoSemConsolidacao: o VALOR nao muda, so o subtitulo.
+                sub: liquidoSemConsolidacao(data.summary.payableCommission, data.summaryRows)
+                  ? SUB_LIQUIDO_SEM_CONSOLIDACAO
+                  : SUB_LIQUIDO_NORMAL,
+                subTone: "gold",
+              },
               { label: "Penetração média", value: formatPercent(data.summary.averageInsurancePenetration), sub: "seguro / crédito" },
             ]}
           />

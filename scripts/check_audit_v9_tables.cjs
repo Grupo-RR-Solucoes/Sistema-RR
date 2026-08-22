@@ -76,6 +76,7 @@ async function main() {
   // 2. Indexes (via RPC supabase-js — se RPC não existir, fallback aviso)
   console.log("\n=== 2. Indexes ===");
   let indexesOk = null;
+  let indexesFalha = null;
   try {
     // Tenta uma RPC genérica que lista indexes (não existe por padrão; vai falhar)
     const { data, error } = await supabase.rpc("pg_indexes_audit_v9");
@@ -84,7 +85,17 @@ async function main() {
     for (const i of data) console.log(`    - ${i.tablename}.${i.indexname}`);
     indexesOk = data.length >= 7;
   } catch (e) {
-    console.log("  RPC pg_indexes_audit_v9 não disponível — esperado; PostgREST não expõe pg_indexes por padrão.");
+    // AUSENCIA DE MEDICAO NAO E APROVACAO (mesma regra do scripts/_diffContraRef.ts).
+    //
+    // Ate 21/08/2026 este catch imprimia a alternativa manual, deixava
+    // `indexesOk` em null — que NINGUEM lia — e o gate seguia para o exit 0. O
+    // cabecalho deste arquivo promete "2. 7+ indexes nao-PK criados"; a promessa
+    // estava desligada em silencio desde sempre. Um index derrubado por migration
+    // futura passaria batido com o gate VERDE.
+    indexesFalha =
+      "RPC pg_indexes_audit_v9 indisponivel: " + String((e && e.message) || e).split("\n")[0];
+    console.log("  RPC pg_indexes_audit_v9 não disponível — PostgREST não expõe pg_indexes por padrão.");
+    console.log("  ESTE BLOCO NAO MEDIU NADA. Ver o Resumo: o gate REPROVA por isso.");
     console.log("  Verificação alternativa: rodar via SQL Editor do Supabase Studio:");
     console.log("");
     console.log("    select tablename, indexname from pg_indexes");
@@ -113,10 +124,50 @@ async function main() {
   console.log(
     `  nenhuma tabela ESVAZIOU: ${nenhumaVazia ? "PASS" : "FAIL — " + vazias.map((r) => r.tabela).join(", ") + " sem linhas; a auditoria v9 fica sem base"}`
   );
-  console.log(`  Indexes: verificação manual no Studio (RPC genérica não existe)`);
+  console.log(
+    `  7+ indexes nao-PK: ${
+      indexesFalha ? "FAIL — NAO MEDIDO (" + indexesFalha + ")" : indexesOk ? "PASS" : "FAIL — menos de 7"
+    }`
+  );
 
   if (!todasExistem) process.exit(1);
   if (!nenhumaVazia) process.exit(2);
+  if (indexesFalha || indexesOk !== true) {
+    console.log(`
+  REPROVADO PORQUE NAO MEDIU, nao porque mediu e achou defeito.
+
+  Este gate afirma no cabecalho que confere "7+ indexes nao-PK criados". Sem a
+  RPC ele nao confere NADA disso — e verde sem medicao e pior que vermelho,
+  porque desliga a desconfianca de quem le. Enquanto isto estiver assim, a
+  ausencia de um index de audit_v9_* passa batida.
+
+  DUAS SAIDAS, as duas deliberadas — escolha uma, nao afrouxe este bloco:
+
+  (a) CRIAR A RPC (o gate passa a medir de verdade). No SQL Editor:
+
+        create or replace function public.pg_indexes_audit_v9()
+        returns table (tablename text, indexname text)
+        language sql stable security definer set search_path = public as $$
+          select tablename::text, indexname::text
+            from pg_indexes
+           where schemaname = 'public'
+             and tablename like 'audit_v9_%'
+             and indexname not like '%_pkey'
+           order by tablename, indexname;
+        $$;
+        revoke all on function public.pg_indexes_audit_v9() from public, anon, authenticated;
+
+      A RPC devolve SO os nao-PK, que e o que o contador >= 7 espera.
+      security definer porque pg_indexes filtra por dono; revoke porque so o
+      service_role (este gate) precisa dela.
+
+  (b) APOSENTAR A ASSERCAO de propósito, se decidirem que index nao e trabalho
+      deste gate — apagando o bloco 2 E a linha do cabecalho que o promete, no
+      mesmo commit. Aposentar so a verificacao e deixar a promessa no comentario
+      recria exatamente este defeito.
+`);
+    process.exit(4);
+  }
   process.exit(0);
 }
 
