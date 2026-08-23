@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withAtribuicaoProdutosAdmin } from "@/lib/auth/guards";
-import { assignProductLine, syncPendingProductAssignments } from "@/lib/produtoAssignments";
+import {
+  assignProductLine,
+  chaveNaturalProduto,
+  syncPendingProductAssignments,
+} from "@/lib/produtoAssignments";
+import { repassePromotor } from "@/lib/produtoRepasse";
+import { repasseConsorcioGestor, repasseConsorcioPromotor } from "@/lib/consorcio/trp210";
 import { assignConsorcioProposta, syncPendingConsorcioAnchors } from "@/lib/consorcio/fila";
 import {
   PAPEIS_COM_VENDA_PROPRIA,
@@ -35,6 +41,102 @@ export const dynamic = "force-dynamic";
 
 const EVENTO_UNICO = ["BBCAP", "CONTA_CORRENTE"];
 
+// ============================================================
+// DETALHE DA LINHA — as colunas do FECHAMENTO MANUAL.
+//
+// A fila (product_line_assignments) so guarda a identidade da linha e o dono. Todo
+// o resto (datas, produto, valores, agencia...) mora na MASTER
+// (monthly_closing_entries), gravado pelo desdobramento do M1. Os dois lados se
+// juntam pela CHAVE NATURAL — chaveNaturalProduto, o mesmo helper que a fila usa
+// para nao duplicar e que o calculo usa para achar o dono.
+//
+// COMPETENCIA DO VALOR EXIBIDO — decisao escrita:
+//   BBCAP / CONTA CORRENTE : a competencia PEDIDA (year, month). A fila ja e por
+//     competencia, entao fila e valor sao sempre o mesmo mes.
+//   CONSORCIO : a ancora NAO tem competencia (uma atribuicao vale para todas as
+//     parcelas, passadas e futuras — e o ponto da heranca). O valor exibido e o da
+//     competencia PEDIDA: soma das parcelas RECEBIDAS naquele mes, com a contagem.
+//     Proposta sem parcela no mes aparece com detalhe null (ainda atribuivel) — e
+//     o unico jeito de a tela nao misturar meses. A competencia vai no payload
+//     (`competencia`) para a tela dizer de qual mes sao os numeros.
+//
+// A comissao do promotor (e a do gestor) e DERIVADA aqui, na exibicao: nao existe
+// coluna gravada para ela. Quem paga continua sendo o PMR / consorcio_gestor_payout.
+// ============================================================
+
+type DetalheEventoUnico = {
+  comissao_empresa: number;
+  comissao_promotor: number;
+  j_key: string | null;
+  operation_date: string | null;
+  metadata: Record<string, unknown>;
+};
+
+type DetalheConsorcio = {
+  comissao_empresa: number;
+  comissao_promotor: number;
+  comissao_gestor: number;
+  parcelas: number;
+  parcela_rotulo: string | null;
+  operation_date: string | null;
+  valor_bem: number;
+  pct_comissao: number | null;
+  segmento: string | null;
+  razao_social: string | null;
+};
+
+type EntryRow = {
+  company_id: string | null;
+  entry_type: string;
+  operation_number: string | null;
+  contract_number: string | null;
+  j_key: string | null;
+  commission_value: number | null;
+  gross_value: number | null;
+  operation_date: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
+const ENTRY_COLS =
+  "company_id, entry_type, operation_number, contract_number, j_key, commission_value, gross_value, operation_date, metadata";
+
+async function fetchEntriesPaged(
+  supabase: any,
+  year: number,
+  month: number,
+  entryTypes: string[]
+): Promise<EntryRow[]> {
+  if (entryTypes.length === 0) return [];
+  const out: EntryRow[] = [];
+  let from = 0;
+  const page = 1000;
+  for (;;) {
+    const { data, error } = await supabase
+      .from("monthly_closing_entries")
+      .select(ENTRY_COLS)
+      .eq("year", year)
+      .eq("month", month)
+      .in("entry_type", entryTypes)
+      .range(from, from + page - 1);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) break;
+    out.push(...(data as EntryRow[]));
+    if (data.length < page) break;
+    from += page;
+  }
+  return out;
+}
+
+const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const txt = (v: unknown) => {
+  const s = String(v ?? "").trim();
+  return s === "" ? null : s;
+};
+
+/** Chave da PROPOSTA de consorcio (a ancora e por proposta, nao por parcela). */
+const chaveProposta = (companyId: string | null, proposta: string | null) =>
+  `${companyId}|${String(proposta ?? "").trim()}`;
+
 function isBalde(entryType: string, operation: string | null): boolean {
   return entryType === "CONTA_CORRENTE" && String(operation || "").startsWith("SEMID|");
 }
@@ -52,7 +154,15 @@ export async function GET(req: Request) {
 
     // eventos unicos da competencia + ancoras de consorcio (todas as competencias).
     // No escopo CONSORCIO os eventos unicos nem sao consultados.
-    const [eu, cons, proms, gestores] = await Promise.all([
+    // As linhas da MASTER da competencia pedida — o detalhe que a fila nao tem.
+    const entriesPromise = fetchEntriesPaged(
+      supabase,
+      year,
+      month,
+      soConsorcio ? ["CONSORCIO"] : [...EVENTO_UNICO, "CONSORCIO"]
+    );
+
+    const [eu, cons, proms, gestores, entries] = await Promise.all([
       soConsorcio
         ? Promise.resolve({ data: [], error: null } as any)
         : supabase
@@ -76,11 +186,72 @@ export async function GET(req: Request) {
         .select("id, full_name, email, role, venda_propria, active")
         .eq("venda_propria", true)
         .eq("active", true),
+      entriesPromise,
     ]);
     if (eu.error) throw new Error(eu.error.message);
     if (cons.error) throw new Error(cons.error.message);
     if (proms.error) throw new Error(proms.error.message);
     if (gestores.error) throw new Error(gestores.error.message);
+
+    // ---- detalhe por CHAVE NATURAL (evento unico: 1 linha da fila = 1 entry) ----
+    const detalheEU = new Map<string, DetalheEventoUnico>();
+    for (const e of entries) {
+      if (e.entry_type === "CONSORCIO") continue;
+      const comissao = num(e.commission_value);
+      detalheEU.set(chaveNaturalProduto(e), {
+        comissao_empresa: comissao,
+        comissao_promotor: repassePromotor(comissao),
+        j_key: e.j_key ?? null,
+        operation_date: e.operation_date ?? null,
+        metadata: e.metadata || {},
+      });
+    }
+
+    // ---- detalhe por PROPOSTA (consorcio: 1 ancora = N parcelas no mes) ----
+    // Soma a comissao-empresa das parcelas da competencia PEDIDA e conta quantas
+    // sao. Nao cria linha por parcela: a fila continua sendo por proposta.
+    const detalheCons = new Map<string, DetalheConsorcio>();
+    for (const e of entries) {
+      if (e.entry_type !== "CONSORCIO") continue;
+      const k = chaveProposta(e.company_id, e.operation_number);
+      const md = (e.metadata || {}) as Record<string, unknown>;
+      const cur =
+        detalheCons.get(k) ||
+        ({
+          comissao_empresa: 0,
+          comissao_promotor: 0,
+          comissao_gestor: 0,
+          parcelas: 0,
+          parcela_rotulo: null,
+          operation_date: null,
+          valor_bem: 0,
+          pct_comissao: null,
+          segmento: null,
+          razao_social: null,
+        } as DetalheConsorcio);
+      cur.comissao_empresa += num(e.commission_value);
+      cur.parcelas += 1;
+      // atributos da PROPOSTA (iguais em todas as parcelas): fica o 1o nao vazio.
+      cur.valor_bem = cur.valor_bem || num(md.valor_bem) || num(e.gross_value);
+      cur.pct_comissao = cur.pct_comissao ?? (md.pct_comissao == null ? null : num(md.pct_comissao));
+      cur.segmento = cur.segmento ?? txt(md.segmento);
+      cur.razao_social = cur.razao_social ?? txt(md.razao_social);
+      cur.operation_date = cur.operation_date ?? (e.operation_date ?? null);
+      // rotulo da parcela: uma so -> "PARC1"; varias -> "PARC1..PARC3".
+      const rot = txt(md.parcela_liberacao);
+      if (rot) {
+        cur.parcela_rotulo = cur.parcela_rotulo
+          ? [cur.parcela_rotulo.split("..")[0], rot].sort().join("..")
+          : rot;
+      }
+      detalheCons.set(k, cur);
+    }
+    // repasses DERIVADOS sobre a soma da proposta (nao gravados em lugar nenhum).
+    for (const d of detalheCons.values()) {
+      d.comissao_empresa = Math.round(d.comissao_empresa * 100) / 100;
+      d.comissao_promotor = repasseConsorcioPromotor(d.comissao_empresa);
+      d.comissao_gestor = repasseConsorcioGestor(d.comissao_empresa);
+    }
 
     const nameOf = new Map((proms.data || []).map((p: any) => [p.id, p.name]));
     const gestaoRows = (gestores.data || []).filter((g: any) =>
@@ -132,6 +303,12 @@ export async function GET(req: Request) {
           : null,
         status: r.status,
         balde: isBalde(r.entry_type, r.operation_number),
+        // Detalhe do fechamento. null = nao ha linha na master para esta chave na
+        // competencia pedida (consorcio sem parcela no mes, ou fila orfa de entry).
+        detalhe:
+          r.entry_type === "CONSORCIO"
+            ? detalheCons.get(chaveProposta(r.company_id, r.operation_number)) ?? null
+            : detalheEU.get(chaveNaturalProduto(r)) ?? null,
       };
     };
 
@@ -152,6 +329,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       year,
       month,
+      competencia: `${String(month).padStart(2, "0")}/${year}`,
       escopo: user.escopo,
       role: user.role,
       grupos,

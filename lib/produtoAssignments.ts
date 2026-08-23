@@ -25,6 +25,23 @@ type SupabaseLike = SupabaseClient;
 export const EVENTO_UNICO_ENTRY_TYPES = ["BBCAP", "CONTA_CORRENTE"] as const;
 export type ProductEntryType = (typeof EVENTO_UNICO_ENTRY_TYPES)[number];
 
+/**
+ * CHAVE NATURAL de uma linha de produto — o que liga a FILA
+ * (product_line_assignments) a linha da MASTER (monthly_closing_entries).
+ * Fonte UNICA: a fila usa para nao duplicar (syncPendingProductAssignments), o
+ * calculo usa para achar o dono (computeProductCommissionByBeneficiario) e a rota
+ * de atribuicao usa para juntar os dois lados e exibir as colunas do fechamento.
+ * Tres copias da mesma expressao divergiriam no primeiro ajuste.
+ */
+export function chaveNaturalProduto(r: {
+  company_id: string | null;
+  entry_type: string;
+  operation_number: string | null;
+  contract_number?: string | null;
+}): string {
+  return `${r.company_id}|${r.entry_type}|${r.operation_number}|${r.contract_number ?? ""}`;
+}
+
 type ProductEntry = {
   company_id: string | null;
   year: number;
@@ -76,17 +93,12 @@ export async function syncPendingProductAssignments(
     .eq("year", year)
     .eq("month", month);
   if (error) throw new Error(error.message);
-  const seen = new Set(
-    (existing || []).map(
-      (a: any) =>
-        `${a.company_id}|${a.entry_type}|${a.operation_number}|${a.contract_number ?? ""}`
-    )
-  );
+  const seen = new Set((existing || []).map((a: any) => chaveNaturalProduto(a)));
 
   const novas: any[] = [];
   const novasChaves = new Set<string>();
   for (const e of entries) {
-    const key = `${e.company_id}|${e.entry_type}|${e.operation_number}|${e.contract_number ?? ""}`;
+    const key = chaveNaturalProduto(e);
     if (seen.has(key) || novasChaves.has(key)) continue;
     novasChaves.add(key);
     novas.push({
@@ -194,10 +206,7 @@ export async function computeProductCommissionByBeneficiario(
   for (const a of assigns || []) {
     const b = beneficiarioDaLinha(a);
     if (!b) continue;
-    donoByKey.set(
-      `${a.company_id}|${a.entry_type}|${a.operation_number}|${a.contract_number ?? ""}`,
-      b
-    );
+    donoByKey.set(chaveNaturalProduto(a), b);
   }
 
   const acc: ProductCommissionByBeneficiario = new Map();
@@ -210,7 +219,7 @@ export async function computeProductCommissionByBeneficiario(
     lob: 0,
   });
   for (const e of entries) {
-    const key = `${e.company_id}|${e.entry_type}|${e.operation_number}|${e.contract_number ?? ""}`;
+    const key = chaveNaturalProduto(e);
     const dono = donoByKey.get(key);
     if (!dono) continue; // PENDING/balde: sem repasse ate ser atribuido
     const repasse = repassePromotor(Number(e.commission_value || 0));

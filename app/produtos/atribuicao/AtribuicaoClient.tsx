@@ -13,6 +13,29 @@ import { Banner, Button, Card, Chip, EmptyState, HeaderNavy, KpiBand, Table, UiS
 // ESCOPO: o gestor de consorcio ve SO o card de Consorcio (a API nem devolve os
 // outros). socio/funcionario veem os tres.
 
+// Detalhe vindo da MASTER (monthly_closing_entries), casado pela chave natural na
+// rota. `comissao_promotor`/`comissao_gestor` sao DERIVADOS na exibicao — nao ha
+// coluna gravada para eles. null = sem linha na master para a competencia pedida.
+type DetalheEventoUnico = {
+  comissao_empresa: number;
+  comissao_promotor: number;
+  j_key: string | null;
+  operation_date: string | null;
+  metadata: Record<string, unknown>;
+};
+type DetalheConsorcio = {
+  comissao_empresa: number;
+  comissao_promotor: number;
+  comissao_gestor: number;
+  parcelas: number;
+  parcela_rotulo: string | null;
+  operation_date: string | null;
+  valor_bem: number;
+  pct_comissao: number | null;
+  segmento: string | null;
+  razao_social: string | null;
+};
+
 type Item = {
   id: string;
   company_id: string | null;
@@ -24,6 +47,7 @@ type Item = {
   beneficiario_nome: string | null;
   status: "PENDING" | "ASSIGNED";
   balde: boolean;
+  detalhe: DetalheEventoUnico | DetalheConsorcio | null;
 };
 type Beneficiario = {
   value: string;
@@ -35,6 +59,7 @@ type Beneficiario = {
 type Payload = {
   year: number;
   month: number;
+  competencia: string;
   escopo: "TODOS" | "CONSORCIO";
   role: string;
   grupos: { bbcap: Item[]; conta_corrente: Item[]; consorcio: Item[] };
@@ -57,6 +82,9 @@ const CSS = `
 .rratr .rowsel:disabled{background:var(--neu);color:var(--ink-3)}
 .rratr tr.gestaorow td{background:rgba(198,157,74,.10)}
 .rratr .hintline{font-size:12.5px;color:var(--ink-3);margin:2px 0 12px}
+.rratr td.num,.rratr th.num{text-align:right;font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;white-space:nowrap}
+.rratr td.rep{color:var(--navy);font-weight:600}
+.rratr td.sem{color:var(--ink-3)}
 
 /* TELEFONE ESTREITO — o .wrap nao tinha media query nenhuma e ficava com 20px
    de cada lado a 384px. */
@@ -65,6 +93,28 @@ const CSS = `
 
 function brl0(v: number) {
   return new Intl.NumberFormat("pt-BR").format(v);
+}
+
+const BRL = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Valor monetario; "—" quando nao ha linha na master para a competencia. */
+function money(v: number | null | undefined) {
+  return v === null || v === undefined ? "—" : BRL.format(v);
+}
+/** ISO (ou "20.07.2026" do xlsx) -> dd/mm/aaaa. Devolve "—" para vazio. */
+function dataBr(v: unknown) {
+  const s = String(v ?? "").trim();
+  if (!s) return "—";
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`;
+  return s.replace(/\./g, "/");
+}
+/** 0.0072 -> "0,72%". */
+function pct(v: number | null | undefined) {
+  return v === null || v === undefined ? "—" : `${BRL.format(v * 100)}%`;
+}
+function txt(v: unknown) {
+  const s = String(v ?? "").trim();
+  return s === "" ? "—" : s;
 }
 
 export default function AtribuicaoClient() {
@@ -158,93 +208,219 @@ export default function AtribuicaoClient() {
     }
   }, [year, month, load]);
 
+  // ============================================================
+  // COLUNAS POR PRODUTO — a MESMA ordem do fechamento manual do financeiro, para
+  // conferir linha a linha sem traduzir cabecalho. As duas ultimas (Status / Quem
+  // vendeu) sao da FILA e valem para os tres.
+  //
+  // "Comissao promotor" e "Comissao gestor" sao DERIVADAS na rota (x 0,5833 para
+  // evento unico, x 0,40 e x 0,10 para consorcio). Nao existe coluna gravada para
+  // elas: quem paga segue sendo o PMR e o consorcio_gestor_payout.
+  // ============================================================
+  type Col = { th: string; cls?: string; get: (it: Item) => React.ReactNode };
+  const mdv = (it: Item, k: string) =>
+    txt(((it.detalhe as DetalheEventoUnico | null)?.metadata ?? {})[k]);
+  const eu = (it: Item) => it.detalhe as DetalheEventoUnico | null;
+  const cs = (it: Item) => it.detalhe as DetalheConsorcio | null;
+
+  const COLS: Record<"BBCAP" | "CONTA_CORRENTE" | "CONSORCIO", Col[]> = {
+    BBCAP: [
+      { th: "CPF", get: (it) => mdv(it, "cpf_cliente") },
+      { th: "Data da venda", get: (it) => dataBr(eu(it)?.operation_date) },
+      {
+        th: "Data do débito",
+        get: (it) => dataBr((eu(it)?.metadata?.data_debito as string | null) ?? null),
+      },
+      { th: "Código do produto", get: (it) => mdv(it, "codigo_produto") },
+      {
+        th: "Valor do produto",
+        cls: "num",
+        get: (it) => money(eu(it) ? Number(eu(it)!.metadata.valor_produto ?? 0) : null),
+      },
+      { th: "Login do agente", get: (it) => mdv(it, "login_agente") },
+      { th: "Comissão", cls: "num", get: (it) => money(eu(it)?.comissao_empresa ?? null) },
+      {
+        th: "Comissão promotor",
+        cls: "num rep",
+        get: (it) => money(eu(it)?.comissao_promotor ?? null),
+      },
+    ],
+    CONTA_CORRENTE: [
+      { th: "Agência", get: (it) => mdv(it, "agencia") },
+      { th: "Chave J", get: (it) => txt(eu(it)?.j_key) },
+      { th: "Data", get: (it) => dataBr(eu(it)?.operation_date) },
+      { th: "Produto", get: (it) => mdv(it, "produto_texto") },
+      { th: "Comissão", cls: "num", get: (it) => money(eu(it)?.comissao_empresa ?? null) },
+      {
+        th: "Comissão promotor",
+        cls: "num rep",
+        get: (it) => money(eu(it)?.comissao_promotor ?? null),
+      },
+    ],
+    CONSORCIO: [
+      { th: "Data", get: (it) => dataBr(cs(it)?.operation_date) },
+      { th: "Segmento", get: (it) => txt(cs(it)?.segmento) },
+      { th: "Valor bem", cls: "num", get: (it) => money(cs(it)?.valor_bem ?? null) },
+      {
+        th: "Parcela",
+        get: (it) => {
+          const d = cs(it);
+          if (!d) return "—";
+          return d.parcelas > 1
+            ? `${d.parcela_rotulo ?? "—"} (${d.parcelas})`
+            : d.parcela_rotulo ?? "—";
+        },
+      },
+      { th: "% Comissão", cls: "num", get: (it) => pct(cs(it)?.pct_comissao ?? null) },
+      { th: "Comissão", cls: "num", get: (it) => money(cs(it)?.comissao_empresa ?? null) },
+      {
+        th: "Comissão promotor",
+        cls: "num rep",
+        get: (it) => money(cs(it)?.comissao_promotor ?? null),
+      },
+      { th: "Comissão gestor", cls: "num", get: (it) => money(cs(it)?.comissao_gestor ?? null) },
+    ],
+  };
+
   const renderGrupo = (
     titulo: string,
+    kind: "BBCAP" | "CONTA_CORRENTE" | "CONSORCIO",
     itens: Item[],
-    porProposta: boolean,
     idLabel: string
-  ) => (
-    <Card title={titulo}>
-      <p className="hintline">
-        {porProposta
-          ? "Consórcio é atribuído por PROPOSTA: uma atribuição vale para todas as parcelas (passadas e futuras) daquela proposta."
-          : "Cada linha é um evento único (uma proposta/conta)."}
-      </p>
-      {itens.length === 0 ? (
-        <EmptyState title={`Nenhuma linha de ${titulo.toLowerCase()} na fila.`} description="Se acabou de importar, use “Sincronizar fila”." />
-      ) : (
-        <Table scrollable minWidth={640} cards>
-          <thead>
-            <tr>
-              <th className="rr-sticky-col">{idLabel}</th>
-              <th>Status</th>
-              <th>Quem vendeu</th>
-            </tr>
-          </thead>
-          <tbody>
-            {itens.map((it) => (
-              <tr key={it.id} className={it.beneficiario_kind === "gestao" ? "gestaorow" : undefined}>
-                {/* idLabel e VARIAVEL (muda por escopo), entao o data-l e a
-                    MESMA expressao do th — nao um literal que sairia do ar. */}
-                <td className="rr-sticky-col idn" data-l={idLabel}>
-                  {it.operation_number}
-                  {it.balde ? (
-                    <>
-                      {" "}
-                      <Chip variant="neutral">S/ IDENTIFICAÇÃO</Chip>
-                    </>
-                  ) : null}
-                </td>
-                <td data-l="Status">
-                  {it.status === "ASSIGNED" ? (
-                    <Chip variant="ok">atribuído</Chip>
-                  ) : (
-                    <Chip variant="warn">pendente</Chip>
-                  )}
-                  {it.beneficiario_kind === "gestao" ? (
-                    <>
-                      {" "}
-                      <Chip variant="warn">VENDA DE GESTÃO</Chip>
-                    </>
-                  ) : null}
-                </td>
-                <td data-l="Quem vendeu">
-                  <select
-                    className="rowsel"
-                    value={it.beneficiario_value}
-                    disabled={busy === it.id}
-                    onChange={(e) => atribuir(it, e.target.value)}
-                    aria-label={`Quem vendeu ${it.operation_number}`}
+  ) => {
+    const cols = COLS[kind];
+    const porProposta = kind === "CONSORCIO";
+    const competencia = data?.competencia ?? "—";
+    // Somatorio do que esta na tela — confere de cabeca com o fechamento manual.
+    const soma = itens.reduce(
+      (a, it) => {
+        const d = it.detalhe;
+        if (!d) return a;
+        a.empresa += d.comissao_empresa;
+        a.promotor += d.comissao_promotor;
+        if (porProposta) a.gestor += (d as DetalheConsorcio).comissao_gestor;
+        return a;
+      },
+      { empresa: 0, promotor: 0, gestor: 0 }
+    );
+    const semDetalhe = itens.filter((it) => !it.detalhe).length;
+    return (
+      <Card title={titulo}>
+        <p className="hintline">
+          {porProposta
+            ? `Consórcio é atribuído por PROPOSTA: uma atribuição vale para todas as parcelas (passadas e futuras) daquela proposta. Os valores são os das parcelas recebidas em ${competencia} — a atribuição não tem competência, o valor tem.`
+            : `Cada linha é um evento único (uma proposta/conta). Valores da competência ${competencia}.`}
+        </p>
+        {itens.length === 0 ? (
+          <EmptyState
+            title={`Nenhuma linha de ${titulo.toLowerCase()} na fila.`}
+            description="Se acabou de importar, use “Sincronizar fila”."
+          />
+        ) : (
+          <>
+            <p className="hintline">
+              Comissão da empresa <b>{money(soma.empresa)}</b> · repasse do promotor{" "}
+              <b>{money(soma.promotor)}</b>
+              {porProposta ? (
+                <>
+                  {" "}
+                  · gestor <b>{money(soma.gestor)}</b>
+                </>
+              ) : null}
+              {semDetalhe > 0 ? ` · ${semDetalhe} sem lançamento em ${competencia}` : ""}
+            </p>
+            <Table scrollable minWidth={640 + cols.length * 90} cards>
+              <thead>
+                <tr>
+                  <th className="rr-sticky-col">{idLabel}</th>
+                  {cols.map((c) => (
+                    <th key={c.th} className={c.cls?.includes("num") ? "num" : undefined}>
+                      {c.th}
+                    </th>
+                  ))}
+                  <th>Status</th>
+                  <th>Quem vendeu</th>
+                </tr>
+              </thead>
+              <tbody>
+                {itens.map((it) => (
+                  <tr
+                    key={it.id}
+                    className={it.beneficiario_kind === "gestao" ? "gestaorow" : undefined}
                   >
-                    <option value="">— não atribuído (balde) —</option>
-                    {promotores.length > 0 ? (
-                      <optgroup label="Promotores">
-                        {promotores.map((b) => (
-                          <option key={b.value} value={b.value}>
-                            {b.nome}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ) : null}
-                    {gestao.length > 0 ? (
-                      <optgroup label="Gestão (venda própria)">
-                        {gestao.map((b) => (
-                          <option key={b.value} value={b.value}>
-                            {b.nome}
-                            {b.sub ? ` — ${b.sub}` : ""}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ) : null}
-                  </select>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      )}
-    </Card>
-  );
+                    {/* idLabel e VARIAVEL (muda por escopo), entao o data-l e a
+                        MESMA expressao do th — nao um literal que sairia do ar. */}
+                    <td className="rr-sticky-col idn" data-l={idLabel}>
+                      {it.operation_number}
+                      {it.balde ? (
+                        <>
+                          {" "}
+                          <Chip variant="neutral">S/ IDENTIFICAÇÃO</Chip>
+                        </>
+                      ) : null}
+                    </td>
+                    {cols.map((c) => (
+                      <td
+                        key={c.th}
+                        className={`${c.cls ?? ""}${it.detalhe ? "" : " sem"}`.trim() || undefined}
+                        data-l={c.th}
+                      >
+                        {c.get(it)}
+                      </td>
+                    ))}
+                    <td data-l="Status">
+                      {it.status === "ASSIGNED" ? (
+                        <Chip variant="ok">atribuído</Chip>
+                      ) : (
+                        <Chip variant="warn">pendente</Chip>
+                      )}
+                      {it.beneficiario_kind === "gestao" ? (
+                        <>
+                          {" "}
+                          <Chip variant="warn">VENDA DE GESTÃO</Chip>
+                        </>
+                      ) : null}
+                    </td>
+                    <td data-l="Quem vendeu">
+                      <select
+                        className="rowsel"
+                        value={it.beneficiario_value}
+                        disabled={busy === it.id}
+                        onChange={(e) => atribuir(it, e.target.value)}
+                        aria-label={`Quem vendeu ${it.operation_number}`}
+                      >
+                        <option value="">— não atribuído (balde) —</option>
+                        {promotores.length > 0 ? (
+                          <optgroup label="Promotores">
+                            {promotores.map((b) => (
+                              <option key={b.value} value={b.value}>
+                                {b.nome}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                        {gestao.length > 0 ? (
+                          <optgroup label="Gestão (venda própria)">
+                            {gestao.map((b) => (
+                              <option key={b.value} value={b.value}>
+                                {b.nome}
+                                {b.sub ? ` — ${b.sub}` : ""}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ) : null}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </>
+        )}
+      </Card>
+    );
+  };
+
 
   const g = data?.grupos;
 
@@ -321,9 +497,9 @@ export default function AtribuicaoClient() {
           </Card>
         ) : (
           <div className="prodgrid">
-            {soConsorcio ? null : renderGrupo("BBCAP", g?.bbcap ?? [], false, "Proposta")}
-            {soConsorcio ? null : renderGrupo("Conta Corrente", g?.conta_corrente ?? [], false, "Conta")}
-            {renderGrupo("Consórcio", g?.consorcio ?? [], true, "Proposta")}
+            {soConsorcio ? null : renderGrupo("BBCAP", "BBCAP", g?.bbcap ?? [], "Proposta")}
+            {soConsorcio ? null : renderGrupo("Conta Corrente", "CONTA_CORRENTE", g?.conta_corrente ?? [], "Conta")}
+            {renderGrupo("Consórcio", "CONSORCIO", g?.consorcio ?? [], "Proposta")}
           </div>
         )}
       </main>
