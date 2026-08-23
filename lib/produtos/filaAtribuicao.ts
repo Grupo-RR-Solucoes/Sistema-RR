@@ -11,6 +11,7 @@
 import { chaveNaturalProduto } from "../produtoAssignments.ts";
 import { repassePromotor } from "../produtoRepasse.ts";
 import { repasseConsorcioGestor, repasseConsorcioPromotor } from "../consorcio/trp210.ts";
+import { isRegular } from "../consorcio/fila.ts";
 import { beneficiarioDaLinha, beneficiarioValue, PAPEIS_COM_VENDA_PROPRIA } from "../produtoBeneficiario.ts";
 import { podeVerComissaoDePromotor } from "../auth/visibilidadeComissao.ts";
 
@@ -48,12 +49,20 @@ export type DetalheEventoUnico = {
   metadata: Record<string, unknown>;
 };
 
-export type DetalheConsorcio = {
+export // UMA PARCELA do consorcio — nao a proposta somada.
+//
+// DECISAO Diego (23/08/2026): a fila lista uma linha por PARCELA, porque e assim
+// que a planilha do financeiro mostra e e assim que ele confere. A agregacao por
+// proposta ESCONDIA linha: medido nos arquivos da Promotiva, julho (C115867) tem
+// 39 parcelas em 33 propostas — 6 linhas sumiam. Junho (C107347) tinha 37 em 37,
+// uma parcela cada (todas PARC6), entao la nao havia o que esconder e o defeito
+// nao aparecia.
+type DetalheConsorcio = {
   comissao_empresa: number;
   /** OPCIONAL de proposito: ausente para quem nao pode ver (ver podeVerComissaoDePromotor). */
   comissao_promotor?: number;
   comissao_gestor: number;
-  parcelas: number;
+  /** "PARC6" — a parcela DESTA linha. */
   parcela_rotulo: string | null;
   operation_date: string | null;
   valor_bem: number;
@@ -201,52 +210,46 @@ const podeVerRepasse = podeVerComissaoDePromotor(role);
     });
   }
 
-  // ---- detalhe por PROPOSTA (consorcio: 1 ancora = N parcelas no mes) ----
-  // Soma a comissao-empresa das parcelas da competencia PEDIDA e conta quantas
-  // sao. Nao cria linha por parcela: a fila continua sendo por proposta.
-  const detalheCons = new Map<string, DetalheConsorcio>();
+  // ---- PARCELAS do consorcio, agrupadas por proposta ----
+  // Uma entrada por PARCELA (a linha que o financeiro confere), guardada sob a
+  // proposta — que continua sendo a unidade da ATRIBUICAO (a ancora).
+  //
+  // SO AS REGULARES: `isRegular` (lib/consorcio/fila.ts) tira a aba MASTER, que e
+  // espelho company-level e nao entra em repasse. Reuso do mesmo predicado que o
+  // calculo do payout usa — duas definicoes de "parcela que conta" divergiriam.
+  const parcelasPorProposta = new Map<string, DetalheConsorcio[]>();
   for (const e of entries) {
     if (e.entry_type !== "CONSORCIO") continue;
+    if (!isRegular(e as any)) continue;
     const k = chaveProposta(e.company_id, e.operation_number);
     const md = (e.metadata || {}) as Record<string, unknown>;
-    const cur =
-      detalheCons.get(k) ||
-      ({
-        comissao_empresa: 0,
-        comissao_gestor: 0,
-        parcelas: 0,
-        parcela_rotulo: null,
-        operation_date: null,
-        valor_bem: 0,
-        pct_comissao: null,
-        segmento: null,
-        razao_social: null,
-      } as DetalheConsorcio);
-    cur.comissao_empresa += num(e.commission_value);
-    cur.parcelas += 1;
-    // atributos da PROPOSTA (iguais em todas as parcelas): fica o 1o nao vazio.
-    cur.valor_bem = cur.valor_bem || num(md.valor_bem) || num(e.gross_value);
-    cur.pct_comissao = cur.pct_comissao ?? (md.pct_comissao == null ? null : num(md.pct_comissao));
-    cur.segmento = cur.segmento ?? txt(md.segmento);
-    cur.razao_social = cur.razao_social ?? txt(md.razao_social);
-    cur.operation_date = cur.operation_date ?? (e.operation_date ?? null);
-    // rotulo da parcela: uma so -> "PARC1"; varias -> "PARC1..PARC3".
-    const rot = txt(md.parcela_liberacao);
-    if (rot) {
-      cur.parcela_rotulo = cur.parcela_rotulo
-        ? [cur.parcela_rotulo.split("..")[0], rot].sort().join("..")
-        : rot;
-    }
-    detalheCons.set(k, cur);
+    const empresa = Math.round(num(e.commission_value) * 100) / 100;
+    const parcela: DetalheConsorcio = {
+      comissao_empresa: empresa,
+      // O repasse do PROMOTOR so existe no payload de quem tem direito. A comissao
+      // do GESTOR (0,10) e a da EMPRESA (a base do calculo dele) ficam sempre — sao
+      // dele e do negocio, nao do promotor.
+      ...(podeVerRepasse ? { comissao_promotor: repasseConsorcioPromotor(empresa) } : {}),
+      comissao_gestor: repasseConsorcioGestor(empresa),
+      parcela_rotulo: txt(md.parcela_liberacao),
+      operation_date: e.operation_date ?? null,
+      valor_bem: num(md.valor_bem) || num(e.gross_value),
+      pct_comissao: md.pct_comissao == null ? null : num(md.pct_comissao),
+      segmento: txt(md.segmento),
+      razao_social: txt(md.razao_social),
+    };
+    const lista = parcelasPorProposta.get(k) || [];
+    lista.push(parcela);
+    parcelasPorProposta.set(k, lista);
   }
-  // repasses DERIVADOS sobre a soma da proposta (nao gravados em lugar nenhum).
-  for (const d of detalheCons.values()) {
-    d.comissao_empresa = Math.round(d.comissao_empresa * 100) / 100;
-    // O repasse do PROMOTOR so existe no payload de quem tem direito. A comissao
-    // do GESTOR (0,10) e a da EMPRESA (a base do calculo dele) ficam sempre — sao
-    // dele e do negocio, nao do promotor.
-    if (podeVerRepasse) d.comissao_promotor = repasseConsorcioPromotor(d.comissao_empresa);
-    d.comissao_gestor = repasseConsorcioGestor(d.comissao_empresa);
+  // Ordem estavel dentro da proposta: PARC1, PARC2, ... (o rotulo e textual, entao
+  // o numero e extraido; sem numero cai para o fim, sem quebrar).
+  const numDaParcela = (rot: string | null) => {
+    const m = String(rot ?? "").match(/(\d+)/);
+    return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+  };
+  for (const lista of parcelasPorProposta.values()) {
+    lista.sort((a, b) => numDaParcela(a.parcela_rotulo) - numDaParcela(b.parcela_rotulo));
   }
 
   const nameOf = new Map((proms.data || []).map((p: any) => [p.id, p.name]));
@@ -300,26 +303,71 @@ const podeVerRepasse = podeVerComissaoDePromotor(role);
       status: r.status,
       balde: isBalde(r.entry_type, r.operation_number),
       // Detalhe do fechamento. null = nao ha linha na master para esta chave na
-      // competencia pedida (consorcio sem parcela no mes, ou fila orfa de entry).
-      detalhe:
-        r.entry_type === "CONSORCIO"
-          ? detalheCons.get(chaveProposta(r.company_id, r.operation_number)) ?? null
-          : detalheEU.get(chaveNaturalProduto(r)) ?? null,
+      // competencia pedida (fila orfa de entry).
+      detalhe: r.entry_type === "CONSORCIO" ? null : detalheEU.get(chaveNaturalProduto(r)) ?? null,
     };
   };
+
+  // ---- CONSORCIO: a ancora VIRA N LINHAS, uma por parcela ----
+  //
+  // A ATRIBUICAO NAO MUDA: continua sendo por PROPOSTA. Todas as parcelas de uma
+  // proposta carregam o MESMO `operation_number` (a chave da ancora), entao o POST
+  // e identico venha ele de qual linha vier — atribuir uma parcela atribui a
+  // proposta inteira, incluindo as futuras. `parcela_seq`/`parcela_total` e
+  // `mesma_proposta` existem para a TELA conseguir dizer isso ao usuario; nao
+  // participam de nenhuma decisao de valor.
+  //
+  // ANCORA SEM PARCELA NO MES sai em lista SEPARADA (`consorcio_sem_lancamento`).
+  // Ela NAO e dado faltando: e a heranca funcionando — a proposta ja apareceu numa
+  // competencia anterior, a parcela deste mes nao veio, e a atribuicao continua
+  // valendo para quando vier. Misturar com as parcelas reais faria parecer buraco.
+  const consorcioParcelas: any[] = [];
+  const consorcioSemLancamento: any[] = [];
+  for (const anc of cons.data || []) {
+    const base = toItem(anc);
+    const lista = parcelasPorProposta.get(chaveProposta(anc.company_id, anc.operation_number)) || [];
+    if (lista.length === 0) {
+      consorcioSemLancamento.push({ ...base, sem_lancamento: true });
+      continue;
+    }
+    lista.forEach((parcela, i) => {
+      consorcioParcelas.push({
+        ...base,
+        // id UNICO por linha (o React precisa) e ESTAVEL entre recargas.
+        id: `${base.id}|${parcela.parcela_rotulo ?? i}`,
+        detalhe: parcela,
+        parcela_seq: i + 1,
+        parcela_total: lista.length,
+        /** true = ha outra parcela da MESMA proposta nesta tela. */
+        mesma_proposta: lista.length > 1,
+        sem_lancamento: false,
+      });
+    });
+  }
 
   const euRows = (eu.data || []).map(toItem);
   const grupos = {
     bbcap: euRows.filter((r: any) => r.entry_type === "BBCAP").sort(ordena),
     conta_corrente: euRows.filter((r: any) => r.entry_type === "CONTA_CORRENTE").sort(ordena),
-    consorcio: (cons.data || []).map(toItem).sort(ordena),
+    consorcio: consorcioParcelas.sort(ordena),
+    consorcio_sem_lancamento: consorcioSemLancamento.sort(ordena),
   };
 
-  const todas = [...grupos.bbcap, ...grupos.conta_corrente, ...grupos.consorcio];
+  // O RESUMO CONTA COISAS A ATRIBUIR, nao linhas na tela. Uma proposta com 3
+  // parcelas e UMA atribuicao pendente, nao tres — senao o KPI "Pendentes"
+  // inflaria e diria que ha mais trabalho do que existe.
+  const paraAtribuir = [
+    ...grupos.bbcap,
+    ...grupos.conta_corrente,
+    ...(cons.data || []).map(toItem),
+  ];
   const resumo = {
-    pendentes: todas.filter((r: any) => r.status === "PENDING").length,
-    atribuidas: todas.filter((r: any) => r.status === "ASSIGNED").length,
-    gestao: todas.filter((r: any) => r.beneficiario_kind === "gestao").length,
+    pendentes: paraAtribuir.filter((r: any) => r.status === "PENDING").length,
+    atribuidas: paraAtribuir.filter((r: any) => r.status === "ASSIGNED").length,
+    gestao: paraAtribuir.filter((r: any) => r.beneficiario_kind === "gestao").length,
+    /** Linhas de parcela na tela — diferente de `pendentes`, e de proposito. */
+    parcelas_consorcio: grupos.consorcio.length,
+    ancoras_sem_lancamento: grupos.consorcio_sem_lancamento.length,
   };
 
 return {

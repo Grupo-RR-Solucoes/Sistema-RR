@@ -257,6 +257,19 @@ const GATES = [
       "createClient; daily_production_records de PRODUCAO",
   },
   {
+    arquivo: "scripts/fila_consorcio_por_parcela_gate.cjs",
+    nome: "fila do consorcio lista PARCELA e atribui PROPOSTA",
+    modo: "needs-db",
+    motivo:
+      "createClient; monthly_closing_entries + product_line_assignments de PRODUCAO. " +
+      "O bloco 1 prova que as 39 parcelas regulares de jul/2026 viram 39 linhas (e nao " +
+      "33, que era a agregacao que escondia 6); o 2 prova que as irmas de uma proposta " +
+      "tem a MESMA chave de atribuicao, que e o que faz 'atribuir uma' ser 'atribuir " +
+      "todas'; o 3 guarda as 11 ancoras sem parcela no mes, em lista separada e ainda " +
+      "atribuiveis; o 4 e a regressao do vazamento (gestor sem comissao_promotor); o 5 " +
+      "garante que BBCAP e Conta Corrente nao foram afetados",
+  },
+  {
     arquivo: "scripts/produtos_detalhamento_escopo_gate.cjs",
     nome: "detalhamento por produto: promotor A nao ve linha de B",
     modo: "needs-db",
