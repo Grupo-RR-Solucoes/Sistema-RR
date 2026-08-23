@@ -29,7 +29,6 @@ type DetalheConsorcio = {
   /** AUSENTE quando quem pediu nao pode ver (a rota nem manda). */
   comissao_promotor?: number;
   comissao_gestor: number;
-  parcelas: number;
   parcela_rotulo: string | null;
   operation_date: string | null;
   valor_bem: number;
@@ -50,6 +49,13 @@ type Item = {
   status: "PENDING" | "ASSIGNED";
   balde: boolean;
   detalhe: DetalheEventoUnico | DetalheConsorcio | null;
+  // CONSORCIO: a linha e uma PARCELA, mas a atribuicao e da PROPOSTA. Estes tres
+  // campos existem so para a tela conseguir DIZER isso — nao decidem valor nenhum.
+  parcela_seq?: number;
+  parcela_total?: number;
+  mesma_proposta?: boolean;
+  /** Ancora sem parcela na competencia: atribuivel para as proximas. */
+  sem_lancamento?: boolean;
 };
 type Beneficiario = {
   value: string;
@@ -67,9 +73,20 @@ type Payload = {
   pode_ver_comissao_promotor: boolean;
   escopo: "TODOS" | "CONSORCIO";
   role: string;
-  grupos: { bbcap: Item[]; conta_corrente: Item[]; consorcio: Item[] };
+  grupos: {
+    bbcap: Item[];
+    conta_corrente: Item[];
+    consorcio: Item[];
+    consorcio_sem_lancamento?: Item[];
+  };
   beneficiarios: Beneficiario[];
-  resumo: { pendentes: number; atribuidas: number; gestao: number };
+  resumo: {
+    pendentes: number;
+    atribuidas: number;
+    gestao: number;
+    parcelas_consorcio?: number;
+    ancoras_sem_lancamento?: number;
+  };
 };
 
 // Nome por EXTENSO, nao a abreviacao de 3 letras. A tela e de trabalho manual e
@@ -178,6 +195,23 @@ export default function AtribuicaoClient() {
 
   const atribuir = useCallback(
     async (item: Item, beneficiarioValue: string) => {
+      // CONSORCIO: a atribuicao e da PROPOSTA, nao da parcela clicada. Se ha irma
+      // na tela, o usuario precisa confirmar sabendo disso — a alternativa era ele
+      // descobrir depois, vendo duas linhas mudarem sozinhas.
+      if (item.entry_type === "CONSORCIO" && item.mesma_proposta) {
+        const nome =
+          beneficiarios.find((b) => b.value === beneficiarioValue)?.nome ??
+          "— não atribuído —";
+        const okConfirm = window.confirm(
+          `A proposta ${item.operation_number} tem ${item.parcela_total} parcelas nesta ` +
+            `competência.\n\nAtribuir a ${nome} vale para TODAS elas — e para as ` +
+            `parcelas futuras da mesma proposta.\n\nConfirma?`
+        );
+        if (!okConfirm) {
+          load(year, month, { silent: true }); // devolve o <select> ao valor anterior
+          return;
+        }
+      }
       setBusy(item.id);
       setError("");
       try {
@@ -206,7 +240,7 @@ export default function AtribuicaoClient() {
         setBusy(null);
       }
     },
-    [year, month, load]
+    [year, month, load, beneficiarios]
   );
 
   const sincronizar = useCallback(async () => {
@@ -296,8 +330,10 @@ export default function AtribuicaoClient() {
         get: (it) => {
           const d = cs(it);
           if (!d) return "—";
-          return d.parcelas > 1
-            ? `${d.parcela_rotulo ?? "—"} (${d.parcelas})`
+          // A parcela DESTA linha. Quando a proposta tem mais de uma no mes, o
+          // "1 de 2" avisa que existe irma na tela — e que atribuir aqui move as duas.
+          return it.mesma_proposta
+            ? `${d.parcela_rotulo ?? "—"} · ${it.parcela_seq} de ${it.parcela_total}`
             : d.parcela_rotulo ?? "—";
         },
       },
@@ -322,6 +358,7 @@ export default function AtribuicaoClient() {
     const podeVerRepasse = data?.pode_ver_comissao_promotor === true;
     const cols = COLS[kind].filter((c) => !c.repassePromotor || podeVerRepasse);
     const porProposta = kind === "CONSORCIO";
+    const soSemLancamento = itens.length > 0 && itens.every((i) => i.sem_lancamento);
     const competencia = data?.competencia ?? "—";
     // Somatorio do que esta na tela — confere de cabeca com o fechamento manual.
     const soma = itens.reduce(
@@ -339,8 +376,10 @@ export default function AtribuicaoClient() {
     return (
       <Card title={titulo}>
         <p className="hintline">
-          {porProposta
-            ? `Consórcio é atribuído por PROPOSTA: uma atribuição vale para todas as parcelas (passadas e futuras) daquela proposta. Os valores são os das parcelas recebidas em ${competencia} — a atribuição não tem competência, o valor tem.`
+          {soSemLancamento
+            ? `Propostas já atribuíveis que NÃO tiveram parcela em ${competencia}. Não é dado faltando: a parcela deste mês não veio, e a proposta segue na fila — atribuir aqui vale para as próximas parcelas, quando chegarem.`
+            : porProposta
+            ? `Uma linha por PARCELA recebida em ${competencia} — a mesma quebra do fechamento manual. A ATRIBUIÇÃO, porém, é da PROPOSTA: dar dono a uma parcela dá dono a todas as parcelas daquela proposta, inclusive as futuras. As linhas de uma proposta com mais de uma parcela no mês vêm marcadas.`
             : `Cada linha é um evento único (uma proposta/conta). Valores da competência ${competencia}.`}
         </p>
         {itens.length === 0 ? (
@@ -393,6 +432,20 @@ export default function AtribuicaoClient() {
                         <>
                           {" "}
                           <Chip variant="neutral">S/ IDENTIFICAÇÃO</Chip>
+                        </>
+                      ) : null}
+                      {/* A proposta tem outra parcela NESTA tela: atribuir aqui move
+                          as duas. O aviso vem antes do clique, nao depois. */}
+                      {it.mesma_proposta ? (
+                        <>
+                          {" "}
+                          <Chip variant="warn">{it.parcela_total} PARCELAS</Chip>
+                        </>
+                      ) : null}
+                      {it.sem_lancamento ? (
+                        <>
+                          {" "}
+                          <Chip variant="neutral">SEM LANÇAMENTO</Chip>
                         </>
                       ) : null}
                     </td>
@@ -536,7 +589,19 @@ export default function AtribuicaoClient() {
           <div className="prodgrid">
             {soConsorcio ? null : renderGrupo("BBCAP", "BBCAP", g?.bbcap ?? [], "Proposta")}
             {soConsorcio ? null : renderGrupo("Conta Corrente", "CONTA_CORRENTE", g?.conta_corrente ?? [], "Conta")}
-            {renderGrupo("Consórcio", "CONSORCIO", g?.consorcio ?? [], "Proposta")}
+            {renderGrupo("Consórcio · parcelas do mês", "CONSORCIO", g?.consorcio ?? [], "Proposta")}
+            {/* SEPARADO DE PROPOSITO. Estas âncoras não são buraco no dado: são
+                propostas de competências anteriores cuja parcela deste mês não
+                veio. Continuam atribuíveis — a atribuição vale para quando vier.
+                Misturadas com as parcelas reais, pareceriam linhas faltando. */}
+            {(g?.consorcio_sem_lancamento?.length ?? 0) > 0
+              ? renderGrupo(
+                  `Consórcio · sem lançamento em ${data?.competencia ?? "—"}`,
+                  "CONSORCIO",
+                  g?.consorcio_sem_lancamento ?? [],
+                  "Proposta"
+                )
+              : null}
           </div>
         )}
       </main>
