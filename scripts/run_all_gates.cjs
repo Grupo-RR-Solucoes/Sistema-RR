@@ -257,6 +257,17 @@ const GATES = [
       "createClient; daily_production_records de PRODUCAO",
   },
   {
+    arquivo: "scripts/produtos_visibilidade_comissao_gate.cjs",
+    nome: "comissao do promotor nao vaza para quem nao tem direito",
+    modo: "needs-db",
+    motivo:
+      "createClient; monthly_closing_entries + product_line_assignments de PRODUCAO. " +
+      "O bloco 1 e puro (a regua por papel); o 2 monta o payload REAL da fila como " +
+      "gestor_consorcio e varre em profundidade; o 3 monta como socio e exige o campo " +
+      "COM valor (sem ele o gate passaria com a rota devolvendo vazio); o 4 garante que " +
+      "empresa e gestor continuam visiveis — suprimir demais seria outro bug",
+  },
+  {
     arquivo: "scripts/reatribuicao_precedencia_gate.cjs",
     nome: "reatribuicao manual: o diario vence a chave J",
     modo: "needs-db",
