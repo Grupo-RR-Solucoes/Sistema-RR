@@ -124,7 +124,7 @@ const CASOS_30_06 = [
     { auth: { persistSession: false } }
   );
   const orfaos = CASOS_30_06.map((c) => ({ contrato: c.prop, companyId: null }));
-  const heir = await HM.buildMasterHeirMap(sb, orfaos, JUL.year, JUL.month);
+  const heir = await HM.buildDonoDoDiarioMap(sb, orfaos, JUL.year, JUL.month);
   console.log(`   heir map devolveu ${heir.size} entrada(s) para ${orfaos.length} orfaos`);
   const nomes = new Map();
   {
@@ -153,9 +153,9 @@ const CASOS_30_06 = [
   for (const rel of ["lib/closingMonthly.ts", "lib/bbtsOrchestrator.ts"]) {
     const src = fs.readFileSync(path.join(ROOT, rel), "utf8");
     const temPrefixo = /movement_date[^\n]*startsWith\(/.test(src);
-    const consome = /buildMasterHeirMap\(/.test(src) && /from "\.\/herancaMaster\.ts"/.test(src);
+    const consome = /buildDonoDoDiarioMap\(/.test(src) && /from "\.\/herancaMaster\.ts"/.test(src);
     ok(!temPrefixo, `${rel} nao filtra movement_date por prefixo de mes`);
-    ok(consome, `${rel} consome buildMasterHeirMap de herancaMaster.ts`);
+    ok(consome, `${rel} consome buildDonoDoDiarioMap de herancaMaster.ts`);
   }
 
   console.log("\n" + linha("="));

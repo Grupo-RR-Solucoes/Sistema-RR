@@ -20,7 +20,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // ============================================================================
 
 import { loadClosingPromoterBase } from "./closingPromoterBase.ts";
-import { buildMasterHeirMap } from "./herancaMaster.ts";
+import { buildDonoDoDiarioMap, resolvePromotorEfetivo } from "./herancaMaster.ts";
 import { lerReguaPisoVigente, resolverPiso } from "./pisoProducao.ts";
 import { consolidateMonthlyFromClosing } from "./closingMonthly.ts";
 import { consolidateMonthlyFromBbts, BBTS_COMPANY_ID } from "./bbtsMonthly.ts";
@@ -113,17 +113,20 @@ export async function consolidateMonthlyGroup(
   // cai na REDE (literal) silenciosamente.
   await primeInsuranceShareTiers(supabase as unknown as SupabaseClient);
 
-  // ---- A. Soma RR (fechamento CASH, excl SRCC/BBTS, com herança master) ----
+  // ---- A. Soma RR (fechamento CASH, excl SRCC/BBTS, promotor efetivo) ----
   const base = await loadClosingPromoterBase(supabase, { year, month });
   const contratos = base.contratos.filter((c) => normKey(c.chaveJ) !== BBTS_KEY);
-  // herança master: contrato sem promotor individual -> assigned do diário (RR).
-  const orphans = contratos.filter((c) => !c.promoterId && (c.contrato || "").trim());
-  // Era uma cópia literal do buildMasterHeirMap do closingMonthly (mesmo prefix,
-  // mesmo startsWith). Agora consome a fonte única: lib/herancaMaster.ts.
-  const heir = await buildMasterHeirMap(supabase, orphans, year, month);
+  // O DIÁRIO manda: `assigned_promoter_id` honra a reatribuição manual; a chave J
+  // fica no dono ORIGINAL e serve de fallback. Mapa sobre TODAS as linhas — não só
+  // as órfãs de chave master, que era o recorte que desfazia a reatribuição.
+  // Fonte única da precedência: lib/herancaMaster.ts (mesmo helper do PMR).
+  const dono = await buildDonoDoDiarioMap(supabase, contratos, year, month);
   const rr = new Map<string, { net: number; liqSeg: number }>();
   for (const c of contratos) {
-    const pid = c.promoterId || heir.get(`${c.companyId}|${(c.contrato || "").trim()}`) || null;
+    const pid = resolvePromotorEfetivo(
+      { promoterIdDaChave: c.promoterId, contrato: c.contrato, companyId: c.companyId },
+      dono
+    );
     if (!pid) continue;
     const a = rr.get(pid) || { net: 0, liqSeg: 0 };
     a.net += c.valorLiquido;
