@@ -9,6 +9,11 @@ import {
   withSocioOrFuncionarioAnon,
 } from "@/lib/auth/guards";
 import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
+import { buildProdutoProposalRows } from "@/lib/produtos/produtoProposalRows";
+import {
+  podeVerComissaoDePromotor,
+  promotorEfetivoDaSessao,
+} from "@/lib/auth/visibilidadeComissao";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
@@ -161,10 +166,14 @@ export async function GET(req: Request) {
     // com dropdown). RLS ja filtra os records, mas a lib precisa do id
     // explicito para sair do early-return em proposalRows = [].
     const queryPromoterId = searchParams.get("promoterId") || undefined;
-    const effectivePromoterId =
-      user.session.appUser.role === "promotor"
-        ? user.session.appUser.promoterId ?? undefined
-        : queryPromoterId;
+    // A regra vive em lib/auth/visibilidadeComissao (promotorEfetivoDaSessao) para
+    // o gate exercitar a MESMA expressao. Promotor -> sempre o proprio id; o
+    // ?promoterId= dele e DESCARTADO, nao respeitado.
+    const effectivePromoterId = promotorEfetivoDaSessao({
+      role: user.session.appUser.role,
+      promoterIdDaSessao: user.session.appUser.promoterId,
+      promoterIdPedido: queryPromoterId,
+    });
 
     // buildPromoterAnalytics agora recebe o cliente do guard (Etapa 3.7).
     // Promotor passa supabase autenticado anon -> RLS filtra para o
@@ -233,6 +242,33 @@ export async function GET(req: Request) {
       }
     }
 
+    // DETALHAMENTO POR PRODUTO (BBCAP / Conta Corrente / Consorcio).
+    //
+    // O ESCOPO E A GUARDA: `effectivePromoterId` ja e o id da SESSAO quando o
+    // papel e `promotor` (:164-167) — o ?promoterId= dele foi descartado la em
+    // cima. O builder exige o id e filtra na origem, entao promotor nao ve linha
+    // de colega nem forjando o parametro.
+    //
+    // `incluirComissaoEmpresa` e CINTO DE SEGURANCA, nao a guarda. Hoje so
+    // socio/funcionario/promotor chegam aqui (supervisor e gerente_regional levam
+    // 403 em :148-154), e o promotor nao precisa da comissao da EMPRESA — ele ve
+    // o que e DELE. `podeVerComissaoDePromotor` devolve false para `promotor` de
+    // proposito; NAO ligar. Ver lib/auth/visibilidadeComissao.ts.
+    let produtoRows: Awaited<ReturnType<typeof buildProdutoProposalRows>> | null = null;
+    if (yearN && monthN && effectivePromoterId) {
+      try {
+        produtoRows = await buildProdutoProposalRows(supabase, {
+          promoterId: effectivePromoterId,
+          year: yearN,
+          month: monthN,
+          incluirComissaoEmpresa: podeVerComissaoDePromotor(user.session.appUser.role),
+        });
+      } catch {
+        // Produto e ADITIVO: a aba nova nao pode derrubar a tela inteira.
+        produtoRows = null;
+      }
+    }
+
     // Mês FECHADO: o detalhe (proposalRows) vem da fonte fechada, não do diário.
     //   'cms' (jan-mai)        -> cms_promoter_entries (ground truth do seed).
     //   'fechamento' (jun+)    -> monthly_closing_entries + linhas ADS, com SRCC.
@@ -246,7 +282,7 @@ export async function GET(req: Request) {
           yearN,
           monthN
         );
-        return NextResponse.json({ ...payload, proposalRows: cmsRows, proposalSource, debitRows, debitQueue });
+        return NextResponse.json({ ...payload, proposalRows: cmsRows, proposalSource, debitRows, debitQueue, produtoRows });
       }
       // regime === 'fechamento'
       proposalSource = "fechamento";
@@ -256,10 +292,10 @@ export async function GET(req: Request) {
         yearN,
         monthN
       );
-      return NextResponse.json({ ...payload, proposalRows: closingRows, proposalSource, debitRows, debitQueue });
+      return NextResponse.json({ ...payload, proposalRows: closingRows, proposalSource, debitRows, debitQueue, produtoRows });
     }
 
-    return NextResponse.json({ ...payload, proposalSource, debitRows, debitQueue });
+    return NextResponse.json({ ...payload, proposalSource, debitRows, debitQueue, produtoRows });
   } catch (error) {
     return apiGuardErrorResponse(error);
   }

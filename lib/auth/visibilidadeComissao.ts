@@ -35,3 +35,32 @@ export function podeVerComissaoDePromotor(role: unknown): boolean {
     String(role ?? "")
   );
 }
+
+/**
+ * De QUEM sao as linhas que esta sessao pode ver em /promotores.
+ *
+ * E a outra metade da regra: a de cima decide CAMPO, esta decide ESCOPO. O
+ * promotor recebe SEMPRE o proprio id — o `?promoterId=` dele e descartado, nao
+ * respeitado. E por isso que podeVerComissaoDePromotor devolve false para o papel
+ * `promotor` sem prejudica-lo: ele nao precisa de permissao de campo para ver a
+ * comissao dele, precisa de escopo. Ligar o helper la em cima quebraria ISTO aqui.
+ *
+ * socio/funcionario escolhem pelo parametro (e a tela deles tem dropdown).
+ * Qualquer outro papel: undefined — nao ha carteira a mostrar. (Hoje supervisor e
+ * gerente_regional nem chegam: levam 403 em app/api/promotores/route.ts:148-154.)
+ *
+ * Extraida de route.ts:164-167 para o gate poder exercitar a MESMA expressao que
+ * a rota usa, em vez de reimplementar a regra e testar a copia.
+ */
+export function promotorEfetivoDaSessao(args: {
+  role: unknown;
+  /** promoter_id gravado no app_user da sessao (so o papel `promotor` tem). */
+  promoterIdDaSessao: string | null | undefined;
+  /** ?promoterId= vindo da URL. IGNORADO quando o papel e `promotor`. */
+  promoterIdPedido: string | null | undefined;
+}): string | undefined {
+  const role = String(args.role ?? "");
+  if (role === "promotor") return args.promoterIdDaSessao ?? undefined;
+  if (role === "socio" || role === "funcionario") return args.promoterIdPedido ?? undefined;
+  return undefined;
+}

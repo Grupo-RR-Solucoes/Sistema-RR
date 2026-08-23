@@ -138,12 +138,45 @@ function classifySrcc(row: ProposalRow): SrccState {
   return "normal";
 }
 
+// DETALHAMENTO POR PRODUTO — vem de lib/produtos/produtoProposalRows via
+// /api/promotores, ja filtrado pelo promoter_id da SESSAO (o escopo e a guarda).
+// `comissao_empresa` NAO vem para o promotor, de proposito: ele ve o que e DELE.
+type ProdutoRow = {
+  entry_type: "BBCAP" | "CONTA_CORRENTE" | "CONSORCIO";
+  operacao: string;
+  comissao_promotor: number;
+  cpf_cliente?: string | null;
+  data_venda?: string | null;
+  data_debito?: string | null;
+  codigo_produto?: string | null;
+  valor_produto?: number | null;
+  agencia?: string | null;
+  produto_texto?: string | null;
+  data?: string | null;
+  segmento?: string | null;
+  valor_bem?: number | null;
+  parcela?: string | null;
+};
+type ProdutoRows = {
+  rows: ProdutoRow[];
+  totais: { bbcap: number; conta_corrente: number; consorcio: number; total: number };
+};
+
+/** ISO -> dd/mm/aaaa; vazio vira travessao. */
+function dataCurta(v: unknown): string {
+  const x = String(v ?? "").trim();
+  if (!x) return "—";
+  const iso = x.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return iso ? `${iso[3]}/${iso[2]}/${iso[1]}` : x;
+}
+
 export default function PromotorView() {
   const [data, setData] = useState<PromotorPayload | null>(null);
   const [selectedKey, setSelectedKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [carteira, setCarteira] = useState<ConsorcioCarteira | null>(null);
+  const [produtos, setProdutos] = useState<ProdutoRows | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,6 +206,9 @@ export default function PromotorView() {
 
         if (!cancelled) {
           setData(payload as PromotorPayload);
+          // produtoRows vem do MESMO payload (mesma guarda, mesmo escopo). Nao ha
+          // segundo fetch: um dado, uma rota, um filtro.
+          setProdutos(((payload as any)?.produtoRows as ProdutoRows | null) ?? null);
         }
       } catch (err) {
         if (!cancelled) {
@@ -471,9 +507,15 @@ export default function PromotorView() {
           </div>
         ) : null}
 
-        {/* PRODUTOS — repasse dos produtos (BBCAP / Conta Corrente / Consórcio) */}
+        {/* PRODUTOS — repasse dos produtos (BBCAP / Conta Corrente / Consórcio)
+            A CONDICAO MUDOU: era so "algum total do PMR > 0". O total do PMR so
+            existe DEPOIS do reconsolidar; as linhas atribuidas existem ANTES.
+            Com a condicao antiga, o promotor com linha ja atribuida e o mes
+            ainda nao reconsolidado via um card VAZIO — dado real escondido por
+            causa da ordem de dois processos. Agora basta ter linha OU total. */}
         {summary &&
-        ((summary.bbcap_commission_value ?? 0) > 0 ||
+        ((produtos?.rows.length ?? 0) > 0 ||
+          (summary.bbcap_commission_value ?? 0) > 0 ||
           (summary.conta_corrente_commission_value ?? 0) > 0 ||
           (summary.consorcio_commission_value ?? 0) > 0) ? (
           <section className="card">
@@ -511,6 +553,51 @@ export default function PromotorView() {
                 </tbody>
               </table>
             </div>
+
+            {/* LINHA A LINHA — o que forma cada total acima. Sem comissao da
+                EMPRESA e sem a do GESTOR: o promotor ve o que e DELE. */}
+            {(produtos?.rows.length ?? 0) > 0 ? (
+              <div className="scroll" style={{ marginTop: 14 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th className="l sticky">Produto</th>
+                      <th className="l">Operação</th>
+                      <th className="l">Detalhe</th>
+                      <th className="l">Data</th>
+                      <th>Meu repasse</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(produtos?.rows ?? []).map((r, i) => (
+                      <tr key={`${r.entry_type}|${r.operacao}|${i}`}>
+                        <td className="l sticky" data-l="Produto">
+                          {r.entry_type === "BBCAP"
+                            ? "BBCAP"
+                            : r.entry_type === "CONTA_CORRENTE"
+                              ? "Conta Corrente"
+                              : "Consórcio"}
+                        </td>
+                        <td className="l ctr" data-l="Operação">{r.operacao}</td>
+                        <td className="l" data-l="Detalhe">
+                          {r.entry_type === "BBCAP"
+                            ? r.codigo_produto || "—"
+                            : r.entry_type === "CONTA_CORRENTE"
+                              ? r.produto_texto || "—"
+                              : `${r.segmento || "—"} · parcela ${r.parcela || "—"}`}
+                        </td>
+                        <td className="l" data-l="Data">
+                          {dataCurta(r.entry_type === "BBCAP" ? r.data_venda : r.data)}
+                        </td>
+                        <td className="num" data-l="Meu repasse">
+                          {formatCurrency(r.comissao_promotor)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
           </section>
         ) : null}
 

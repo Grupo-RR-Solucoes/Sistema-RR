@@ -257,6 +257,17 @@ const GATES = [
       "createClient; daily_production_records de PRODUCAO",
   },
   {
+    arquivo: "scripts/produtos_detalhamento_escopo_gate.cjs",
+    nome: "detalhamento por produto: promotor A nao ve linha de B",
+    modo: "needs-db",
+    motivo:
+      "createClient no bloco 4; os blocos 1-3 sao PUROS (conjunto fabricado com A, B " +
+      "e linhas orfas) porque hoje ha ZERO atribuicao e o gate passaria por vacuidade. " +
+      "NAO atribui em producao para se testar: PostgREST nao tem transacao, e 'atribui " +
+      "e desfaz' sao dois writes — queda no meio deixaria atribuicao real, que muda " +
+      "repasse. O bloco 4 fica DECLARADO PENDENTE e ACORDA sozinho quando houver ASSIGNED",
+  },
+  {
     arquivo: "scripts/consorcio_gestor_por_proposta_gate.cjs",
     nome: "gestor de consorcio por proposta (base bate, so o centavo diverge)",
     modo: "needs-db",

@@ -177,6 +177,37 @@ type PromoterPayload = {
   companies: CompanyOption[];
   debitRows?: DebitRow[];
   debitQueue?: DebitQueueRow[];
+  produtoRows?: ProdutoRows | null;
+};
+
+// DETALHAMENTO POR PRODUTO — vem de lib/produtos/produtoProposalRows, ja filtrado
+// pelo promotor na ORIGEM (o escopo e a guarda; a tela nao esconde nada que a
+// rota tenha mandado). `comissao_empresa` chega ausente para quem nao tem direito.
+type ProdutoRow = {
+  entry_type: "BBCAP" | "CONTA_CORRENTE" | "CONSORCIO";
+  operacao: string;
+  company_id: string | null;
+  comissao_empresa?: number;
+  comissao_promotor: number;
+  cpf_cliente?: string | null;
+  data_venda?: string | null;
+  data_debito?: string | null;
+  codigo_produto?: string | null;
+  valor_produto?: number | null;
+  login_agente?: string | null;
+  agencia?: string | null;
+  j_key?: string | null;
+  produto_texto?: string | null;
+  data?: string | null;
+  segmento?: string | null;
+  valor_bem?: number | null;
+  parcela?: string | null;
+  pct_comissao?: number | null;
+};
+type ProdutoRows = {
+  rows: ProdutoRow[];
+  totais: { bbcap: number; conta_corrente: number; consorcio: number; total: number };
+  sem_atribuicao: { bbcap: number; conta_corrente: number; consorcio: number };
 };
 
 // FRENTE DÉBITOS — detalhe dos débitos do promotor + fila de atribuição.
@@ -226,6 +257,7 @@ const emptyPayload: PromoterPayload = {
   },
   summaryRows: [],
   proposalRows: [],
+  produtoRows: null,
   agreementRows: [],
   discountRows: [],
   promoterOptions: [],
@@ -252,7 +284,7 @@ export default function PromotoresPage() {
 function PromotoresFullPage() {
   const { user } = useUser();
   const [activeSection, setActiveSection] = useState<
-    "resumo" | "metas" | "descontos" | "detalhamento" | "migracao"
+    "resumo" | "metas" | "descontos" | "detalhamento" | "produtos" | "migracao"
   >("resumo");
   const [selectedKey, setSelectedKey] = useState("");
   const [companyId, setCompanyId] = useState("");
@@ -355,7 +387,14 @@ function PromotoresFullPage() {
     if (typeof window === "undefined") return;
     const sp = new URLSearchParams(window.location.search);
     const tab = sp.get("tab");
-    if (tab === "resumo" || tab === "metas" || tab === "descontos" || tab === "detalhamento" || tab === "migracao") {
+    if (
+      tab === "resumo" ||
+      tab === "metas" ||
+      tab === "descontos" ||
+      tab === "detalhamento" ||
+      tab === "produtos" ||
+      tab === "migracao"
+    ) {
       setActiveSection(tab);
     }
     if (sp.get("unassigned") === "1") setUnassignedRequested(true);
@@ -1113,6 +1152,7 @@ function PromotoresFullPage() {
     { key: "metas", label: "Metas & escala" },
     { key: "descontos", label: "Descontos" },
     { key: "detalhamento", label: "Detalhamento" },
+    { key: "produtos", label: "Produtos" },
     { key: "migracao", label: "Migração" },
   ];
 
@@ -2335,6 +2375,179 @@ function PromotoresFullPage() {
                 </div>
               )}
             </div>
+          </section>
+        ) : null}
+
+        {/* PANEL: PRODUTOS — BBCAP / Conta Corrente / Consórcio, linha a linha */}
+        {activeSection === "produtos" ? (
+          <section className="panel active">
+            {(() => {
+              const pr = data.produtoRows;
+              const rows = pr?.rows ?? [];
+              const sem = pr?.sem_atribuicao ?? { bbcap: 0, conta_corrente: 0, consorcio: 0 };
+              const semTotal = sem.bbcap + sem.conta_corrente + sem.consorcio;
+              const doTipo = (t: string) => rows.filter((r) => r.entry_type === t);
+              const brlOuTraco = (v: number | null | undefined) =>
+                v === null || v === undefined ? "—" : formatCurrency(v);
+              const dataBr = (v: unknown) => {
+                const x = String(v ?? "").trim();
+                if (!x) return "—";
+                const iso = x.match(/^(\d{4})-(\d{2})-(\d{2})/);
+                return iso ? `${iso[3]}/${iso[2]}/${iso[1]}` : x;
+              };
+              const pctBr = (v: number | null | undefined) =>
+                v === null || v === undefined ? "—" : `${(v * 100).toFixed(2).replace(".", ",")}%`;
+              const txtOu = (v: unknown) => {
+                const x = String(v ?? "").trim();
+                return x === "" ? "—" : x;
+              };
+              const temEmpresa = rows.some((r) => r.comissao_empresa !== undefined);
+
+              const tabela = (
+                titulo: string,
+                tipo: string,
+                pendentes: number,
+                cols: Array<{ th: string; num?: boolean; get: (r: ProdutoRow) => React.ReactNode }>
+              ) => {
+                const linhas = doTipo(tipo);
+                return (
+                  <div className="card" key={tipo}>
+                    <div className="card-head">
+                      <div>
+                        <h2>{titulo}</h2>
+                        <p className="csub">
+                          {linhas.length} linha(s) atribuída(s) a este promotor · {competenceShort}
+                          {pendentes > 0
+                            ? ` · ${pendentes} linha(s) do mês ainda sem dono (fila de atribuição)`
+                            : ""}
+                        </p>
+                      </div>
+                      <span className="chip soft">
+                        {formatCurrency(
+                          linhas.reduce((a, r) => a + r.comissao_promotor, 0)
+                        )}
+                      </span>
+                    </div>
+                    {linhas.length === 0 ? (
+                      <div className="state">
+                        Nenhuma linha de {titulo.toLowerCase()} atribuída a este promotor nesta
+                        competência.
+                        {pendentes > 0 ? (
+                          <>
+                            {" "}
+                            <Link className="linkbtn" href="/produtos/atribuicao">
+                              Ir para a fila de atribuição →
+                            </Link>
+                          </>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="scroll">
+                        <table className="wide">
+                          <thead>
+                            <tr>
+                              {cols.map((c) => (
+                                <th key={c.th} className={c.num ? undefined : "l"}>
+                                  {c.th}
+                                </th>
+                              ))}
+                              {temEmpresa ? <th>Comissão empresa</th> : null}
+                              <th>Comissão promotor</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {linhas.map((r, i) => (
+                              <tr key={`${r.entry_type}|${r.operacao}|${i}`}>
+                                {cols.map((c) => (
+                                  <td
+                                    key={c.th}
+                                    className={c.num ? "num" : "l"}
+                                    data-l={c.th}
+                                  >
+                                    {c.get(r)}
+                                  </td>
+                                ))}
+                                {temEmpresa ? (
+                                  <td className="num" data-l="Comissão empresa">
+                                    {brlOuTraco(r.comissao_empresa)}
+                                  </td>
+                                ) : null}
+                                <td className="num" data-l="Comissão promotor">
+                                  {formatCurrency(r.comissao_promotor)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              };
+
+              return (
+                <>
+                  <div className="dk">
+                    <div className="dkc">
+                      <p className="k">BBCAP</p>
+                      <div className="v num">{formatCurrency(pr?.totais.bbcap ?? 0)}</div>
+                    </div>
+                    <div className="dkc">
+                      <p className="k">Conta Corrente</p>
+                      <div className="v num">{formatCurrency(pr?.totais.conta_corrente ?? 0)}</div>
+                    </div>
+                    <div className="dkc">
+                      <p className="k">Consórcio</p>
+                      <div className="v num">{formatCurrency(pr?.totais.consorcio ?? 0)}</div>
+                    </div>
+                    <div className="dkc">
+                      <p className="k">Total do promotor</p>
+                      <div className="v num">{formatCurrency(pr?.totais.total ?? 0)}</div>
+                    </div>
+                  </div>
+
+                  {semTotal > 0 ? (
+                    <div className="card">
+                      <p className="state">
+                        {semTotal} linha(s) de produto desta competência ainda estão{" "}
+                        <b>sem dono</b> na fila (BBCAP {sem.bbcap} · Conta Corrente{" "}
+                        {sem.conta_corrente} · Consórcio {sem.consorcio}). Sem atribuição não há
+                        repasse — elas não aparecem para promotor nenhum.{" "}
+                        <Link className="linkbtn" href="/produtos/atribuicao">
+                          Fila de atribuição →
+                        </Link>
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {tabela("BBCAP", "BBCAP", sem.bbcap, [
+                    { th: "Proposta", get: (r) => r.operacao },
+                    { th: "CPF", get: (r) => txtOu(r.cpf_cliente) },
+                    { th: "Data da venda", get: (r) => dataBr(r.data_venda) },
+                    { th: "Data do débito", get: (r) => dataBr(r.data_debito) },
+                    { th: "Código do produto", get: (r) => txtOu(r.codigo_produto) },
+                    { th: "Valor do produto", num: true, get: (r) => brlOuTraco(r.valor_produto) },
+                    { th: "Login do agente", get: (r) => txtOu(r.login_agente) },
+                  ])}
+
+                  {tabela("Conta Corrente", "CONTA_CORRENTE", sem.conta_corrente, [
+                    { th: "Conta", get: (r) => r.operacao },
+                    { th: "Agência", get: (r) => txtOu(r.agencia) },
+                    { th: "Chave J", get: (r) => txtOu(r.j_key) },
+                    { th: "Data", get: (r) => dataBr(r.data) },
+                    { th: "Produto", get: (r) => txtOu(r.produto_texto) },
+                  ])}
+
+                  {tabela("Consórcio", "CONSORCIO", sem.consorcio, [
+                    { th: "Proposta", get: (r) => r.operacao },
+                    { th: "Segmento", get: (r) => txtOu(r.segmento) },
+                    { th: "Valor bem", num: true, get: (r) => brlOuTraco(r.valor_bem) },
+                    { th: "Parcela", num: true, get: (r) => txtOu(r.parcela) },
+                    { th: "% Comissão", num: true, get: (r) => pctBr(r.pct_comissao) },
+                  ])}
+                </>
+              );
+            })()}
           </section>
         ) : null}
 
