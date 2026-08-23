@@ -257,6 +257,17 @@ const GATES = [
       "createClient; daily_production_records de PRODUCAO",
   },
   {
+    arquivo: "scripts/reatribuicao_precedencia_gate.cjs",
+    nome: "reatribuicao manual: o diario vence a chave J",
+    modo: "needs-db",
+    motivo:
+      "createClient; monthly_closing_entries + daily_production_records de PRODUCAO. " +
+      "O bloco 1 e puro; o 2 prova que a precedencia ANTIGA punha os 5 contratos " +
+      "medidos de jul/2026 no dono da chave (contraprova, para o gate nao passar por " +
+      "vacuidade); o 3 prova o FALLBACK numa competencia sem diario (2026-01); o 4 " +
+      "impede a precedencia voltar a ser escrita a mao nos consumidores",
+  },
+  {
     arquivo: "scripts/heranca_master_janela_gate.cjs",
     nome: "heranca master decide competencia pela janela",
     modo: "needs-db",

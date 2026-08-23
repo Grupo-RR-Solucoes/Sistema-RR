@@ -40,7 +40,7 @@ import {
   loadClosingPromoterBase,
   type ClosingContrato,
 } from "./closingPromoterBase.ts";
-import { buildMasterHeirMap } from "./herancaMaster.ts";
+import { buildDonoDoDiarioMap, resolvePromotorEfetivo } from "./herancaMaster.ts";
 import {
   assertPisoInjetado,
   competenciaExigePiso,
@@ -121,8 +121,9 @@ async function fetchAllPaged<T = any>(build: () => any): Promise<T[]> {
   return all;
 }
 
-// Herança master: EXTRAÍDA para lib/herancaMaster.ts (fonte única). Havia uma
-// cópia literal em bbtsOrchestrator.ts; as duas consomem o helper agora.
+// Promotor efetivo da linha: EXTRAÍDO para lib/herancaMaster.ts (fonte única).
+// O DIÁRIO vence a chave J (honra a reatribuição manual); a chave J é fallback
+// quando não há linha no diário. Os três consumidores chamam o mesmo helper.
 
 type SupabaseLike = SupabaseClient;
 
@@ -192,11 +193,12 @@ export async function resolveDonaCompanyForPromoter(
   const base = await loadClosingPromoterBase(supabase, { year, month, companyId: null });
   const isBbts = (c: ClosingContrato) => normKey(c.chaveJ) === BBTS_KEY;
   const contratos = base.contratos.filter((c) => !isBbts(c));
-  const orphans = contratos.filter((c) => !c.promoterId && (c.contrato || "").trim());
-  const heir = await buildMasterHeirMap(supabase, orphans, year, month);
+  const dono = await buildDonoDoDiarioMap(supabase, contratos, year, month);
   for (const c of contratos) {
-    (c as any).__pid =
-      c.promoterId ?? heir.get(`${c.companyId}|${(c.contrato || "").trim()}`) ?? null;
+    (c as any).__pid = resolvePromotorEfetivo(
+      { promoterIdDaChave: c.promoterId, contrato: c.contrato, companyId: c.companyId },
+      dono
+    );
   }
   return computeDonaCompanyMap(contratos).get(promoterId) ?? null;
 }
@@ -272,14 +274,18 @@ export async function consolidateMonthlyFromClosing(
   const contratos = base.contratos.filter((c) => !isBbts(c));
   const restritas = base.restritas.filter((c) => !isBbts(c));
 
-  // 3. Herança master: contratos sem promotor individual herdam do diário.
-  const orphans = contratos.filter((c) => !c.promoterId && (c.contrato || "").trim());
-  const heir = await buildMasterHeirMap(supabase, orphans, year, month);
-  const efetivoPid = (c: ClosingContrato): string | null => {
-    if (c.promoterId) return c.promoterId;
-    const h = heir.get(`${c.companyId}|${(c.contrato || "").trim()}`);
-    return h ?? null;
-  };
+  // 3. Promotor efetivo: o DIÁRIO manda. `assigned_promoter_id` é o campo que o
+  //    financeiro edita ao reatribuir; a chave J fica no dono ORIGINAL e por isso
+  //    não pode ter a última palavra. O mapa é construído sobre TODAS as linhas
+  //    (contratos + restritas) — filtrar só as órfãs de chave master era o defeito
+  //    que desfazia toda reatribuição promotor->promotor no fechamento.
+  //    A chave J segue como FALLBACK: sem linha no diário, nada muda.
+  const dono = await buildDonoDoDiarioMap(supabase, [...contratos, ...restritas], year, month);
+  const efetivoPid = (c: ClosingContrato): string | null =>
+    resolvePromotorEfetivo(
+      { promoterIdDaChave: c.promoterId, contrato: c.contrato, companyId: c.companyId },
+      dono
+    );
   for (const c of contratos) (c as any).__pid = efetivoPid(c);
   for (const c of restritas) (c as any).__pid = efetivoPid(c);
 
@@ -554,7 +560,11 @@ export async function consolidateMonthlyFromClosing(
     table,
     // Diagnóstico / UI futura.
     contratos_processados: contratos.length,
-    contratos_herdados: orphans.filter((c) => (c as any).__pid).length,
+    // Linhas cujo dono veio do DIÁRIO (reatribuição honrada + herança master):
+    //   antes só contava a herança, porque o diário só era consultado p/ órfã.
+    contratos_do_diario: contratos.filter(
+      (c) => (c as any).__pid && (c as any).__pid !== c.promoterId
+    ).length,
     orfaos_sem_dono: orfaosSemDono,
     restritas, // SRCC="Sim": fora do valor, para a UI listar depois.
     bbts_excluidos: base.contratos.length - contratos.length,
@@ -572,7 +582,8 @@ const A_CONTRATO = ["CONTRATO", "NUMERO CONTRATO", "NÚMERO CONTRATO"];
  * Acumula em cada promotor a COMISSÃO SEGURO BRUTA da aba INSURANCE/"A Vista"
  * (em seguroEmpresaAvulso). O share (penetração individual) é aplicado UMA vez no
  * final, junto com o embutido — por isso NÃO multiplica por share aqui. Atribui
- * por CHAVE J (INDIVIDUAL) ou herança master (contrato → daily.proposal_number).
+ * pelo DIÁRIO (contrato → daily.proposal_number, assigned_promoter_id) com a
+ * CHAVE J (INDIVIDUAL) como fallback — MESMA precedência do PMR à vista.
  * Sem chave resolvível => fora. Exclui BBTS. Muta o agregado via getAgg (cria
  * entrada nova se o promotor só tiver seguro avulso).
  */
@@ -583,7 +594,7 @@ async function addSeguroAvulso(
 ): Promise<{
   linhas: number;
   atribuidas: number;
-  master_herdadas: number;
+  do_diario: number; // resolvidas pelo assigned_promoter_id do diário
   sem_chave: number;
   bbts: number;
   total: number; // Σ COMISSÃO SEGURO BRUTA atribuída (antes do share)
@@ -619,17 +630,20 @@ async function addSeguroAvulso(
   const contratoDe = (r: any): string =>
     String(readRawPayloadValue(r.metadata || {}, A_CONTRATO) || "").trim();
 
-  // Herança master p/ as linhas cuja chave é MASTER.
-  const masterOrphans = rows
-    .filter((r) => {
-      const info = jkeyMap.get(chaveDe(r));
-      return info && info.key_type === "MASTER";
-    })
-    .map((r) => ({ contrato: contratoDe(r), companyId: r.company_id ?? null }));
-  const heir = await buildMasterHeirMap(supabase, masterOrphans, year, month);
+  // Dono do DIÁRIO p/ TODAS as linhas (não só as de chave MASTER): é a consulta
+  //   ao diário que faz a reatribuição manual valer. Restringi-la à chave MASTER
+  //   deixava a aba de seguro desfazendo a reatribuição igual ao à vista fazia.
+  const dono = await buildDonoDoDiarioMap(
+    supabase,
+    rows
+      .filter((r) => chaveDe(r) !== BBTS_KEY)
+      .map((r) => ({ contrato: contratoDe(r), companyId: r.company_id ?? null })),
+    year,
+    month
+  );
 
   let atribuidas = 0;
-  let masterHerdadas = 0;
+  let doDiario = 0;
   let semChave = 0;
   let bbts = 0;
   let total = 0;
@@ -641,15 +655,19 @@ async function addSeguroAvulso(
       continue;
     }
     const info = jkeyMap.get(chave);
-    let pid: string | null = null;
-    if (info && info.key_type === "INDIVIDUAL") {
-      pid = info.promoter_id;
-    } else if (info && info.key_type === "MASTER") {
-      pid = heir.get(`${r.company_id}|${contratoDe(r)}`) ?? null;
-      if (pid) masterHerdadas += 1;
-    }
+    const contrato = contratoDe(r);
+    const pid = resolvePromotorEfetivo(
+      {
+        promoterIdDaChave:
+          info && info.key_type === "INDIVIDUAL" ? info.promoter_id ?? null : null,
+        contrato,
+        companyId: r.company_id ?? null,
+      },
+      dono
+    );
+    if (pid && dono.get(`${r.company_id ?? null}|${contrato}`) === pid) doDiario += 1;
     if (!pid) {
-      semChave += 1; // sem chave individual nem herança master resolvível
+      semChave += 1; // nem o diário nem a chave J resolvem -> fora
       continue;
     }
     const comSeg =
@@ -661,5 +679,5 @@ async function addSeguroAvulso(
     atribuidas += 1;
   }
 
-  return { linhas: rows.length, atribuidas, master_herdadas: masterHerdadas, sem_chave: semChave, bbts, total };
+  return { linhas: rows.length, atribuidas, do_diario: doDiario, sem_chave: semChave, bbts, total };
 }
