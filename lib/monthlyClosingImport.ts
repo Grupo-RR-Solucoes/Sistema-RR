@@ -541,6 +541,9 @@ export function buildProductLines(
       const cProd = locateProductCol(rows, "CODIGO DO PRODUTO");
       const cVal = locateProductCol(rows, "VALOR DO PRODUTO");
       const cData = locateProductCol(rows, "DATA DA VENDA");
+      // FASE 1 — colunas do fechamento manual que faltavam no metadata. So LEITURA
+      // de coluna existente: nao muda valor nem a chave natural da linha.
+      const cDataDeb = locateProductCol(rows, "DATA DO DEBITO");
       const cCpf = locateProductCol(rows, "CPF DO CLIENTE");
       const cLogin = locateProductCol(rows, "LOGIN DO AGENTE DE CREDITO");
       const cMci = locateProductCol(rows, "MCI");
@@ -560,6 +563,7 @@ export function buildProductLines(
           metadata: {
             codigo_produto: trimStr(cellAt(row, cProd?.col)) || null,
             valor_produto: parseNumber(cellAt(row, cVal?.col)),
+            data_debito: parseDate(cellAt(row, cDataDeb?.col)),
             cpf_cliente: trimStr(cellAt(row, cCpf?.col)) || null,
             login_agente: trimStr(cellAt(row, cLogin?.col)) || null,
             mci: trimStr(cellAt(row, cMci?.col)) || null,
@@ -582,6 +586,9 @@ export function buildProductLines(
     const cPct = locateProductCol(rows, "% COMISSAO");
     const cData = locateProductCol(rows, "DATA");
     const cMci = locateProductCol(rows, "MCI");
+    // FASE 1 — "8763 - 48357275000103 - RR SOLUCOES LTDA": guardada INTEIRA, sem
+    // tentar separar cod. coban / CNPJ / nome (o formato nao e garantido).
+    const cRazao = locateProductCol(rows, "RAZAO SOCIAL");
     const isMaster = abaName.includes("MASTER");
     for (let r = kProp.headerRow + 1; r < rows.length; r++) {
       const row = rows[r] || [];
@@ -600,6 +607,7 @@ export function buildProductLines(
         grossValue: parseNumber(cellAt(row, cBem?.col)),
         operationDate: parseDate(cellAt(row, cData?.col)),
         metadata: {
+          razao_social: trimStr(cellAt(row, cRazao?.col)) || null,
           segmento: trimStr(cellAt(row, cSeg?.col)) || null,
           valor_bem: parseNumber(cellAt(row, cBem?.col)),
           parcela_liberacao: parcela || null,
@@ -624,6 +632,12 @@ export function buildProductLines(
       const cAg = locateProductCol(rows, "AGENCIA");
       const cLoja = locateProductCol(rows, "LOJA");
       const cMci = locateProductCol(rows, "MCI");
+      // FASE 1 — colunas do fechamento manual que faltavam no metadata.
+      // "AG. REL." tem ponto e e DIFERENTE de "AGENCIA" (4287 x 3183 na mesma linha).
+      const cRazao = locateProductCol(rows, "RAZAO SOCIAL");
+      const cGrupo = locateProductCol(rows, "GRUPO");
+      const cTipoServ = locateProductCol(rows, "TIPO SERV");
+      const cAgRel = locateProductCol(rows, "AG. REL.");
       // ha DUAS colunas "PRODUTO" (codigo numerico + texto "Ativacao ... PF/PJ").
       const hdr = rows[kConta.headerRow] || [];
       const prodCols: number[] = [];
@@ -655,6 +669,10 @@ export function buildProductLines(
           metadata: {
             numero_conta: balde ? null : conta,
             balde,
+            razao_social: trimStr(cellAt(row, cRazao?.col)) || null,
+            grupo: trimStr(cellAt(row, cGrupo?.col)) || null,
+            tipo_serv: trimStr(cellAt(row, cTipoServ?.col)) || null,
+            ag_rel: trimStr(cellAt(row, cAgRel?.col)) || null,
             modalidade: trimStr(cellAt(row, cModal?.col)) || null,
             produto_cod: trimStr(cellAt(row, prodCodCol)) || null,
             produto_texto: trimStr(cellAt(row, prodTxtCol)) || null,
