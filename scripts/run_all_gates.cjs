@@ -257,6 +257,17 @@ const GATES = [
       "createClient; daily_production_records de PRODUCAO",
   },
   {
+    arquivo: "scripts/consorcio_gestor_por_proposta_gate.cjs",
+    nome: "gestor de consorcio por proposta (base bate, so o centavo diverge)",
+    modo: "needs-db",
+    motivo:
+      "createClient; monthly_closing_entries de PRODUCAO. Blocos 1 e 2 sao PUROS " +
+      "(conjunto fabricado; o 2 monta de proposito um caso em que 1 round e N rounds " +
+      "divergem, para o gate nao passar por vacuidade quando os dois concordarem); o 3 " +
+      "confere jun e jul/2026 — base IDENTICA nas duas reguas e delta em centavos; o 4 " +
+      "guarda que a proposta vendida pelo PROPRIO gestor continua na base dos 10%",
+  },
+  {
     arquivo: "scripts/produtos_visibilidade_comissao_gate.cjs",
     nome: "comissao do promotor nao vaza para quem nao tem direito",
     modo: "needs-db",
