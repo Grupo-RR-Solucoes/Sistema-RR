@@ -27,6 +27,31 @@
 // formato='AGREGADO_LEGADO' e NAO recebe detalhe — reconsolidar junho nao inventa
 // linhas por proposta numa competencia paga. Ver
 // scripts/sql/2026-08-23_consorcio_gestor_por_proposta.sql
+//
+// FECHADO PROTEGE O VALOR (decisao Diego, 23/08/2026). A linha do AGREGADO com
+// status='FECHADO' NAO e reescrita pelo reconsolidar: o upsert dela e pulado, e o
+// retorno diz quais foram puladas (`agregado_pulado`) — nunca em silencio, porque
+// quem chama precisa saber que pediu gravacao e nao houve.
+//
+// POR QUE: sem isso, FECHADO seria rotulo decorativo. Medido em 23/08 com as duas
+// competencias ja fechadas, o proximo reconsolidar reescreveria
+// base_comissao_empresa, gestor_10, gestor_user_id e delta_arredondamento. Hoje os
+// numeros recalculados sao iguais, entao seria inocuo — mas uma reimportacao com
+// dado diferente mudaria em silencio o valor de uma competencia PAGA. O guard e por
+// (competencia, company_id), nao pela competencia inteira: uma empresa fechada nao
+// congela a outra.
+//
+// AUSENCIA DE LINHA NAO E FECHADO. Competencia nova (sem linha no payout) grava
+// normal — senao a guarda impediria o primeiro calculo de existir.
+//
+// O DETALHE CONTINUA RODANDO com a competencia fechada. Ele nao e o registro de
+// pagamento; e a explicacao de como o numero se formou. Travar o detalhe deixaria
+// uma competencia fechada sem como conferir a propria conta.
+//
+// CONSEQUENCIA ACEITA, ESCRITA PARA NAO VIRAR BUG-REPORT: com julho ja FECHADA
+// antes de qualquer reconsolidar, o `delta_arredondamento` dela fica NULL PARA
+// SEMPRE — o -0,01 so entraria pelo upsert do agregado, que agora nao roda. Gravar
+// o centavo la e um UPDATE consciente no Studio, nao efeito colateral de recalculo.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FATOR_REPASSE_GESTOR_CONSORCIO } from "./trp210.ts";
 import { fetchConsorcioEntries, isRegular, type ConsorcioEntry } from "./fila.ts";
@@ -129,6 +154,10 @@ export async function computeConsorcioGestorPayout(
   total_10_detalhe: number;
   delta_arredondamento: number;
   legado: boolean;
+  /** Linhas de agregado efetivamente gravadas (0 em dryRun). */
+  agregado_gravado: number;
+  /** Empresas cujo agregado NAO foi gravado porque a competencia esta FECHADA. */
+  agregado_pulado: Array<{ company_id: string | null; motivo: "FECHADO" }>;
 }> {
   const { year, month } = params;
   const dryRun = params.dryRun === true;
@@ -143,17 +172,28 @@ export async function computeConsorcioGestorPayout(
   const total_10_detalhe = round2(propostas.reduce((s, l) => s + l.gestor_10, 0));
   const delta_arredondamento = round2(total_10_detalhe - total_10);
 
-  // UM probe responde as duas perguntas: a migration ja rodou? e esta competencia
-  // esta rotulada como LEGADO (paga pelo agregado, sem detalhe)? O rotulo mora no
-  // BANCO, nao aqui — uma data hardcoded envelheceria em silencio.
-  const { aplicada, legado } = await probeFormato(supabase, competencia);
+  // UM probe responde as tres perguntas: a migration ja rodou? esta competencia e
+  // LEGADO (paga pelo agregado, sem detalhe)? e quais empresas ja estao FECHADAS?
+  // Tudo isso mora no BANCO, nao aqui — data ou lista hardcoded envelheceria em
+  // silencio.
+  const { aplicada, legado, fechadas } = await probeCompetencia(supabase, competencia);
   // CARIMBO LEVE: quem e o gestor NO MOMENTO da reconsolidacao (resolvido pelo role
   // ativo, nao por tela). Cada competencia guarda quem estava responsavel quando foi
   // paga (historico do pagamento). null = ainda sem gestor cadastrado.
   const gestor_user_id = await gestorAtivoPorRole(supabase);
 
-  if (!dryRun && linhas.length > 0) {
-    const payload = linhas.map((l) => ({
+  // GUARD DO FECHADO — por (competencia, company_id). A linha fechada sai do
+  // payload; as demais gravam normal. Sai do payload, nao do calculo: `linhas` e
+  // `total_10` continuam inteiros no retorno, para quem so quer conferir.
+  const chaveFechada = (companyId: string | null) => `${companyId ?? "NULL"}`;
+  const agregado_pulado = linhas
+    .filter((l) => fechadas.has(chaveFechada(l.company_id)))
+    .map((l) => ({ company_id: l.company_id, motivo: "FECHADO" as const }));
+  const gravaveis = linhas.filter((l) => !fechadas.has(chaveFechada(l.company_id)));
+  let agregado_gravado = 0;
+
+  if (!dryRun && gravaveis.length > 0) {
+    const payload = gravaveis.map((l) => ({
       competencia,
       company_id: l.company_id,
       gestor_user_id,
@@ -171,6 +211,7 @@ export async function computeConsorcioGestorPayout(
         .upsert(payload.slice(i, i + 500), { onConflict: "competencia,company_id" });
       if (error) throw new Error(error.message);
     }
+    agregado_gravado = payload.length;
   }
   // ---- DETALHE por proposta ----
   // Tolera a migration ainda NAO aplicada: so PGRST204/205 (tabela ou coluna que o
@@ -205,6 +246,8 @@ export async function computeConsorcioGestorPayout(
     total_10_detalhe,
     delta_arredondamento,
     legado,
+    agregado_gravado,
+    agregado_pulado,
   };
 }
 
@@ -228,32 +271,52 @@ function ausenteNoSchema(error: { code?: string; message?: string }): boolean {
 }
 
 /**
- * Le o rotulo de formato da competencia. Responde as duas perguntas de uma vez:
+ * Le o estado da competencia no payout. Responde tres perguntas de uma vez:
  *   aplicada -> a migration 2026-08-23 ja rodou (a coluna `formato` existe)?
  *   legado   -> esta competencia foi paga pelo agregado e NAO recebe detalhe?
+ *   fechadas -> quais company_id ja estao com status='FECHADO' (nao reescrever).
  *
- * Sem a migration devolve { aplicada: false, legado: false }: o codigo segue
- * calculando e gravando o agregado exatamente como antes — a frente inteira e
- * no-op ate o SQL rodar no Studio.
+ * DUAS TENTATIVAS DE PROPOSITO. `status` existe desde a migration original;
+ * `formato` so depois de 2026-08-23. Uma consulta unica pedindo as duas colunas
+ * falharia INTEIRA quando a segunda nao existe (42703) e levaria junto a leitura
+ * do status — que e a guarda do dinheiro. Entao: tenta com as duas; se a coluna
+ * nova nao existe, refaz so com `status`. Sem NENHUMA das duas (tabela ausente),
+ * devolve tudo vazio e o codigo segue como antes.
  */
-async function probeFormato(
+async function probeCompetencia(
   supabase: SupabaseLike,
   competencia: string
-): Promise<{ aplicada: boolean; legado: boolean }> {
-  const { data, error } = await supabase
+): Promise<{ aplicada: boolean; legado: boolean; fechadas: Set<string> }> {
+  const vazio = { aplicada: false, legado: false, fechadas: new Set<string>() };
+
+  let aplicada = true;
+  let res: any = await supabase
     .from("consorcio_gestor_payout")
-    .select("formato")
+    .select("company_id, formato, status")
     .eq("competencia", competencia);
-  if (error) {
-    if (ausenteNoSchema(error)) return { aplicada: false, legado: false };
-    throw new Error(error.message);
+  if (res.error) {
+    if (!ausenteNoSchema(res.error)) throw new Error(res.error.message);
+    aplicada = false;
+    res = await supabase
+      .from("consorcio_gestor_payout")
+      .select("company_id, status")
+      .eq("competencia", competencia);
+    if (res.error) {
+      if (ausenteNoSchema(res.error)) return vazio;
+      throw new Error(res.error.message);
+    }
   }
-  const linhas = (data || []).filter((r: any) => r && typeof r === "object");
-  // Coluna ausente e diferente de linha ausente: se ha linha e ela nao tem a
-  // chave `formato`, a migration nao rodou.
-  const aplicada = linhas.length === 0 || linhas.some((r: any) => "formato" in r);
+
+  const linhas = (res.data || []).filter((r: any) => r && typeof r === "object");
+  const fechadas = new Set<string>();
+  for (const r of linhas) {
+    // AUSENCIA DE LINHA NAO E FECHADO: so entra aqui a linha que EXISTE e diz
+    // FECHADO. Competencia nova nao tem linha, o Set fica vazio, e grava normal.
+    if (String(r.status) === "FECHADO") fechadas.add(`${r.company_id ?? "NULL"}`);
+  }
   return {
     aplicada,
     legado: linhas.some((r: any) => String(r.formato) === FORMATO_LEGADO),
+    fechadas,
   };
 }

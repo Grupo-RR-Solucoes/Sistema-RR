@@ -265,7 +265,11 @@ const GATES = [
       "(conjunto fabricado; o 2 monta de proposito um caso em que 1 round e N rounds " +
       "divergem, para o gate nao passar por vacuidade quando os dois concordarem); o 3 " +
       "confere jun e jul/2026 — base IDENTICA nas duas reguas e delta em centavos; o 4 " +
-      "guarda que a proposta vendida pelo PROPRIO gestor continua na base dos 10%",
+      "guarda que a proposta vendida pelo PROPRIO gestor continua na base dos 10%; o 5 " +
+      "prova que o 42703 da migration ausente nao derruba o reconsolidar; o 6 executa o " +
+      "codigo REAL com escritas interceptadas e prova que competencia FECHADA nao recebe " +
+      "upsert de agregado (mas recebe detalhe), com o lado ABERTO fabricado para o teste " +
+      "nao passar por meia prova",
   },
   {
     arquivo: "scripts/produtos_visibilidade_comissao_gate.cjs",
