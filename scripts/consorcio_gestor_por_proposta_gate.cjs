@@ -30,6 +30,11 @@
  *                     identica, gestor de julho em R$ 1.480,3x, delta em
  *                     centavos.
  *   4. NAO EXCLUI   — a proposta do gestor-vendedor segue na base.
+ *   6. FECHADO PROTEGE O VALOR — competencia FECHADA nao recebe upsert de
+ *                     agregado, mas RECEBE o detalhe. Competencia ABERTA recebe os
+ *                     dois. Anti-vacuidade: o mesmo run mostra o que SERIA
+ *                     reescrito sem a guarda (jun gestor_user_id null -> Alan,
+ *                     jul delta null -> -0,01).
  *   5. TOLERA A MIGRATION AUSENTE — o dry-run roda e devolve o delta com ou sem o
  *                     SQL aplicado. Medido em 23/08: pedir a coluna `formato` sem
  *                     a migration devolve **42703** (undefined_column) do Postgres,
@@ -283,6 +288,218 @@ const e = (company_id, proposta, parcela, comissao, master) => ({
     );
     ok(payout.propostas.length === 33, "33 linhas de detalhe", String(payout.propostas.length));
   }
+
+  // ---- 6. FECHADO PROTEGE O VALOR ----
+  // Executa o codigo REAL com dryRun FALSE contra producao, com um shim que
+  // ENGOLE toda escrita e a registra. Leitura vai para o banco de verdade. Nada
+  // e gravado — a conferencia final reconfere as linhas.
+  console.log("\n" + linha("="));
+  console.log("6) FECHADO PROTEGE O VALOR — agregado nao, detalhe sim");
+  console.log(linha("="));
+
+  const escritas = [];
+  function shimDe(cliente) {
+    return {
+      from(tabela) {
+        const q = cliente.from(tabela);
+        q.upsert = (rows, opts) => {
+          escritas.push({ tabela, op: "upsert", rows: Array.isArray(rows) ? rows : [rows], opts });
+          return Promise.resolve({ data: null, error: null });
+        };
+        q.insert = (rows) => {
+          escritas.push({ tabela, op: "insert", rows: Array.isArray(rows) ? rows : [rows] });
+          return Promise.resolve({ data: null, error: null });
+        };
+        q.update = (patch) => {
+          escritas.push({ tabela, op: "update", rows: [patch] });
+          const enc = { eq: () => enc, in: () => enc, then: (r) => Promise.resolve({ data: null, error: null }).then(r) };
+          return enc;
+        };
+        q.delete = () => {
+          escritas.push({ tabela, op: "delete", rows: [] });
+          const enc = { eq: () => enc, in: () => enc, not: () => enc, then: (r) => Promise.resolve({ data: null, error: null }).then(r) };
+          return enc;
+        };
+        return q;
+      },
+    };
+  }
+
+  const { data: estado } = await sb
+    .from("consorcio_gestor_payout")
+    .select("competencia, company_id, status, gestor_user_id, gestor_10, delta_arredondamento")
+    .order("competencia");
+  const porComp = new Map((estado || []).map((r) => [r.competencia, r]));
+  console.log(`   linhas no payout: ${(estado || []).length}`);
+  for (const r of estado || [])
+    console.log(
+      `     ${r.competencia}  status=${r.status}  gestor_10=${brl(r.gestor_10)}  ` +
+        `gestor_user_id=${r.gestor_user_id ? "preenchido" : "NULL"}  ` +
+        `delta=${r.delta_arredondamento === null ? "NULL" : r.delta_arredondamento}`
+    );
+  const fechadas = (estado || []).filter((r) => r.status === "FECHADO").map((r) => r.competencia);
+  ok(
+    fechadas.length > 0,
+    "ANTI-VACUIDADE: ha competencia FECHADA para a guarda morder",
+    fechadas.join(", ")
+  );
+
+  for (const comp of ["2026-06", "2026-07"]) {
+    const [Y, M] = comp.split("-").map(Number);
+    const linhaDb = porComp.get(comp);
+    if (!linhaDb) {
+      console.log(`   ${comp}: sem linha no payout — pulado`);
+      continue;
+    }
+    escritas.length = 0;
+    const res = await computeConsorcioGestorPayout(shimDe(sb), { year: Y, month: M, dryRun: false });
+    const upAgregado = escritas.filter((w) => w.tabela === "consorcio_gestor_payout");
+    const upDetalhe = escritas.filter((w) => w.tabela === "consorcio_gestor_payout_proposta");
+    const nDetalhe = upDetalhe.reduce((a, w) => a + w.rows.length, 0);
+    console.log(
+      `\n   ${comp} (status=${linhaDb.status}, legado=${res.legado}): ` +
+        `upsert agregado=${upAgregado.length}  linhas de detalhe=${nDetalhe}  ` +
+        `agregado_gravado=${res.agregado_gravado}  pulado=${res.agregado_pulado.length}`
+    );
+
+    if (linhaDb.status === "FECHADO") {
+      ok(upAgregado.length === 0, `${comp}: FECHADA -> ZERO upsert de agregado`);
+      ok(
+        res.agregado_gravado === 0,
+        `${comp}: o retorno diz que nao gravou`,
+        `agregado_gravado=${res.agregado_gravado}`
+      );
+      ok(
+        res.agregado_pulado.length > 0 &&
+          res.agregado_pulado.every((x) => x.motivo === "FECHADO"),
+        `${comp}: e diz POR QUE pulou (nao em silencio)`,
+        JSON.stringify(res.agregado_pulado)
+      );
+      // O detalhe roda igual — a menos que a competencia seja LEGADO.
+      if (res.legado) {
+        ok(nDetalhe === 0, `${comp}: LEGADO -> tambem sem detalhe (competencia paga)`);
+      } else {
+        ok(nDetalhe > 0, `${comp}: FECHADA mas NAO legado -> o detalhe roda`, `${nDetalhe} linhas`);
+        ok(nDetalhe === res.propostas.length, `${comp}: todas as propostas viraram detalhe`);
+      }
+      // ANTI-VACUIDADE: o que SERIA reescrito se a guarda nao existisse.
+      const seriaGravado = {
+        gestor_user_id: res.gestor_user_id,
+        base_comissao_empresa: res.linhas[0] && res.linhas[0].base_comissao_empresa,
+        gestor_10: res.linhas[0] && res.linhas[0].gestor_10,
+        delta_arredondamento: res.delta_arredondamento,
+      };
+      const mudariaGestor =
+        String(linhaDb.gestor_user_id) !== String(seriaGravado.gestor_user_id);
+      const mudariaDelta =
+        String(linhaDb.delta_arredondamento) !== String(seriaGravado.delta_arredondamento);
+      console.log(
+        `      sem a guarda seria gravado: ${JSON.stringify(seriaGravado)}`
+      );
+      console.log(
+        `      mudaria gestor_user_id? ${mudariaGestor}   mudaria delta? ${mudariaDelta}`
+      );
+      ok(
+        mudariaGestor || mudariaDelta,
+        `${comp}: ANTI-VACUIDADE — sem a guarda ALGO mudaria nesta linha fechada`,
+        `gestor=${mudariaGestor} delta=${mudariaDelta}`
+      );
+    } else {
+      ok(upAgregado.length > 0, `${comp}: ABERTA -> o agregado E gravado`);
+      ok(res.agregado_gravado > 0, `${comp}: o retorno confirma a gravacao`);
+    }
+  }
+
+  // A competencia SEM linha nenhuma grava normal: ausencia nao e FECHADO.
+  {
+    escritas.length = 0;
+    const res = await computeConsorcioGestorPayout(shimDe(sb), { year: 2026, month: 5, dryRun: false });
+    const upAgregado = escritas.filter((w) => w.tabela === "consorcio_gestor_payout");
+    console.log(
+      `\n   2026-05 (sem linha no payout): propostas=${res.propostas.length} ` +
+        `upsert agregado=${upAgregado.length} pulado=${res.agregado_pulado.length}`
+    );
+    ok(
+      res.agregado_pulado.length === 0,
+      "2026-05: AUSENCIA de linha NAO e FECHADO (nada pulado por status)"
+    );
+  }
+
+  // O LADO ABERTO. As duas competencias reais estao FECHADAS, entao sem isto o
+  // bloco so provaria metade — "nao grava" passaria ate com um `return` no topo
+  // da funcao. Aqui a LEITURA de consorcio_gestor_payout e trocada por uma linha
+  // ABERTA fabricada; o resto (entries, app_users) segue vindo do banco real.
+  {
+    const abertaShim = {
+      from(tabela) {
+        if (tabela !== "consorcio_gestor_payout") return shimDe(sb).from(tabela);
+        const enc = {
+          select: () => enc,
+          eq: () => enc,
+          order: () => enc,
+          upsert: (rows, opts) => {
+            escritas.push({ tabela, op: "upsert", rows: Array.isArray(rows) ? rows : [rows], opts });
+            return Promise.resolve({ data: null, error: null });
+          },
+          then: (r) =>
+            Promise.resolve({
+              data: [
+                {
+                  company_id: "b037ecdf-20db-4ab0-81a2-b267f876c626",
+                  formato: "AGREGADO_COM_DETALHE",
+                  status: "ABERTO",
+                },
+              ],
+              error: null,
+            }).then(r),
+        };
+        return enc;
+      },
+    };
+    escritas.length = 0;
+    const res = await computeConsorcioGestorPayout(abertaShim, {
+      year: 2026,
+      month: 7,
+      dryRun: false,
+    });
+    const upAgregado = escritas.filter((w) => w.tabela === "consorcio_gestor_payout");
+    const nDetalhe = escritas
+      .filter((w) => w.tabela === "consorcio_gestor_payout_proposta")
+      .reduce((a, w) => a + w.rows.length, 0);
+    console.log(
+      `\n   2026-07 com status ABERTO (fabricado): upsert agregado=${upAgregado.length} ` +
+        `linhas de detalhe=${nDetalhe} agregado_gravado=${res.agregado_gravado} ` +
+        `pulado=${res.agregado_pulado.length}`
+    );
+    ok(upAgregado.length === 1, "ABERTA -> o agregado E gravado", `${upAgregado.length} upsert`);
+    ok(res.agregado_gravado === 1, "e o retorno confirma", `agregado_gravado=${res.agregado_gravado}`);
+    ok(res.agregado_pulado.length === 0, "nada pulado quando esta ABERTA");
+    ok(nDetalhe === 33, "e o detalhe roda igual (33 linhas)", `${nDetalhe}`);
+    const linhaUp = upAgregado[0] && upAgregado[0].rows[0];
+    ok(
+      !!linhaUp && !("status" in linhaUp),
+      "o payload do agregado segue SEM `status` (nao reverte o rotulo)"
+    );
+    ok(
+      !!linhaUp && Math.abs(Number(linhaUp.delta_arredondamento) + 0.01) < 0.005,
+      "e leva o delta -0,01",
+      linhaUp ? String(linhaUp.delta_arredondamento) : "-"
+    );
+  }
+
+  // Reconferencia: o shim nao deixou passar nada.
+  const { data: depois } = await sb
+    .from("consorcio_gestor_payout")
+    .select("competencia, gestor_10, status, delta_arredondamento")
+    .order("competencia");
+  const igual =
+    JSON.stringify(
+      (estado || []).map((r) => [r.competencia, r.gestor_10, r.status, r.delta_arredondamento])
+    ) ===
+    JSON.stringify(
+      (depois || []).map((r) => [r.competencia, r.gestor_10, r.status, r.delta_arredondamento])
+    );
+  ok(igual, "NADA foi gravado durante o gate (as linhas seguem identicas)");
 
   console.log("\n" + linha("="));
   console.log(falhas === 0 ? "GATE: PASSOU" : `GATE: ${falhas} FALHA(S)`);

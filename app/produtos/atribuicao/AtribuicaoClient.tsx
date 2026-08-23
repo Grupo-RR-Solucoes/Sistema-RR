@@ -72,7 +72,23 @@ type Payload = {
   resumo: { pendentes: number; atribuidas: number; gestao: number };
 };
 
-const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+// Nome por EXTENSO, nao a abreviacao de 3 letras. A tela e de trabalho manual e
+// "jul" x "jun" a 12px se confundem — errar o mes aqui significa atribuir a
+// competencia errada, que so aparece no fechamento seguinte.
+const MES = [
+  "Janeiro",
+  "Fevereiro",
+  "Março",
+  "Abril",
+  "Maio",
+  "Junho",
+  "Julho",
+  "Agosto",
+  "Setembro",
+  "Outubro",
+  "Novembro",
+  "Dezembro",
+];
 
 const CSS = `
 .rratr .wrap{max-width:1080px;margin:0 auto;padding:24px 20px 64px;display:flex;flex-direction:column;gap:22px}
@@ -80,7 +96,8 @@ const CSS = `
 .rratr .crumb a{color:var(--ink-2);text-decoration:none}
 .rratr .crumb .sep{opacity:.5}
 .rratr .comp{display:flex;gap:8px;align-items:center}
-.rratr .comp select{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:8px;padding:7px 10px;font:inherit}
+.rratr .comp select{appearance:none;-webkit-appearance:none;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.13);color:#E4E9F4;padding:8px 16px;border-radius:999px;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;}
+.rratr .comp select:focus{outline:none;border-color:rgba(255,255,255,.35);}
 .rratr .prodgrid{display:flex;flex-direction:column;gap:22px}
 .rratr .idn{font-family:var(--font-mono);font-size:13px}
 .rratr .rowsel{min-width:210px;max-width:280px;background:var(--paper);border:1px solid var(--bd);border-radius:8px;padding:6px 8px;font:inherit;color:var(--ink)}

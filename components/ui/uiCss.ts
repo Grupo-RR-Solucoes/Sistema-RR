@@ -32,6 +32,18 @@ export const UI_CSS = `
 .rrui-hnavy__title{font-size:27px;font-weight:600;letter-spacing:-.01em;margin:0;color:#fff;}
 .rrui-hnavy__subtitle{font-size:13px;color:rgba(255,255,255,.62);margin:8px 0 0;}
 .rrui-hnavy__aside{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+/* SELECT SOBRE O NAVY — a lista aberta e do SISTEMA, nao do bloco.
+   O <select> herda color:#E4E9F4/#fff para ficar legivel sobre o navy, e o
+   <option> herda essa cor DE VOLTA. So que o popup nativo abre com fundo CLARO:
+   texto quase branco sobre branco = so da para ler a opcao selecionada, que o
+   proprio campo mostra. Foi o que aconteceu no seletor de mes da
+   /produtos/atribuicao.
+   A regra vive AQUI, e nao em cada tela, porque o padrao "select dentro do
+   actions do HeaderNavy" se repete em 14 lugares — 7 ja remendavam por conta
+   propria (com este mesmo #16203A), 7 estavam quebrados. Escopo .rrui-hnavy:
+   nao encosta em select de formulario, que ja nasce com fundo branco. */
+.rrui-hnavy select option,
+.rrui-hnavy select optgroup{color:#16203A;background:#fff;}
 /* TELEFONE — o padding de 34px lateral come 68px dos 356 úteis a 384px (19%).
    16px devolve 36px ao conteúdo. O título de 27px cai para 21px porque a 384px
    ele quebrava em 2-3 linhas e era ele quem empurrava a tabela abaixo da dobra.

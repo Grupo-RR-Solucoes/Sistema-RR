@@ -257,6 +257,17 @@ const GATES = [
       "createClient; daily_production_records de PRODUCAO",
   },
   {
+    arquivo: "scripts/produtos_detalhamento_escopo_gate.cjs",
+    nome: "detalhamento por produto: promotor A nao ve linha de B",
+    modo: "needs-db",
+    motivo:
+      "createClient no bloco 4; os blocos 1-3 sao PUROS (conjunto fabricado com A, B " +
+      "e linhas orfas) porque hoje ha ZERO atribuicao e o gate passaria por vacuidade. " +
+      "NAO atribui em producao para se testar: PostgREST nao tem transacao, e 'atribui " +
+      "e desfaz' sao dois writes — queda no meio deixaria atribuicao real, que muda " +
+      "repasse. O bloco 4 fica DECLARADO PENDENTE e ACORDA sozinho quando houver ASSIGNED",
+  },
+  {
     arquivo: "scripts/consorcio_gestor_por_proposta_gate.cjs",
     nome: "gestor de consorcio por proposta (base bate, so o centavo diverge)",
     modo: "needs-db",
@@ -265,7 +276,11 @@ const GATES = [
       "(conjunto fabricado; o 2 monta de proposito um caso em que 1 round e N rounds " +
       "divergem, para o gate nao passar por vacuidade quando os dois concordarem); o 3 " +
       "confere jun e jul/2026 — base IDENTICA nas duas reguas e delta em centavos; o 4 " +
-      "guarda que a proposta vendida pelo PROPRIO gestor continua na base dos 10%",
+      "guarda que a proposta vendida pelo PROPRIO gestor continua na base dos 10%; o 5 " +
+      "prova que o 42703 da migration ausente nao derruba o reconsolidar; o 6 executa o " +
+      "codigo REAL com escritas interceptadas e prova que competencia FECHADA nao recebe " +
+      "upsert de agregado (mas recebe detalhe), com o lado ABERTO fabricado para o teste " +
+      "nao passar por meia prova",
   },
   {
     arquivo: "scripts/produtos_visibilidade_comissao_gate.cjs",
