@@ -18,14 +18,16 @@ import { Banner, Button, Card, Chip, EmptyState, HeaderNavy, KpiBand, Table, UiS
 // coluna gravada para eles. null = sem linha na master para a competencia pedida.
 type DetalheEventoUnico = {
   comissao_empresa: number;
-  comissao_promotor: number;
+  /** AUSENTE quando quem pediu nao pode ver (a rota nem manda). */
+  comissao_promotor?: number;
   j_key: string | null;
   operation_date: string | null;
   metadata: Record<string, unknown>;
 };
 type DetalheConsorcio = {
   comissao_empresa: number;
-  comissao_promotor: number;
+  /** AUSENTE quando quem pediu nao pode ver (a rota nem manda). */
+  comissao_promotor?: number;
   comissao_gestor: number;
   parcelas: number;
   parcela_rotulo: string | null;
@@ -60,6 +62,9 @@ type Payload = {
   year: number;
   month: number;
   competencia: string;
+  // A rota ja OMITIU comissao_promotor do payload quando isto e false. O flag so
+  // evita desenhar uma coluna inteira de "—": nao e ele que protege o dado.
+  pode_ver_comissao_promotor: boolean;
   escopo: "TODOS" | "CONSORCIO";
   role: string;
   grupos: { bbcap: Item[]; conta_corrente: Item[]; consorcio: Item[] };
@@ -217,7 +222,13 @@ export default function AtribuicaoClient() {
   // evento unico, x 0,40 e x 0,10 para consorcio). Nao existe coluna gravada para
   // elas: quem paga segue sendo o PMR e o consorcio_gestor_payout.
   // ============================================================
-  type Col = { th: string; cls?: string; get: (it: Item) => React.ReactNode };
+  type Col = {
+    th: string;
+    cls?: string;
+    /** coluna que expoe a comissao do PROMOTOR — some para quem nao tem direito. */
+    repassePromotor?: true;
+    get: (it: Item) => React.ReactNode;
+  };
   const mdv = (it: Item, k: string) =>
     txt(((it.detalhe as DetalheEventoUnico | null)?.metadata ?? {})[k]);
   const eu = (it: Item) => it.detalhe as DetalheEventoUnico | null;
@@ -242,6 +253,7 @@ export default function AtribuicaoClient() {
       {
         th: "Comissão promotor",
         cls: "num rep",
+        repassePromotor: true,
         get: (it) => money(eu(it)?.comissao_promotor ?? null),
       },
     ],
@@ -254,6 +266,7 @@ export default function AtribuicaoClient() {
       {
         th: "Comissão promotor",
         cls: "num rep",
+        repassePromotor: true,
         get: (it) => money(eu(it)?.comissao_promotor ?? null),
       },
     ],
@@ -276,6 +289,7 @@ export default function AtribuicaoClient() {
       {
         th: "Comissão promotor",
         cls: "num rep",
+        repassePromotor: true,
         get: (it) => money(cs(it)?.comissao_promotor ?? null),
       },
       { th: "Comissão gestor", cls: "num", get: (it) => money(cs(it)?.comissao_gestor ?? null) },
@@ -288,7 +302,8 @@ export default function AtribuicaoClient() {
     itens: Item[],
     idLabel: string
   ) => {
-    const cols = COLS[kind];
+    const podeVerRepasse = data?.pode_ver_comissao_promotor === true;
+    const cols = COLS[kind].filter((c) => !c.repassePromotor || podeVerRepasse);
     const porProposta = kind === "CONSORCIO";
     const competencia = data?.competencia ?? "—";
     // Somatorio do que esta na tela — confere de cabeca com o fechamento manual.
@@ -297,7 +312,7 @@ export default function AtribuicaoClient() {
         const d = it.detalhe;
         if (!d) return a;
         a.empresa += d.comissao_empresa;
-        a.promotor += d.comissao_promotor;
+        a.promotor += d.comissao_promotor ?? 0;
         if (porProposta) a.gestor += (d as DetalheConsorcio).comissao_gestor;
         return a;
       },
@@ -319,8 +334,13 @@ export default function AtribuicaoClient() {
         ) : (
           <>
             <p className="hintline">
-              Comissão da empresa <b>{money(soma.empresa)}</b> · repasse do promotor{" "}
-              <b>{money(soma.promotor)}</b>
+              Comissão da empresa <b>{money(soma.empresa)}</b>
+              {podeVerRepasse ? (
+                <>
+                  {" "}
+                  · repasse do promotor <b>{money(soma.promotor)}</b>
+                </>
+              ) : null}
               {porProposta ? (
                 <>
                   {" "}
