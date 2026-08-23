@@ -33,8 +33,9 @@
  * O banco e a unica fonte que nao mente sobre o que o runtime vai encontrar.
  *
  * CONSEQUENCIA ACEITA: este gate NAO roda sem credencial, entao nao e
- * self-contained e nao entra no `npm run gates` do CI. Ver o bloco FAIXA no fim
- * do arquivo — a escolha esta escrita la, com o que ela deixa descoberto.
+ * self-contained e nao entra no `npm run gates`. Ele entra no CI por um passo
+ * PROPRIO do .github/workflows/gates.yml, com a chave ANON. Ver o bloco FAIXA no
+ * fim do arquivo.
  *
  * ---------------------------------------------------------------------------
  * O QUE ELE VARRE
@@ -666,16 +667,28 @@ if (vacuidade.length > 0) {
 const URL_BASE = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
 const KEY_SVC = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const KEY_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-const KEY = KEY_SVC || KEY_ANON;
+
+// `--anon` FORCA o caminho do CI mesmo com a service_role em disco. Existe para
+// o caminho do CI ser EXERCITAVEL localmente: sem isto, ele so seria testado no
+// dia em que quebrasse dentro do CI — que e a forma de gate morto que este repo
+// ja pagou uma vez (o runner rodava `node arquivo.ts` e os 16 gates .ts/.mts
+// eram orfaos por incapacidade, nao por esquecimento).
+const FORCAR_ANON = process.argv.includes("--anon");
+const USANDO_ANON = FORCAR_ANON || !KEY_SVC;
+const KEY = USANDO_ANON ? KEY_ANON : KEY_SVC;
+const ROTULO_CHAVE = USANDO_ANON ? "anon (publicavel, sb_publishable_)" : "service_role";
 
 if (!URL_BASE || !KEY) {
   console.log("\n" + linha("="));
   console.log("ABORTADO — SEM CREDENCIAL");
   console.log(linha("="));
-  console.log("  Faltou NEXT_PUBLIC_SUPABASE_URL e/ou uma chave (service_role ou anon).");
+  if (!URL_BASE) console.log("  Faltou NEXT_PUBLIC_SUPABASE_URL.");
+  if (!KEY && USANDO_ANON) console.log("  Faltou NEXT_PUBLIC_SUPABASE_ANON_KEY" + (FORCAR_ANON ? " (e --anon foi pedido)." : "."));
+  if (!KEY && !USANDO_ANON) console.log("  Faltou uma chave (service_role ou anon).");
   console.log("  Este gate compara contra o BANCO REAL (ver o cabecalho); sem banco ele");
   console.log("  nao tem o que comparar. ABORTA em vez de passar: ausencia de medicao");
   console.log("  nunca e aprovacao.");
+  console.log("  No CI, isto quer dizer que as repository VARIABLES nao chegaram ao passo.");
   process.exit(3);
 }
 
@@ -686,7 +699,9 @@ function cab(): Record<string, string> {
 type Erro = { code?: string; message?: string };
 
 async function schemaViaOpenApi(): Promise<Map<string, Set<string>> | null> {
-  if (!KEY_SVC) return null;
+  // A raiz do PostgREST exige chave SECRETA: com a anon devolve 401 "Secret API
+  // key required" (medido 21/08). Entao no CI este caminho nunca roda.
+  if (USANDO_ANON || !KEY_SVC) return null;
   try {
     const r = await fetch(`${URL_BASE}/rest/v1/`, {
       headers: { apikey: KEY_SVC, Authorization: `Bearer ${KEY_SVC}`, Accept: "application/openapi+json" },
@@ -742,7 +757,7 @@ for (const p of pedidos) {
 
 const t0 = Date.now();
 const openapi = await schemaViaOpenApi();
-const modo = openapi ? "OpenAPI (1 requisicao, service_role)" : `sonda por tabela (${KEY_SVC ? "service_role" : "anon"})`;
+const modo = openapi ? "OpenAPI — 1 requisicao" : `sonda por tabela — ${porTabela.size} requisicoes`;
 
 const colunasAusentes: Array<{ tabela: string; coluna: string; sitios: Pedido[] }> = [];
 const tabelasAusentes: Array<{ tabela: string; sitios: Origem[] }> = [];
@@ -772,9 +787,26 @@ for (const [tabela, colunas] of [...porTabela.entries()].sort()) {
 const msBanco = Date.now() - t0;
 
 console.log(`\n>>> BANCO  (${URL_BASE.replace(/^https?:\/\//, "")})`);
+console.log(`    chave ............................... ${ROTULO_CHAVE}${FORCAR_ANON ? "   [--anon: forcado]" : ""}`);
 console.log(`    modo ................................ ${modo}`);
 console.log(`    tabelas conferidas .................. ${porTabela.size}`);
 console.log(`    tempo ............................... ${(msBanco / 1000).toFixed(2)}s`);
+if (USANDO_ANON) {
+  // NAO PRESUMA PARIDADE. Medido em 21/08/2026, com a anon deste projeto:
+  //   - a raiz OpenAPI devolve 401 "Secret API key required" -> so a sonda resta;
+  //   - toda tabela existente responde 42501 (a anon nao tem grant em nenhuma),
+  //     e o PostgREST resolve NOME DE COLUNA ANTES da permissao, entao 42703
+  //     ainda aparece — inclusive misturando coluna existente e inexistente na
+  //     MESMA consulta, nas duas ordens (testado);
+  //   - tabela ausente responde PGRST205 igual a service_role.
+  // O QUE SE PERDE: a lista do que EXISTE. A service_role traz todas as colunas
+  // de cada tabela numa requisicao; a anon so consegue perguntar "esta existe?".
+  // Consequencia pratica: com anon o gate NAO pode sugerir "voce quis dizer X?"
+  // nem apontar coluna orfa no banco. O VEREDITO (falta/nao falta) e o mesmo.
+  console.log("    NOTA: com a chave anon o gate so pergunta \"esta coluna existe?\".");
+  console.log("          Nao le a lista do que existe, entao nao sugere coluna parecida.");
+  console.log("          O veredito falta/nao-falta e o MESMO da service_role.");
+}
 
 // ===========================================================================
 // NAO COBERTO — o que este gate NAO conferiu, dito em voz alta
@@ -851,27 +883,47 @@ console.log("\n  RESULTADO: FALHOU");
 process.exit(1);
 
 /* ============================================================================
- * FAIXA — ONDE ESTE GATE RODA, E O QUE ISSO DEIXA DESCOBERTO
+ * FAIXA — ONDE ESTE GATE RODA
  * ----------------------------------------------------------------------------
- * CLASSIFICADO COMO needs-db em scripts/run_all_gates.cjs, ou seja: roda em
- * `npm run gates:db` (a faixa "antes do PR", teto de 90s) e em `npm run
- * gates:full`. NAO roda no `npm run gates` do CI.
+ * DOIS LUGARES, com chaves diferentes e custos diferentes:
  *
- * POR QUE NAO NO CI HOJE, DITO SEM ENFEITE: o .github/workflows/gates.yml roda
- * SEM SECRETS por desenho, e o criterio self-contained do runner reprova
- * qualquer gate que leia .env. Este gate le. Entao, como esta, ele so pega o
- * incidente se alguem rodar gates:db antes de abrir o PR — que e ritual, nao
- * garantia.
+ *   1. CI, a cada pull_request para main — passo proprio em
+ *      .github/workflows/gates.yml, `npx tsx ... --anon`, com as repository
+ *      VARIABLES (nao secrets) NEXT_PUBLIC_SUPABASE_URL e
+ *      NEXT_PUBLIC_SUPABASE_ANON_KEY. Reprova o check.
  *
- * O QUE FALTA PARA ELE ENTRAR NO CI (medido, nao especulado): ele NAO precisa da
- * service_role. O caminho 2 (sonda por tabela) distingue coluna ausente de
- * permissao negada usando so a chave ANON, que ja e NEXT_PUBLIC_ e ja viaja no
- * bundle do browser. Bastaria expor NEXT_PUBLIC_SUPABASE_URL e
- * NEXT_PUBLIC_SUPABASE_ANON_KEY como *variables* do repositorio (nao secrets) e
- * dar a este gate um passo proprio no workflow. Isso NAO foi feito aqui porque
- * as variables precisam ser criadas no GitHub por quem tem acesso ao repo, e
- * ligar o passo antes disso deixaria o CI vermelho para todo mundo.
+ *   2. `npm run gates:db` local (needs-db no run_all_gates.cjs), com a
+ *      service_role que ja esta no .env.local.
  *
- * O QUE CONTINUA DESCOBERTO ATE LA: um PR que mergeie SELECT de coluna
- * inexistente passa no CI. A rede de seguranca e o gates:db antes do merge.
+ * POR QUE NAO ENTROU NO `npm run gates`: aquele comando roda so os
+ * self-contained e o criterio do runner reprova gate que le .env — este le. Um
+ * passo separado no workflow resolve sem afrouxar o criterio de ninguem.
+ *
+ * O QUE MUDA ENTRE AS DUAS CHAVES (medido em 21/08/2026, nao presumido):
+ *
+ *                          service_role            anon (sb_publishable_)
+ *   raiz OpenAPI           200, 73 tabelas         401 "Secret API key required"
+ *   caminho                1 requisicao            sonda: 62 requisicoes
+ *   tempo do bloco BANCO   0,8s - 1,9s             10,7s
+ *   coluna ausente         detecta                 detecta (42703)
+ *   tabela ausente         detecta                 detecta (PGRST205)
+ *   le linha de dado       sim                     NAO (42501 nas 62 tabelas)
+ *   lista o que EXISTE     sim                     NAO
+ *
+ *   O VEREDITO E O MESMO: as duas saidas foram comparadas por diff, ignorando
+ *   so as linhas de chave/modo/tempo, e sao IDENTICAS. A deteccao de coluna
+ *   ausente foi provada nos DOIS caminhos com colunas falsas injetadas (3
+ *   colunas, 2 tabelas, via select e via update).
+ *
+ *   O QUE SE PERDE COM A ANON e a lista do que existe. Consequencia pratica:
+ *   nenhuma hoje — o gate so pergunta "este nome resolve?". Se um dia ele for
+ *   sugerir "voce quis dizer X?" ou apontar coluna ORFA no banco (existe e
+ *   ninguem le), isso so funciona no caminho da service_role.
+ *
+ * POR QUE 42703 VENCE 42501, que e o que torna a anon suficiente: o PostgREST
+ * resolve os nomes de coluna ANTES de aplicar permissao. Testado misturando
+ * coluna existente e inexistente na MESMA consulta, nas DUAS ordens — o 42703
+ * volta sempre. Se um dia essa ordem mudar do lado do PostgREST, este gate
+ * comeca a passar por vacuidade no CI; o sinal seria o gate ficar verde no CI e
+ * vermelho no gates:db para a mesma arvore.
  * ========================================================================== */
