@@ -28,6 +28,20 @@
 // linhas por proposta numa competencia paga. Ver
 // scripts/sql/2026-08-23_consorcio_gestor_por_proposta.sql
 //
+// ============================================================
+// AS DUAS GUARDAS SAO INDEPENDENTES, E TEM MOTIVOS DIFERENTES.
+//
+//   status  = 'FECHADO'          -> NAO grava o AGREGADO. Protege valor PAGO.
+//   formato = 'AGREGADO_LEGADO'  -> NAO grava o DETALHE.  Junho/2026, ja paga
+//                                   pelo agregado, nao ganha rateio por proposta.
+//
+// Uma nao implica a outra, e nenhuma e consequencia da outra. Julho esta FECHADA
+// e RECEBE detalhe (33 linhas); junho esta FECHADA e LEGADO, e nao recebe
+// nenhuma. Quem for procurar as 37 linhas de detalhe de junho NAO VAI ACHAR —
+// e a causa esta no `formato`, nao no `status`. Esta escrito aqui para a busca
+// comecar no lugar certo.
+// ============================================================
+//
 // FECHADO PROTEGE O VALOR (decisao Diego, 23/08/2026). A linha do AGREGADO com
 // status='FECHADO' NAO e reescrita pelo reconsolidar: o upsert dela e pulado, e o
 // retorno diz quais foram puladas (`agregado_pulado`) — nunca em silencio, porque
@@ -37,16 +51,28 @@
 // competencias ja fechadas, o proximo reconsolidar reescreveria
 // base_comissao_empresa, gestor_10, gestor_user_id e delta_arredondamento. Hoje os
 // numeros recalculados sao iguais, entao seria inocuo — mas uma reimportacao com
-// dado diferente mudaria em silencio o valor de uma competencia PAGA. O guard e por
-// (competencia, company_id), nao pela competencia inteira: uma empresa fechada nao
-// congela a outra.
+// dado diferente mudaria em silencio o valor de uma competencia PAGA.
+//
+// O GUARD E POR (competencia, company_id), NAO PELA COMPETENCIA INTEIRA. Uma
+// empresa fechada nao congela a outra: a linha fechada sai do PAYLOAD, as demais
+// gravam normal. Hoje isso NAO muda nada na pratica — so a AL1 tem consorcio,
+// entao ha uma linha por competencia e travar "a competencia" daria o mesmo
+// resultado. Esta escrito para o dia em que houver duas: quem simplificar para
+// `if (competenciaFechada) return` vai congelar a empresa errada junto.
 //
 // AUSENCIA DE LINHA NAO E FECHADO. Competencia nova (sem linha no payout) grava
 // normal — senao a guarda impediria o primeiro calculo de existir.
 //
-// O DETALHE CONTINUA RODANDO com a competencia fechada. Ele nao e o registro de
-// pagamento; e a explicacao de como o numero se formou. Travar o detalhe deixaria
-// uma competencia fechada sem como conferir a propria conta.
+// O DETALHE CONTINUA RODANDO com a competencia fechada (a menos que ela seja
+// LEGADO — ver o bloco das duas guardas). Ele nao e o registro de pagamento; e a
+// explicacao de como o numero se formou. Travar o detalhe deixaria uma
+// competencia fechada sem como conferir a propria conta.
+//
+// O PULO NUNCA E SILENCIOSO. computeConsorcioGestorPayout devolve:
+//   agregado_gravado -> quantas linhas de agregado foram gravadas (0 em dryRun);
+//   agregado_pulado  -> [{ company_id, motivo: 'FECHADO' }] das que NAO foram.
+// Quem chama pediu gravacao; se nao houve, precisa saber por que, sem ler log nem
+// abrir o banco. Uma guarda que apenas "nao faz" e indistinguivel de um bug.
 //
 // CONSEQUENCIA ACEITA, ESCRITA PARA NAO VIRAR BUG-REPORT: com julho ja FECHADA
 // antes de qualquer reconsolidar, o `delta_arredondamento` dela fica NULL PARA
