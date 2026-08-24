@@ -24,17 +24,31 @@
 //   BBCAP / CONTA_CORRENTE -> monthly_closing_entries (as linhas que o M1
 //     desdobrou) juntadas a product_line_assignments pela CHAVE NATURAL
 //     (chaveNaturalProduto — o mesmo helper da fila e do calculo).
-//   CONSORCIO -> carteira_consorcio, que JA esta materializada (316 linhas), JA
-//     tem `promoter_id` vindo da ancora e JA e renderizada em PromotorView:517.
-//     Reusar e melhor que refazer: a carteira sabe a POSICAO da parcela no
-//     contrato (3a de 6) e o que ainda esta por vir, coisas que
-//     monthly_closing_entries nao sabe. O recorte aqui e a competencia PEDIDA
-//     (competencia_recebida = 'YYYY-MM'): o detalhamento e do mes, e a visao da
-//     carteira inteira continua sendo a de PromotorView, que nao muda.
+//   CONSORCIO -> DUAS fontes, com papeis separados:
+//     O DONO sai das ANCORAS (product_line_assignments, via
+//       resolveConsorcioBeneficiarioByProposta) — a MESMA funcao de onde o
+//       PAGAMENTO tira o dono (computeConsorcioCommissionByBeneficiario).
+//     A LINHA sai de carteira_consorcio, que sabe o que a master nao sabe: a
+//       POSICAO da parcela no contrato (3a de 6), o teto e o valor do bem.
+//     O recorte e a competencia PEDIDA (competencia_recebida = 'YYYY-MM'); a
+//       visao da carteira INTEIRA continua sendo a de PromotorView.
+//
+// POR QUE O DONO NAO SAI MAIS DA CARTEIRA (medido em 23/08/2026, e era bug meu):
+// carteira_consorcio.promoter_id e um RETRATO DO IMPORT —
+// materializarCarteiraConsorcio so e chamada de app/api/import/closing/route.ts.
+// Atribuir na fila NAO re-materializa nada. Resultado: 27 ancoras ASSIGNED e as
+// 316 linhas da carteira com promoter_id NULO, porque o ultimo import foi 14/08,
+// antes de qualquer atribuicao. O detalhamento mostrava 0,00 de consorcio para
+// TODO MUNDO enquanto o PMR pagava certo — duas fontes de verdade para "de quem e
+// esta parcela", e a minha era a que envelhecia. Agora ha uma so.
 // ============================================================
 import { chaveNaturalProduto } from "../produtoAssignments.ts";
 import { repassePromotor } from "../produtoRepasse.ts";
 import { repasseConsorcioPromotor } from "../consorcio/trp210.ts";
+import {
+  chaveProposta,
+  resolveConsorcioBeneficiarioByProposta,
+} from "../consorcio/fila.ts";
 
 type SupabaseLike = { from: (t: string) => any };
 
@@ -192,23 +206,29 @@ export async function buildProdutoProposalRows(
     }
   }
 
-  // ---- 2. CONSORCIO: carteira_consorcio (ja materializada e ja com dono) ----
+  // ---- 2. CONSORCIO: dono da ANCORA, linha da CARTEIRA ----
   // Sem try/catch por tabela ausente: carteira_consorcio existe desde a migration
   // 20260721_000001 e e lida pela /api/promotores/consorcio-carteira em producao.
+  const donoPorProposta = await resolveConsorcioBeneficiarioByProposta(supabase as any);
   const carteira = await paged<any>(() =>
     supabase
       .from("carteira_consorcio")
       .select(
-        "company_id, proposta, posicao, teto_parcelas, segmento_grupo, segmento_codigo, valor_bem, pct_comissao_ref, comissao_recebida, competencia_recebida, status, promoter_id"
+        "company_id, proposta, posicao, teto_parcelas, segmento_grupo, segmento_codigo, valor_bem, pct_comissao_ref, comissao_recebida, competencia_recebida, status"
       )
       .eq("competencia_recebida", competencia)
   );
   for (const p of carteira) {
-    if (!p.promoter_id) {
+    // O dono vem da FILA, nao da carteira. `sem_atribuicao` tambem: contava 39
+    // orfas lendo o promoter_id defasado enquanto havia 27 ancoras ASSIGNED.
+    const dono = donoPorProposta.get(chaveProposta(p.company_id, p.proposta));
+    if (!dono) {
       sem_atribuicao.consorcio += 1;
       continue;
     }
-    if (p.promoter_id !== promoterId) continue;
+    // Linha de um papel de GESTAO (venda propria) nao e de promotor nenhum: vai
+    // para gestao_venda_propria, nao para o PMR. Nao entra aqui nem conta como orfa.
+    if (dono.kind !== "promotor" || dono.id !== promoterId) continue;
     const empresa = num(p.comissao_recebida);
     rows.push({
       entry_type: "CONSORCIO",

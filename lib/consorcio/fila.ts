@@ -32,7 +32,13 @@ export type ConsorcioEntry = {
   metadata: any;
 };
 
-const chaveProposta = (companyId: string | null, proposta: string | null) =>
+/**
+ * Chave da PROPOSTA de consorcio. EXPORTADA porque quem consome
+ * resolveConsorcioBeneficiarioByProposta precisa montar a MESMA chave — copiar o
+ * template em outro arquivo faria as duas divergirem no primeiro ajuste, que e
+ * exatamente o defeito que trouxe o dono da carteira defasada.
+ */
+export const chaveProposta = (companyId: string | null, proposta: string | null) =>
   `${companyId ?? "NULL"}|${proposta ?? ""}`;
 
 // Linha REGULAR do consorcio (exclui a aba MASTER, que e espelho company-level e nao

@@ -10,6 +10,40 @@
 //
 // Rebuild total (delete-all + insert): a carteira e derivada; a verdade do promotor
 // fica na fila. Idempotente (rebuild nao duplica). Em dryRun nao grava.
+//
+// ============================================================
+// DUAS DIVIDAS NOMEADAS (23/08/2026). Nenhuma consertada; as duas medidas.
+// ============================================================
+//
+// DIVIDA 1 — A MATERIALIZACAO E DESTRUTIVA, E O IMPORT CORRE ESSE RISCO HOJE.
+// `materializarCarteiraConsorcio` faz DELETE das 316 linhas e depois INSERT em
+// lotes de 500. Sao chamadas PostgREST SEPARADAS: nao ha transacao. Uma queda de
+// rede entre o delete e o primeiro insert deixa a carteira VAZIA — e quem a
+// reconstroi e o import de fechamento, que acontece UMA VEZ POR MES. Ate la,
+// PromotorView:517 fica em branco para todo mundo.
+//   O comentario acima diz que "o wipe nao perde nada autoritativo porque a
+//   carteira e derivada". E verdade quanto ao CONTEUDO e FALSO quanto a
+//   DISPONIBILIDADE: derivado e reconstruivel nao ajuda se quem reconstroi
+//   demora um mes.
+// Foi por isso que a materializacao NAO foi ligada no clique de atribuicao
+// (decisao Diego, 23/08): um erro de rede num dropdown nao pode esvaziar a
+// carteira. Custo medido do calculo, sem gravar: 533 / 888 / 2.599 ms em tres
+// execucoes — a variacao de 5x e latencia, que num clique vira travamento.
+// CONSERTO, quando alguem for mexer nela de qualquer jeito: upsert com
+// onConflict (company_id, proposta, posicao) + delete restrito ao que sobrou.
+// Ai "carteira vazia" deixa de ser um estado possivel, inclusive no import.
+//
+// DIVIDA 2 — `promoter_id` / `app_user_id` DESTA TABELA FICAM DEFASADOS POR
+// DESENHO. Eles sao preenchidos AQUI, no import; atribuir na fila nao
+// re-materializa nada. Medido em 23/08: 0 donos gravados contra 27 ancoras de
+// consorcio ASSIGNED.
+//   Depois do commit ea262db NENHUM leitor depende deles para saber o dono —
+//   lib/produtos/produtoProposalRows e app/api/promotores/consorcio-carteira
+//   resolvem por resolveConsorcioBeneficiarioByProposta, a mesma funcao do
+//   pagamento. As colunas ficam porque a materializacao as grava e porque um dia
+//   podem virar cache legitimo; mas QUEM VOLTAR A LE-LAS VAI LER DADO VELHO.
+//   Antes de usar: ou conserte a Divida 1 e chame a materializacao na
+//   atribuicao, ou resolva pela ancora como os outros tres fazem.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   classificacaoPorPercentual,
@@ -21,6 +55,7 @@ import {
   type SegmentoGrupo,
 } from "./trp210.ts";
 import {
+  chaveProposta,
   fetchConsorcioEntriesAll,
   isRegular,
   resolveConsorcioBeneficiarioByProposta,
@@ -203,4 +238,29 @@ export async function materializarCarteiraConsorcio(
     if (error) throw new Error(error.message);
   }
   return { linhas: rows.length, propostas, rows };
+}
+
+/**
+ * As parcelas da carteira que sao DESTE promotor.
+ *
+ * O dono vem do mapa das ANCORAS (resolveConsorcioBeneficiarioByProposta), NAO
+ * da coluna promoter_id desta tabela — ver a Divida 2 no topo do arquivo.
+ * Proposta cujo dono e um papel de GESTAO (venda propria) nao e de promotor
+ * nenhum: vai para gestao_venda_propria e nao entra aqui.
+ *
+ * PURA e EXPORTADA para o gate exercitar a MESMA funcao que a rota
+ * (app/api/promotores/consorcio-carteira) usa, em vez de testar uma copia.
+ */
+export function filtrarCarteiraDoPromotor<
+  T extends { company_id: string | null; proposta: string }
+>(
+  rows: T[],
+  donoPorProposta: Map<string, Beneficiario>,
+  promoterId: string
+): T[] {
+  if (!promoterId) return [];
+  return rows.filter((r) => {
+    const dono = donoPorProposta.get(chaveProposta(r.company_id, r.proposta));
+    return !!dono && dono.kind === "promotor" && dono.id === promoterId;
+  });
 }
