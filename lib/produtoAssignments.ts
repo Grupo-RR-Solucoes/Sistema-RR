@@ -363,7 +363,14 @@ export async function applyProdutoRepasseAoPmr(
   for (const v of porPromotor) chaves.add(chavePmr(v.promoter_id, empresaDe(v)));
 
   if (porPromotor.length === 0 || dryRun) {
-    return { chaves, atualizadas: 0, inseridas: 0, promotores: porPromotor.length, gestao };
+    // `promotores` = DISTINTOS, igual ao retorno do caminho que grava (ver la).
+    return {
+      chaves,
+      atualizadas: 0,
+      inseridas: 0,
+      promotores: new Set(porPromotor.map((v) => v.promoter_id)).size,
+      gestao,
+    };
   }
 
   // Le producao/seguro atuais dos promotores com produto (para recompor o final
@@ -386,11 +393,51 @@ export async function applyProdutoRepasseAoPmr(
     }
   }
 
-  const updates: any[] = []; // linhas ja existentes: nao mexe em producao/seguro
-  const inserts: any[] = []; // promotores so-produto: nascem com producao/seguro 0
+  // UMA LINHA POR CHAVE FINAL, NUNCA UMA POR BUCKET.
+  //
+  // Os buckets sao chaveados por `beneficiario|company_id da LINHA` (:248). Um
+  // promotor com produto em tres empresas gera TRES buckets, e `empresaDe()`
+  // manda os tres para a MESMA empresa dona. Ate 24/08/2026 o loop abaixo
+  // empurrava um update POR BUCKET: tres linhas com a mesma
+  // (promoter_id, year, month, company_id) no MESMO upsert, e o Postgres recusa
+  // o lote inteiro com "ON CONFLICT DO UPDATE command cannot affect row a
+  // second time".
+  //
+  // O ESTRAGO NAO E SO O ERRO. O reconsolidar aborta NO MEIO: o grupo (RR+ADS)
+  // ja gravou producao e seguro, e quem recompoe o final com os produtos e
+  // justamente este passo. Medido em jul/2026 depois do abort: 19 linhas com
+  // final_commission_value SEM a parcela de produto (Sigma das partes
+  // 140.505,21 contra 139.989,15 gravados, delta -516,06), 17 linhas orfas "so
+  // produto" que o reconciliador nao chegou a apagar, e as colunas de produto
+  // congeladas nas empresas da rodada anterior.
+  //
+  // Medido em jul/2026: 28 buckets -> 21 chaves finais -> 5 colapsos (JENIFFER
+  // e BIANCA com 3 buckets; JARLES, JAMERSON e MAYANNE com 2). Em jun/2026, 8
+  // buckets -> 8 chaves -> 0 colapsos: por isso junho passou e julho quebrou.
+  //
+  // `empresaDe()` esta certo — o defeito era a granularidade da escrita. Agora
+  // os buckets sao SOMADOS por chave final antes de virar linha.
+  const porChaveFinal = new Map<
+    string,
+    { promoter_id: string; companyId: string | null; bbcap: number; conta_corrente: number; consorcio: number; lob: number }
+  >();
   for (const v of porPromotor) {
     const companyId = empresaDe(v);
     const k = chavePmr(v.promoter_id, companyId);
+    const acc =
+      porChaveFinal.get(k) ??
+      { promoter_id: v.promoter_id, companyId, bbcap: 0, conta_corrente: 0, consorcio: 0, lob: 0 };
+    acc.bbcap += Number(v.bbcap || 0);
+    acc.conta_corrente += Number(v.conta_corrente || 0);
+    acc.consorcio += Number(v.consorcio || 0);
+    acc.lob += Number(v.lob || 0);
+    porChaveFinal.set(k, acc);
+  }
+
+  const updates: any[] = []; // linhas ja existentes: nao mexe em producao/seguro
+  const inserts: any[] = []; // promotores so-produto: nascem com producao/seguro 0
+  for (const [k, v] of porChaveFinal) {
+    const companyId = v.companyId;
     const base = existentes.get(k);
     const prod = base?.prod ?? 0;
     const ins = base?.ins ?? 0;
@@ -445,7 +492,12 @@ export async function applyProdutoRepasseAoPmr(
     chaves,
     atualizadas: updates.length,
     inseridas: inserts.length,
-    promotores: porPromotor.length,
+    // PROMOTORES DISTINTOS, nao buckets. Antes de 24/08/2026 isto era
+    // `porPromotor.length` — a contagem de BUCKETS, que conta o mesmo promotor
+    // uma vez por empresa de origem do produto. Em jul/2026 dizia 28 onde ha 21
+    // linhas e 21 promotores; o numero inflado era o mesmo sintoma do defeito
+    // do upsert, so que no diagnostico.
+    promotores: new Set(porPromotor.map((v) => v.promoter_id)).size,
     gestao,
   };
 }
