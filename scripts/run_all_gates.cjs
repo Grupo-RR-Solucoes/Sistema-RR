@@ -56,6 +56,14 @@ const GATES = [
       "le regras_promotiva/json + lib/motor.ts; sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/produto_pmr_uma_linha_por_chave_gate.cjs",
+    nome: "produto no PMR: uma linha por chave, nunca N (upsert nao repete chave)",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria (com a trava de chave repetida do Postgres) + " +
+      "applyProdutoRepasseAoPmr real; sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/seguro_sem_duplicata_gate.cjs",
     nome: "seguro do fechamento sai do CASH (a gemea INSURANCE nao soma)",
     modo: "self-contained",
