@@ -282,6 +282,18 @@ const GATES = [
       "garante que BBCAP e Conta Corrente nao foram afetados",
   },
   {
+    arquivo: "scripts/produto_pmr_empresa_dona_gate.cjs",
+    nome: "repasse de produto cai na linha de PMR da empresa DONA",
+    modo: "needs-db",
+    motivo:
+      "createClient; promoter_monthly_results + fechamento de PRODUCAO. O bloco 2 e a " +
+      "contraprova (a regra VELHA apontaria para empresa != a da linha com credito, " +
+      "criando linha nova); o 3 roda applyProdutoRepasseAoPmr em dryRun e confere que os " +
+      "28 buckets (beneficiario, empresa do produto) COLAPSAM em 21 chaves, todas na " +
+      "empresa dona; o 4 prova que o produto cai na MESMA linha do credito, que e o que " +
+      "faz o .find() de closingProposalRows achar a certa",
+  },
+  {
     arquivo: "scripts/produtos_detalhamento_escopo_gate.cjs",
     nome: "detalhamento por produto: promotor A nao ve linha de B",
     modo: "needs-db",

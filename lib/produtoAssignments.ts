@@ -8,6 +8,7 @@
 // - Upsert respeita decisao humana (status ASSIGNED nunca vira PENDING de volta).
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { repassePromotor } from "./produtoRepasse.ts";
+import { buildDonaCompanyMapDoMes } from "./closingMonthly.ts";
 import {
   computeConsorcioCommissionByBeneficiario,
   syncPendingConsorcioAnchors,
@@ -327,8 +328,40 @@ export async function applyProdutoRepasseAoPmr(
     else porPromotor.push({ ...v, promoter_id: v.beneficiario.id });
   }
 
+  // EMPRESA DONA — a MESMA regua do fechamento (computeDonaCompanyMap, via
+  // buildDonaCompanyMapDoMes). Uma carga para todos os promotores.
+  //
+  // POR QUE NAO A EMPRESA DA LINHA DE PRODUTO (era `v.company_id`, ate 24/08/2026):
+  // o PMR tem UNIQUE (promoter_id, year, month, company_id). O consorcio inteiro e
+  // da AL1; se o credito do promotor e de outra empresa, gravar o produto na AL1
+  // NAO atualiza a linha dele — CRIA UMA SEGUNDA. Medido em jul/2026: 8 linhas
+  // "so produto" nasceram assim em 23/08 23:08, e 13 promotores ficaram com 2+
+  // linhas de source='fechamento'.
+  //
+  // O ESTRAGO NAO E COSMETICO. closingProposalRows:73 faz
+  // `(pmrRows||[]).find(r => r.source === "fechamento")` SEM ORDER BY: pegando a
+  // linha so-produto, `fechCredit` sai 0 e a aba Detalhamento zera a comissao de
+  // TODAS as propostas do promotor. Medido: 4 promotores zerados (THAYNARA,
+  // MAYANNE, ERIVAN, JAMERSON) e outros 9 certos por sorte da ordem fisica.
+  // E todo leitor que filtra por empresa — inclusive o piso em
+  // promoterAnalytics:1421 — acha o consorcio numa empresa onde o promotor nao
+  // produziu.
+  //
+  // FALLBACK a `v.company_id` quando o promotor NAO aparece no fechamento do mes
+  // (so-produto, sem credito): nao ha dona a resolver, e a empresa da linha e a
+  // unica informacao que existe.
+  const donaCompany = await buildDonaCompanyMapDoMes(supabase, { year, month });
+  const empresaDe = (v: { promoter_id: string; company_id: string | null }) =>
+    donaCompany.get(v.promoter_id) ?? v.company_id;
+
+  // `chaves` sai ANTES do early-return e ja com a empresa DONA. E o que o
+  // reconciliador de reconsolidarCompetencia usa para NAO apagar o promotor que
+  // so tem produto; devolve-lo vazio em dryRun faria o dry-run mentir sobre o que
+  // a gravacao preservaria. (Ate 24/08 ele era montado com v.company_id, a
+  // empresa da LINHA — a mesma origem do defeito da linha duplicada.)
   const chaves = new Set<string>();
-  for (const v of porPromotor) chaves.add(chavePmr(v.promoter_id, v.company_id));
+  for (const v of porPromotor) chaves.add(chavePmr(v.promoter_id, empresaDe(v)));
+
   if (porPromotor.length === 0 || dryRun) {
     return { chaves, atualizadas: 0, inseridas: 0, promotores: porPromotor.length, gestao };
   }
@@ -356,7 +389,8 @@ export async function applyProdutoRepasseAoPmr(
   const updates: any[] = []; // linhas ja existentes: nao mexe em producao/seguro
   const inserts: any[] = []; // promotores so-produto: nascem com producao/seguro 0
   for (const v of porPromotor) {
-    const k = chavePmr(v.promoter_id, v.company_id);
+    const companyId = empresaDe(v);
+    const k = chavePmr(v.promoter_id, companyId);
     const base = existentes.get(k);
     const prod = base?.prod ?? 0;
     const ins = base?.ins ?? 0;
@@ -371,7 +405,7 @@ export async function applyProdutoRepasseAoPmr(
     if (base) {
       updates.push({
         promoter_id: v.promoter_id,
-        company_id: v.company_id,
+        company_id: companyId,
         year,
         month,
         bbcap_commission_value: bbcap,
@@ -383,7 +417,7 @@ export async function applyProdutoRepasseAoPmr(
     } else {
       inserts.push({
         promoter_id: v.promoter_id,
-        company_id: v.company_id,
+        company_id: companyId,
         year,
         month,
         source: "fechamento",
