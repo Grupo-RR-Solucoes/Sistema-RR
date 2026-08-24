@@ -69,12 +69,33 @@ export async function buildClosingProposalRows(
     .eq("month", month)
     .in("source", ["fechamento", "bbts"]);
   if (pmrErr) throw pmrErr;
-  const pmrFech = (pmrRows || []).find((r: any) => r.source === "fechamento");
-  const pmrBbts = (pmrRows || []).find((r: any) => r.source === "bbts");
-  const fechCredit = toNumber(pmrFech?.production_commission_value);
-  const fechInsurance = toNumber(pmrFech?.insurance_commission_value);
-  const bbtsCredit = toNumber(pmrBbts?.production_commission_value);
-  const bbtsInsurance = toNumber(pmrBbts?.insurance_commission_value);
+  // SOMA, NAO ESCOLHA. Ate 24/08/2026 estas seis linhas eram dois `.find()`, que
+  // pegavam a PRIMEIRA linha de cada source e descartavam as demais em silencio.
+  //
+  // Duas linhas source='fechamento' NAO sao estado invalido: o PMR tem uma linha
+  // POR EMPRESA, e promotor que produziu em duas RR tem duas. Medido em jul/2026:
+  // 13 promotores com mais de uma linha 'fechamento', e em 11 deles a primeira
+  // que voltava era a de PRODUTO (credito 0) — o rateio inteiro zerava.
+  //   THAYNARA: RR ALAGOAS 1 cred 0 + consorcio 2.568,04
+  //             RR PERNAMBUCO cred 8.802,93 seg 1.121,91
+  //   o `.find()` pegava a de AL1 e a aba Detalhamento exibia 0,00 nos dois cards
+  //   de comissao, embora o topo somasse os 12.492,88 corretos.
+  //
+  // O total do promotor no mes e a SOMA das empresas — e o mesmo numero que o
+  // topo da tela ja mostra. Nao lancar: quebraria a tela desses 13 por um estado
+  // que e legitimo.
+  //
+  // As colunas de PRODUTO (bbcap/conta corrente/consorcio) ficam de fora de
+  // proposito: elas nao sao rateaveis pelas propostas de credito e ja tem cards
+  // proprios na mesma aba.
+  const somaPmr = (source: string, campo: string) =>
+    (pmrRows || [])
+      .filter((r: any) => r.source === source)
+      .reduce((total: number, r: any) => total + toNumber(r[campo]), 0);
+  const fechCredit = somaPmr("fechamento", "production_commission_value");
+  const fechInsurance = somaPmr("fechamento", "insurance_commission_value");
+  const bbtsCredit = somaPmr("bbts", "production_commission_value");
+  const bbtsInsurance = somaPmr("bbts", "insurance_commission_value");
 
   // 2. RR — contratos do fechamento do promotor (chave individual + herança master).
   const base = await loadClosingPromoterBase(supabase, { year, month });

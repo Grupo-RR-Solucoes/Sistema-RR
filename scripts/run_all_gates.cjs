@@ -56,6 +56,14 @@ const GATES = [
       "le regras_promotiva/json + lib/motor.ts; sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/closing_proposal_rows_pmr_soma_gate.cjs",
+    nome: "closingProposalRows: PMR e a SOMA das linhas, nao a primeira",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria + buildClosingProposalRows/loadClosingPromoterBase reais; " +
+      "sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/venda_propria_gestao_gate.cjs",
     nome: "venda propria de gestao (no-op + isolamento do PMR)",
     modo: "self-contained",
