@@ -9,7 +9,10 @@ import {
   withSocioOrFuncionarioAnon,
 } from "@/lib/auth/guards";
 import { buildPromoterAnalytics } from "@/lib/promoterAnalytics";
-import { buildProdutoProposalRows } from "@/lib/produtos/produtoProposalRows";
+import {
+  buildProdutoProposalRows,
+  buildProdutoResumoGrupo,
+} from "@/lib/produtos/produtoProposalRows";
 import {
   podeVerComissaoDePromotor,
   promotorEfetivoDaSessao,
@@ -255,17 +258,31 @@ export async function GET(req: Request) {
     // o que e DELE. `podeVerComissaoDePromotor` devolve false para `promotor` de
     // proposito; NAO ligar. Ver lib/auth/visibilidadeComissao.ts.
     let produtoRows: Awaited<ReturnType<typeof buildProdutoProposalRows>> | null = null;
-    if (yearN && monthN && effectivePromoterId) {
+    let produtoGrupo: Awaited<ReturnType<typeof buildProdutoResumoGrupo>> | null = null;
+    if (yearN && monthN) {
       try {
-        produtoRows = await buildProdutoProposalRows(supabase, {
-          promoterId: effectivePromoterId,
-          year: yearN,
-          month: monthN,
-          incluirComissaoEmpresa: podeVerComissaoDePromotor(user.session.appUser.role),
-        });
+        if (effectivePromoterId) {
+          produtoRows = await buildProdutoProposalRows(supabase, {
+            promoterId: effectivePromoterId,
+            year: yearN,
+            month: monthN,
+            incluirComissaoEmpresa: podeVerComissaoDePromotor(user.session.appUser.role),
+          });
+        } else if (podeVerComissaoDePromotor(user.session.appUser.role)) {
+          // "Promotor: todos" — a aba Produtos mostra o GRUPO em vez de 0,00.
+          // So para quem enxerga o grupo inteiro: sem promotor selecionado, um
+          // papel sem esse direito nao pode receber a soma de ninguem. Hoje
+          // supervisor/gerente ja levam 403 acima; esta condicao e a segunda
+          // tranca, para o dia em que um quarto papel entrar por aqui.
+          produtoGrupo = await buildProdutoResumoGrupo(supabase, {
+            year: yearN,
+            month: monthN,
+          });
+        }
       } catch {
         // Produto e ADITIVO: a aba nova nao pode derrubar a tela inteira.
         produtoRows = null;
+        produtoGrupo = null;
       }
     }
 
@@ -282,7 +299,7 @@ export async function GET(req: Request) {
           yearN,
           monthN
         );
-        return NextResponse.json({ ...payload, proposalRows: cmsRows, proposalSource, debitRows, debitQueue, produtoRows });
+        return NextResponse.json({ ...payload, proposalRows: cmsRows, proposalSource, debitRows, debitQueue, produtoRows, produtoGrupo });
       }
       // regime === 'fechamento'
       proposalSource = "fechamento";
@@ -292,10 +309,10 @@ export async function GET(req: Request) {
         yearN,
         monthN
       );
-      return NextResponse.json({ ...payload, proposalRows: closingRows, proposalSource, debitRows, debitQueue, produtoRows });
+      return NextResponse.json({ ...payload, proposalRows: closingRows, proposalSource, debitRows, debitQueue, produtoRows, produtoGrupo });
     }
 
-    return NextResponse.json({ ...payload, proposalSource, debitRows, debitQueue, produtoRows });
+    return NextResponse.json({ ...payload, proposalSource, debitRows, debitQueue, produtoRows, produtoGrupo });
   } catch (error) {
     return apiGuardErrorResponse(error);
   }

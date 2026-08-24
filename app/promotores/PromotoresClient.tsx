@@ -178,6 +178,7 @@ type PromoterPayload = {
   debitRows?: DebitRow[];
   debitQueue?: DebitQueueRow[];
   produtoRows?: ProdutoRows | null;
+  produtoGrupo?: ProdutoGrupo | null;
 };
 
 // DETALHAMENTO POR PRODUTO — vem de lib/produtos/produtoProposalRows, ja filtrado
@@ -208,6 +209,26 @@ type ProdutoRows = {
   rows: ProdutoRow[];
   totais: { bbcap: number; conta_corrente: number; consorcio: number; total: number };
   sem_atribuicao: { bbcap: number; conta_corrente: number; consorcio: number };
+};
+
+// VISAO DO GRUPO — chega quando NENHUM promotor esta selecionado. O corte e por
+// PROMOTOR, nao por linha: sao ~200 parcelas contra ~21 pessoas, e a pergunta
+// aqui e "quem vendeu quanto", nao "qual foi a 3a parcela da proposta X".
+type ProdutoGrupoLinha = {
+  promoter_id: string;
+  promoter_name: string;
+  bbcap: number;
+  conta_corrente: number;
+  consorcio: number;
+  total: number;
+  linhas: number;
+};
+type ProdutoGrupo = {
+  totais: { bbcap: number; conta_corrente: number; consorcio: number; total: number };
+  por_promotor: ProdutoGrupoLinha[];
+  sem_atribuicao: { bbcap: number; conta_corrente: number; consorcio: number };
+  promotores: number;
+  linhas: number;
 };
 
 // FRENTE DÉBITOS — detalhe dos débitos do promotor + fila de atribuição.
@@ -258,6 +279,7 @@ const emptyPayload: PromoterPayload = {
   summaryRows: [],
   proposalRows: [],
   produtoRows: null,
+  produtoGrupo: null,
   agreementRows: [],
   discountRows: [],
   promoterOptions: [],
@@ -2383,8 +2405,14 @@ function PromotoresFullPage() {
           <section className="panel active">
             {(() => {
               const pr = data.produtoRows;
+              const grupo = data.produtoGrupo;
+              // SEM promotor selecionado a aba mostra o GRUPO. Antes herdava o
+              // early-return da aba Detalhamento e exibia 0,00, que e pior que
+              // vazio: parece resposta.
               const rows = pr?.rows ?? [];
-              const sem = pr?.sem_atribuicao ?? { bbcap: 0, conta_corrente: 0, consorcio: 0 };
+              const sem =
+                pr?.sem_atribuicao ??
+                grupo?.sem_atribuicao ?? { bbcap: 0, conta_corrente: 0, consorcio: 0 };
               const semTotal = sem.bbcap + sem.conta_corrente + sem.consorcio;
               const doTipo = (t: string) => rows.filter((r) => r.entry_type === t);
               const brlOuTraco = (v: number | null | undefined) =>
@@ -2402,6 +2430,13 @@ function PromotoresFullPage() {
                 return x === "" ? "—" : x;
               };
               const temEmpresa = rows.some((r) => r.comissao_empresa !== undefined);
+              const ehGrupo = !promoterId && !!grupo;
+              const tot = (ehGrupo ? grupo?.totais : pr?.totais) ?? {
+                bbcap: 0,
+                conta_corrente: 0,
+                consorcio: 0,
+                total: 0,
+              };
 
               const tabela = (
                 titulo: string,
@@ -2490,19 +2525,19 @@ function PromotoresFullPage() {
                   <div className="dk">
                     <div className="dkc">
                       <p className="k">BBCAP</p>
-                      <div className="v num">{formatCurrency(pr?.totais.bbcap ?? 0)}</div>
+                      <div className="v num">{formatCurrency(tot.bbcap)}</div>
                     </div>
                     <div className="dkc">
                       <p className="k">Conta Corrente</p>
-                      <div className="v num">{formatCurrency(pr?.totais.conta_corrente ?? 0)}</div>
+                      <div className="v num">{formatCurrency(tot.conta_corrente)}</div>
                     </div>
                     <div className="dkc">
                       <p className="k">Consórcio</p>
-                      <div className="v num">{formatCurrency(pr?.totais.consorcio ?? 0)}</div>
+                      <div className="v num">{formatCurrency(tot.consorcio)}</div>
                     </div>
                     <div className="dkc">
-                      <p className="k">Total do promotor</p>
-                      <div className="v num">{formatCurrency(pr?.totais.total ?? 0)}</div>
+                      <p className="k">{ehGrupo ? "Total do grupo" : "Total do promotor"}</p>
+                      <div className="v num">{formatCurrency(tot.total)}</div>
                     </div>
                   </div>
 
@@ -2520,7 +2555,73 @@ function PromotoresFullPage() {
                     </div>
                   ) : null}
 
-                  {tabela("BBCAP", "BBCAP", sem.bbcap, [
+                  {ehGrupo ? (
+                    <div className="card">
+                      <div className="card-head">
+                        <div>
+                          <h2>Repasse de produto por promotor</h2>
+                          <p className="csub">
+                            {grupo?.promotores ?? 0} promotor(es) · {grupo?.linhas ?? 0} linha(s) de
+                            produto · {competenceShort}. Selecione um promotor acima para ver as
+                            linhas dele.
+                          </p>
+                        </div>
+                        <span className="chip soft">{formatCurrency(tot.total)}</span>
+                      </div>
+                      {(grupo?.por_promotor.length ?? 0) === 0 ? (
+                        <div className="state">
+                          Nenhuma linha de produto atribuída nesta competência.
+                        </div>
+                      ) : (
+                        <div className="scroll">
+                          <table className="wide">
+                            <thead>
+                              <tr>
+                                <th className="l sticky">Promotor(a)</th>
+                                <th>BBCAP</th>
+                                <th>Conta Corrente</th>
+                                <th>Consórcio</th>
+                                <th>Total</th>
+                                <th>Linhas</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(grupo?.por_promotor ?? []).map((r) => (
+                                <tr key={r.promoter_id}>
+                                  <td className="l sticky" data-l="Promotor(a)">
+                                    {r.promoter_name}
+                                  </td>
+                                  <td className={`num${r.bbcap > 0 ? "" : " dash"}`} data-l="BBCAP">
+                                    {r.bbcap > 0 ? formatCurrency(r.bbcap) : "—"}
+                                  </td>
+                                  <td
+                                    className={`num${r.conta_corrente > 0 ? "" : " dash"}`}
+                                    data-l="Conta Corrente"
+                                  >
+                                    {r.conta_corrente > 0 ? formatCurrency(r.conta_corrente) : "—"}
+                                  </td>
+                                  <td
+                                    className={`num${r.consorcio > 0 ? "" : " dash"}`}
+                                    data-l="Consórcio"
+                                  >
+                                    {r.consorcio > 0 ? formatCurrency(r.consorcio) : "—"}
+                                  </td>
+                                  <td className="num" data-l="Total">
+                                    {formatCurrency(r.total)}
+                                  </td>
+                                  <td className="num" data-l="Linhas">
+                                    {r.linhas}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {ehGrupo ? null : tabela("BBCAP", "BBCAP", sem.bbcap, [
                     { th: "Proposta", get: (r) => r.operacao },
                     { th: "CPF", get: (r) => txtOu(r.cpf_cliente) },
                     { th: "Data da venda", get: (r) => dataBr(r.data_venda) },
@@ -2530,7 +2631,7 @@ function PromotoresFullPage() {
                     { th: "Login do agente", get: (r) => txtOu(r.login_agente) },
                   ])}
 
-                  {tabela("Conta Corrente", "CONTA_CORRENTE", sem.conta_corrente, [
+                  {ehGrupo ? null : tabela("Conta Corrente", "CONTA_CORRENTE", sem.conta_corrente, [
                     { th: "Conta", get: (r) => r.operacao },
                     { th: "Agência", get: (r) => txtOu(r.agencia) },
                     { th: "Chave J", get: (r) => txtOu(r.j_key) },
@@ -2538,7 +2639,7 @@ function PromotoresFullPage() {
                     { th: "Produto", get: (r) => txtOu(r.produto_texto) },
                   ])}
 
-                  {tabela("Consórcio", "CONSORCIO", sem.consorcio, [
+                  {ehGrupo ? null : tabela("Consórcio", "CONSORCIO", sem.consorcio, [
                     { th: "Proposta", get: (r) => r.operacao },
                     { th: "Segmento", get: (r) => txtOu(r.segmento) },
                     { th: "Valor bem", num: true, get: (r) => brlOuTraco(r.valor_bem) },
