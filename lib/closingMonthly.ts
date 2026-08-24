@@ -178,18 +178,26 @@ export function computeDonaCompanyMap(
 }
 
 /**
- * Resolve a empresa DONA determinística de UM promotor no mês, pela MESMA régua do
- * fechamento (computeDonaCompanyMap): carrega a base do fechamento (todas as empresas),
- * aplica exclusão BBTS + herança master p/ obter o pid efetivo, e retorna a company da
- * chave individual dominante. Usada pela FILA de débitos (estorno master) p/ NÃO gravar
- * company_id nulo — que faria o débito sumir ao filtrar por empresa. Retorna null só se
- * o promotor não aparece no fechamento do mês.
+ * Empresa DONA determinística de CADA promotor no mês, pela régua de
+ * computeDonaCompanyMap: carrega a base do fechamento (todas as empresas), aplica
+ * exclusão BBTS + herança master p/ obter o pid efetivo, e devolve o mapa inteiro.
+ *
+ * O MAPA, e não uma chamada por promotor: quem precisa da dona de VÁRIAS pessoas
+ * (a Frente C grava produto de ~21 promotores) faria 21 cargas do fechamento
+ * inteiro. Uma carga serve a todos. `resolveDonaCompanyForPromoter` virou um
+ * `.get()` sobre isto — as duas nunca podem divergir porque só há um cálculo.
  */
-export async function resolveDonaCompanyForPromoter(
+/**
+ * Empresa DONA de UM promotor. Açúcar sobre buildDonaCompanyMapDoMes. Usada pela
+ * FILA de débitos (estorno master) p/ NÃO gravar company_id nulo — que faria o
+ * débito sumir ao filtrar por empresa. Retorna null só se o promotor não aparece
+ * no fechamento do mês.
+ */
+export async function buildDonaCompanyMapDoMes(
   supabase: SupabaseLike,
-  params: { year: number; month: number; promoterId: string }
-): Promise<string | null> {
-  const { year, month, promoterId } = params;
+  params: { year: number; month: number }
+): Promise<Map<string, string | null>> {
+  const { year, month } = params;
   const base = await loadClosingPromoterBase(supabase, { year, month, companyId: null });
   const isBbts = (c: ClosingContrato) => normKey(c.chaveJ) === BBTS_KEY;
   const contratos = base.contratos.filter((c) => !isBbts(c));
@@ -200,7 +208,16 @@ export async function resolveDonaCompanyForPromoter(
       dono
     );
   }
-  return computeDonaCompanyMap(contratos).get(promoterId) ?? null;
+  return computeDonaCompanyMap(contratos);
+}
+
+export async function resolveDonaCompanyForPromoter(
+  supabase: SupabaseLike,
+  params: { year: number; month: number; promoterId: string }
+): Promise<string | null> {
+  const { year, month, promoterId } = params;
+  const mapa = await buildDonaCompanyMapDoMes(supabase, { year, month });
+  return mapa.get(promoterId) ?? null;
 }
 
 /**

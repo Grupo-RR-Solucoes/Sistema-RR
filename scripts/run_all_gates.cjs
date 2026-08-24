@@ -56,6 +56,14 @@ const GATES = [
       "le regras_promotiva/json + lib/motor.ts; sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/closing_proposal_rows_pmr_soma_gate.cjs",
+    nome: "closingProposalRows: PMR e a SOMA das linhas, nao a primeira",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria + buildClosingProposalRows/loadClosingPromoterBase reais; " +
+      "sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/venda_propria_gestao_gate.cjs",
     nome: "venda propria de gestao (no-op + isolamento do PMR)",
     modo: "self-contained",
@@ -280,6 +288,18 @@ const GATES = [
       "todas'; o 3 guarda as 11 ancoras sem parcela no mes, em lista separada e ainda " +
       "atribuiveis; o 4 e a regressao do vazamento (gestor sem comissao_promotor); o 5 " +
       "garante que BBCAP e Conta Corrente nao foram afetados",
+  },
+  {
+    arquivo: "scripts/produto_pmr_empresa_dona_gate.cjs",
+    nome: "repasse de produto cai na linha de PMR da empresa DONA",
+    modo: "needs-db",
+    motivo:
+      "createClient; promoter_monthly_results + fechamento de PRODUCAO. O bloco 2 e a " +
+      "contraprova (a regra VELHA apontaria para empresa != a da linha com credito, " +
+      "criando linha nova); o 3 roda applyProdutoRepasseAoPmr em dryRun e confere que os " +
+      "28 buckets (beneficiario, empresa do produto) COLAPSAM em 21 chaves, todas na " +
+      "empresa dona; o 4 prova que o produto cai na MESMA linha do credito, que e o que " +
+      "faz o .find() de closingProposalRows achar a certa",
   },
   {
     arquivo: "scripts/produtos_detalhamento_escopo_gate.cjs",
