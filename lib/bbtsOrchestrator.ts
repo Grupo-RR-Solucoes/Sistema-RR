@@ -233,9 +233,13 @@ export async function consolidateMonthlyGroup(
   // seguro_share e exibido como FAIXA DE PENETRACAO (closingMonthly:465, :245
   // abaixo). Faixa e piso sao duas regras; na mesma variavel, uma esconde a outra.
   //
-  // UNIVERSO = pids UNIAO alcancados. Quem tem so seguro avulso nao entra em
-  // `pids` (:170, alimentado por contratos) mas entra no agregado do
-  // closingMonthly via addSeguroAvulso — sem a uniao, passaria batido pelo piso.
+  // UNIVERSO = pids UNIAO alcancados. A uniao nasceu porque quem tinha SO seguro
+  // "avulso" nao entrava em `pids` (:170, alimentado por contratos) e passava
+  // batido pelo piso. Esse caso deixou de existir em 24/08/2026 — o addSeguroAvulso
+  // foi removido (era duplicata do embutido; ver closingMonthly bloco 5b) e todo
+  // promotor com seguro tem contrato CASH. A uniao FICA: protege contra qualquer
+  // outra fonte de alcancado fora de `pids`, e tirar defesa por "hoje nao
+  // acontece" e exatamente o erro que a regra de varredura deste repo proibe.
   const alcancadosPiso = (await lerReguaPisoVigente(supabase, { year, month })).regua?.promoterIds ?? [];
   const universoPiso = [...new Set([...pids, ...alcancadosPiso])];
   const planoPiso = await resolverPiso(supabase, {

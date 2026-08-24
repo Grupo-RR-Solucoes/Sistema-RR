@@ -37,10 +37,13 @@ import { getProductionPeriodFromValue } from "./productionPeriod.ts";
 // — a mesma regua que o resto do sistema usa.
 // Gate: scripts/heranca_master_janela_gate.cjs
 //
-// TRES consumidores dependem desta decisao e nenhum pode ter copia propria:
-//   lib/closingMonthly.ts   (PMR do fechamento + a empresa dona do debito)
-//   lib/closingMonthly.ts   (addSeguroAvulso — aba INSURANCE/"A Vista")
-//   lib/bbtsOrchestrator.ts (bloco A, producao RR consolidada RR+ADS)
+// Os consumidores dependem desta decisao e nenhum pode ter copia propria:
+//   lib/closingMonthly.ts      (PMR do fechamento + a empresa dona do debito)
+//   lib/bbtsOrchestrator.ts    (bloco A, producao RR consolidada RR+ADS)
+//   lib/closingProposalRows.ts (linhas da aba Detalhamento no mes fechado)
+// Um consumidor original saiu da lista: addSeguroAvulso, em closingMonthly,
+// REMOVIDO em 24/08/2026 — as linhas INSURANCE/"A Vista" eram a MESMA linha do
+// CASH desdobrada pelo importador. Ver o bloco 5b de lib/closingMonthly.ts.
 // ============================================================
 
 type SupabaseLike = SupabaseClient;
