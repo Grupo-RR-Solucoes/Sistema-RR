@@ -2453,7 +2453,7 @@ function PromotoresFullPage() {
                         <p className="csub">
                           {linhas.length} linha(s) atribuída(s) a este promotor · {competenceShort}
                           {pendentes > 0
-                            ? ` · ${pendentes} linha(s) do mês ainda sem dono (fila de atribuição)`
+                            ? ` · ${pendentes} linha(s) do mês sem dono, que ficam com a empresa`
                             : ""}
                         </p>
                       </div>
@@ -2466,7 +2466,7 @@ function PromotoresFullPage() {
                     {linhas.length === 0 ? (
                       <div className="state">
                         Nenhuma linha de {titulo.toLowerCase()} atribuída a este promotor nesta
-                        competência.
+                        competência. As linhas sem dono ficam com a empresa.
                         {pendentes > 0 ? (
                           <>
                             {" "}
@@ -2544,10 +2544,11 @@ function PromotoresFullPage() {
                   {semTotal > 0 ? (
                     <div className="card">
                       <p className="state">
-                        {semTotal} linha(s) de produto desta competência ainda estão{" "}
-                        <b>sem dono</b> na fila (BBCAP {sem.bbcap} · Conta Corrente{" "}
-                        {sem.conta_corrente} · Consórcio {sem.consorcio}). Sem atribuição não há
-                        repasse — elas não aparecem para promotor nenhum.{" "}
+                        {semTotal} linha(s) de produto desta competência estão <b>sem dono</b> na
+                        fila (BBCAP {sem.bbcap} · Conta Corrente {sem.conta_corrente} · Consórcio{" "}
+                        {sem.consorcio}) e por isso a comissão delas fica{" "}
+                        <b>100% com a empresa</b>. Não é erro e o valor não se perde: ele apenas não
+                        é repassado a promotor nenhum. Atribuir é o que muda isso.{" "}
                         <Link className="linkbtn" href="/produtos/atribuicao">
                           Fila de atribuição →
                         </Link>

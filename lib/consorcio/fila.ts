@@ -239,7 +239,28 @@ export type ConsorcioRepasseBucket = {
 
 // Repasse do consorcio por (beneficiario, empresa) numa competencia: soma a comissao-
 // EMPRESA das parcelas RECEBIDAS no mes x 0,40, resolvendo o dono pela ancora da
-// proposta. Parcelas de proposta sem ancora ASSIGNED (balde) NAO entram.
+// proposta.
+//
+// ============================================================
+// LINHA SEM DONO FICA 100% COM A EMPRESA (regra confirmada por Diego,
+// 23/08/2026). Nao ha repasse, e nao ha para quem repassar.
+//
+// NAO E "dado faltando" nem bug: e o estado NORMAL de uma linha que ninguem
+// atribuiu ainda, e e uma DECISAO de negocio — a comissao que a Promotiva pagou
+// pela operacao fica inteira com a RR. O dinheiro nao some; so nao e repassado.
+//
+// TAMBEM NAO PRECISA de "chave master" no dropdown: "nao atribuido" JA E a forma
+// de dizer "e da empresa". Oferecer um beneficiario-empresa criaria uma segunda
+// maneira de expressar a mesma coisa, e duas maneiras divergem.
+//
+// ESTA ESCRITO AQUI porque ate 23/08/2026 isso era CONSEQUENCIA (um `continue`)
+// e nao decisao registrada. Quem chegasse depois veria repasse zero numa linha
+// com valor e teria motivo para achar que era defeito, e "consertar".
+// ============================================================
+//
+// No consorcio a unidade e a PROPOSTA: parcela cuja proposta nao tem ancora
+// ASSIGNED nao entra, e a comissao-empresa dela fica inteira com a RR. Isso vale
+// tambem para as parcelas FUTURAS dessa proposta, ate alguem atribuir a ancora.
 //
 // A REGUA E A MESMA para promotor e para gestao (x 0,40) — muda so o destino do valor
 // mais adiante (PMR x gestao_venda_propria).
@@ -253,7 +274,8 @@ export async function computeConsorcioCommissionByBeneficiario(
   const acc = new Map<string, ConsorcioRepasseBucket>();
   for (const e of entries) {
     const b = beneficiarioByProposta.get(chaveProposta(e.company_id, e.operation_number));
-    if (!b) continue; // balde: sem dono = sem repasse ate atribuir
+    // SEM DONO -> 100% DA EMPRESA. Ver o bloco no cabecalho desta funcao.
+    if (!b) continue;
     const repasse = repasseConsorcioPromotor(Number(e.commission_value || 0));
     const ak = `${b.kind}:${b.id}|${e.company_id}`;
     const cur = acc.get(ak) || { beneficiario: b, company_id: e.company_id, consorcio: 0 };

@@ -479,7 +479,10 @@ export default function AtribuicaoClient() {
                         onChange={(e) => atribuir(it, e.target.value)}
                         aria-label={`Quem vendeu ${it.operation_number}`}
                       >
-                        <option value="">— não atribuído (balde) —</option>
+                        {/* "balde" nao dizia para ONDE ia o dinheiro. Linha sem
+                            dono fica 100% com a empresa — quem confere precisa
+                            ler isso no proprio campo, nao deduzir. */}
+                        <option value="">— sem dono · fica com a empresa —</option>
                         {promotores.length > 0 ? (
                           <optgroup label="Promotores">
                             {promotores.map((b) => (
@@ -569,6 +572,9 @@ export default function AtribuicaoClient() {
           Consórcio é <b>diferido</b>: atribuir a proposta uma vez faz todas as parcelas (e as futuras)
           herdarem o dono. BBCAP e Conta Corrente são <b>evento único</b>. Reatribuir é possível a
           qualquer momento — o repasse recompõe no próximo fechamento.
+          <br />
+          Linha <b>sem dono não é erro</b>: a comissão dela fica <b>100% com a empresa</b>. O valor
+          não se perde — só não é repassado a ninguém. Atribuir é o que decide para onde ele vai.
         </Banner>
 
         {gestao.length > 0 ? (
