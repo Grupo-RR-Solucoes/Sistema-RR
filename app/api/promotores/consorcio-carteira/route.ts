@@ -3,17 +3,36 @@ import { NextResponse } from "next/server";
 import { apiGuardErrorResponse, requireAuthenticated } from "@/lib/auth/guards";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 import { FATOR_REPASSE_PROMOTOR_CONSORCIO } from "@/lib/consorcio/trp210";
+import { resolveConsorcioBeneficiarioByProposta } from "@/lib/consorcio/fila";
+import { filtrarCarteiraDoPromotor } from "@/lib/consorcio/carteira";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // ============================================================
 // FRENTE DE PRODUTO — M3 PARTE B: carteira de consorcio do PROMOTOR.
-// Le carteira_consorcio filtrando pelo promoter_id do proprio promotor (RLS de
-// promotor nao existe na tabela, entao service_role + FILTRO explicito pelo id da
-// sessao — mesma disciplina do /api/promotores). Mostra as parcelas recebidas x a vir
-// e o REPASSE do promotor (comissao-empresa x 0,40). socio/funcionario podem passar
+// Le carteira_consorcio e devolve as parcelas DO PROMOTOR. RLS de promotor nao
+// existe nesta tabela, entao service_role + FILTRO explicito pelo id da sessao —
+// mesma disciplina do /api/promotores. Mostra as parcelas recebidas x a vir e o
+// REPASSE do promotor (comissao-empresa x 0,40). socio/funcionario podem passar
 // ?promoterId=. Gestor/outros: bloqueado (so proprio promotor ou admin).
+//
+// O DONO VEM DA ANCORA, NAO DA COLUNA. Esta rota filtrava por
+// `carteira_consorcio.promoter_id`, que e um RETRATO DO IMPORT:
+// materializarCarteiraConsorcio so roda em app/api/import/closing, e atribuir na
+// fila NAO re-materializa. Medido em 23/08/2026: 27 ancoras de consorcio
+// ASSIGNED contra 316 linhas de carteira com promoter_id NULO — a carteira do
+// promotor aparecia VAZIA em PromotorView:517 para todo mundo, com a atribuicao
+// feita e o PMR pagando certo.
+//
+// Agora o dono sai de resolveConsorcioBeneficiarioByProposta, a MESMA funcao que
+// o pagamento (computeConsorcioCommissionByBeneficiario) e o detalhamento
+// (lib/produtos/produtoProposalRows, commit ea262db) usam. Uma fonte para o dono.
+//
+// O FILTRO SAIU DO SQL E FOI PARA O JS, e a guarda NAO mudou: `promoterId`
+// continua vindo da sessao (o ?promoterId= do promotor segue descartado) e
+// nenhuma linha de outro dono e devolvida. Sao 316 linhas no total — trazer
+// todas e filtrar em memoria custa menos que uma segunda ida ao banco.
 // ============================================================
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -37,15 +56,26 @@ export async function GET(req: Request) {
     }
 
     const admin = getSupabaseAdmin();
-    const { data, error } = await admin
-      .from("carteira_consorcio")
-      .select(
-        "proposta, posicao, segmento_grupo, teto_parcelas, valor_bem, comissao_esperada, comissao_recebida, competencia_recebida, status"
-      )
-      .eq("promoter_id", promoterId)
-      .order("proposta", { ascending: true })
-      .order("posicao", { ascending: true });
-    if (error) throw new Error(error.message);
+    const [carteira, donoPorProposta] = await Promise.all([
+      admin
+        .from("carteira_consorcio")
+        .select(
+          "company_id, proposta, posicao, segmento_grupo, teto_parcelas, valor_bem, comissao_esperada, comissao_recebida, competencia_recebida, status"
+        )
+        .order("proposta", { ascending: true })
+        .order("posicao", { ascending: true }),
+      resolveConsorcioBeneficiarioByProposta(admin),
+    ]);
+    if (carteira.error) throw new Error(carteira.error.message);
+
+    // SO as parcelas cuja ANCORA aponta para ESTE promotor. Proposta de papel de
+    // GESTAO (venda propria) nao e de promotor nenhum — vai para
+    // gestao_venda_propria, e nao entra aqui.
+    const data = filtrarCarteiraDoPromotor(
+      (carteira.data || []) as any[],
+      donoPorProposta,
+      promoterId
+    );
 
     const rows = (data || []).map((r: any) => {
       const recebida = r.status === "RECEBIDA" || r.status === "ENCERRADA";

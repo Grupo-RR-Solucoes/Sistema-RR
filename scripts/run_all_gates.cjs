@@ -257,6 +257,18 @@ const GATES = [
       "createClient; daily_production_records de PRODUCAO",
   },
   {
+    arquivo: "scripts/carteira_consorcio_dono_ancora_gate.cjs",
+    nome: "carteira do promotor: dono pela ancora, nao pela coluna defasada",
+    modo: "needs-db",
+    motivo:
+      "createClient no bloco 3; blocos 1 e 2 sao PUROS. O 2 e a contraprova — o filtro " +
+      "ANTIGO (.eq promoter_id) devolve VAZIO no mesmo conjunto, senao o gate nao " +
+      "distingue conserto de ausencia de defeito. O 3 mede contra producao: 316 linhas " +
+      "com 0 promoter_id gravado, 27 ancoras ASSIGNED, e 198 parcelas entregues pela " +
+      "ancora contra 0 pelo filtro antigo. Exercita filtrarCarteiraDoPromotor, a MESMA " +
+      "funcao que a rota chama",
+  },
+  {
     arquivo: "scripts/fila_consorcio_por_parcela_gate.cjs",
     nome: "fila do consorcio lista PARCELA e atribui PROPOSTA",
     modo: "needs-db",
