@@ -70,6 +70,9 @@ const faixaLabel = (p: number) => (p >= 0.30 ? "≥30" : p >= 0.21 ? "21-30" : p
   console.log("-".repeat(h.length));
   console.log(pad("TOTAL", 30) + padL("", 8) + padL("", 7) + padL("", 8) + padL(brl(tEmp), 11) + padL(brl(tCorr), 11) + padL(brl(tGrav), 11) + padL((tCorr - tGrav >= 0 ? "+" : "") + brl(tCorr - tGrav), 10));
   console.log(`\nSeguro: CORRETO ${brl(tCorr)} vs GRAVADO ${brl(tGrav)} → delta ${brl(tCorr - tGrav)}`);
-  console.log(`(embutido CASH + avulso INSURANCE/A Vista; seguro avulso diag: ${JSON.stringify(res.seguro_avulso)})`);
+  // Fonte do seguro-empresa: SÓ o embutido no CASH desde 24/08/2026. O "avulso"
+  // INSURANCE/"A Vista" era a MESMA linha desdobrada pelo importador e dobrava o
+  // valor; o campo `seguro_avulso` do retorno morreu junto. Ver closingMonthly 5b.
+  console.log(`(seguro-empresa = COMISSÃO SEGURO embutida nas linhas CASH)`);
   console.log(`\nDRY-RUN: nada gravado. dry_run=${res.dry_run}`);
 })().catch((e) => { console.error("ERRO:", e && e.message ? e.message : e); process.exit(1); });

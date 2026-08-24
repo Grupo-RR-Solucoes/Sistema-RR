@@ -19,18 +19,24 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //              PENETRAÇÃO INDIVIDUAL do promotor (líquido_segurado/líquido_total,
 //              "segurado" pelo FLAG PROD.SEGURADA), cortes oficiais 0,11/0,21/0,30
 //              (lib/insurancePenetration). NÃO usa a penetração do GRUPO (era bug).
-//              Soma duas fontes de comissão-empresa — (a) embutido nas linhas CASH
-//              e (b) aba avulsa INSURANCE/"A Vista" (chave individual ou herança
-//              master; sem chave => fora) — e aplica o share UMA vez. O BBTS-2d
+//              FONTE ÚNICA: a COMISSÃO SEGURO EMBUTIDA nas linhas CASH. Até
+//              24/08/2026 somava-se também a aba "avulsa" INSURANCE/"A Vista",
+//              que NÃO é uma segunda fonte: é a MESMA linha desdobrada pelo
+//              importador, e o seguro saía DOBRADO (ver o bloco 5b). O BBTS-2d
 //              pode INJETAR o share (penetração consolidada RR+ADS).
 //   exclusões: chave BBTS (JJ552710) fica FORA (frente BBTS futura); SRCC="Sim"
 //              sai do valor e volta em `restritas` para a UI.
 //
-// TODO (PENDÊNCIA DOCUMENTADA — não tratar nesta onda): a aba avulsa
-// INSURANCE/"Seguro" (~-R$901 em jun/2026, estornos/cancelamentos SEM chave J
-// nem promotor) NÃO entra nesta consolidação. Falta decisão de rateio (dedução
-// da empresa? proporcional? ignorar?). Enquanto não houver régua, fica de fora.
-// (Distinta da aba INSURANCE/"A Vista", que TEM régua e já entra — ver acima.)
+// DÍVIDA NOMEADA (não tratada aqui): a aba INSURANCE/"Seguro" — ESTORNOS, com
+// OPERACAO/DATA_CANCELAMENTO/NUMERO_SEGURO/STATUS=CANCELADO e comissões
+// NEGATIVAS (−R$ 419,21 em jul/2026, 17 linhas; ~−R$ 901 em jun/2026) — NÃO é
+// consumida por ninguém. Falta decisão de rateio (dedução da empresa?
+// proporcional? ignorar?). É a aba que tem valor de verdade a somar.
+//
+// DÍVIDA NOMEADA (importação): abr/2026 tem 497 linhas CASH contra 707 em
+// jun/2026 e 724 em jul/2026, e 5 linhas INSURANCE cujo contrato não existe em
+// CASH nenhum — a importação daquela competência parece incompleta. Medido em
+// 24/08/2026; nada foi feito a respeito.
 //
 // NÃO altera detectClosedMonth, NÃO toca /api/promotores, NÃO vira a tela. É
 // chamada por script/endpoint de teste manual (scripts/rodarClosingMonthly.ts).
@@ -49,7 +55,6 @@ import {
 import {
   fetchPromoterShareData,
   resolvePromoterShareSync,
-  readRawPayloadValue,
 } from "./proposalDetailing.ts";
 import {
   individualPenetration,
@@ -134,9 +139,9 @@ type ClosingAgg = {
   count: number;
   avista: number; // Σ COMISSÃO PF × acordo (com Frente C)
   // Comissão-EMPRESA de seguro (COMISSÃO SEGURO), BRUTA — o share (individual) é
-  // aplicado UMA vez no final sobre (embutido + avulso).
+  // aplicado UMA vez no final. FONTE ÚNICA: o CASH. Não existe mais um campo
+  // "avulso" somando aqui — ver o bloco 5b abaixo.
   seguroEmpresaEmbutido: number; // Σ COMISSÃO SEGURO do CASH
-  seguroEmpresaAvulso: number; // Σ COMISSÃO SEGURO da aba INSURANCE/"A Vista"
   insuredCount: number;
 };
 
@@ -383,14 +388,13 @@ export async function consolidateMonthlyFromClosing(
     if (!a) {
       a = {
         // Empresa DONA (determinística) para quem tem contrato CASH; fallback ao
-        // company_id passado (ex.: promotor só com seguro avulso, fora do map).
+        // company_id passado.
         companyId: donaCompany.get(pid) ?? companyId ?? null,
         net: 0,
         liquidoSegurado: 0,
         count: 0,
         avista: 0,
         seguroEmpresaEmbutido: 0,
-        seguroEmpresaAvulso: 0,
         insuredCount: 0,
       };
       agg.set(pid, a);
@@ -417,15 +421,46 @@ export async function consolidateMonthlyFromClosing(
     }
   }
 
-  // 5b. Seguro AVULSO — aba INSURANCE/"A Vista". Acumula a COMISSÃO SEGURO BRUTA
-  //     (o share individual é aplicado no final, junto com o embutido). Atribui
-  //     por CHAVE J individual ou herança master; exclui BBTS. A aba
-  //     INSURANCE/"Seguro" (estornos, sem chave) segue como pendência.
-  const insDiag = await addSeguroAvulso(
-    supabase,
-    { year, month, companyId },
-    getAgg
-  );
+  // 5b. NÃO EXISTE SEGURO AVULSO. (Removido em 24/08/2026.)
+  //
+  //     Havia aqui um `addSeguroAvulso` que somava a COMISSÃO SEGURO das linhas
+  //     entry_type='INSURANCE' com sheet_name='A Vista ' num segundo campo do
+  //     agregado, e o cálculo somava os dois lados. Isso DOBRAVA o seguro.
+  //
+  //     Essas linhas não são uma segunda fonte: são a MESMA linha da aba
+  //     "A Vista", desdobrada pelo importador. `buildEntriesForRow`
+  //     (monthlyClosingImport.ts:1075-1101) emite DUAS entries da mesma `row`
+  //     — uma CASH com "Comissao PF" e uma INSURANCE com "Comissao Seguro" —
+  //     e `buildBaseEntry` grava `metadata: row` nas duas. O arquivo da
+  //     Promotiva tem UMA aba com o seguro embutido por contrato; a outra aba
+  //     de seguro é a de ESTORNO (OPERACAO, DATA_CANCELAMENTO, NUMERO_SEGURO,
+  //     STATUS=CANCELADO, comissões negativas), estrutura diferente.
+  //
+  //     MEDIDO em 24/08/2026, casando por (company_id, contrato):
+  //       jun/2026  194 de 194 linhas INSURANCE têm par no CASH, valor idêntico
+  //       jul/2026  184 de 184, idem
+  //       abr/2026  149 de 154; as 5 restantes têm metadata de linha da aba
+  //                 "A Vista" (% A VISTA, COMISSÃO PF, VALOR LÍQUIDO) e o
+  //                 contrato não existe em CASH nenhum — são gêmeas CASH
+  //                 PERDIDAS de uma importação incompleta (abril tem 497 linhas
+  //                 CASH contra 707 em jun e 724 em jul), não avulso legítimo.
+  //     Em nenhuma competência o valor da INSURANCE difere do embutido.
+  //
+  //     POR QUE NÃO "LER SÓ O QUE NÃO TEM PAR": deixaria a régua dependendo de
+  //     uma coincidência (hoje zero) e manteria vivo um caminho que já
+  //     CONTRABANDEAVA SRCC RESTRITA. O embutido exclui as restritas — elas não
+  //     entram no agregado — mas a gêmea INSURANCE não carrega essa marca e o
+  //     addSeguroAvulso a atribuía assim mesmo. SEVERINA em jun/2026 recebia
+  //     seguro com embutido 0,00: o valor vinha inteiro de uma restrita
+  //     (contrato 211317389, R$ 22,11). Em jul/2026 o mesmo com o 220065875
+  //     (R$ 2,76). Remover a soma conserta isso de graça; dividir por dois não
+  //     consertaria.
+  //
+  //     DÍVIDA NOMEADA (não consertada aqui): a aba INSURANCE/"Seguro" —
+  //     ESTORNOS, −R$ 419,21 em jul/2026, 17 linhas — não é consumida por
+  //     ninguém. O filtro sheet_name==='A Vista ' que a deixava de fora morreu
+  //     junto com esta função; ela continua fora, agora por ausência de
+  //     leitor. É a aba que tem valor de verdade a somar.
 
   // 6. Metas (para target_status e colunas de meta).
   const targets = await fetchAllPaged<any>(() => {
@@ -466,7 +501,10 @@ export async function consolidateMonthlyFromClosing(
     const penetracao = individualPenetration(a.liquidoSegurado, a.net);
     const seguroShare =
       params.seguroShareByPromoter?.get(pid) ?? insuranceShareForPenetration(penetracao);
-    const seguroEmpresa = a.seguroEmpresaEmbutido + a.seguroEmpresaAvulso;
+    // FONTE ÚNICA: o seguro embutido no CASH. Até 24/08/2026 esta linha somava
+    // um `seguroEmpresaAvulso` que era a MESMA linha desdobrada pelo importador
+    // — o seguro saía dobrado e o share o dividia de volta pela metade. Ver 5b.
+    const seguroEmpresa = a.seguroEmpresaEmbutido;
 
     // PISO DE REPASSE — fatores injetados pelo bloco F do bbtsOrchestrator.
     // Multiplicam SÓ o repasse: `seguroEmpresa` (comissão da EMPRESA) fica
@@ -585,116 +623,6 @@ export async function consolidateMonthlyFromClosing(
     orfaos_sem_dono: orfaosSemDono,
     restritas, // SRCC="Sim": fora do valor, para a UI listar depois.
     bbts_excluidos: base.contratos.length - contratos.length,
-    seguro_avulso: insDiag,
   };
 }
 
-// Aliases das colunas do metadata das linhas de seguro (readRawPayloadValue já
-// normaliza acento/caixa e apara espaços — cobre "COMISSÃO SEGURO", " % PENETRAÇÃO ").
-const A_CHAVE_J = ["CHAVE J", "LOGIN", "USUARIO"];
-const A_COMISSAO_SEGURO = ["COMISSAO SEGURO", "COMISSÃO SEGURO"];
-const A_CONTRATO = ["CONTRATO", "NUMERO CONTRATO", "NÚMERO CONTRATO"];
-
-/**
- * Acumula em cada promotor a COMISSÃO SEGURO BRUTA da aba INSURANCE/"A Vista"
- * (em seguroEmpresaAvulso). O share (penetração individual) é aplicado UMA vez no
- * final, junto com o embutido — por isso NÃO multiplica por share aqui. Atribui
- * pelo DIÁRIO (contrato → daily.proposal_number, assigned_promoter_id) com a
- * CHAVE J (INDIVIDUAL) como fallback — MESMA precedência do PMR à vista.
- * Sem chave resolvível => fora. Exclui BBTS. Muta o agregado via getAgg (cria
- * entrada nova se o promotor só tiver seguro avulso).
- */
-async function addSeguroAvulso(
-  supabase: SupabaseLike,
-  params: { year: number; month: number; companyId: string | null },
-  getAgg: (pid: string, companyId: string | null) => ClosingAgg
-): Promise<{
-  linhas: number;
-  atribuidas: number;
-  do_diario: number; // resolvidas pelo assigned_promoter_id do diário
-  sem_chave: number;
-  bbts: number;
-  total: number; // Σ COMISSÃO SEGURO BRUTA atribuída (antes do share)
-}> {
-  const { year, month, companyId } = params;
-
-  // Linhas INSURANCE da aba "A Vista" (sheet_name tem espaço no fim). A aba
-  // "Seguro" (estornos) é outra sheet_name e NÃO entra aqui.
-  const rows = await fetchAllPaged<any>(() => {
-    let q = supabase
-      .from("monthly_closing_entries")
-      .select("company_id, j_key, commission_value, metadata")
-      .eq("year", year)
-      .eq("month", month)
-      .eq("entry_type", "INSURANCE")
-      .eq("sheet_name", "A Vista ");
-    if (companyId) q = q.eq("company_id", companyId);
-    return q;
-  });
-
-  // Mapa Chave J -> tipo/promotor.
-  const jkeys = await fetchAllPaged<any>(() =>
-    supabase.from("j_keys").select("j_key, promoter_id, key_type")
-  );
-  const jkeyMap = new Map<string, { promoter_id: string | null; key_type: string | null }>();
-  for (const jk of jkeys) {
-    const k = normKey(jk.j_key);
-    if (k) jkeyMap.set(k, { promoter_id: jk.promoter_id ?? null, key_type: jk.key_type ?? null });
-  }
-
-  const chaveDe = (r: any): string =>
-    normKey(readRawPayloadValue(r.metadata || {}, A_CHAVE_J) || r.j_key);
-  const contratoDe = (r: any): string =>
-    String(readRawPayloadValue(r.metadata || {}, A_CONTRATO) || "").trim();
-
-  // Dono do DIÁRIO p/ TODAS as linhas (não só as de chave MASTER): é a consulta
-  //   ao diário que faz a reatribuição manual valer. Restringi-la à chave MASTER
-  //   deixava a aba de seguro desfazendo a reatribuição igual ao à vista fazia.
-  const dono = await buildDonoDoDiarioMap(
-    supabase,
-    rows
-      .filter((r) => chaveDe(r) !== BBTS_KEY)
-      .map((r) => ({ contrato: contratoDe(r), companyId: r.company_id ?? null })),
-    year,
-    month
-  );
-
-  let atribuidas = 0;
-  let doDiario = 0;
-  let semChave = 0;
-  let bbts = 0;
-  let total = 0;
-
-  for (const r of rows) {
-    const chave = chaveDe(r);
-    if (chave === BBTS_KEY) {
-      bbts += 1;
-      continue;
-    }
-    const info = jkeyMap.get(chave);
-    const contrato = contratoDe(r);
-    const pid = resolvePromotorEfetivo(
-      {
-        promoterIdDaChave:
-          info && info.key_type === "INDIVIDUAL" ? info.promoter_id ?? null : null,
-        contrato,
-        companyId: r.company_id ?? null,
-      },
-      dono
-    );
-    if (pid && dono.get(`${r.company_id ?? null}|${contrato}`) === pid) doDiario += 1;
-    if (!pid) {
-      semChave += 1; // nem o diário nem a chave J resolvem -> fora
-      continue;
-    }
-    const comSeg =
-      toNumber(readRawPayloadValue(r.metadata || {}, A_COMISSAO_SEGURO)) ||
-      toNumber(r.commission_value);
-    const a = getAgg(pid, r.company_id ?? null);
-    a.seguroEmpresaAvulso += comSeg; // BRUTO — share individual aplicado no final
-    total += comSeg;
-    atribuidas += 1;
-  }
-
-  return { linhas: rows.length, atribuidas, do_diario: doDiario, sem_chave: semChave, bbts, total };
-}

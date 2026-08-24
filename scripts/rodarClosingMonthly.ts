@@ -54,10 +54,11 @@ function padL(s: string | number, n: number): string {
   console.log(
     `Diagnóstico: ${res.contratos_processados} contratos processados | ${res.contratos_do_diario} com dono do diário | ${res.orfaos_sem_dono} órfãos sem dono | ${res.bbts_excluidos} BBTS excluídos | ${res.restritas.length} restritas SRCC | ${res.promoters_calculated} promotores gravados`
   );
-  const sa = res.seguro_avulso;
-  console.log(
-    `Seguro avulso (INSURANCE/A Vista): ${sa.linhas} linhas | ${sa.atribuidas} atribuídas (${sa.do_diario} pelo diário) | ${sa.sem_chave} sem chave (fora) | ${sa.bbts} BBTS | Σ ${brl(sa.total)}\n`
-  );
+  // A linha "Seguro avulso (INSURANCE/A Vista)" saiu daqui em 24/08/2026 junto
+  // com o campo `seguro_avulso` do retorno: aquelas linhas eram a MESMA linha do
+  // CASH desdobrada pelo importador, e somá-las dobrava o seguro. Ver o bloco 5b
+  // de lib/closingMonthly.ts. O seguro agora vem só do embutido no CASH.
+  console.log("");
 
   const W = { nome: 36, val: 16 };
   const header =

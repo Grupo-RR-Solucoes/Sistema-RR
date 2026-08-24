@@ -56,6 +56,14 @@ const GATES = [
       "le regras_promotiva/json + lib/motor.ts; sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/seguro_sem_duplicata_gate.cjs",
+    nome: "seguro do fechamento sai do CASH (a gemea INSURANCE nao soma)",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria + consolidateMonthlyFromClosing real em dryRun; " +
+      "sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/closing_proposal_rows_pmr_soma_gate.cjs",
     nome: "closingProposalRows: PMR e a SOMA das linhas, nao a primeira",
     modo: "self-contained",
