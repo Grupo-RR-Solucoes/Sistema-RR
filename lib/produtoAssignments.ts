@@ -180,8 +180,27 @@ export type ProductCommissionByBeneficiario = Map<
 
 // Repasse consolidado por (beneficiario, empresa): junta as linhas de produto
 // (comissao-EMPRESA no fechamento) com a fila (ASSIGNED -> promotor OU app_user de
-// gestao) e aplica o fator de repasse. Linhas PENDING/balde NAO entram (sem dono =
-// sem repasse).
+// gestao) e aplica o fator de repasse.
+//
+// ============================================================
+// LINHA SEM DONO FICA 100% COM A EMPRESA (regra confirmada por Diego,
+// 23/08/2026). Nao ha repasse, e nao ha para quem repassar.
+//
+// NAO E "dado faltando" nem bug: e o estado NORMAL de uma linha que ninguem
+// atribuiu ainda, e e uma DECISAO de negocio — a comissao que a Promotiva pagou
+// pela operacao fica inteira com a RR. O dinheiro nao some; so nao e repassado.
+//
+// TAMBEM NAO PRECISA de "chave master" no dropdown: "nao atribuido" JA E a forma
+// de dizer "e da empresa". Oferecer um beneficiario-empresa criaria uma segunda
+// maneira de expressar a mesma coisa, e duas maneiras divergem.
+//
+// ESTA ESCRITO AQUI porque ate 23/08/2026 isso era CONSEQUENCIA (um `continue`)
+// e nao decisao registrada. Quem chegasse depois veria repasse zero numa linha
+// com valor e teria motivo para achar que era defeito, e "consertar".
+// ============================================================
+//
+// Consequencia pratica aqui: linha PENDING (ou ASSIGNED sem beneficiario) nao
+// entra no acumulador — a comissao dela fica com a empresa.
 //
 // A REGUA E A MESMA para os dois tipos de dono — x 0,5833 nos eventos unicos, x 0,40
 // no consorcio. O que separa promotor de gestao e so o DESTINO, decidido adiante:
@@ -221,7 +240,9 @@ export async function computeProductCommissionByBeneficiario(
   for (const e of entries) {
     const key = chaveNaturalProduto(e);
     const dono = donoByKey.get(key);
-    if (!dono) continue; // PENDING/balde: sem repasse ate ser atribuido
+    // SEM DONO -> 100% DA EMPRESA. Nao e "pular ate atribuir": e a regra. Ver o
+    // bloco no cabecalho desta funcao antes de "consertar" o repasse zero.
+    if (!dono) continue;
     const repasse = repassePromotor(Number(e.commission_value || 0));
     const ak = `${beneficiarioValue(dono)}|${e.company_id}`;
     const cur = acc.get(ak) || novoBucket(dono, e.company_id);

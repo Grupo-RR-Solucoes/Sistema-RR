@@ -88,7 +88,14 @@ export type ProdutoProposalRow = {
 export type ProdutoProposalRows = {
   rows: ProdutoProposalRow[];
   totais: { bbcap: number; conta_corrente: number; consorcio: number; total: number };
-  /** Diagnostico honesto: quantas linhas do mes existem SEM dono atribuido. */
+  /**
+   * Quantas linhas do mes ficaram COM A EMPRESA por nao ter dono na fila.
+   *
+   * Nao e erro nem pendencia de sistema: linha sem dono fica 100% com a empresa
+   * (regra Diego, 23/08/2026 — ver lib/produtoAssignments.ts). O contador existe
+   * para a tela poder DIZER isso: quem confere precisa saber que o valor nao
+   * sumiu, so nao foi repassado — e que atribuir muda para onde ele vai.
+   */
   sem_atribuicao: { bbcap: number; conta_corrente: number; consorcio: number };
 };
 
