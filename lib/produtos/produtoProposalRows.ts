@@ -114,26 +114,29 @@ async function paged<T = any>(build: () => any): Promise<T[]> {
   return out;
 }
 
+/** Linha de produto JA com o dono resolvido. Uso interno. */
+type LinhaComDono = { promoterId: string; row: ProdutoProposalRow };
+
 /**
- * Linhas de produto do promotor na competencia. `promoterId` e OBRIGATORIO —
- * chamar sem ele e erro de programacao, nao um "traz tudo".
+ * COLETOR: todas as linhas de produto da competencia que tem dono PROMOTOR, cada
+ * uma com o id do dono. Uso INTERNO — nao e exportado de proposito: quem chama de
+ * fora passa por buildProdutoProposalRows (escopo de um promotor) ou por
+ * buildProdutoResumoGrupo (visao do grupo, so para socio/funcionario). Nao ha
+ * caminho que devolva "as linhas de todo mundo, uma a uma".
+ *
+ * As duas saidas nascem DAQUI, e e por isso que a soma do grupo e identica a soma
+ * dos individuais por CONSTRUCAO, e nao por coincidencia de dois codigos.
  */
-export async function buildProdutoProposalRows(
+async function coletarLinhasComDono(
   supabase: SupabaseLike,
-  params: {
-    promoterId: string;
-    year: number;
-    month: number;
-    /** Cinto de seguranca: false esconde a comissao da EMPRESA. Ver o topo. */
-    incluirComissaoEmpresa: boolean;
-  }
-): Promise<ProdutoProposalRows> {
-  const { promoterId, year, month, incluirComissaoEmpresa } = params;
-  if (!promoterId) {
-    throw new Error("buildProdutoProposalRows: promoterId e obrigatorio (o escopo e a guarda)");
-  }
+  params: { year: number; month: number; incluirComissaoEmpresa: boolean }
+): Promise<{
+  linhas: LinhaComDono[];
+  sem_atribuicao: { bbcap: number; conta_corrente: number; consorcio: number };
+}> {
+  const { year, month, incluirComissaoEmpresa } = params;
   const competencia = `${year}-${String(month).padStart(2, "0")}`;
-  const rows: ProdutoProposalRow[] = [];
+  const linhas: LinhaComDono[] = [];
   const sem_atribuicao = { bbcap: 0, conta_corrente: 0, consorcio: 0 };
 
   // ---- 1. BBCAP e CONTA CORRENTE: master + fila, pela chave natural ----
@@ -157,13 +160,13 @@ export async function buildProdutoProposalRows(
         .eq("month", month)
         .in("entry_type", EVENTO_UNICO as unknown as string[])
     );
-    // SO ASSIGNED, e SO deste promotor. As duas condicoes no mesmo Set: uma
-    // linha ASSIGNED para OUTRA pessoa nao pode cair aqui por descuido.
-    const minhas = new Set(
-      fila
-        .filter((a) => a.status === "ASSIGNED" && a.promoter_id === promoterId)
-        .map((a) => chaveNaturalProduto(a))
-    );
+    // SO ASSIGNED e SO com promoter_id: a linha de um papel de GESTAO (venda
+    // propria) nao e de promotor nenhum — vai para gestao_venda_propria.
+    const donoDaChave = new Map<string, string>();
+    for (const a of fila) {
+      if (a.status !== "ASSIGNED" || !a.promoter_id) continue;
+      donoDaChave.set(chaveNaturalProduto(a), a.promoter_id as string);
+    }
     const semDono = new Set(
       fila.filter((a) => a.status !== "ASSIGNED" || !a.promoter_id).map((a) => chaveNaturalProduto(a))
     );
@@ -174,7 +177,8 @@ export async function buildProdutoProposalRows(
         if (e.entry_type === "BBCAP") sem_atribuicao.bbcap += 1;
         else sem_atribuicao.conta_corrente += 1;
       }
-      if (!minhas.has(chave)) continue;
+      const donoEU = donoDaChave.get(chave);
+      if (!donoEU) continue;
       const md = (e.metadata || {}) as Record<string, unknown>;
       const empresa = num(e.commission_value);
       const base: ProdutoProposalRow = {
@@ -185,22 +189,28 @@ export async function buildProdutoProposalRows(
         ...(incluirComissaoEmpresa ? { comissao_empresa: empresa } : {}),
       };
       if (e.entry_type === "BBCAP") {
-        rows.push({
-          ...base,
-          cpf_cliente: txt(md.cpf_cliente),
-          data_venda: e.operation_date ?? null,
-          data_debito: txt(md.data_debito),
-          codigo_produto: txt(md.codigo_produto),
-          valor_produto: num(md.valor_produto) || num(e.gross_value),
-          login_agente: txt(md.login_agente),
+        linhas.push({
+          promoterId: donoEU,
+          row: {
+            ...base,
+            cpf_cliente: txt(md.cpf_cliente),
+            data_venda: e.operation_date ?? null,
+            data_debito: txt(md.data_debito),
+            codigo_produto: txt(md.codigo_produto),
+            valor_produto: num(md.valor_produto) || num(e.gross_value),
+            login_agente: txt(md.login_agente),
+          },
         });
       } else {
-        rows.push({
-          ...base,
-          agencia: txt(md.agencia),
-          j_key: e.j_key ?? null,
-          data: e.operation_date ?? null,
-          produto_texto: txt(md.produto_texto),
+        linhas.push({
+          promoterId: donoEU,
+          row: {
+            ...base,
+            agencia: txt(md.agencia),
+            j_key: e.j_key ?? null,
+            data: e.operation_date ?? null,
+            produto_texto: txt(md.produto_texto),
+          },
         });
       }
     }
@@ -228,39 +238,173 @@ export async function buildProdutoProposalRows(
     }
     // Linha de um papel de GESTAO (venda propria) nao e de promotor nenhum: vai
     // para gestao_venda_propria, nao para o PMR. Nao entra aqui nem conta como orfa.
-    if (dono.kind !== "promotor" || dono.id !== promoterId) continue;
+    if (dono.kind !== "promotor") continue;
     const empresa = num(p.comissao_recebida);
-    rows.push({
-      entry_type: "CONSORCIO",
-      operacao: String(p.proposta ?? ""),
-      company_id: p.company_id ?? null,
-      comissao_promotor: repasseConsorcioPromotor(empresa),
-      ...(incluirComissaoEmpresa ? { comissao_empresa: empresa } : {}),
-      segmento: txt(p.segmento_codigo) ?? txt(p.segmento_grupo),
-      valor_bem: num(p.valor_bem),
-      // "3ª / 6" — a POSICAO no contrato, que so a carteira sabe. E o que
-      // responde "quantas ainda vem", pergunta que o promotor faz sempre.
-      parcela: `${num(p.posicao)}/${num(p.teto_parcelas)}`,
-      pct_comissao: p.pct_comissao_ref === null ? null : num(p.pct_comissao_ref),
-      parcelas: 1,
-      data: null,
+    linhas.push({
+      promoterId: dono.id,
+      row: {
+        entry_type: "CONSORCIO",
+        operacao: String(p.proposta ?? ""),
+        company_id: p.company_id ?? null,
+        comissao_promotor: repasseConsorcioPromotor(empresa),
+        ...(incluirComissaoEmpresa ? { comissao_empresa: empresa } : {}),
+        segmento: txt(p.segmento_codigo) ?? txt(p.segmento_grupo),
+        valor_bem: num(p.valor_bem),
+        // "3ª / 6" — a POSICAO no contrato, que so a carteira sabe. E o que
+        // responde "quantas ainda vem", pergunta que o promotor faz sempre.
+        parcela: `${num(p.posicao)}/${num(p.teto_parcelas)}`,
+        pct_comissao: p.pct_comissao_ref === null ? null : num(p.pct_comissao_ref),
+        parcelas: 1,
+        data: null,
+      },
     });
   }
 
+  return { linhas, sem_atribuicao };
+}
+
+/** Soma o repasse de um produto num conjunto de linhas. */
+const somaProduto = (rows: ProdutoProposalRow[], t: string) =>
+  r2(rows.filter((r) => r.entry_type === t).reduce((s, r) => s + r.comissao_promotor, 0));
+
+const totaisDe = (rows: ProdutoProposalRow[]) => {
+  const bbcap = somaProduto(rows, "BBCAP");
+  const conta_corrente = somaProduto(rows, "CONTA_CORRENTE");
+  const consorcio = somaProduto(rows, "CONSORCIO");
+  return { bbcap, conta_corrente, consorcio, total: r2(bbcap + conta_corrente + consorcio) };
+};
+
+/**
+ * Linhas de produto do promotor na competencia. `promoterId` e OBRIGATORIO —
+ * chamar sem ele e erro de programacao, nao um "traz tudo". Ver o topo: o escopo
+ * e a guarda.
+ */
+export async function buildProdutoProposalRows(
+  supabase: SupabaseLike,
+  params: {
+    promoterId: string;
+    year: number;
+    month: number;
+    /** Cinto de seguranca: false esconde a comissao da EMPRESA. Ver o topo. */
+    incluirComissaoEmpresa: boolean;
+  }
+): Promise<ProdutoProposalRows> {
+  const { promoterId, year, month, incluirComissaoEmpresa } = params;
+  if (!promoterId) {
+    throw new Error("buildProdutoProposalRows: promoterId e obrigatorio (o escopo e a guarda)");
+  }
+  const { linhas, sem_atribuicao } = await coletarLinhasComDono(supabase, {
+    year,
+    month,
+    incluirComissaoEmpresa,
+  });
+  const rows = linhas.filter((l) => l.promoterId === promoterId).map((l) => l.row);
   rows.sort(
     (a, b) =>
       a.entry_type.localeCompare(b.entry_type) || a.operacao.localeCompare(b.operacao)
   );
+  return { rows, totais: totaisDe(rows), sem_atribuicao };
+}
 
-  const soma = (t: string) =>
-    r2(rows.filter((r) => r.entry_type === t).reduce((s, r) => s + r.comissao_promotor, 0));
-  const bbcap = soma("BBCAP");
-  const conta_corrente = soma("CONTA_CORRENTE");
-  const consorcio = soma("CONSORCIO");
+export type ProdutoResumoGrupoLinha = {
+  promoter_id: string;
+  promoter_name: string;
+  bbcap: number;
+  conta_corrente: number;
+  consorcio: number;
+  total: number;
+  /** Quantas linhas de produto formam esse total (o gancho para o drill-down). */
+  linhas: number;
+};
 
+export type ProdutoResumoGrupo = {
+  totais: { bbcap: number; conta_corrente: number; consorcio: number; total: number };
+  por_promotor: ProdutoResumoGrupoLinha[];
+  sem_atribuicao: { bbcap: number; conta_corrente: number; consorcio: number };
+  /** Diagnostico: quantos promotores e quantas linhas formam o total. */
+  promotores: number;
+  linhas: number;
+};
+
+/**
+ * VISAO DO GRUPO — a aba Produtos com "Promotor: todos".
+ *
+ * O CORTE E POR PROMOTOR, NAO POR LINHA, e isso e a decisao de projeto: sao 198
+ * parcelas de consorcio em julho contra ~21 promotores. Despejar as 198 numa tela
+ * de visao geral seria trocar uma resposta por uma pilha — e a pergunta que o
+ * socio faz aqui e "quem vendeu quanto de cada produto", nao "qual foi a 3a
+ * parcela da proposta 8526498". Uma linha por promotor, os tres produtos em
+ * colunas, mais a CONTAGEM de linhas: quem quiser o detalhe seleciona a pessoa e
+ * cai na visao que ja existe.
+ *
+ * Escolhi isto em vez de tres tabelas (uma por produto) porque repetiria o nome
+ * de cada promotor tres vezes e obrigaria a somar de cabeca para saber o total de
+ * alguem — que e justamente a coluna que interessa na hora de pagar.
+ *
+ * VISIBILIDADE: esta funcao NAO tem escopo de promotor, entao so pode ser chamada
+ * por quem enxerga o grupo inteiro. Hoje isso e socio/funcionario — supervisor e
+ * gerente_regional levam 403 antes, em app/api/promotores/route.ts:148-154. Quem
+ * chamar daqui e responsavel por ter passado por essa porta; a funcao nao a
+ * reimplementa, e por isso NAO recebe `role`: um parametro de papel aqui daria a
+ * impressao de que ela decide permissao, e ela nao decide.
+ */
+export async function buildProdutoResumoGrupo(
+  supabase: SupabaseLike,
+  params: { year: number; month: number }
+): Promise<ProdutoResumoGrupo> {
+  const { year, month } = params;
+  // A visao do grupo e de quem ve tudo, entao a comissao da EMPRESA vem junto —
+  // e o mesmo `true` que a rota ja passa para socio/funcionario no caminho
+  // individual. As linhas em si nao saem daqui; so os agregados.
+  const { linhas, sem_atribuicao } = await coletarLinhasComDono(supabase, {
+    year,
+    month,
+    incluirComissaoEmpresa: true,
+  });
+
+  const porPid = new Map<string, ProdutoProposalRow[]>();
+  for (const l of linhas) {
+    const lista = porPid.get(l.promoterId) || [];
+    lista.push(l.row);
+    porPid.set(l.promoterId, lista);
+  }
+
+  // Nomes: uma consulta so, nos ids que realmente aparecem.
+  const ids = [...porPid.keys()];
+  const nomes = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data, error } = await supabase
+      .from("promoters")
+      .select("id, name")
+      .in("id", ids.slice(i, i + 300));
+    if (error) throw new Error(error.message);
+    for (const p of data || []) nomes.set(p.id, String(p.name));
+  }
+
+  const por_promotor: ProdutoResumoGrupoLinha[] = [...porPid.entries()]
+    .map(([pid, rows]) => {
+      const t = totaisDe(rows);
+      return {
+        promoter_id: pid,
+        promoter_name: nomes.get(pid) ?? "(promotor removido)",
+        bbcap: t.bbcap,
+        conta_corrente: t.conta_corrente,
+        consorcio: t.consorcio,
+        total: t.total,
+        linhas: rows.length,
+      };
+    })
+    .sort((a, b) => b.total - a.total || a.promoter_name.localeCompare(b.promoter_name));
+
+  // O TOTAL sai das linhas, nao da soma dos arredondados por promotor: somar
+  // valores ja arredondados acumularia centavo. Cada `total` de promotor continua
+  // sendo o que ele recebe; o total do grupo e o que a empresa repassa.
+  const todasAsRows = linhas.map((l) => l.row);
   return {
-    rows,
-    totais: { bbcap, conta_corrente, consorcio, total: r2(bbcap + conta_corrente + consorcio) },
+    totais: totaisDe(todasAsRows),
+    por_promotor,
     sem_atribuicao,
+    promotores: por_promotor.length,
+    linhas: todasAsRows.length,
   };
 }

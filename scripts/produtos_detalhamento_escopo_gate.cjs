@@ -41,7 +41,10 @@ const {
   podeVerComissaoDePromotor,
   promotorEfetivoDaSessao,
 } = require("../lib/auth/visibilidadeComissao.ts");
-const { buildProdutoProposalRows } = require("../lib/produtos/produtoProposalRows.ts");
+const {
+  buildProdutoProposalRows,
+  buildProdutoResumoGrupo,
+} = require("../lib/produtos/produtoProposalRows.ts");
 const {
   resolveConsorcioBeneficiarioByProposta,
   computeConsorcioCommissionByBeneficiario,
@@ -447,6 +450,92 @@ function shimFabricado() {
         "    nao se aplica mais — os itens (a) e (b) seguem cobrindo a identidade)"
     );
   }
+
+  // ---- 6. GRUPO ----
+  console.log("\n" + linha("="));
+  console.log("6) GRUPO — a soma do grupo e a soma dos individuais");
+  console.log(linha("="));
+  const grupo = await buildProdutoResumoGrupo(sb, { year: 2026, month: 7 });
+  console.log(
+    `   promotores=${grupo.promotores}  linhas=${grupo.linhas}  ` +
+      `bbcap=${brl(grupo.totais.bbcap)} cc=${brl(grupo.totais.conta_corrente)} ` +
+      `consorcio=${brl(grupo.totais.consorcio)} total=${brl(grupo.totais.total)}`
+  );
+  ok(grupo.promotores > 0, "ANTI-VACUIDADE: ha promotor no grupo", `${grupo.promotores}`);
+  ok(grupo.linhas > 0, "ANTI-VACUIDADE: ha linha de produto", `${grupo.linhas}`);
+  const comValor = grupo.por_promotor.filter((r) => r.total > 0);
+  ok(
+    comValor.length > 1,
+    "ANTI-VACUIDADE: MAIS DE UM promotor com valor (com um so, 'a soma bate' e trivial)",
+    `${comValor.length}`
+  );
+
+  // (a) a soma das linhas por promotor = as linhas do grupo
+  const somaLinhas = grupo.por_promotor.reduce((a, r) => a + r.linhas, 0);
+  ok(somaLinhas === grupo.linhas, "as linhas por promotor somam as do grupo", `${somaLinhas} x ${grupo.linhas}`);
+
+  // (b) IDENTIDADE: cada promotor do grupo bate com o que o builder INDIVIDUAL da
+  let divergentes = 0;
+  let somaIndividual = 0;
+  for (const r of grupo.por_promotor) {
+    const ind = await buildProdutoProposalRows(sb, {
+      promoterId: r.promoter_id,
+      year: 2026,
+      month: 7,
+      incluirComissaoEmpresa: true,
+    });
+    somaIndividual += ind.totais.total;
+    const bate =
+      Math.abs(ind.totais.bbcap - r.bbcap) < 0.005 &&
+      Math.abs(ind.totais.conta_corrente - r.conta_corrente) < 0.005 &&
+      Math.abs(ind.totais.consorcio - r.consorcio) < 0.005 &&
+      ind.rows.length === r.linhas;
+    if (!bate) {
+      divergentes += 1;
+      console.log(
+        `      DIVERGE ${r.promoter_name}: grupo ${brl(r.total)}/${r.linhas}L x ` +
+          `individual ${brl(ind.totais.total)}/${ind.rows.length}L`
+      );
+    }
+  }
+  ok(
+    divergentes === 0,
+    "cada promotor do grupo = o que o builder individual devolve",
+    `divergentes=${divergentes}`
+  );
+  const r2gr = (v) => Math.round(v * 100) / 100;
+  console.log(
+    `   soma dos individuais: ${brl(r2gr(somaIndividual))}   total do grupo: ${brl(grupo.totais.total)}`
+  );
+  // Tolerancia de 1 centavo por promotor: o total do grupo sai das LINHAS, e a
+  // soma dos individuais soma valores ja arredondados. E esperado, e a diferenca
+  // tem de ser residual — nao estrutural.
+  ok(
+    Math.abs(r2gr(somaIndividual) - grupo.totais.total) <= 0.01 * grupo.promotores,
+    "o total do grupo = a soma dos individuais (dentro do residuo de arredondamento)",
+    `${brl(r2gr(somaIndividual))} x ${brl(grupo.totais.total)}`
+  );
+
+  // (c) o sem_atribuicao do grupo e o mesmo do individual (nao depende de quem pergunta)
+  const umInd = await buildProdutoProposalRows(sb, {
+    promoterId: grupo.por_promotor[0].promoter_id,
+    year: 2026,
+    month: 7,
+    incluirComissaoEmpresa: true,
+  });
+  ok(
+    JSON.stringify(umInd.sem_atribuicao) === JSON.stringify(grupo.sem_atribuicao),
+    "o aviso de linhas SEM DONO e o mesmo nas duas visoes",
+    JSON.stringify(grupo.sem_atribuicao)
+  );
+
+  // (d) a visao do grupo NAO devolve as linhas cruas — e o corte que evita
+  //     despejar ~200 parcelas numa tela de visao geral.
+  ok(
+    !("rows" in grupo),
+    "o grupo NAO devolve linha a linha (o corte e por promotor)",
+    Object.keys(grupo).join(", ")
+  );
 
   console.log("\n" + linha("="));
   console.log(falhas === 0 ? "GATE: PASSOU" : `GATE: ${falhas} FALHA(S)`);
