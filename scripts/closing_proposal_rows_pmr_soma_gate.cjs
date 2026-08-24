@@ -24,6 +24,9 @@
  *   D) SRCC="Sim" continua com repasse 0 e fora da base do rateio.
  *   E) as colunas de PRODUTO (consorcio/bbcap/conta corrente) NAO entram no
  *      rateio das propostas de credito — elas tem cards proprios na aba.
+ *   F) a penetracao sai DECIMAL 0..1 da lib — quem multiplica por 100 e a UI,
+ *      uma vez so. A lib multiplicava tambem, e as 724 linhas de jul/2026 saiam
+ *      a 2143,80% ao lado dos 64,1% do topo.
  *
  * ANTI-VACUIDADE: o run exige que existam, ao mesmo tempo, promotor com 2+
  * linhas E promotor com 1. Se o cenario perder um dos dois lados o gate REPROVA
@@ -311,6 +314,23 @@ const primeiraFonte = (source, campo, promoterId) => {
     "e NAO esta somado nas propostas de credito",
     perto(credDois, credEsperado) && !perto(credDois, credEsperado + consorcio),
     `propostas ${brl(credDois)} | consorcio ${brl(consorcio)} fora`
+  );
+
+  // -- F) penetracao sai DECIMAL, quem multiplica por 100 e a UI -------------
+  console.log("\n== F) penetracao — contrato decimal 0..1 (a UI que multiplica)");
+  const penCru = Number(
+    DB.monthly_closing_entries[0].metadata["% PENETRAÇÃO"]
+  );
+  const penSaida = Number(rrRows[0]?.insurance_penetration_percent);
+  checa(
+    "a lib entrega o decimal cru, sem converter",
+    perto(penSaida, penCru),
+    `saida ${penSaida} vs cru ${penCru}`
+  );
+  checa(
+    "e a UI (x100) exibe um percentual plausivel, nao 100x",
+    penSaida * 100 <= 100,
+    `${(penSaida * 100).toFixed(2)}% (com o x100 antigo daria ${(penSaida * 100 * 100).toFixed(2)}%)`
   );
 
   console.log("");

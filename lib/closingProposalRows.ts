@@ -180,7 +180,14 @@ export async function buildClosingProposalRows(
       gross_value: 0,
       insurance_value: toNumber(c.valorSeguro),
       company_insurance_commission_amount: comissaoSeg,
-      insurance_penetration_percent: c.penetracao != null ? toNumber(c.penetracao) * 100 : 0,
+      // DECIMAL 0..1, sem converter. O contrato do campo em toda a tela e
+      // decimal: quem multiplica por 100 e a UI (PromotoresClient:2363), e os
+      // outros dois caminhos ja respeitam isso — promoterReportData:126 entrega
+      // o cru do cms e promoterAnalytics:1927 DIVIDE por 100 de proposito.
+      // Este era o unico fora, e a UI multiplicava de novo: em jul/2026 as 724
+      // linhas do fechamento (penetracao 0,214380107695807) saiam a 2143,80% ao
+      // lado dos 64,1% do topo. Em jun/2026, 707 linhas a 2012,60%.
+      insurance_penetration_percent: toNumber(c.penetracao),
       promoter_commission_percent: 0,
       promoter_commission_amount: promoterCredit,
       insurance_commission_percent: 0,

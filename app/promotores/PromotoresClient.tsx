@@ -170,6 +170,10 @@ type PromoterPayload = {
   };
   summaryRows: PromoterSummaryRow[];
   proposalRows: ProposalRow[];
+  // De onde saiu proposalRows: 'daily' = mes ABERTO (diario, com regua por
+  // contrato); 'cms'/'fechamento' = mes FECHADO (fonte fechada, sem percentual
+  // por linha). A coluna "% Promotor" depende disso — ver o TRACO em :2366.
+  proposalSource?: "daily" | "cms" | "fechamento";
   agreementRows: AgreementRow[];
   discountRows: DiscountRow[];
   promoterOptions: PromoterOption[];
@@ -1000,6 +1004,11 @@ function PromotoresFullPage() {
       ),
     [data.proposalRows]
   );
+
+  // Mes FECHADO = as propostas vieram da fonte fechada (cms jan-mai, fechamento
+  // jun+), nao do diario. Ver o TRACO na coluna "% Promotor".
+  const mesFechado =
+    data.proposalSource === "cms" || data.proposalSource === "fechamento";
 
   const promoterDiscountTotal = useMemo(
     () =>
@@ -2363,7 +2372,28 @@ function PromotoresFullPage() {
                             {formatPercent(row.insurance_penetration_percent * 100, 2)}
                           </td>
                           <td className="num pay" data-l="% Promotor">
-                            {formatPercent(clampPromoterPercent(row.promoter_commission_percent), 2)}
+                            {/* TRACO EM MES FECHADO, NAO "0,00%".
+                                A fonte fechada nao tem percentual por linha: o
+                                campo nasce 0 fixo nos DOIS caminhos
+                                (closingProposalRows:163 e :244 p/ a ADS,
+                                promoterReportData:127 p/ o cms), porque a
+                                comissao do promotor chega como TOTAL do mes e e
+                                RATEADA aqui — o rateio nao conhece a regua por
+                                contrato. Exibir 0,00% ao lado de uma "Comissao
+                                promotor" com valor e uma afirmacao FALSA: diz
+                                que a linha foi paga a zero por cento.
+                                Nao derivar taxa efetiva do rateio — seria
+                                fabricar precisao que a fonte nao tem (o mesmo
+                                argumento de closingProposalRows:224-235).
+                                O traco diz o que e verdade: nao ha esse dado
+                                nesta fonte. No mes ABERTO o percentual e real
+                                (promoterAnalytics:1932-1935) e continua saindo. */}
+                            {mesFechado
+                              ? "–"
+                              : formatPercent(
+                                  clampPromoterPercent(row.promoter_commission_percent),
+                                  2
+                                )}
                           </td>
                           <td className="num pay" data-l="Comissão promotor">
                             {formatCurrency(row.promoter_commission_amount)}
