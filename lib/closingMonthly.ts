@@ -54,6 +54,7 @@ import {
 } from "./pisoProducao.ts";
 import {
   fetchPromoterShareData,
+  isAldaleneInssCarveOut,
   resolvePromoterShareSync,
 } from "./proposalDetailing.ts";
 import {
@@ -358,7 +359,10 @@ export async function consolidateMonthlyFromClosing(
   const producaoDe = (pid: string) => prodConsol?.get(pid) ?? share.frenteCProductionMap.get(pid) ?? 0;
 
   // acordo POR CONTRATO — Frente C aplica na faixa 5,80% (escala de repasse) e o
-  // acordo base (profile/default) fora dela. isAldaleneInss usa nome + produto.
+  // acordo base (profile/default) fora dela. O carve-out INSS da Aldalene vem
+  // da fonte única isAldaleneInssCarveOut (critério = a TAXA de à-vista; até
+  // 25/08/2026 este ponto testava `c.produto.includes("INSS")` e `produto` é o
+  // CÓDIGO do produto — "2882", "3100" —, então o carve-out nunca disparou).
   function acordoDoContrato(pid: string, c: ClosingContrato): number {
     const tgt = share.targetsMap.get(pid);
     const res = resolvePromoterShareSync({
@@ -371,9 +375,10 @@ export async function consolidateMonthlyFromClosing(
         productionValue: producaoDe(pid), // Frente C: produção consolidada
         target1Value: tgt?.meta1 ?? 0,
         target2Value: tgt?.meta2 ?? 0,
-        isAldaleneInss:
-          normText(nameById.get(pid)).includes("ALDALENE") &&
-          normText(c.produto).includes("INSS"),
+        isAldaleneInss: isAldaleneInssCarveOut({
+          promoterName: nameById.get(pid) ?? null,
+          aVistaPercentDecimal: c.percentualEmpresa,
+        }),
         isFaixa580: isFaixaTetoAvistaRR(c.percentualEmpresa, { year, month }),
       },
     });

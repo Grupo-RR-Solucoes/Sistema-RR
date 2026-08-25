@@ -58,6 +58,15 @@ const GATES = [
       "acordo congelada); sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/aldalene_inss_carveout_gate.cjs",
+    nome: "carve-out INSS da Aldalene: dispara pela TAXA, so nela, so nessa taxa",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria + consolidateMonthlyFromClosing real em dryRun; " +
+      "o share default sai de um run de CONTROLE (promotora sem carve-out) no " +
+      "proprio gate; sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/tiquete_min_regua_gate.cjs",
     nome: "tiquete_min (regua x hardcode)",
     modo: "self-contained",

@@ -513,8 +513,58 @@ export function findScaleTier(
 // DEFAULT 58,33% — o que fazia o Salvar REBAIXAR o acordo.
 // ============================================================
 
-// INSS da Aldalene: repasse fixo 65,86% (fora da escala por meta). So mes ABERTO.
+// INSS da Aldalene: repasse fixo 65,86% (fora da escala por meta).
 export const ALDALENE_INSS_FIXED_SHARE = 0.6586;
+
+/**
+ * O percentual de a-vista que identifica o INSS no carve-out da Aldalene.
+ *
+ * E a taxa de INSS Novo da TRP na janela medida. NAO e um numero arbitrario, e
+ * TAMBEM NAO e derivado: esta congelado aqui. Se a Promotiva mexer na taxa de
+ * INSS Novo, ESTE numero tem de mexer junto — senao o carve-out para de casar
+ * em silencio. Marcador greppavel de proposito.
+ */
+export const ALDALENE_INSS_AVISTA_PERCENT = 0.0334;
+
+/** Tolerancia de float ao comparar o percentual (o dado vem da planilha). */
+const ALDALENE_INSS_EPS = 1e-6;
+
+/**
+ * CARVE-OUT INDIVIDUAL da ALDALENE: proposta de INSS dela repassa 65,86% fixo,
+ * fora da escala por meta.
+ *
+ * POR QUE O NOME DA PESSOA ESTA NO TESTE. Regra por nome e bomba-relogio e
+ * normalmente se tira. Aqui ela FICA porque o carve-out e mesmo individual, e
+ * isso foi medido, nao suposto: em jul/2026 ha 278 contratos a 3,34% em 37
+ * promotores; a planilha do financeiro paga 65,86% em 15 deles, TODOS da
+ * Aldalene. Todo o resto segue o acordo normal de cada um (58,33%, 62,50%,
+ * 16,66%, 100,00%...). Tirar o nome daria 65,86% a 37 pessoas.
+ * Quando o acordo dela mudar, isto morre — e o jeito de matar e apagar esta
+ * funcao, nao generalizar.
+ *
+ * POR QUE O CRITERIO E A TAXA, E NAO O CONVENIO. Ate 25/08/2026 o consolidador
+ * testava `produto.includes("INSS")` — e `produto` e o CODIGO do produto
+ * ("2882", "3100"), nunca uma descricao: o carve-out nunca disparou, em
+ * nenhuma competencia. Ao reconstruir o criterio a partir da planilha, medidas
+ * as tres hipoteses sobre os 44 contratos dela em jul/2026:
+ *     convenio 1640 .......... 42/44
+ *     categoria TRP INSS ..... 42/44
+ *     % a vista == 3,34% ..... 44/44   <-- esta
+ * Os dois que derrubam as outras duas: 214235822 (convenio 1078/SIAPE,
+ * remunerado a 3,34%, planilha pagou 65,86%) e 220180918 (convenio 1640/INSS,
+ * remunerado a 2,03%, planilha pagou 58,33%). Com este criterio a Aldalene
+ * fecha em 4.429,88 contra 4.429,88 da planilha — diferenca 0,00.
+ */
+export function isAldaleneInssCarveOut(args: {
+  promoterName: string | null | undefined;
+  /** % a vista em DECIMAL (0,0334). O consolidador tem `percentualEmpresa`. */
+  aVistaPercentDecimal: number | null | undefined;
+}): boolean {
+  if (!normalizeText(args.promoterName).includes("ALDALENE")) return false;
+  const pct = Number(args.aVistaPercentDecimal ?? 0);
+  if (!Number.isFinite(pct)) return false;
+  return Math.abs(pct - ALDALENE_INSS_AVISTA_PERCENT) < ALDALENE_INSS_EPS;
+}
 
 // Detecta proposta INSS (mesmo criterio do motor): convenio_code '1640' OU
 // descricao do produto contem 'INSS'.
@@ -1111,9 +1161,14 @@ export async function recalculateSingleProposal(
         productionValue: frenteCProductionMap.get(promoterId) ?? 0,
         target1Value: tgt?.meta1 ?? 0,
         target2Value: tgt?.meta2 ?? 0,
-        isAldaleneInss:
-          normalizeText((promRow as { name?: string } | null)?.name).includes("ALDALENE") &&
-          isInssRecord(record as { convenio_code?: string | null; product_description?: string | null }),
+        // MESMO criterio do consolidador (isAldaleneInssCarveOut): a TAXA, nao
+        // o convenio. `aVista` esta em unidade PERCENTUAL aqui; a funcao quer
+        // DECIMAL. Usa o valor CRU, nao o clampado — igual ao consolidador,
+        // que passa `c.percentualEmpresa` sem cap (e 3,34% nem chega no teto).
+        isAldaleneInss: isAldaleneInssCarveOut({
+          promoterName: (promRow as { name?: string } | null)?.name ?? null,
+          aVistaPercentDecimal: Number(aVista ?? 0) / 100,
+        }),
         isFaixa580: isFaixaTetoAvistaRRPercent(aVistaClamped, { year, month }),
       },
     });
