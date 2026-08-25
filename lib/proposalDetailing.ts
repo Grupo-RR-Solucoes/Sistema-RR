@@ -975,13 +975,37 @@ export async function fetchPromoterShareData(
     );
   }
 
-  // 4. FRENTE C — escala de repasse da competência + metas (meta_1/meta_2).
+  // 4. FRENTE C — escala de repasse VIGENTE + metas (meta_1/meta_2).
+  //
+  // ============================ VIGÊNCIA — LEIA ============================
+  // A régua de repasse é PERMANENTE por decisão de Diego: vale até ele definir
+  // outra. Não expira ao virar o mês. Por isso a leitura é "a régua VIGENTE
+  // mais recente ATÉ a competência pedida", e não "a régua DAQUELA competência".
+  //
+  // Ler por competência exata fazia a Frente C SUMIR em todo mês em que ninguém
+  // cadastrasse — sem erro, sem aviso, caindo na cascata de profile. Foi o que
+  // aconteceu em jul/2026: promoter_goal_repasse tinha (e tem) 19 linhas, só de
+  // 2026-05 e 2026-06. Em julho o mapa vinha VAZIO, `resolveFrenteCShare`
+  // devolvia null nos 114 contratos elegíveis e todo mundo caía em
+  // PROFILE_VARIAVEL_FALLBACK / PROFILE_DEFAULT. Medido: com a régua vigente
+  // julho ganha R$ 863,90 e sobe de 26 para 28 promotores batendo com a
+  // planilha do financeiro.
+  //
+  // O `.lte` da query NÃO decide sozinho — ele só reduz o tráfego. Quem escolhe
+  // é o código abaixo, que fica com a MAIOR competência <= a pedida por
+  // promotor. Confiar no filtro/ordem da query para vigência já deu ruim neste
+  // repo (régua de 2026-08 alcançando jun/abr num dry-run do piso).
+  //
+  // ANTERIOR À PRIMEIRA RÉGUA => NENHUMA. abr/2026 não herda a de maio: não há
+  // régua anterior a abril, e inventar uma "mais próxima" retroagiria decisão
+  // comercial para trás. Sem linha, a Frente C não dispara — como hoje.
+  // =========================================================================
   const competencia = `${year}-${String(month).padStart(2, "0")}-01`;
   const [goalRes, targetsRes] = await Promise.all([
     supabase
       .from("promoter_goal_repasse")
-      .select("promoter_id, pct_base, pct_meta1, pct_meta2")
-      .eq("competencia", competencia)
+      .select("promoter_id, competencia, pct_base, pct_meta1, pct_meta2")
+      .lte("competencia", competencia)
       .in("promoter_id", promoterIds),
     supabase
       .from("monthly_targets")
@@ -990,9 +1014,28 @@ export async function fetchPromoterShareData(
       .eq("month", month)
       .in("promoter_id", promoterIds),
   ]);
+  // Fica com a MAIOR competência <= a pedida, POR PROMOTOR. A comparação é de
+  // string em ISO (AAAA-MM-DD), que ordena igual à data — e é feita AQUI, não
+  // delegada à ordem que o banco devolveu.
+  const vigenteDe = new Map<string, string>();
   for (const g of goalRes.data ?? []) {
-    const r = g as { promoter_id: string; pct_base: number; pct_meta1: number | null; pct_meta2: number | null };
-    goalRepasseMap.set(r.promoter_id, { pct_base: Number(r.pct_base), pct_meta1: r.pct_meta1, pct_meta2: r.pct_meta2 });
+    const r = g as {
+      promoter_id: string;
+      competencia: string;
+      pct_base: number;
+      pct_meta1: number | null;
+      pct_meta2: number | null;
+    };
+    const comp = String(r.competencia ?? "");
+    if (!comp) continue; // sem vigência não dá para ordenar — descarta em vez de chutar
+    const atual = vigenteDe.get(r.promoter_id);
+    if (atual !== undefined && atual >= comp) continue;
+    vigenteDe.set(r.promoter_id, comp);
+    goalRepasseMap.set(r.promoter_id, {
+      pct_base: Number(r.pct_base),
+      pct_meta1: r.pct_meta1,
+      pct_meta2: r.pct_meta2,
+    });
   }
   for (const t of targetsRes.data ?? []) {
     const r = t as { promoter_id: string; meta_1: number | null; meta_2: number | null };

@@ -58,6 +58,15 @@ const GATES = [
       "acordo congelada); sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/regua_repasse_vigencia_gate.cjs",
+    nome: "regua da Frente C por VIGENCIA (propria > anterior > nenhuma)",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria + fetchPromoterShareData e " +
+      "consolidateMonthlyFromClosing reais; roda as duas ordens de linha para " +
+      "provar que a ordem do banco nao decide; sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/convenio_zero_padded_gate.cjs",
     nome: "convenio zero-padded: os 6 sitios que comparam com literal normalizam",
     modo: "self-contained",
