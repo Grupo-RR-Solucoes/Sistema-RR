@@ -58,6 +58,14 @@ const GATES = [
       "acordo congelada); sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/convenio_zero_padded_gate.cjs",
+    nome: "convenio zero-padded: os 6 sitios que comparam com literal normalizam",
+    modo: "self-contained",
+    motivo:
+      "chama as funcoes reais com '000001640' e '1640' e exige a mesma resposta; " +
+      "sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/aldalene_inss_carveout_gate.cjs",
     nome: "carve-out INSS da Aldalene: dispara pela TAXA, so nela, so nessa taxa",
     modo: "self-contained",

@@ -24,6 +24,8 @@ import {
   getProductionPeriodFromValue,
   getProductionWindow,
 } from "./productionPeriod.ts";
+// Util canonico do convenio ("000001640" -> "1640"). Ver isInssRecord.
+import { normConvenio } from "./convenioSegmento.ts";
 
 export type ProposalRecord = {
   raw_payload?: Record<string, unknown> | null;
@@ -566,14 +568,28 @@ export function isAldaleneInssCarveOut(args: {
   return Math.abs(pct - ALDALENE_INSS_AVISTA_PERCENT) < ALDALENE_INSS_EPS;
 }
 
-// Detecta proposta INSS (mesmo criterio do motor): convenio_code '1640' OU
-// descricao do produto contem 'INSS'.
+/**
+ * Detecta proposta INSS (mesmo criterio do motor): convenio 1640 OU descricao
+ * do produto contem 'INSS'.
+ *
+ * O CONVENIO E NORMALIZADO. Ate 25/08/2026 esta funcao fazia
+ * `String(convenio_code).trim() === "1640"` — e o dado do banco vem
+ * ZERO-PADDED: `"000001640"`. Medido em jul/2026: 711 de 711 contratos com o
+ * convenio padded (100%), dos quais 358 sao 1640. A funcao devolvia FALSE nos
+ * 358, e o fallback pela descricao nao salvava nenhum: as descricoes reais sao
+ * "CONSIGNADO CORRENTISTA REFIN", "CREDITO BENEFICIO CORRENTISTA", "CREDITO
+ * ANTECIPACAO 13o SALARIO" — nenhuma diz INSS.
+ *
+ * `normConvenio` e o util canonico (lib/convenioSegmento.ts): so digitos, sem
+ * zeros a esquerda. Varridos os sitios que comparam convenio com literal, esta
+ * era a UNICA que nao normalizava; motor.ts, regrasLoader.ts (x2),
+ * convenioSegmento.ts e promoterRemuneration.js ja normalizavam.
+ */
 export function isInssRecord(record: {
   convenio_code?: string | null;
   product_description?: string | null;
 }): boolean {
-  const code = String(record?.convenio_code ?? "").trim();
-  if (code === "1640") return true;
+  if (normConvenio(record?.convenio_code) === "1640") return true;
   return normalizeText(record?.product_description).includes("INSS");
 }
 
