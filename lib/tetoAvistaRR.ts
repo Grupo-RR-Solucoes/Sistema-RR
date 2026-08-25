@@ -110,6 +110,45 @@ export function capAvistaRRPercent(percent: number, comp: CompetenciaTeto): numb
 }
 
 /**
+ * BASE DO REPASSE ao promotor, a partir da comissao-empresa a vista em REAIS.
+ *
+ * POR QUE ESTA FUNCAO EXISTE (e por que capar o PERCENTUAL nao resolve):
+ * o consolidador do fechamento nao tem o percentual na mao na hora de somar —
+ * ele tem `comissaoEmpresaAvista`, um valor em R$ que a fonte JA apurou a
+ * 6,00%. Chamar `capAvistaRR` ali nao faz nada: o argumento nao e percentual.
+ * O cap tem de ser PROPORCIONAL — encolher o valor na razao teto/percentual —
+ * para que o promotor seja remunerado sobre 5,80% de algo apurado a 6,00%.
+ *
+ *   comissaoEmpresaAvista = liquido x %empresa         (6,00% -> R$ 600 em 10k)
+ *   base do repasse       = valor x (5,80 / %empresa)  (          R$ 580)
+ *   spread 6,00 -> 5,80   = fica com a EMPRESA
+ *
+ * A COMISSAO DA EMPRESA NAO MUDA. Esta funcao so responde "sobre quanto o
+ * promotor e remunerado". Quanto a Promotiva pagou a RR e outra entidade
+ * (lib/promotivaCashPolicy.ts) e segue intacta.
+ *
+ * NO-OP quando %empresa <= teto (o caso comum), inclusive dentro do epsilon de
+ * float: um contrato ja a 5,80% nao pode encolher por arredondamento.
+ *
+ * Gemeo do que lib/bbtsMonthly.ts:262 ja faz na ADS, onde o percentual esta na
+ * mao e o cap sai de um Math.min direto. Aqui nao esta; dai a razao.
+ */
+export function baseRepasseAvistaRR(
+  comissaoEmpresaAvista: number,
+  percentualEmpresa: number,
+  comp: CompetenciaTeto
+): number {
+  const valor = Number.isFinite(comissaoEmpresaAvista) ? comissaoEmpresaAvista : 0;
+  const pct = Number.isFinite(percentualEmpresa) ? percentualEmpresa : 0;
+  const teto = tetoAvistaRR(comp);
+  // Percentual ausente/invalido: sem razao para escalar, devolve intacto — o
+  // valor ja e o que a fonte apurou. Nunca inventa um cap sem base.
+  if (pct <= 0) return valor;
+  if (pct <= teto + TETO_EPS_DECIMAL) return valor;
+  return valor * (teto / pct);
+}
+
+/**
  * O percentual (DECIMAL) esta NA faixa do teto? Classificador, NAO cap — nao
  * altera valor nenhum, so rotula (isFaixa580). Usa tolerancia porque o dado
  * vem de divisao de float.

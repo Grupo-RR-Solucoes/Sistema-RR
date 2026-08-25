@@ -25,6 +25,7 @@ import { getPrazoTrp } from "@/lib/prazoTrp";
 import { getProductionWindow } from "@/lib/productionPeriod";
 import {
   fetchPromoterShareData,
+  isAldaleneInssCarveOut,
   resolveFrenteCShare,
   resolvePromoterShareSync,
 } from "@/lib/proposalDetailing";
@@ -67,23 +68,20 @@ function normalizeText(value: unknown): string {
     .toUpperCase();
 }
 
-// FRENTE C — repasse escalonado por meta (competencia 2026-05+).
-// INSS da Aldalene fica FORA da escala: repasse fixo 65,86% (share sobre
-// o % A VISTA, igual aos demais shares da cascata).
+// FRENTE C — repasse escalonado por meta. O INSS da Aldalene fica FORA da
+// escala (repasse fixo). A constante ALDALENE_INSS_FIXED_SHARE que vivia aqui
+// saiu em 25/08/2026: ja estava MORTA — quem aplica o valor e resolveFrenteCShare,
+// na lib, com a constante de la. Duas copias do mesmo numero, uma sem leitor.
+// BACKLOG (herdado): parametrizar o 65,86% em tabela em vez de constante —
+// ver docs/frente-c-backlog.md. Hoje a fonte unica e lib/proposalDetailing.ts.
 //
-// BACKLOG (antes do fechamento de jun/2026): parametrizar este valor em
-// tabela/coluna (ex.: promoter_goal_repasse.pct_inss_fixo ou tabela propria)
-// em vez de constante. So tem efeito em meses ABERTOS (jun+); maio espelha o
-// cms. Ver docs/frente-c-backlog.md.
-const ALDALENE_INSS_FIXED_SHARE = 0.6586;
-
-// Detecta proposta INSS (mesmo criterio do motor.ts:379):
-// convenio_code = '1640' OU descricao do produto contem 'INSS'.
-function isInssRecord(record: any): boolean {
-  const code = String(record?.convenio_code ?? "").trim();
-  if (code === "1640") return true;
-  return normalizeText(record?.product_description).includes("INSS");
-}
+// A copia local de isInssRecord que vivia aqui saiu junto. Ela so
+// alimentava o carve-out INSS da Aldalene, e o criterio daquele carve-out NAO e
+// o convenio — e a TAXA de a-vista (isAldaleneInssCarveOut em
+// lib/proposalDetailing.ts, medido 44/44 contra a planilha de jul/2026).
+// Alem do criterio errado, a copia comparava "1640" com o dado do banco, que
+// vem "000001640": nunca casava. Quem precisar do predicado INSS geral usa o
+// isInssRecord da lib, que normaliza o convenio pelo util canonico.
 
 function readRawPayloadValue(record: any, aliases: string[]) {
   const payload = record?.raw_payload;
@@ -1185,12 +1183,11 @@ export async function POST(req: Request) {
       const target1Value = target ? toNumber(target.meta_1) : 0;
       const target2Value = target ? toNumber(target.meta_2) : 0;
 
-      // FRENTE C — escala de repasse deste promotor na competencia (ou null)
-      // e flag da Aldalene (carve-out do INSS fixo).
+      // FRENTE C — escala de repasse deste promotor na competencia (ou null).
+      // A flag da Aldalene saiu daqui: o carve-out depende da TAXA do contrato,
+      // que so existe dentro do laco por proposta — ver isAldaleneInssCarveOut
+      // no ponto de uso.
       const goalRepasse = goalRepasseMap.get(promoter.id) || null;
-      const isAldalenePromoter = normalizeText(promoter.name).includes(
-        "ALDALENE"
-      );
 
       const projectedProductionValue =
         elapsedBusinessDays > 0
@@ -1348,7 +1345,13 @@ export async function POST(req: Request) {
               productionValue,
               target1Value,
               target2Value,
-              isAldaleneInss: isAldalenePromoter && isInssRecord(record),
+              // MESMO criterio do consolidador e da tela: a TAXA, nao o
+              // convenio. `effectiveCompanyReceivedPercent` esta em PERCENTUAL;
+              // a funcao quer DECIMAL, e o valor CRU (nao o clampado).
+              isAldaleneInss: isAldaleneInssCarveOut({
+                promoterName: promoter.name ?? null,
+                aVistaPercentDecimal: Number(effectiveCompanyReceivedPercent ?? 0) / 100,
+              }),
               isFaixa580,
             });
             if (fcShare) {

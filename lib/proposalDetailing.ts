@@ -24,6 +24,8 @@ import {
   getProductionPeriodFromValue,
   getProductionWindow,
 } from "./productionPeriod.ts";
+// Util canonico do convenio ("000001640" -> "1640"). Ver isInssRecord.
+import { normConvenio } from "./convenioSegmento.ts";
 
 export type ProposalRecord = {
   raw_payload?: Record<string, unknown> | null;
@@ -513,17 +515,81 @@ export function findScaleTier(
 // DEFAULT 58,33% — o que fazia o Salvar REBAIXAR o acordo.
 // ============================================================
 
-// INSS da Aldalene: repasse fixo 65,86% (fora da escala por meta). So mes ABERTO.
+// INSS da Aldalene: repasse fixo 65,86% (fora da escala por meta).
 export const ALDALENE_INSS_FIXED_SHARE = 0.6586;
 
-// Detecta proposta INSS (mesmo criterio do motor): convenio_code '1640' OU
-// descricao do produto contem 'INSS'.
+/**
+ * O percentual de a-vista que identifica o INSS no carve-out da Aldalene.
+ *
+ * E a taxa de INSS Novo da TRP na janela medida. NAO e um numero arbitrario, e
+ * TAMBEM NAO e derivado: esta congelado aqui. Se a Promotiva mexer na taxa de
+ * INSS Novo, ESTE numero tem de mexer junto — senao o carve-out para de casar
+ * em silencio. Marcador greppavel de proposito.
+ */
+export const ALDALENE_INSS_AVISTA_PERCENT = 0.0334;
+
+/** Tolerancia de float ao comparar o percentual (o dado vem da planilha). */
+const ALDALENE_INSS_EPS = 1e-6;
+
+/**
+ * CARVE-OUT INDIVIDUAL da ALDALENE: proposta de INSS dela repassa 65,86% fixo,
+ * fora da escala por meta.
+ *
+ * POR QUE O NOME DA PESSOA ESTA NO TESTE. Regra por nome e bomba-relogio e
+ * normalmente se tira. Aqui ela FICA porque o carve-out e mesmo individual, e
+ * isso foi medido, nao suposto: em jul/2026 ha 278 contratos a 3,34% em 37
+ * promotores; a planilha do financeiro paga 65,86% em 15 deles, TODOS da
+ * Aldalene. Todo o resto segue o acordo normal de cada um (58,33%, 62,50%,
+ * 16,66%, 100,00%...). Tirar o nome daria 65,86% a 37 pessoas.
+ * Quando o acordo dela mudar, isto morre — e o jeito de matar e apagar esta
+ * funcao, nao generalizar.
+ *
+ * POR QUE O CRITERIO E A TAXA, E NAO O CONVENIO. Ate 25/08/2026 o consolidador
+ * testava `produto.includes("INSS")` — e `produto` e o CODIGO do produto
+ * ("2882", "3100"), nunca uma descricao: o carve-out nunca disparou, em
+ * nenhuma competencia. Ao reconstruir o criterio a partir da planilha, medidas
+ * as tres hipoteses sobre os 44 contratos dela em jul/2026:
+ *     convenio 1640 .......... 42/44
+ *     categoria TRP INSS ..... 42/44
+ *     % a vista == 3,34% ..... 44/44   <-- esta
+ * Os dois que derrubam as outras duas: 214235822 (convenio 1078/SIAPE,
+ * remunerado a 3,34%, planilha pagou 65,86%) e 220180918 (convenio 1640/INSS,
+ * remunerado a 2,03%, planilha pagou 58,33%). Com este criterio a Aldalene
+ * fecha em 4.429,88 contra 4.429,88 da planilha — diferenca 0,00.
+ */
+export function isAldaleneInssCarveOut(args: {
+  promoterName: string | null | undefined;
+  /** % a vista em DECIMAL (0,0334). O consolidador tem `percentualEmpresa`. */
+  aVistaPercentDecimal: number | null | undefined;
+}): boolean {
+  if (!normalizeText(args.promoterName).includes("ALDALENE")) return false;
+  const pct = Number(args.aVistaPercentDecimal ?? 0);
+  if (!Number.isFinite(pct)) return false;
+  return Math.abs(pct - ALDALENE_INSS_AVISTA_PERCENT) < ALDALENE_INSS_EPS;
+}
+
+/**
+ * Detecta proposta INSS (mesmo criterio do motor): convenio 1640 OU descricao
+ * do produto contem 'INSS'.
+ *
+ * O CONVENIO E NORMALIZADO. Ate 25/08/2026 esta funcao fazia
+ * `String(convenio_code).trim() === "1640"` — e o dado do banco vem
+ * ZERO-PADDED: `"000001640"`. Medido em jul/2026: 711 de 711 contratos com o
+ * convenio padded (100%), dos quais 358 sao 1640. A funcao devolvia FALSE nos
+ * 358, e o fallback pela descricao nao salvava nenhum: as descricoes reais sao
+ * "CONSIGNADO CORRENTISTA REFIN", "CREDITO BENEFICIO CORRENTISTA", "CREDITO
+ * ANTECIPACAO 13o SALARIO" — nenhuma diz INSS.
+ *
+ * `normConvenio` e o util canonico (lib/convenioSegmento.ts): so digitos, sem
+ * zeros a esquerda. Varridos os sitios que comparam convenio com literal, esta
+ * era a UNICA que nao normalizava; motor.ts, regrasLoader.ts (x2),
+ * convenioSegmento.ts e promoterRemuneration.js ja normalizavam.
+ */
 export function isInssRecord(record: {
   convenio_code?: string | null;
   product_description?: string | null;
 }): boolean {
-  const code = String(record?.convenio_code ?? "").trim();
-  if (code === "1640") return true;
+  if (normConvenio(record?.convenio_code) === "1640") return true;
   return normalizeText(record?.product_description).includes("INSS");
 }
 
@@ -909,13 +975,37 @@ export async function fetchPromoterShareData(
     );
   }
 
-  // 4. FRENTE C — escala de repasse da competência + metas (meta_1/meta_2).
+  // 4. FRENTE C — escala de repasse VIGENTE + metas (meta_1/meta_2).
+  //
+  // ============================ VIGÊNCIA — LEIA ============================
+  // A régua de repasse é PERMANENTE por decisão de Diego: vale até ele definir
+  // outra. Não expira ao virar o mês. Por isso a leitura é "a régua VIGENTE
+  // mais recente ATÉ a competência pedida", e não "a régua DAQUELA competência".
+  //
+  // Ler por competência exata fazia a Frente C SUMIR em todo mês em que ninguém
+  // cadastrasse — sem erro, sem aviso, caindo na cascata de profile. Foi o que
+  // aconteceu em jul/2026: promoter_goal_repasse tinha (e tem) 19 linhas, só de
+  // 2026-05 e 2026-06. Em julho o mapa vinha VAZIO, `resolveFrenteCShare`
+  // devolvia null nos 114 contratos elegíveis e todo mundo caía em
+  // PROFILE_VARIAVEL_FALLBACK / PROFILE_DEFAULT. Medido: com a régua vigente
+  // julho ganha R$ 863,90 e sobe de 26 para 28 promotores batendo com a
+  // planilha do financeiro.
+  //
+  // O `.lte` da query NÃO decide sozinho — ele só reduz o tráfego. Quem escolhe
+  // é o código abaixo, que fica com a MAIOR competência <= a pedida por
+  // promotor. Confiar no filtro/ordem da query para vigência já deu ruim neste
+  // repo (régua de 2026-08 alcançando jun/abr num dry-run do piso).
+  //
+  // ANTERIOR À PRIMEIRA RÉGUA => NENHUMA. abr/2026 não herda a de maio: não há
+  // régua anterior a abril, e inventar uma "mais próxima" retroagiria decisão
+  // comercial para trás. Sem linha, a Frente C não dispara — como hoje.
+  // =========================================================================
   const competencia = `${year}-${String(month).padStart(2, "0")}-01`;
   const [goalRes, targetsRes] = await Promise.all([
     supabase
       .from("promoter_goal_repasse")
-      .select("promoter_id, pct_base, pct_meta1, pct_meta2")
-      .eq("competencia", competencia)
+      .select("promoter_id, competencia, pct_base, pct_meta1, pct_meta2")
+      .lte("competencia", competencia)
       .in("promoter_id", promoterIds),
     supabase
       .from("monthly_targets")
@@ -924,9 +1014,28 @@ export async function fetchPromoterShareData(
       .eq("month", month)
       .in("promoter_id", promoterIds),
   ]);
+  // Fica com a MAIOR competência <= a pedida, POR PROMOTOR. A comparação é de
+  // string em ISO (AAAA-MM-DD), que ordena igual à data — e é feita AQUI, não
+  // delegada à ordem que o banco devolveu.
+  const vigenteDe = new Map<string, string>();
   for (const g of goalRes.data ?? []) {
-    const r = g as { promoter_id: string; pct_base: number; pct_meta1: number | null; pct_meta2: number | null };
-    goalRepasseMap.set(r.promoter_id, { pct_base: Number(r.pct_base), pct_meta1: r.pct_meta1, pct_meta2: r.pct_meta2 });
+    const r = g as {
+      promoter_id: string;
+      competencia: string;
+      pct_base: number;
+      pct_meta1: number | null;
+      pct_meta2: number | null;
+    };
+    const comp = String(r.competencia ?? "");
+    if (!comp) continue; // sem vigência não dá para ordenar — descarta em vez de chutar
+    const atual = vigenteDe.get(r.promoter_id);
+    if (atual !== undefined && atual >= comp) continue;
+    vigenteDe.set(r.promoter_id, comp);
+    goalRepasseMap.set(r.promoter_id, {
+      pct_base: Number(r.pct_base),
+      pct_meta1: r.pct_meta1,
+      pct_meta2: r.pct_meta2,
+    });
   }
   for (const t of targetsRes.data ?? []) {
     const r = t as { promoter_id: string; meta_1: number | null; meta_2: number | null };
@@ -1111,9 +1220,14 @@ export async function recalculateSingleProposal(
         productionValue: frenteCProductionMap.get(promoterId) ?? 0,
         target1Value: tgt?.meta1 ?? 0,
         target2Value: tgt?.meta2 ?? 0,
-        isAldaleneInss:
-          normalizeText((promRow as { name?: string } | null)?.name).includes("ALDALENE") &&
-          isInssRecord(record as { convenio_code?: string | null; product_description?: string | null }),
+        // MESMO criterio do consolidador (isAldaleneInssCarveOut): a TAXA, nao
+        // o convenio. `aVista` esta em unidade PERCENTUAL aqui; a funcao quer
+        // DECIMAL. Usa o valor CRU, nao o clampado — igual ao consolidador,
+        // que passa `c.percentualEmpresa` sem cap (e 3,34% nem chega no teto).
+        isAldaleneInss: isAldaleneInssCarveOut({
+          promoterName: (promRow as { name?: string } | null)?.name ?? null,
+          aVistaPercentDecimal: Number(aVista ?? 0) / 100,
+        }),
         isFaixa580: isFaixaTetoAvistaRRPercent(aVistaClamped, { year, month }),
       },
     });

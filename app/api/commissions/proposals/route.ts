@@ -16,7 +16,7 @@ import {
   getCompanyCommissionAmount,
   getInstallmentCount,
   getSrccRestrictionLabel,
-  isInssRecord,
+  isAldaleneInssCarveOut,
   recalculateSingleProposal,
   resolvePromoterShareSync,
 } from "@/lib/proposalDetailing";
@@ -566,8 +566,13 @@ export async function GET(req: Request) {
         productionValue: frenteCProductionMap.get(pid) ?? 0,
         target1Value: tgt?.meta1 ?? 0,
         target2Value: tgt?.meta2 ?? 0,
-        isAldaleneInss:
-          String(promoter?.name ?? "").toUpperCase().includes("ALDALENE") && isInssRecord(record),
+        // MESMO criterio do consolidador e da tela: a TAXA, nao o convenio.
+        // Ver isAldaleneInssCarveOut. `aVistaPercent` vem em PERCENTUAL; a
+        // funcao quer DECIMAL, e o valor e o CRU (nao o clampado).
+        isAldaleneInss: isAldaleneInssCarveOut({
+          promoterName: promoter?.name ?? null,
+          aVistaPercentDecimal: Number(aVistaPercent ?? 0) / 100,
+        }),
         isFaixa580: aVistaClampedRec >= 5.8 - 0.001,
       };
       const shareResolution = resolvePromoterShareSync({

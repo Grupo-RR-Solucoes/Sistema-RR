@@ -49,6 +49,41 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/teto_avista_repasse_gate.cjs",
+    nome: "teto 5,80%: o repasse sai da comissao-empresa TRAZIDA AO TETO",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria + consolidateMonthlyFromClosing real em dryRun; " +
+      "o share sai de um run de CONTROLE no proprio gate (nenhuma constante de " +
+      "acordo congelada); sem banco, sem caminho absoluto",
+  },
+  {
+    arquivo: "scripts/regua_repasse_vigencia_gate.cjs",
+    nome: "regua da Frente C por VIGENCIA (propria > anterior > nenhuma)",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria + fetchPromoterShareData e " +
+      "consolidateMonthlyFromClosing reais; roda as duas ordens de linha para " +
+      "provar que a ordem do banco nao decide; sem banco, sem caminho absoluto",
+  },
+  {
+    arquivo: "scripts/convenio_zero_padded_gate.cjs",
+    nome: "convenio zero-padded: os 6 sitios que comparam com literal normalizam",
+    modo: "self-contained",
+    motivo:
+      "chama as funcoes reais com '000001640' e '1640' e exige a mesma resposta; " +
+      "sem banco, sem caminho absoluto",
+  },
+  {
+    arquivo: "scripts/aldalene_inss_carveout_gate.cjs",
+    nome: "carve-out INSS da Aldalene: dispara pela TAXA, so nela, so nessa taxa",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria + consolidateMonthlyFromClosing real em dryRun; " +
+      "o share default sai de um run de CONTROLE (promotora sem carve-out) no " +
+      "proprio gate; sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/tiquete_min_regua_gate.cjs",
     nome: "tiquete_min (regua x hardcode)",
     modo: "self-contained",
