@@ -83,8 +83,20 @@ export type ClosingContrato = {
   promoterName: string | null;
   keyType: string | null; // INDIVIDUAL | MASTER | null (chave não cadastrada)
   companyId: string | null;
-  percentualEmpresa: number; // "% A VISTA" (decimal 0..1) — SÓ INFORMATIVO, não é base de cálculo
-  comissaoEmpresaAvista: number; // "COMISSÃO PF" — BASE À VISTA da empresa (valor final pago, já pós-teto 5,80%). Não recalcular de líquido × %.
+  percentualEmpresa: number; // "% A VISTA" (decimal 0..1) — o percentual QUE A FONTE APLICOU
+  // "COMISSÃO PF" — BASE À VISTA da empresa, valor final pago PELA PROMOTIVA.
+  // NÃO recalcular de líquido × % (o valor da fonte é a verdade).
+  //
+  // ATENÇÃO — ESTE VALOR É PRÉ-TETO 5,80%. A anotação anterior aqui dizia "já
+  // pós-teto 5,80%" e era FALSA: medido em 25/08/2026 sobre as 3 competências
+  // com fechamento, `comissaoEmpresaAvista == valorLiquido × percentualEmpresa`
+  // em 296 de 296 contratos acima do teto (jul 101, jun 96, abr 99), e
+  // `== valorLiquido × 5,80%` em 0 de 296. Ou seja: quando a Promotiva paga
+  // 6,00%, este campo traz os 6,00%.
+  // Quem remunera promotor TEM de trazer a base ao teto antes de multiplicar
+  // pelo acordo — ver baseRepasseAvistaRR em lib/tetoAvistaRR.ts, usado por
+  // closingMonthly. O spread 6,00 → 5,80 fica com a EMPRESA.
+  comissaoEmpresaAvista: number;
   valorLiquido: number;
   produto: string | null; // "DESCRIÇÃO DO PRODUTO"
   txJuros: number | null;

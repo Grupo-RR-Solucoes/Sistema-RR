@@ -61,7 +61,7 @@ import {
   insuranceShareForPenetration,
   primeInsuranceShareTiers,
 } from "./insurancePenetration.ts";
-import { isFaixaTetoAvistaRR } from "./tetoAvistaRR.ts";
+import { baseRepasseAvistaRR, isFaixaTetoAvistaRR } from "./tetoAvistaRR.ts";
 import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
 
 // Chave master BBTS/ADS — excluída DESTA consolidação (a da RR, via fechamento).
@@ -410,7 +410,18 @@ export async function consolidateMonthlyFromClosing(
       continue;
     }
     const a = getAgg(pid, c.companyId ?? null);
-    a.avista += c.comissaoEmpresaAvista * acordoDoContrato(pid, c);
+    // TETO 5,80% — a base do REPASSE e a comissao-empresa a vista TRAZIDA AO
+    // TETO, nao a comissao cheia. A Promotiva paga ate 6,00%; a RR remunera o
+    // promotor sobre 5,80% e o spread fica com a empresa. Ate 24/08/2026 este
+    // ponto multiplicava `c.comissaoEmpresaAvista` cru pelo acordo e pagava
+    // repasse sobre 6,00% em todo contrato acima do teto (jul/2026: 101
+    // contratos, R$ 1.047,30 a mais; jun 96 / R$ 950,26; abr 99 / R$ 955,88).
+    // O gemeo da ADS ja capava (bbtsMonthly:262) — dai a ADS bater e o RR nao.
+    // O cap e PROPORCIONAL, nao um Math.min: ver baseRepasseAvistaRR.
+    // NAO mexe na comissao da EMPRESA — `a.avista` e repasse ao promotor.
+    a.avista +=
+      baseRepasseAvistaRR(c.comissaoEmpresaAvista, c.percentualEmpresa, { year, month }) *
+      acordoDoContrato(pid, c);
     a.seguroEmpresaEmbutido += c.comissaoSeguro;
     a.net += c.valorLiquido; // denominador da penetração (SRCC já fora — restritas separadas)
     a.count += 1;

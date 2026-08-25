@@ -49,6 +49,15 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/teto_avista_repasse_gate.cjs",
+    nome: "teto 5,80%: o repasse sai da comissao-empresa TRAZIDA AO TETO",
+    modo: "self-contained",
+    motivo:
+      "Supabase falso em memoria + consolidateMonthlyFromClosing real em dryRun; " +
+      "o share sai de um run de CONTROLE no proprio gate (nenhuma constante de " +
+      "acordo congelada); sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/tiquete_min_regua_gate.cjs",
     nome: "tiquete_min (regua x hardcode)",
     modo: "self-contained",
