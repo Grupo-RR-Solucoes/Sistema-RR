@@ -49,6 +49,36 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/ads_caixa_sem_rls_gate.cjs",
+    nome: "o Caixa nao le bbts_prt_parcelas pelo cliente da PAGINA (42501)",
+    modo: "needs-db",
+    motivo:
+      "cliente ESPIAO (Proxy sobre service_role) que estoura se .from() tocar tabela " +
+      "RLS default-deny; roda buildFinancialAnalytics real e ainda exige que a ADS " +
+      "continue no numero, para 'nao ler' nao virar 'remover'. createClient, sem " +
+      "caminho absoluto",
+  },
+  {
+    arquivo: "scripts/ads_no_regime_fechado_gate.cjs",
+    nome: "a ADS ('bbts') entra em todo leitor do regime FECHADO",
+    modo: "self-contained",
+    motivo:
+      "le os arquivos REAIS do repo: (A) os 6 sitios mapeados + a forma permissiva " +
+      "do Caixa, (B) VARRE lib/ e app/ (256 arquivos) e reprova qualquer lista de " +
+      "source que cite 'fechamento' sem 'bbts' — inclusive sitio que ainda nao " +
+      "existe; sem banco, sem caminho absoluto",
+  },
+  {
+    arquivo: "scripts/bbts_sinal_negativo_gate.cjs",
+    nome: "sinal negativo sobrevive ao parser da BBTS (linha CANCELADA do seguro)",
+    modo: "self-contained",
+    motivo:
+      "importa money/SEGURO_RE/CREDITO_RE REAIS e roda sobre linhas copiadas dos " +
+      "PDFs de jun e jul/2026; pega Math.abs em money() e a perda do '-?' no " +
+      "regex (que faria a linha cancelada sumir em silencio); sem banco, sem " +
+      "caminho absoluto",
+  },
+  {
     arquivo: "scripts/teto_avista_repasse_gate.cjs",
     nome: "teto 5,80%: o repasse sai da comissao-empresa TRAZIDA AO TETO",
     modo: "self-contained",

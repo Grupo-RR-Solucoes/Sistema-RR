@@ -303,7 +303,7 @@ export default function FinanceiroPage() {
               <KpiBand
                 valueSize={24}
                 items={[
-                  { label: "Seguro recebido", value: kpiVal(fin.summary.receivedInsurance, "in"), sub: "do qual das 'comissões recebidas' — mês anterior" },
+                  { label: "Seguro recebido", value: kpiVal(fin.summary.receivedInsurance, "in"), sub: "a mais das 'comissões recebidas' — mês anterior" },
                   { label: "Seguro repassado", value: kpiVal(fin.summary.paidInsuranceShare, "out"), sub: "do qual das 'comissões pagas' (M-1)" },
                   { label: "Saldo", value: kpiVal(fin.summary.operatingResult, "saldo"), sub: "recebido − comissões − despesas", accent: true },
                 ]}
@@ -351,7 +351,10 @@ export default function FinanceiroPage() {
         {!loading && tab === "caixa" && fin ? (
           <div className="panes">
             {/* Os KPIs (incl. os 2 de seguro, agora promovidos) vivem no <KpiBand>
-                dentro do <HeaderNavy>. "Seguro recebido" e um "do qual" das Comissoes
+                dentro do <HeaderNavy>. "Seguro recebido" e A MAIS das Comissoes
+                recebidas (saiu do Recebido em 26/08); "Seguro repassado" segue sendo
+                um "do qual" das Comissoes pagas — MEDIDO: paidInsuranceShare 2.309,77
+                == Sigma insurance_commission_value, e final_commission_value ja o inclui
                 recebidas pela empresa; "Seguro repassado" e um "do qual" das Comissoes
                 pagas — nenhum e entrada/saida adicional (nao somam). */}
             <p className="note"><span className="dot" />Saldo de <b>caixa</b> = recebido − comissões pagas − despesas. <b>Comissões recebidas</b> (à vista + seguro do fechamento M-1) × <b>Comissões pagas</b> = <b>Saldo de comissões à vista</b> (mesma competência M-1). Difere do resultado da DRE pela receita complementar (competência, não caixa).</p>

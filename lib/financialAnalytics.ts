@@ -2,6 +2,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { fetchAllRows } from "@/lib/queryHelpers";
 import { nowInFortaleza } from "@/lib/dateFortaleza";
+import { BBTS_COMPANY_ID } from "@/lib/bbtsClosingImport";
+import { getProductionPeriodFromValue, getProductionPeriodKey } from "@/lib/productionPeriod";
+import { getSupabaseAdmin, hasSupabaseEnv } from "@/lib/supabaseAdmin";
 
 const MONTH_NAMES = [
   "jan",
@@ -42,6 +45,19 @@ type ClosingRow = {
   valor_dental?: number | null;
   valor_lob?: number | null;
   valor_credito?: number | null;
+};
+
+type AdsDailyRow = {
+  bbts_pag_avista?: number | null;
+  bbts_seguro_pago?: number | null;
+  movement_date?: string | null;
+  contract_date?: string | null;
+  proposal_date?: string | null;
+};
+
+type AdsPrtRow = {
+  competencia?: string | null;
+  valor_parcela?: number | null;
 };
 
 type ExpenseCategoryRow = {
@@ -358,27 +374,129 @@ function manualCreditYM(row: ManualRevenueRow): { year: number; month: number } 
   return null;
 }
 
+// ---- ADS/BBTS: a 5a empresa, que NAO tem linha em fechamento_mensal_empresa ----
+//
+// A ADS nao fatura pela Promotiva — fatura pela BBTS — e por isso NUNCA teve linha
+// naquela tabela (medido 26/08/2026: 0 no historico inteiro, contra 44/24/21/11 das
+// quatro RR). O Caixa somava so as 4 RR e ficava ~6,3% abaixo do realizado do grupo.
+// O DRE ja compensava isso desde sempre, com bloco proprio (lib/dre.ts:314-365):
+// eram duas telas do MESMO sistema respondendo diferente para a mesma competencia.
+//
+// O de-para com as colunas do RR — a MESMA semantica, fonte diferente:
+//   valor_avista   -> daily_production_records.bbts_pag_avista
+//   valor_diferido -> bbts_prt_parcelas.valor_parcela  (PRT)
+//   valor_seguro   -> daily_production_records.bbts_seguro_pago
+//
+// COMPETENCIA por JANELA (getProductionPeriodFromValue), igual ao dre.ts: a linha
+// de 30/06 e julho e a de 31/07 e agosto. Nao usar o mes de calendario.
+//
+// LIMITE CONHECIDO (nao e estimativa — esta medido em julho/2026):
+//   - Abertura de Conta (R$ 100,00 em jul) NAO entra: o parser le o rotulo so como
+//     marcador de parada (bbtsPdfExtract.ts:376-377) e o valor nao tem coluna no
+//     banco. Fechar isso exige captura do cabecalho + MIGRATION.
+//   - o seguro das linhas SO-SEGURO (R$ 89,42 em jul) fica de fora enquanto
+//     bbtsClosingImport nao gravar bbts_seguro_pago nelas.
+// Ambos estao nomeados em HANDOFF_ADS_FECHAMENTO_CAIXA.md.
+type AdsCash = { avista: number; prt: number; seguro: number };
+
+function buildAdsCashByPeriod(
+  adsDaily: AdsDailyRow[],
+  adsPrt: AdsPrtRow[]
+): Map<string, AdsCash> {
+  const out = new Map<string, AdsCash>();
+  const bucket = (k: string) => {
+    let b = out.get(k);
+    if (!b) { b = { avista: 0, prt: 0, seguro: 0 }; out.set(k, b); }
+    return b;
+  };
+  for (const r of adsDaily) {
+    const p =
+      getProductionPeriodFromValue(r.movement_date) ||
+      getProductionPeriodFromValue(r.contract_date) ||
+      getProductionPeriodFromValue(r.proposal_date);
+    if (!p) continue;
+    const b = bucket(getProductionPeriodKey(p.year, p.month));
+    b.avista += toNumber(r.bbts_pag_avista);
+    b.seguro += toNumber(r.bbts_seguro_pago);
+  }
+  for (const r of adsPrt) {
+    const comp = String(r.competencia || "").slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(comp)) continue;
+    bucket(comp).prt += toNumber(r.valor_parcela);
+  }
+  return out;
+}
+
+// ===========================================================================
+// GRANDEZA DO CARD "Recebido" — DECISAO DO DIEGO, 26/08/2026. NAO REABRIR SEM ELE.
+//
+// O card mede COMISSAO PAGA PELA GESTORA na competencia M-1 — o que a Promotiva
+// pagou ao RR e o que a BBTS pagou a ADS. NAO e volume financiado: em jul/2026 o
+// financiado do grupo foi R$ 6.477.490,15 e a comissao R$ 299.736,82 (4,63%).
+//
+// O QUE ENTRA (e por que):
+//   a-vista .......... SIM. E o nucleo da comissao.
+//   PRT / diferido ... SIM. E comissao paga, so diferida; deixar de fora
+//                      SUBESTIMA (R$ 51.806,30 do RR em jul/2026).
+//   Abertura de Conta  SIM por decisao — mas HOJE NAO ENTRA por falta de coluna
+//                      no banco (R$ 100,00 em jul/2026). Ver secao 5a do
+//                      HANDOFF_ADS_FECHAMENTO_CAIXA.md: exige captura do
+//                      cabecalho do PDF + MIGRATION.
+//   produtos (6) ..... SIM. Consorcio/BBCAP/conta corrente/dental/LOB/credito.
+//   estorno/renovacao  SUBTRAI.
+//
+// O QUE NAO ENTRA:
+//   SEGURO ........... NAO. Tem card proprio ("Seguro recebido"); somar aqui
+//                      seria duplicidade. Por isso o Recebido usa
+//                      valor_liquido MENOS valor_seguro, e a ADS entra so com
+//                      a-vista + PRT.
+//                      ATENCAO: o subtitulo do card de seguro diz "do qual das
+//                      comissoes recebidas" (app/financeiro/page.tsx:306) — com o
+//                      seguro FORA do Recebido esse "do qual" ficou incorreto e
+//                      precisa virar rotulo proprio. Nomeado no handoff.
+// ===========================================================================
 // "Recebido" (caixa) da competencia M: fechamento(M-1) + manuais(data_credito em M).
-// receivedClosing = valor_liquido(M-1) + Σ produtos(M-1).
+// receivedClosing = valor_liquido(M-1) + Σ produtos(M-1) + ADS(M-1).
 function cashReceivedFor(
   year: number,
   month: number,
   allClosings: ClosingRow[],
-  manualRows: ManualRevenueRow[]
+  manualRows: ManualRevenueRow[],
+  adsCashByPeriod: Map<string, AdsCash>
 ) {
   const prev = prevCompetencia(year, month);
   const closingRows = allClosings.filter((r) => r.ano === prev.year && r.mes === prev.month);
-  const receivedLiquido = roundMoney(sumClosingNet(closingRows));
+  const ads = adsCashByPeriod.get(getProductionPeriodKey(prev.year, prev.month)) ?? {
+    avista: 0,
+    prt: 0,
+    seguro: 0,
+  };
+  // ADS: avista + PRT + seguro = o analogo do valor_liquido do RR (que tambem soma
+  // avista + diferido + seguro). Nao ha estorno/renovacao do lado da ADS.
+  // SEGURO FORA (decisao 26/08): a ADS entra so com a-vista + PRT.
+  const receivedAds = roundMoney(ads.avista + ads.prt);
+  // RR: valor_liquido JA inclui valor_seguro (avista+diferido+seguro-estorno-renov),
+  // entao o seguro sai por SUBTRACAO — nao ha coluna "liquido sem seguro".
+  const receivedLiquido = roundMoney(
+    sumClosingNet(closingRows) - sumClosingInsurance(closingRows) + receivedAds
+  );
   const receivedProdutos = roundMoney(sumClosingProdutos(closingRows));
   // INFORMATIVO: parcela de seguro JA dentro de receivedLiquido (mesmas M-1 rows).
-  const receivedInsurance = roundMoney(sumClosingInsurance(closingRows));
+  // Card PROPRIO "Seguro recebido" — RR + ADS. Desde 26/08 ele NAO e mais um
+  // subconjunto do Recebido: e uma linha INDEPENDENTE (o seguro saiu do Recebido).
+  const receivedInsurance = roundMoney(sumClosingInsurance(closingRows) + ads.seguro);
   // COMISSOES RECEBIDAS PELA EMPRESA (M-1) — so o que gera repasse ao promotor:
   // valor_avista + valor_seguro. PRT (valor_diferido) FICA DE FORA (e da empresa,
   // nao entra na comparacao com as comissoes pagas). E um SUBCONJUNTO do Recebido.
   // TODO (decisao Diego): abater valor_estorno? O Recebido usa valor_liquido (ja
   // liquido de estorno/renovacao); por ora receivedEmpresa e avista+seguro PURO.
+  // A ADS entra AQUI TAMBEM, com o mesmo recorte do RR (avista + seguro, PRT fora).
+  // Sem isto o "Recebido" passaria a incluir a ADS e as "Comissoes recebidas" nao —
+  // e o card "Saldo de comissoes a vista" (receivedEmpresa - comissoesPagas) ficaria
+  // comparando um lado COM a ADS contra um lado SEM, que e pior que o desalinho de
+  // hoje (onde os dois ignoram a ADS por igual).
   const receivedEmpresa = roundMoney(
-    closingRows.reduce((sum, r) => sum + toNumber(r.valor_avista) + toNumber(r.valor_seguro), 0)
+    closingRows.reduce((sum, r) => sum + toNumber(r.valor_avista), 0) + ads.avista
   );
   const receivedClosing = roundMoney(receivedLiquido + receivedProdutos);
   const receivedManual = roundMoney(
@@ -389,6 +507,7 @@ function cashReceivedFor(
   );
   return {
     receivedLiquido,
+    receivedAds,
     receivedProdutos,
     receivedInsurance,
     receivedEmpresa,
@@ -521,6 +640,7 @@ export async function buildFinancialAnalytics(
           .from("promoter_discounts")
           .select("year, month, amount, apply_to_company, promoter_id")
       ),
+
     ]);
 
   const companyById = new Map(companies.map((company) => [company.id, company]));
@@ -621,12 +741,62 @@ export async function buildFinancialAnalytics(
     }
   );
 
-  // REGIME DE CAIXA: "Recebido" = fechamento(M-1) + manuais(data_credito em M).
+  // ============================================================================
+  // LEITURA DA ADS — service_role DIRIGIDO, so para estas duas fontes.
+  //
+  // POR QUE NAO PELO CLIENTE DA PAGINA. `bbts_prt_parcelas` esta com RLS
+  // default-deny e ZERO politicas, DE PROPOSITO — a migration que a criou diz
+  // "RLS default-deny (so service_role)" (20260712_000004:40) e ate prevê, na
+  // verificacao pos-execucao, `select count(*) from pg_policies ... -- 0`. As 4
+  // rotas que chamam esta funcao usam guard ANON (papel `authenticated`), entao
+  // ler a tabela por elas devolve 42501 "permission denied" e derruba a tela
+  // INTEIRA — aconteceu em 26/08/2026, no /financeiro.
+  //
+  // A ALTERNATIVA REJEITADA foi abrir policy na tabela: ela e a unica do grupo
+  // deliberadamente fechada, e afrouxar isso de passagem, dentro de um conserto de
+  // card, e mudanca que merece contexto proprio. Decisao do Diego, 26/08/2026.
+  //
+  // NAO E ESCALADA DE PRIVILEGIO: a AUTORIZACAO continua no guard de cada rota
+  // (socio ou funcionario, ja exigido antes de chegar aqui); o que muda e so o
+  // canal de leitura de dois agregados. Mesmo padrao ja usado em
+  // app/api/dre/route.ts:8-13 (cms_imports) e app/api/promotores/route.ts:98.
+  //
+  // `daily_production_records` teria grant para `authenticated` (o Dashboard a le
+  // pelo caminho anon em app/api/dashboard/route.ts:330), mas vai pelo MESMO
+  // cliente de proposito: as duas fontes compoem UM numero, e le-las por canais
+  // diferentes deixaria o card meio-preenchido se so uma falhasse.
+  //
+  // Sem env de service_role (build/preview), a ADS entra como ZERO em vez de
+  // derrubar a pagina — o card fica incompleto, nunca quebrado.
+  // ============================================================================
+  let adsDaily: AdsDailyRow[] = [];
+  let adsPrt: AdsPrtRow[] = [];
+  if (hasSupabaseEnv()) {
+    const admin = getSupabaseAdmin();
+    [adsDaily, adsPrt] = await Promise.all([
+      fetchAllRows<AdsDailyRow>(() =>
+        admin
+          .from("daily_production_records")
+          .select("bbts_pag_avista, bbts_seguro_pago, movement_date, contract_date, proposal_date")
+          .eq("company_id", BBTS_COMPANY_ID)
+      ),
+      fetchAllRows<AdsPrtRow>(() =>
+        admin.from("bbts_prt_parcelas").select("competencia, valor_parcela").eq("company_id", BBTS_COMPANY_ID)
+      ),
+    ]);
+  }
+
+  // ADS: um balde por competencia, construido UMA vez e reusado pelo KPI e pela
+  // serie do grafico — os dois tem de ver o mesmo numero.
+  const adsCashByPeriod = buildAdsCashByPeriod(adsDaily, adsPrt);
+
+  // REGIME DE CAIXA: "Recebido" = fechamento(M-1) + ADS(M-1) + manuais(data_credito em M).
   const received = cashReceivedFor(
     selectedPeriod.year,
     selectedPeriod.month,
     closings,
-    manualRevenues
+    manualRevenues,
+    adsCashByPeriod
   );
 
   const totalExpenses = roundMoney(
@@ -865,7 +1035,7 @@ export async function buildFinancialAnalytics(
 
       // mesmo regime de caixa do KPI: fechamento(M-1) + manuais(M). Mantém o
       // gráfico coerente com o "Recebido" do summary.
-      const { receivedNet } = cashReceivedFor(period.year, period.month, closings, manualRevenues);
+      const { receivedNet } = cashReceivedFor(period.year, period.month, closings, manualRevenues, adsCashByPeriod);
       const totalExpenses = roundMoney(
         periodExpenses.reduce((sum, row) => sum + toNumber(row.amount), 0)
       );
