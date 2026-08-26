@@ -155,3 +155,78 @@ ADS pela régua do DRE = R$ 18.859,44 (AVT 18.737,33 + seguro 115,10 + PRT 7,01)
 **ARMADILHA:** `active=false` da ADS **não** é bug e **não** é a causa.
 `lib/cmsMonthly.ts:54` é explícito: "ADS e active=false => NAO entra no gatilho".
 O regime de julho fechou certo (4 ativas / 4 cobertas). Falta a RECEITA, não o regime.
+
+---
+
+## 5. RECONCILIAÇÃO PDF x BANCO — ADS julho/2026 (medido 26/08 com os PDFs reais)
+
+Fonte: `C:/Users/diego/Downloads/pdf (1).pdf` (crédito) e `pdf.pdf` (seguro), rodados
+pelo extrator do próprio repo (`scripts/diag-ads-20-pdf.cjs`, `-21-`, `-22-`).
+
+Cabeçalho do PDF de crédito, texto cru:
+
+```
+Pagamento AVT | Pagamento PRT | Abertura de Conta | Glosa   | Pagamento Total
+R$ 18.737,33  | R$ 7,01       | R$ 100,00         | R$ 0,00 | R$ 18.844,34
+```
+
+| componente | PDF | banco | delta | causa |
+|---|---|---|---|---|
+| Pagamento AVT | 18.737,33 | 18.737,33 | 0,00 | **43/43 idênticos** |
+| Pagamento PRT | 7,01 | 7,01 | 0,00 | **8/8 idênticos** |
+| Abertura de Conta | 100,00 | — | −100,00 | rótulo é MARCADOR DE PARADA |
+| Glosa | 0,00 | — | 0,00 | nunca lida (zero neste mês) |
+| Seguro `calculo` | 204,52 | 115,10 | −89,42 | 13ª linha só no `raw_payload` |
+| Seguro `debito` | −49,45 | 0,00 | +49,45 | fora da produção (correto p/ comissão) |
+| **TOTAL** | **18.999,41** | **18.859,44** | **−139,97** | 100,00 + 89,42 − 49,45 |
+
+### 5a. Abertura de Conta: o parser lê o rótulo e joga o dinheiro fora
+
+```
+lib/bbtsPdfExtract.ts:376-377
+    // a seção acaba no próximo rótulo (Abertura de Conta / Tabela da SRCC)
+    if (/^(Abertura de Conta|Tabela da SRCC)/i.test(ln)) break;
+```
+
+`grep -rn "Pagamento Total|Glosa|pagamento_total" --include=*.ts lib` -> **nenhuma ocorrência**.
+
+O PDF DECLARA o próprio total (R$ 18.844,34) e o sistema **nunca o lê**. As `_ancoras`
+do extrator são `credito_propostas`, `credito_valor_financiado`, `credito_pag_avista`,
+`seguro_calculo`, `prt_valor` — nenhuma confere o TOTAL PAGO. Por isso os R$ 100,00
+sumiram sem o gate piscar: ele valida as partes que conhece, não o todo declarado.
+
+### 5b. Seguro: o sistema NÃO infla — deflaciona
+
+O extrator parseia as 16 linhas e classifica certo:
+
+```
+tratamento | linhas | Sigma valor_seguro
+calculo    | 13     |  204,52
+debito     |  3     |  -49,45
+TOTAL                  155,07   <- bate com o PDF
+```
+
+As 3 negativas são **estornos de junho cobrados em julho** (`212146378` −24,00 e
+`212205929` −24,05 foram pagas em junho por +24,00 e +24,05). Ficam fora da
+produção — correto para COMISSÃO, errado para CAIXA: a BBTS descontou do pagamento.
+
+Das 13 `calculo`, 12 estão na coluna `bbts_seguro_pago`. A 13ª não:
+
+```
+221262790 | PDF=89,42 | coluna=0,00 | raw_payload.__bbts_meta.seguro_valor_relatorio=89,42 | fonte=fechamento_pdf_seguro_only
+```
+
+É o defeito da seção 3: o bloco só-seguro (`bbtsClosingImport.ts:521-569`) nunca grava
+`bbts_seguro_pago`. 115,10 + 89,42 = **204,52** = a âncora `seguro_calculo`. O dado
+existe; está na coluna errada para quem lê receita.
+
+### 5c. CONSEQUÊNCIA PARA O CONSERTO DO CAIXA
+
+Os dois números estão certos, para fins diferentes:
+- **R$ 18.859,44** = régua do DRE (`lib/dre.ts:319-321`) — visão de PRODUÇÃO/comissão.
+- **R$ 18.999,41** = o que a BBTS PAGOU — visão de CAIXA.
+
+O caixa precisa da segunda. **Copiar a régua do DRE para o caixa erraria por R$ 139,97**
+em julho, e por valor desconhecido nos outros meses (Abertura de Conta e Glosa variam).
+A fonte correta é o TOTAL DECLARADO no cabeçalho do PDF — que hoje ninguém captura
+e ninguém persiste.
