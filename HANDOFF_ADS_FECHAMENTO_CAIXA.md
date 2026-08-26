@@ -800,3 +800,81 @@ grandeza) e continua dentro do lado PAGO (o promotor recebe comissão de seguro
 dentro do repasse). Dois cards com nome parecido e relação oposta com o seu total —
 por isso os subtítulos precisam ser diferentes. Registrado aqui para não ser
 "uniformizado" por engano.
+
+---
+
+## 19. DECISÃO REVISTA — 26/08/2026 TARDE revoga a da MANHÃ
+
+O seguro **volta para dentro** do "Recebido" e das "Comissões recebidas".
+
+| | manhã (REVOGADA) | tarde (VIGENTE) |
+|---|---|---|
+| Recebido | à-vista + PRT + produtos, **sem seguro** | **tudo que entrou**: crédito + PRT + seguro + produtos, RR + ADS |
+| Comissões recebidas | à-vista, sem seguro | **à-vista + seguro**, dos dois lados |
+| Seguro recebido | linha independente ("a mais") | **"do qual"** |
+| Seguro repassado | "do qual" | **"do qual"** (nunca mudou) |
+
+Os dois cards de seguro voltam a ser SIMÉTRICOS. O subtítulo das "Comissões
+recebidas" (`page.tsx:296`, *"à vista + seguro do fechamento M-1"*) nunca foi
+tocado e voltou a ser verdade sozinho.
+
+### Medição — as três competências, com as três réguas
+
+| competência | | `main` | manhã | **tarde** | vs `main` |
+|---|---|---|---|---|---|
+| jun/26 | Recebido | 249.566,80 | 242.664,83 | **249.566,80** | **0,00** |
+| jul/26 | Recebido | 266.406,26 | 269.747,68 | **274.217,84** | +7.811,58 (+2,93%) |
+| ago/26 | Recebido | 299.736,82 | 313.349,47 | **318.596,26** | +18.859,44 (+6,29%) |
+| jun/26 | Com. recebidas | 188.290,69 | 181.388,72 | **188.290,69** | 0,00 |
+| jul/26 | Com. recebidas | 201.210,30 | 204.544,71 | **209.014,87** | +7.804,57 |
+| ago/26 | Com. recebidas | 232.525,62 | 246.131,26 | **251.378,05** | +18.852,43 |
+
+Duas provas de que o seguro voltou intacto:
+- **jun/26 volta ao centavo ao valor de `main`** — ele lê maio, e não há fechamento
+  ADS de maio no banco; só o seguro do RR mudava, e voltou exato.
+- **jul/26 sobe +7.811,58** = a ADS de junho (`7.707,03 + 7,01 + 97,54`), o mesmo
+  número já registrado no comentário de `lib/dre.ts:322`.
+
+### ago/26 contra o extrato do Diego
+
+```
+Recebido medido  = 318.596,26
+extrato          = 318.736,23
+diferenca        =     139,97
+```
+
+Decompõe sem sobra: `Abertura de Conta +100,00` + `seguro so-seguro +89,42`
++ `cancelados de julho -49,45` = **139,97**.
+
+ATENÇÃO à terceira parcela: são os cancelamentos de JULHO (−49,45), não a fila de
+junho (R$ 41,53 — pendência real, mas de outra competência e fora desta conta;
+`100,00 + 89,42 − 41,53` daria 147,89).
+
+### "Comissões pagas" não precisou de mudança
+
+Medido em jul/26:
+
+```
+Sigma production_commission_value = 132.671,58
+Sigma insurance_commission_value  =   2.309,77   <- o seguro repassado
+Sigma produtos (bbcap+cc+cons+lob)=   6.134,80
+Sigma final_commission_value      = 141.116,15
+producao + seguro + produtos      = 141.116,15   -> bate
+paidInsuranceShare do card        =   2.309,77   -> == Sigma insurance
+```
+
+O seguro repassado já estava dentro do total, e o card é o "do qual" dele.
+
+### Gate e comentário travado
+
+`test_caixa_recebido_empresa.cjs`: mesma disciplina das duas viradas — as asserções
+de (b) e (c) são INVARIANTES e não mudaram nenhuma das duas vezes; só as de (a),
+que descrevem a COMPOSIÇÃO, foram reescritas, sempre com o lado esperado computado
+NO PRÓPRIO RUN. Agora **9/9**, com uma asserção a mais que a versão da manhã:
+`"'do qual': receivedInsurance é SUBCONJUNTO do receivedEmpresa"` — exatamente a
+relação que a decisão da tarde restaura. O cabeçalho do gate traz as três
+composições em ordem cronológica.
+
+O comentário travado em `lib/financialAnalytics.ts` registra **as duas decisões com
+data**: a da tarde marcada VIGENTE, a da manhã marcada REVOGADA, com a nota de que
+um `"a mais"` solto em rótulo ou comentário é resíduo da versão revogada.

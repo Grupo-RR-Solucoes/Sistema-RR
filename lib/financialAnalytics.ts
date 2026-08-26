@@ -428,32 +428,41 @@ function buildAdsCashByPeriod(
 }
 
 // ===========================================================================
-// GRANDEZA DO CARD "Recebido" — DECISAO DO DIEGO, 26/08/2026. NAO REABRIR SEM ELE.
+// GRANDEZA DO CARD "Recebido" — HISTORICO DE DECISOES. NAO REABRIR SEM O DIEGO.
 //
-// O card mede COMISSAO PAGA PELA GESTORA na competencia M-1 — o que a Promotiva
-// pagou ao RR e o que a BBTS pagou a ADS. NAO e volume financiado: em jul/2026 o
-// financiado do grupo foi R$ 6.477.490,15 e a comissao R$ 299.736,82 (4,63%).
+// [26/08/2026 TARDE — VIGENTE] "Recebido" = TUDO que entrou no caixa da empresa,
+// de TODAS as gestoras (RR + ADS): comissao de credito + PRT + SEGURO + produtos.
+//   - "Comissoes recebidas" = tudo que foi comissao, INCLUINDO seguro.
+//   - "Comissoes pagas" = tudo que foi pago, incluindo o seguro repassado ao
+//     promotor (ja era assim: final_commission_value soma producao + seguro +
+//     produtos, e paidInsuranceShare e o Sigma insurance_commission_value).
+//   - "Seguro recebido" e "Seguro repassado" sao DETALHE dentro dos totais: os
+//     dois com rotulo "do qual", simetricos.
 //
-// O QUE ENTRA (e por que):
-//   a-vista .......... SIM. E o nucleo da comissao.
-//   PRT / diferido ... SIM. E comissao paga, so diferida; deixar de fora
-//                      SUBESTIMA (R$ 51.806,30 do RR em jul/2026).
-//   Abertura de Conta  SIM por decisao — mas HOJE NAO ENTRA por falta de coluna
-//                      no banco (R$ 100,00 em jul/2026). Ver secao 5a do
-//                      HANDOFF_ADS_FECHAMENTO_CAIXA.md: exige captura do
-//                      cabecalho do PDF + MIGRATION.
-//   produtos (6) ..... SIM. Consorcio/BBCAP/conta corrente/dental/LOB/credito.
-//   estorno/renovacao  SUBTRAI.
+// [26/08/2026 MANHA — REVOGADA] O seguro tinha ficado FORA do "Recebido" e do
+// "receivedEmpresa", virando linha independente ("a mais"). Revogada na mesma
+// tarde. Fica registrada porque o codigo passou algumas horas assim e o
+// test_caixa_recebido_empresa.cjs chegou a ser reescrito para ela — se aparecer
+// um "a mais" solto em rotulo ou comentario, e residuo desta versao.
 //
-// O QUE NAO ENTRA:
-//   SEGURO ........... NAO. Tem card proprio ("Seguro recebido"); somar aqui
-//                      seria duplicidade. Por isso o Recebido usa
-//                      valor_liquido MENOS valor_seguro, e a ADS entra so com
-//                      a-vista + PRT.
-//                      ATENCAO: o subtitulo do card de seguro diz "do qual das
-//                      comissoes recebidas" (app/financeiro/page.tsx:306) — com o
-//                      seguro FORA do Recebido esse "do qual" ficou incorreto e
-//                      precisa virar rotulo proprio. Nomeado no handoff.
+// O QUE O CARD NAO E: volume financiado. Em jul/2026 o financiado do grupo foi
+// R$ 6.477.490,15 e a comissao R$ 299.736,82 — 4,63%. Se fosse desembolso o card
+// mostraria milhoes.
+//
+// DE-PARA RR -> ADS (mesma semantica, fonte diferente):
+//   valor_avista   -> daily_production_records.bbts_pag_avista
+//   valor_diferido -> bbts_prt_parcelas.valor_parcela
+//   valor_seguro   -> daily_production_records.bbts_seguro_pago
+//
+// LIMITE CONHECIDO (medido em jul/2026, nao e estimativa): faltam R$ 139,97 da ADS.
+//   - Abertura de Conta R$ 100,00: o parser le o rotulo so como marcador de parada
+//     (bbtsPdfExtract.ts:376-377) e o valor NAO tem coluna no banco. Exige captura
+//     do cabecalho + MIGRATION.
+//   - seguro das linhas SO-SEGURO R$ 89,42: bbtsClosingImport.ts:521-569 nao grava
+//     bbts_seguro_pago nelas; o valor fica so no raw_payload.
+//   - os cancelamentos (-R$ 49,45) reduziram o pagamento da BBTS e nao sao abatidos
+//     aqui: viram debito ao promotor.
+//   Ver HANDOFF_ADS_FECHAMENTO_CAIXA.md.
 // ===========================================================================
 // "Recebido" (caixa) da competencia M: fechamento(M-1) + manuais(data_credito em M).
 // receivedClosing = valor_liquido(M-1) + Σ produtos(M-1) + ADS(M-1).
@@ -473,17 +482,15 @@ function cashReceivedFor(
   };
   // ADS: avista + PRT + seguro = o analogo do valor_liquido do RR (que tambem soma
   // avista + diferido + seguro). Nao ha estorno/renovacao do lado da ADS.
-  // SEGURO FORA (decisao 26/08): a ADS entra so com a-vista + PRT.
-  const receivedAds = roundMoney(ads.avista + ads.prt);
-  // RR: valor_liquido JA inclui valor_seguro (avista+diferido+seguro-estorno-renov),
-  // entao o seguro sai por SUBTRACAO — nao ha coluna "liquido sem seguro".
-  const receivedLiquido = roundMoney(
-    sumClosingNet(closingRows) - sumClosingInsurance(closingRows) + receivedAds
-  );
+  // ADS = a-vista + PRT + SEGURO — o analogo do valor_liquido do RR, que tambem
+  // soma os tres. Nao ha estorno/renovacao do lado da ADS.
+  const receivedAds = roundMoney(ads.avista + ads.prt + ads.seguro);
+  // RR: valor_liquido JA inclui valor_seguro. Nada a subtrair (decisao da tarde).
+  const receivedLiquido = roundMoney(sumClosingNet(closingRows) + receivedAds);
   const receivedProdutos = roundMoney(sumClosingProdutos(closingRows));
   // INFORMATIVO: parcela de seguro JA dentro de receivedLiquido (mesmas M-1 rows).
-  // Card PROPRIO "Seguro recebido" — RR + ADS. Desde 26/08 ele NAO e mais um
-  // subconjunto do Recebido: e uma linha INDEPENDENTE (o seguro saiu do Recebido).
+  // "DO QUAL" seguro do Recebido — RR + ADS. E SUBCONJUNTO, nao soma de novo
+  // (decisao de 26/08 tarde: o seguro voltou para dentro dos totais).
   const receivedInsurance = roundMoney(sumClosingInsurance(closingRows) + ads.seguro);
   // COMISSOES RECEBIDAS PELA EMPRESA (M-1) — so o que gera repasse ao promotor:
   // valor_avista + valor_seguro. PRT (valor_diferido) FICA DE FORA (e da empresa,
@@ -495,8 +502,13 @@ function cashReceivedFor(
   // e o card "Saldo de comissoes a vista" (receivedEmpresa - comissoesPagas) ficaria
   // comparando um lado COM a ADS contra um lado SEM, que e pior que o desalinho de
   // hoje (onde os dois ignoram a ADS por igual).
+  // "a vista + seguro do fechamento M-1", dos DOIS lados. O PRT fica de fora aqui
+  // (e da empresa, nao entra na comparacao com as comissoes pagas) — regra antiga
+  // do RR, agora espelhada na ADS.
   const receivedEmpresa = roundMoney(
-    closingRows.reduce((sum, r) => sum + toNumber(r.valor_avista), 0) + ads.avista
+    closingRows.reduce((sum, r) => sum + toNumber(r.valor_avista) + toNumber(r.valor_seguro), 0) +
+      ads.avista +
+      ads.seguro
   );
   const receivedClosing = roundMoney(receivedLiquido + receivedProdutos);
   const receivedManual = roundMoney(
