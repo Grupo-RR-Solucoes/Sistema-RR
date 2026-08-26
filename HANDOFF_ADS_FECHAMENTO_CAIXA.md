@@ -27,12 +27,34 @@ A tela tem separação real — duas listas de duas tabelas (`app/api/importacoe
 São 7 PDFs em `daily_imports` (3x `pdf (1).pdf`, 3x `fechamento_bbts_junho.pdf`,
 1x `Crédito ADS-BBTS.pdf`).
 
-**POR QUE NÃO FOI CONSERTADO NA TELA.** `daily_imports` não tem coluna de tipo.
-Colunas medidas: `id, file_name, import_date, status, rows_count, processing_notes,
-created_at, finished_at`. Filtrar por tipo na tela exigiria:
+**POR QUE NÃO FOI CONSERTADO NA TELA — MEDIDO, não suposto.** Varri as 124 linhas
+de `daily_imports` atrás de qualquer discriminador de tipo já existente
+(`scripts/diag-ads-18-discriminador.cjs`):
+
+```
+total de linhas em daily_imports: 124
+coluna | linhas com valor NAO-nulo (de 124)
+id               | 124
+file_name        | 124
+import_date      |   0     <- coluna MORTA (nenhum importador escreve)
+status           | 124
+rows_count       | 123
+processing_notes |   1     <- amostra de erro, nao tipo
+created_at       | 124
+finished_at      |   0     <- coluna MORTA
+
+distribuicao de extensao do file_name:
+.pdf  |   7
+.xlsx | 117
+```
+
+Não há coluna de tipo, e `import_date`/`finished_at` são 100% nulas — não servem
+nem como proxy. O único sinal é a EXTENSÃO. Filtrar por tipo na tela exigiria:
   (a) coluna nova (`kind`/`tipo`) => MUDANÇA DE ESQUEMA; ou
   (b) heurística por extensão do nome do arquivo => frágil (o nome vem do browser:
-      "pdf (1).pdf"), e quebraria no dia em que uma diária vier em PDF.
+      "pdf (1).pdf"), quebraria no dia em que uma diária vier em PDF, e é uma regra
+      de NEGÓCIO escondida numa string — o mesmo tipo de acoplamento que a âncora
+      por texto literal do parser da BBTS já custou uma vez.
 Fica registrado, não consertado. **Decisão do Diego (26/08): não conserta agora.**
 
 **Sem estrago em dado.** Sem duplicação (97 linhas ADS, 0 propostas repetidas);
