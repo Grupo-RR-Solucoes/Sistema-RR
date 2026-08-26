@@ -765,3 +765,38 @@ com o lado esperado computado NO PRÓPRIO RUN (nenhuma constante congelada). Ago
 A memória do projeto já registrava `gate-srcc-ads` vermelho antes. A faixa também
 estourou o teto de tempo (238,1s de 90s) — dívida anterior, agravada em 1,6s pelo
 gate novo.
+
+---
+
+## 18. OS DOIS RÓTULOS DE SEGURO — a relação inverteu num, não no outro
+
+Quando o seguro saiu do "Recebido" (decisão 26/08), o subtítulo do card
+**"Seguro recebido"** ficou FALSO. Ele dizia *"do qual das 'comissões recebidas'"* —
+e "do qual" afirma SUBCONJUNTO. Com o seguro fora do `receivedNet` E do
+`receivedEmpresa`, ele deixou de ser parte do total e virou **parcela independente**:
+para saber o que a empresa recebeu no mês, o leitor tem de SOMAR os dois. É por isso
+que **"a mais"** é o certo: "do qual" mandava não somar, "a mais" manda somar.
+
+Novo: `"a mais das 'comissões recebidas' — mês anterior"` (`page.tsx:306`).
+
+### O card GÊMEO **não** inverteu — e rotulá-lo igual seria erro
+
+`"Seguro repassado"` continua sendo **"do qual"** das "comissões pagas". Medido:
+
+```
+Comissoes pagas       = 139.451,16
+Seguro repassado      =   2.309,77   == Sigma insurance_commission_value (exato)
+final_commission_value = producao 132.671,58 + seguro 2.309,77 + produtos 6.134,80
+```
+
+`paidInsuranceShare` é `Σ insurance_commission_value`, e `final_commission_value`
+(base do `comissoesPagas`) JÁ o inclui — o próprio código diz, em
+`financialAnalytics.ts`: *"INFORMATIVO: 'do qual seguro' do repasse — subcomponente
+do comissoesPagas"*. Trocar para "a mais" faria o leitor somar R$ 2.309,77 em cima
+de R$ 139.451,16 e superestimar a saída.
+
+**A assimetria é real e tem causa:** o seguro saiu do lado RECEBIDO (decisão de
+grandeza) e continua dentro do lado PAGO (o promotor recebe comissão de seguro
+dentro do repasse). Dois cards com nome parecido e relação oposta com o seu total —
+por isso os subtítulos precisam ser diferentes. Registrado aqui para não ser
+"uniformizado" por engano.
