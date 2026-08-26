@@ -230,3 +230,77 @@ O caixa precisa da segunda. **Copiar a régua do DRE para o caixa erraria por R$
 em julho, e por valor desconhecido nos outros meses (Abertura de Conta e Glosa variam).
 A fonte correta é o TOTAL DECLARADO no cabeçalho do PDF — que hoje ninguém captura
 e ninguém persiste.
+
+---
+
+## 6. FRENTE B — o cancelamento de seguro NÃO é ignorado (medido 26/08)
+
+O parser lê o RÓTULO, não o sinal (`lib/bbtsPdfExtract.ts:432`):
+
+```ts
+432:    const cancelado = /CANCELADO/i.test(m[7]);
+438:      tratamento: cancelado ? "debito" : "calculo",
+```
+
+`m[7]` é o grupo "Tipo de Lançamento" do `SEGURO_RE` (`:404`), que só aceita
+`POSITIVO|CANCELADO`. Texto cru das 3 linhas de julho:
+
+```
+211689509 1.398,00  108 ESTOQUE D0 82374630   260,32 CANCELADO 28May2026 JJ552710 0,10% -R$ 1,40
+212205929 24.050,00 108 ESTOQUE D0 82453122 4.602,52 CANCELADO 05Jun2026 JJ552710 0,10% -R$ 24,05
+212146378 24.000,00 108 ESTOQUE D0 82442550 4.594,71 CANCELADO 03Jun2026 JJ552710 0,10% -R$ 24,00
+```
+
+Rótulo e sinal concordam em **100%** das 16 linhas. E há AUTO-ÂNCORA (`:443-449`):
+Σ(calculo + debito) tem de bater o TOTAL do próprio PDF, senão o import ABORTA.
+Medido: `calculo 204,52 + debito −49,45 = 155,07` = âncora `R$ 155,07`.
+
+**O sistema não infla.** Os cancelados nunca entram em `daily_production_records`
+(`seguroByContrato` recebe só `seguroCalculo`, `bbtsClosingImport.ts:322-323`) e são
+persistidos como DÉBITO ao promotor (`:635-648` -> `resolveAdsCancelDebits`).
+
+### Alcance medido (source_kind=DAILY_CANCEL, o caminho da ADS)
+
+| competência | ops | Σ estorno | destino |
+|---|---|---|---|
+| 2026-06 | 2 | 41,53 | fila=2 (41,53) / debitados=0 |
+| 2026-07 | 3 | 49,45 | fila=1 (1,40) / debitados=2 (48,05) |
+| **TOTAL** | **5** | **90,98** | |
+
+**PENDÊNCIA REAL:** os R$ 41,53 de junho (ops 209867885 e 209621970) estão na fila
+com `promoter_id = null`, `status = PENDING`, desde 09/07/2026. Sem dono, ninguém
+foi debitado. Não é defeito de parser — é fila sem tratamento.
+
+## 7. REIMPORTAÇÃO DE 26/08 13:53 UTC — efeito medido
+
+O Diego reimportou o fechamento ADS de julho com os 2 PDFs. Efeitos:
+- `221262790` reancorada em `movement_date = 2026-07-15` -> voltou para competência
+  **2026-07** (a diária a tinha empurrado para agosto — seção 3 deste handoff);
+- PMR jul/26 recalculado: `com_seguro` 38,83 -> **83,54**, `com_final` 10.489,05 -> **10.533,76**;
+- 2 dos 3 cancelamentos viraram débito ACTIVE (24,05 + 24,00);
+- `bbts_seguro_pago` da linha só-seguro CONTINUA 0,00 — o defeito da seção 3 persiste.
+
+## 8. FRENTE A — não existe filtro de `source` excluindo a ADS
+
+Enumerei TODOS os sítios que filtram o PMR por `source`. **Todos já incluem 'bbts'.**
+
+| # | arquivo:linha | filtro | ADS entra? |
+|---|---|---|---|
+| 1 | `lib/promoterAnalytics.ts:1403` | `closedSource === "cms" ? ["cms"] : ["fechamento","bbts"]` | SIM |
+| 2 | `lib/dre.ts:486,499` | `.in("source", regimeSources)` idem | SIM |
+| 3 | `app/api/metas/route.ts:62,93` | `.in("source", regimeSources)` idem | SIM |
+| 4 | `app/api/commissions/proposals/route.ts:266` | `.in("source", ["fechamento","bbts"])` | SIM |
+| 5 | `lib/closingProposalRows.ts:70` | `.in("source", ["fechamento","bbts"])` | SIM |
+| 6 | `lib/financialAnalytics.ts:507` | `.neq("source","daily")` | SIM |
+
+O sítio 6 é o do Caixa, e é o mais permissivo dos seis. **Somar 'bbts' ali é no-op.**
+
+E o "Recebido" NÃO passa por nenhum desses: ele lê `fechamento_mensal_empresa`
+(`financialAnalytics.ts:451-460`), tabela que **não tem coluna `source`** (colunas:
+`empresa_cnpj, ano, mes, valor_*, operacoes, valor_nota_fiscal, created_at, updated_at`).
+A ADS falta ali por AUSÊNCIA DE LINHA, não por filtro.
+
+### Separações que SÃO deliberadas (não confundir)
+- `semAds` (`app/api/calculate/monthly/route.ts:711`) — exclui a ADS da escrita do
+  motor RR. Deliberada.
+- `detectMonthRegime` ignora a ADS via `active=false` (`lib/cmsMonthly.ts:54`). Deliberada.
