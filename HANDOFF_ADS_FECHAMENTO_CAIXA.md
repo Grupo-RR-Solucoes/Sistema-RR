@@ -375,3 +375,81 @@ não por sinal.
 Se a BBTS um dia mandar um `CANCELADO` com valor POSITIVO (estorno de estorno), o
 `abs` transformaria um crédito ao promotor em débito. Hoje rótulo e sinal concordam
 em 100% das linhas medidas, então não acontece.
+
+---
+
+## 10. POR QUE O DEFEITO NÃO ALCANÇA O PROMOTOR — desacoplamento acidental
+
+**Conclusão do Diego (26/08): comissões de promotor corretas, ninguém recebeu a mais.**
+Confirmado. Mas o MECANISMO não é o que parecia, e a diferença importa para o dia em
+que a base mudar.
+
+**NÃO é verdade que "o repasse de seguro da ADS não deriva da comissão-empresa".**
+Ele deriva, e com a MESMA forma do RR (`lib/bbtsMonthly.ts:366`):
+
+```ts
+366:    const comPromotorSeguro = a.comEmpSeguro * seguroShare * fatorSeguro;
+```
+
+compare com o RR (`lib/bbtsOrchestrator.ts:88-90`):
+```
+//   repasse_seguro_rr = insurance_commission_value do fechamento RR
+//                       `insuranceCommission = seguroEmpresa * seguroShare`
+```
+
+**O desacoplamento real está uma camada ACIMA**: a comissão-empresa da ADS é
+RECALCULADA pela régua versionada sobre `insurance_value`, e nunca lê
+`bbts_seguro_pago` (`lib/bbtsMonthly.ts:270-279`):
+
+```ts
+270:    const seguroBase = toNumber(r.insurance_value);   // <- a BASE segurada
+271:    const tipo = meta.seguro_tipo ?? r.insurance_type;
+272:    let comEmpSeguro = 0;
+273:    if (seguroBase > 0) {
+274:      const taxa = seguroRateFromRegra(regraSeguro, tipo, r.term_months);
+...
+278:        comEmpSeguro = seguroBase * taxa.rate;         // <- REGUA, nao o pago
+```
+
+Ou seja: **duas colunas, dois consumidores disjuntos.**
+
+| coluna | quem lê | usada para |
+|---|---|---|
+| `insurance_value` (base segurada) | `bbtsMonthly.ts:270` | comissão-empresa -> repasse ao promotor |
+| `bbts_seguro_pago` (o que a BBTS pagou) | `lib/dre.ts:321,348` + auditoria | RECEITA da empresa |
+
+O defeito da seção 3 (R$ 89,42 fora de `bbts_seguro_pago` na linha só-seguro) não
+alcança o promotor porque a cadeia do promotor **não passa por essa coluna** — e
+`insurance_value` daquela linha ESTÁ preenchida (R$ 89.415,39).
+
+**ISSO É DESACOPLAMENTO ACIDENTAL, NÃO PROTEÇÃO PROJETADA.** Nada no código impede
+que alguém, amanhã, faça a comissão-empresa da ADS ler o valor PAGO em vez de
+recalcular pela régua — o que seria até defensável (é o realizado). No dia em que
+isso acontecer, o furo de `bbts_seguro_pago` passa a ser furo de REPASSE, e as
+linhas só-seguro pagam a menos ao promotor. Consertar a seção 3 antes remove a mina.
+
+## 11. FRENTE A — enumeração COMPLETA do filtro `source = 'cms'`
+
+| # | arquivo:linha | forma | a ADS deve entrar? |
+|---|---|---|---|
+| 1 | `lib/promoterAnalytics.ts:1403` | `closedSource === "cms" ? ["cms"] : ["fechamento","bbts"]` | **NÃO** — ramos EXCLUSIVOS |
+| 2 | `lib/dre.ts:486` | idem | **NÃO** — idem |
+| 3 | `app/api/metas/route.ts:62-63` | `cms?["cms"] : open?["daily"] : ["fechamento","bbts"]` | **NÃO** — idem |
+| 4 | `lib/cms/auditCmsVsPmr.ts:112` | `.eq("source","cms")` | **NÃO** — audita o SEED contra `cms_promoter_entries`; a ADS não está no seed |
+| 5 | `lib/reconsolidarCompetencia.ts:60` | `SOURCES_RECONCILIAVEIS = {fechamento,bbts,daily}` — exclui `cms` | já inclui `bbts` |
+| 6 | `lib/cmsMonthly.ts:79-88` | precedência `cms > fechamento` no regime | deliberada (`:52-54`) |
+
+**Os sítios 1-3 não são "filtros que excluem a ADS": são SELETORES DE REGIME, e os
+dois ramos são mutuamente exclusivos.** Quando o regime é `cms` (jan-mai/2026), o mês
+INTEIRO lê o seed do financeiro — para RR e ADS igualmente. Somar `'bbts'` ao ramo
+`cms` misturaria seed com recálculo, que é exatamente o que `cmsMonthly.ts:52-54`
+proíbe:
+
+```
+// A ORDEM importa: jan-mai tem cms E fechamento; a precedencia cms > fechamento
+// garante que aqueles meses continuem lendo o SEED do cms (nao recalculam pelo
+// fechamento).
+```
+
+E não haveria o que ganhar: a ADS tem **UMA** linha `source='cms'` no banco inteiro —
+`2026-02`, `production_value = 0,00`.
