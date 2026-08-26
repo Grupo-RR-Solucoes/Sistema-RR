@@ -304,3 +304,74 @@ A ADS falta ali por AUSÊNCIA DE LINHA, não por filtro.
 - `semAds` (`app/api/calculate/monthly/route.ts:711`) — exclui a ADS da escrita do
   motor RR. Deliberada.
 - `detectMonthRegime` ignora a ADS via `active=false` (`lib/cmsMonthly.ts:54`). Deliberada.
+
+---
+
+## 9. O SINAL NEGATIVO — verificado, não há defeito (26/08)
+
+`parseBrNumber` **não existe no repo** (`grep -rn parseBrNumber lib app scripts` -> 0).
+O parser de número é `money()`, e ele PRESERVA O SINAL de propósito, em dois passos:
+
+```ts
+lib/bbtsPdfExtract.ts:33-43
+33:function money(raw: unknown): number {
+34:  let s = String(raw ?? "").trim();
+35:  if (s === "") return 0;
+36:  const negative = s.includes("-");          // <- captura ANTES de limpar
+37:  s = s.replace(/[^\d,.]/g, "");             // tira R$, sinais, espaços
+...
+42:  return negative ? -n : n;                  // <- restaura
+43:}
+```
+
+Prova empírica com as strings reais do PDF:
+
+```
+money("-R$ 1,40")      = -1.4
+money("-R$ 24,05")     = -24.05
+money("-R$ 1.234,56")  = -1234.56
+money("R$ 18.737,33")  = 18737.33
+money("R$ -")          = 0        <- traço de "sem valor"
+```
+
+Os 8 chamadores de `money()`/`moneysIn()`/`pct()` estão em `:294, :326, :327, :329,
+:385, :419, :435, :437`. Todos recebem grupos de regex estritamente monetários.
+
+Os ÚNICOS `Math.abs` sobre VALOR no caminho são `debitInsuranceResolver.ts:170` e
+`:389`, ambos convertendo estorno em MAGNITUDE POSITIVA para virar débito — correto
+e deliberado (um débito de R$ 24,05, não de −24,05). Os `Math.abs` de
+`bbtsPdfExtract.ts` são comparação de tolerância e distância de coordenada Y.
+
+### Nunca houve negativo no crédito — medido
+
+PDF de crédito de julho: `Cancelamento=SIM: 0`, `pag_avista < 0: 0`,
+`valor_financiado < 0: 0`, `parcela PRT < 0: 0`.
+
+Banco, TODAS as competências da ADS (97 linhas + 16 parcelas PRT):
+
+```
+gross_value < 0 : 0   net_value < 0 : 0   insurance_value < 0 : 0
+bbts_pag_avista < 0 : 0   bbts_seguro_pago < 0 : 0   bbts_taxa_relatorio < 0 : 0
+parcelas PRT negativas : 0
+status: {"PRODUCAO":63,"Producao":34}   (as duas grafias sao normalizadas por
+                                         isProductionStatus — ver bbtsDailyImport:313-317)
+```
+
+A coluna `Cancelamento` do crédito É lida (`bbtsPdfExtract.ts:345`,
+`cancelamento: /^SIM$/i.test(m[9])`) e vira `status: "CANCELADO"`
+(`bbtsClosingImport.ts:449`), o que tira a linha da produção. Tratada por STATUS,
+não por sinal.
+
+### O RISCO REAL É OUTRO: omissão, não perda de sinal
+
+`Glosa` é um total de CABEÇALHO, não coluna por linha — e não é lida por ninguém
+(seção 5a). Se a BBTS mandar Glosa != 0, o valor não será "inflado pelo abs": será
+**ignorado inteiro**, e nenhuma âncora perceberá, porque nenhuma confere o
+`Pagamento Total` declarado. O conserto continua sendo o da seção 5a.
+
+### Aresta nomeada (não é defeito hoje)
+
+`debitInsuranceResolver.ts:389` aplica `Math.abs` a QUALQUER linha `tratamento='debito'`.
+Se a BBTS um dia mandar um `CANCELADO` com valor POSITIVO (estorno de estorno), o
+`abs` transformaria um crédito ao promotor em débito. Hoje rótulo e sinal concordam
+em 100% das linhas medidas, então não acontece.
