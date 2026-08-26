@@ -453,3 +453,62 @@ proíbe:
 
 E não haveria o que ganhar: a ADS tem **UMA** linha `source='cms'` no banco inteiro —
 `2026-02`, `production_value = 0,00`.
+
+---
+
+## 12. PORTÃO DO SINAL — `scripts/bbts_sinal_negativo_gate.cjs` (26/08)
+
+`money()` já preservava o sinal; o que NÃO existia era vigia. Agora existe.
+Registrado em `run_all_gates.cjs`, faixa `self-contained` (435ms), 18 asserções.
+
+Importa `money` / `SEGURO_RE` / `CREDITO_RE` REAIS (exportados só para isto) e roda
+sobre linhas COPIADAS dos PDFs de jun e jul/2026. Nenhuma constante congelada do
+lado esperado.
+
+**Mutação testada — o gate reprova de verdade:**
+
+| mutação | resultado |
+|---|---|
+| `money()` -> `return Math.abs(n)` | **VERMELHO, 11 falhas** (`229.2 !== -229.2`) |
+| tirar o `-?` do grupo 11 do `SEGURO_RE` | **VERMELHO, 5 falhas** ("NAO casou — a linha sumiria em silencio") |
+| revertido | VERDE |
+
+A 2ª mutação é a mais perigosa e a menos óbvia: sem o `-?`, a linha cancelada não
+CASA o regex e é **descartada em silêncio** — não vira zero, some. A auto-âncora do
+seguro (`:443-449`) pegaria, mas só depois; o gate pega antes.
+
+## 13. VARREDURA DE TODAS AS COMPETÊNCIAS EM DISCO
+
+Varri os 12 PDFs da ADS em `Downloads` (`scripts/diag-ads-29-varredura.cjs`).
+Fechamentos de crédito legíveis: **junho** (`Crédito ADS-BBTS.pdf`, 19 linhas) e
+**julho** (`pdf (1).pdf`, 43 linhas). Os de maio e o "COMPLEMENTAR JUNHO" são NOTAS
+FISCAIS (começam em "TOMADOR DE SERVIÇOS"), e os `Tabela_de_Pagamento_*` são a TRP.
+
+| competência | Cancelamento=SIM | pag_avista < 0 | valor_financiado < 0 | Glosa |
+|---|---|---|---|---|
+| 2026-06 | 0 | 0 | 0 | vazio (`R$ -`) |
+| 2026-07 | 0 | 0 | 0 | 0,00 |
+
+**O crédito NUNCA veio negativo nem cancelado. Não há inflação de crédito.**
+Confirmado também no banco: 0 negativos em 6 campos × 97 linhas × todas as
+competências, e 0 parcelas PRT negativas.
+
+### ACHADO NOVO — o cabeçalho MUDA DE LAYOUT entre competências
+
+```
+JUNHO:  Pagamento AVT | Pagamento PRT | Abertura de Conta | Valor Descontado | Pagamento Total
+        R$ 7.707,03   | R$ 7,01       | R$ -              | -R$              | R$ 7.714,04
+
+JULHO:  Pagamento AVT | Pagamento PRT | Abertura de Conta | Glosa            | Pagamento Total
+        R$ 18.737,33  | R$ 7,01       | R$ 100,00         | R$ 0,00          | R$ 18.844,34
+```
+
+A 4ª coluna foi RENOMEADA — "Valor Descontado" (jun) -> "Glosa" (jul) — e junho usa
+`R$ -` / `-R$` como placeholder de vazio.
+
+**CONSEQUÊNCIA PARA O CONSERTO DA SEÇÃO 5a:** ler o cabeçalho por NOME DE COLUNA
+quebra entre meses, e ler por POSIÇÃO ("o 3º R$ da linha") também — porque o regex
+de dinheiro exige dígitos e os placeholders `R$ -` / `-R$` NÃO casam, deslocando
+tudo. Foi exatamente o erro que minha 1ª varredura cometeu (leu ABERTURA=7.714,04
+em junho, que na verdade é o TOTAL). O conserto tem de casar RÓTULO->VALOR por
+pareamento, tolerando placeholder, e conferir contra o `Pagamento Total`.

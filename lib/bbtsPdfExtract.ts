@@ -30,7 +30,16 @@ function round2(n: number): number {
 }
 
 // "R$ 5.000,00" / "R$ -" / "-R$ 20,70" / "24.000,00" -> number (respeita sinal).
-function money(raw: unknown): number {
+/**
+ * PRESERVA O SINAL. O traco vem ANTES do "R$" nos PDFs da BBTS ("-R$ 24,05"), e a
+ * limpeza da linha 37 apaga qualquer sinal — por isso ele e capturado antes e
+ * restaurado no return. NAO trocar por Math.abs nem por Number(): o sinal e
+ * informacao do DOCUMENTO (linha CANCELADA do seguro vem negativa), nao
+ * interpretacao nossa. Travado por scripts/bbts_sinal_negativo_gate.cjs.
+ *
+ * Exportada SO para o gate — nenhum consumidor de producao deve chamar direto.
+ */
+export function money(raw: unknown): number {
   let s = String(raw ?? "").trim();
   if (s === "") return 0;
   const negative = s.includes("-");
@@ -56,7 +65,9 @@ class BbtsPdfError extends Error {}
 // ---- CRÉDITO ----------------------------------------------------------------
 // Ex.: "212539496 R$ 5.000,00 R$ 143,50 08/06/2026 2,8700% 2 JJ552710 Novo Não
 //       Crédito Novo PUBLICO 1640 INSS Novo 1,85 108 109 NÃO"
-const CREDITO_RE =
+// Exportada so para o gate de sinal. O grupo 3 aceita `R$ -` (placeholder de
+// "sem valor", visto em junho/2026) E `-R$ 1.234,56` (negativo).
+export const CREDITO_RE =
   /^(\d{6,})\s+R\$\s*([\d.,]+)\s+(R\$\s*-|-?R\$\s*[\d.,]+)\s+(\d{2}\/\d{2}\/\d{4})\s+([\d.,]+)%\s+(\d)\s+(JJ\d+)\s+(.*?)\s+(N[ÃA]O|SIM)\s*$/i;
 
 // ---------------------------------------------------------------------------
@@ -401,7 +412,9 @@ export async function extractBbtsCreditoPdf(data: Uint8Array): Promise<CreditoEx
 // ---- SEGURO -----------------------------------------------------------------
 // Ex.: "212146378 24.000,00 108 ESTOQUE D0 82442550 4.594,71 POSITIVO 03Jun2026
 //       JJ552710 0,10% R$ 24,00"  (cancelado: "… CANCELADO … -R$ 20,70")
-const SEGURO_RE =
+// Exportada so para o gate de sinal. O `-?` do grupo 11 e o que faz a linha
+// CANCELADA CASAR: sem ele a linha nao casaria e seria descartada em silencio.
+export const SEGURO_RE =
   /^(\d{6,})\s+([\d.,]+)\s+(\d+)\s+(ESTOQUE D0|ESTOQUE|SLIP NOVO|SLIP)\s+(\d+)\s+([\d.,]+)\s+(POSITIVO|CANCELADO)\s+(\S+)\s+(JJ\d+)\s+([\d.,]+)%\s+(-?R\$\s*[\d.,]+)\s*$/i;
 
 export type SeguroExtract = { rows: BbtsSeguroRow[]; totalAnchor: number };

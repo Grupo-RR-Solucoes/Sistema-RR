@@ -49,6 +49,16 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/bbts_sinal_negativo_gate.cjs",
+    nome: "sinal negativo sobrevive ao parser da BBTS (linha CANCELADA do seguro)",
+    modo: "self-contained",
+    motivo:
+      "importa money/SEGURO_RE/CREDITO_RE REAIS e roda sobre linhas copiadas dos " +
+      "PDFs de jun e jul/2026; pega Math.abs em money() e a perda do '-?' no " +
+      "regex (que faria a linha cancelada sumir em silencio); sem banco, sem " +
+      "caminho absoluto",
+  },
+  {
     arquivo: "scripts/teto_avista_repasse_gate.cjs",
     nome: "teto 5,80%: o repasse sai da comissao-empresa TRAZIDA AO TETO",
     modo: "self-contained",
