@@ -550,3 +550,63 @@ Duas partes, ambas lendo os arquivos REAIS (nenhuma lista congelada de esperado)
   A ADS tem 1 linha `source='cms'` no banco, com produção R$ 0,00.
 
 Estão nomeadas no cabeçalho do próprio gate, para que ninguém "conserte" as três.
+
+---
+
+## 15. O CARD "Recebido" — a soma do Diego reproduzida AO CENTAVO (26/08)
+
+`scripts/diag-ads-31-card.cjs` reproduz `cashReceivedFor(2026, 8)` e testa os cenários.
+
+```
+=== CARD 'Recebido' ago/26 — AGORA (4 empresas RR) ===
+  receivedLiquido  = 283.908,16
+  receivedProdutos =  15.828,66
+  receivedNet      = 299.736,82   <- o que a tela mostra
+  do qual: a-vista 227.393,93 | diferido(PRT) 51.806,30 | seguro 5.131,69
+```
+
+**O card NÃO é "crédito bruto à-vista"** — o rótulo mente. Ele soma à-vista +
+diferido/PRT + seguro + os 6 produtos. Logo o análogo da ADS é o TOTAL PAGO
+(R$ 18.999,41), não só a parte à-vista.
+
+```
+=== CENARIOS ===
+  hoje                                             299.736,82
+  + ADS so com o que esta em COLUNA                318.596,26  (+6,29%)
+  + ADS com seguro do raw_payload (conserta 89,42) 318.685,68  (+6,32%)
+  + ADS com o TOTAL do PDF (precisa Abertura)      318.736,23  (+6,34%)
+
+  soma a mao do Diego                              318.736,23
+```
+
+**O cenário 3 bate a soma do Diego AO CENTAVO.** A conta dele era o caixa + o total
+do PDF da ADS. Investigação fechada.
+
+### TETO SEM MIGRATION: R$ 318.636,23
+
+Decomposição do que falta em cada cenário:
+
+| peça | valor | onde está no banco |
+|---|---|---|
+| AVT | 18.737,33 | `daily_production_records.bbts_pag_avista` |
+| PRT | 7,01 | `bbts_prt_parcelas.valor_parcela` |
+| seguro `calculo` | 204,52 | 115,10 em coluna + **89,42 só no `raw_payload`** (seção 3) |
+| seguro `debito` | −49,45 | `promoter_debit_assignments` + `promoter_debit_sources` |
+| **Abertura de Conta** | **100,00** | **NENHUM lugar — não existe coluna** |
+
+`18.737,33 + 7,01 + 204,52 − 49,45 = 18.899,41` -> card = **R$ 318.636,23**.
+
+Os R$ 100,00 **não têm onde morar**. Chegar aos R$ 318.736,23 exatos exige:
+1. capturar Abertura de Conta e Glosa do cabeçalho (seção 5a, com o pareamento
+   rótulo->valor da seção 13, porque o layout muda entre meses);
+2. **uma coluna nova para guardá-los => MIGRATION**;
+3. só então a rota do caixa somar a ADS.
+
+O passo 2 é decisão do Diego. Sem ele, o teto é 318.636,23 (R$ 100,00 a menos).
+
+### E ISTO NÃO É O FILTRO `source`
+
+O card lê `fechamento_mensal_empresa` (`financialAnalytics.ts:451-460`), que **não
+tem coluna `source`** e não passa por nenhum dos 6 sítios de regime. Nenhuma mudança
+em filtro de `source` — `'cms'`, `'bbts'` ou qualquer outro — move este número em
+um centavo. O que falta é a ADS ter LINHA/CAMINHO no caixa, não passar num filtro.
