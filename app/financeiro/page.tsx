@@ -46,7 +46,7 @@ type Matriz = {
   cardTotal: number;
   delta: number;
 };
-type Detalhamento = { entrada: Matriz; saida: Matriz };
+type Detalhamento = { entrada: Matriz; saida: Matriz; despesa: Matriz };
 
 type CashTrend = { key: string; label: string; receivedNet: number; totalExpenses: number; comissoesPagas: number };
 type CatTotal = Record<string, unknown>;
@@ -155,7 +155,7 @@ function SaldoDasMatrizes({
   );
 }
 
-function MatrizTabela({ m, tom }: { m: Matriz; tom: "in" | "out" }) {
+function MatrizTabela({ m, tom, vazio }: { m: Matriz; tom: "in" | "out"; vazio?: string }) {
   const [aberta, setAberta] = useState(false);
   const fecha = Math.abs(m.delta) < 0.005;
   const colunas = aberta
@@ -183,6 +183,9 @@ function MatrizTabela({ m, tom }: { m: Matriz; tom: "in" | "out" }) {
         </h3>
         <span className={`mtx-total ${tom}`}>{brl2(m.total)}</span>
       </div>
+      {vazio && m.linhas.length === 0 ? (
+        <p className="mtx-vazio">{vazio}</p>
+      ) : (
       <div className="mtx-scroll">
         <table className="mtx-tbl">
           <thead>
@@ -236,6 +239,7 @@ function MatrizTabela({ m, tom }: { m: Matriz; tom: "in" | "out" }) {
           </tfoot>
         </table>
       </div>
+      )}
       {m.notaMarca ? <p className="mtx-nota">{m.notaMarca}</p> : null}
       <details className="mtx-fontes">
         <summary>Fonte de cada coluna</summary>
@@ -564,6 +568,7 @@ export default function FinanceiroPage() {
               <>
                 <MatrizTabela m={fin.detalhamento.entrada} tom="in" />
                 <MatrizTabela m={fin.detalhamento.saida} tom="out" />
+                <MatrizTabela m={fin.detalhamento.despesa} tom="out" vazio={`Nenhuma despesa lancada em ${fin.selectedPeriod?.label ?? ""}.`} />
                 <SaldoDasMatrizes
                   entrada={fin.detalhamento.entrada.total}
                   saida={fin.detalhamento.saida.total}
@@ -890,6 +895,7 @@ const CSS = `
 .rrfin .mtx-total.pos{color:var(--kpi-pos,#15803d);}
 .rrfin .mtx-total.neg{color:var(--kpi-neg,#b91c1c);}
 .rrfin .mtx-saldo .mtx-conta{margin:0;font-size:13px;color:#374151;font-variant-numeric:tabular-nums;}
+.rrfin .mtx-vazio{margin:0;font-size:13px;color:#6b7280;font-style:italic;}
 .rrfin .mtx-marca{color:#6b7280;margin-left:2px;cursor:help;}
 .rrfin .mtx-nota{margin:10px 0 0;font-size:11px;line-height:1.5;color:#6b7280;}
 .rrfin .mtx-fontes{margin-top:6px;font-size:11px;color:#6b7280;}

@@ -252,3 +252,94 @@ rolar horizontalmente dentro da matriz (~1385px de conteúdo contra ~1270px úte
 **Em 1366 isso é mais de uma tela extra de rolagem** (viewport útil ~630px). Foi o
 atrito que motivou a proposta de aba separada; a decisão foi aceitá-lo em troca de o
 detalhamento ficar junto do que ele explica.
+
+---
+
+## 8. TERCEIRA MATRIZ — despesas (EMPRESA × CATEGORIA), 26/08/2026
+
+### O dado, medido (contagem exata)
+
+```
+financial_expenses: 5 linhas no total
+  2026-05 | RR PERNAMBUCO | Folha      | COMPANY | PAID |  4.361,28
+  2026-05 | RR PERNAMBUCO | FGTS       | COMPANY | PAID |    348,90
+  2026-05 | RR ALAGOAS 1  | Folha      | COMPANY | PAID | 22.613,07
+  2026-05 | RR ALAGOAS 1  | Pró-labore | COMPANY | PAID |  5.000,00
+  2026-05 | RR ALAGOAS 1  | FGTS       | COMPANY | PAID |  1.809,03
+  TOTAL = 34.132,28
+
+despesas de escopo GRUPO: 0 linhas, R$ 0,00
+junho/2026: 0 linhas, R$ 0,00
+```
+
+`company_id` preenchido em 5/5; `scope = COMPANY` em 5/5. **Uma única competência
+com movimento: 2026-05.** Jun, jul e ago estão zerados — a matriz nasce vazia nas
+três competências que o Diego olha hoje, e mostra "Nenhuma despesa lançada em X".
+
+### O corte das colunas — e por que é DIFERENTE das outras duas
+
+Nas matrizes de entrada e saída as colunas são **estruturais**: componentes fixos do
+fechamento e do PMR, sempre os mesmos, sempre com valor. Aqui a categoria é um
+cadastro **aberto** — 11 hoje, podem virar 15 — e o uso é concentrado: das 11
+cadastradas (todas ativas, todas `is_default`, nenhuma criada por usuário) apenas
+**3 tiveram movimento**:
+
+```
+Folha       | 26.974,35 | 79,0%
+Pró-labore  |  5.000,00 | 14,6%  (acum 93,7%)
+FGTS        |  2.157,93 |  6,3%  (acum 100,0%)
+```
+
+Colunas fixas dariam **8 colunas de zero permanente**. Então: as categorias com
+valor na competência exibida, ordenadas por valor, **teto de 4 colunas**; da 5ª em
+diante entra em "Outros", expansível — o mesmo critério de materialidade das outras
+duas.
+
+### A linha de GRUPO — rótulo deliberado
+
+`"Grupo (sem empresa)"`, **nunca** `"não atribuído"`. A primeira diz *esta despesa
+não pertence a uma empresa*; a segunda diria *faltou o dado*. São coisas diferentes
+e só uma é verdade aqui: `lib/financialAnalytics.ts:1058` define despesa de grupo
+como `scope ∈ {GROUP, GRUPO}` **ou** `company_id` nulo — é categoria legítima, e o
+`dre.ts:560-570` já a trata como tal.
+
+### As três competências são DIFERENTES, e cada matriz diz a sua
+
+`lib/financialAnalytics.ts:833` — `selectedExpenses` filtra por `selectedPeriod`, o
+mês CORRENTE, enquanto Recebido e Comissões pagas leem M-1. **Não é defeito, é o
+regime de caixa**: o que entrou veio do fechamento do mês passado; a despesa é deste
+mês. Três tabelas na mesma tela com janelas diferentes seriam um convite ao erro se
+não dissessem qual é — por isso os subtítulos passaram a ser explícitos:
+
+- `Recebido — fechamento de jul/26 (M-1)`
+- `Comissões pagas — competência jul/26 (M-1)`
+- `Despesas — competência ago/26 — o mês CORRENTE, não M-1`
+
+### O fechamento — as duas provas
+
+```
+2026-05 despesa: matriz 34.132,28 · card 34.132,28 · delta 0,00
+2026-05: 238.727,01 − 93.540,18 − 34.132,28 = 111.054,55 = card "Saldo"
+2026-06: 249.566,80 − 105.773,30 − 0,00 = 143.793,50 = card
+2026-07: 274.217,84 − 115.936,94 − 0,00 = 158.280,90 = card
+2026-08: 318.596,26 − 139.451,16 − 0,00 = 179.145,10 = card
+```
+
+**O card "Saldo" ficou rastreável pelas três matrizes.**
+
+### Gate — mutação provada
+
+`maio/2026 é OBRIGATÓRIO` na lista de competências do gate: é a única com despesa
+real. Sem ela o lado da despesa passaria por **vacuidade** (matriz vazia contra card
+zerado fecha trivialmente).
+
+| mutação | resultado |
+|---|---|
+| card Despesas anda R$ 777,77, matriz intacta | **VERMELHO, 8 falhas** (4 de `matriz == card` + 4 do Saldo) |
+| teto de categorias 4→2 e a cauda some em vez de ir para "Outros" | **VERMELHO, 2 falhas** |
+| revertido | VERDE |
+
+**VACUIDADE DECLARADA:** a asserção do rótulo de GRUPO **não exercita hoje** —
+mutá-la para `"nao atribuido"` mantém o gate VERDE, porque não existe despesa de
+grupo no banco. Ela é uma trava POSICIONADA para quando a primeira aparecer, não uma
+prova de que o rótulo funciona. Está declarado no cabeçalho do próprio gate.

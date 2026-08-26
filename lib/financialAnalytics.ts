@@ -659,7 +659,7 @@ export type Matriz = {
   /** total - cardTotal; 0,00 quando fecha */
   delta: number;
 };
-export type FinanceDetalhamento = { entrada: Matriz; saida: Matriz };
+export type FinanceDetalhamento = { entrada: Matriz; saida: Matriz; despesa: Matriz };
 
 export async function buildFinancialAnalytics(
   supabase: SupabaseClient,
@@ -1472,10 +1472,128 @@ export async function buildFinancialAnalytics(
       delta: roundMoney(total - alvo),
     };
   };
+  // ---- DESPESAS: EMPRESA x CATEGORIA ----
+  //
+  // POR QUE AS COLUNAS SAO DINAMICAS, ao contrario das outras duas. Nas matrizes de
+  // entrada e saida as colunas sao ESTRUTURAIS: componentes fixos do fechamento e do
+  // PMR, sempre os mesmos, sempre com valor. Aqui a categoria e um cadastro ABERTO —
+  // 11 hoje (`expense_categories`), podem virar 15 — e o uso e concentrado: medido em
+  // 26/08/2026, das 11 apenas 3 tiveram movimento (Folha 79,0%, Pro-labore 14,6%,
+  // FGTS 6,3%). Colunas fixas dariam 8 colunas de zero permanente, que nao ensinam
+  // nada e comem a largura que as outras precisam.
+  //
+  // O CORTE: as categorias com valor na competencia exibida, ordenadas por valor
+  // (maior primeiro), TETO de 4 colunas; da 5a em diante entra em "Outros",
+  // expansivel — o mesmo criterio de materialidade das outras duas matrizes.
+  //
+  // COMPETENCIA: esta matriz le a competencia CORRENTE (o mes selecionado), enquanto
+  // Recebido e Comissoes pagas leem M-1. NAO e defeito, e o regime de caixa: o que
+  // entrou veio do fechamento do mes passado, o que se paga de despesa e deste mes.
+  // Por isso cada matriz declara o proprio periodo no subtitulo — tres tabelas na
+  // mesma tela com janelas diferentes e um convite ao erro se nao disserem qual e.
+  const TETO_CAT = 4;
+  const catNomePorId = new Map(categories.map((c) => [c.id, c.name]));
+  const norm = (v: unknown) => normalizeText(v);
+  const ehGrupo = (r: ExpenseRow) =>
+    norm(r.scope) === "GROUP" || norm(r.scope) === "GRUPO" || !r.company_id;
+
+  // valor por categoria na competencia, para decidir o corte
+  const valorPorCat = new Map<string, number>();
+  for (const r of selectedExpenses) {
+    const k = String(r.category_id ?? "__sem_categoria");
+    valorPorCat.set(k, toNumber(valorPorCat.get(k)) + toNumber(r.amount));
+  }
+  const catsOrdenadas = [...valorPorCat.entries()]
+    .filter(([, v]) => Math.abs(v) > 0.005)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  const catsColuna = catsOrdenadas.slice(0, TETO_CAT).map(([k]) => k);
+  const catsOutros = catsOrdenadas.slice(TETO_CAT).map(([k]) => k);
+  const rotuloCat = (id: string) =>
+    id === "__sem_categoria" ? "(sem categoria)" : catNomePorId.get(id) || "(categoria removida)";
+
+  const accDesp = new Map<string, { grupo: boolean; porCat: Map<string, number> }>();
+  for (const r of selectedExpenses) {
+    const grupo = ehGrupo(r);
+    // A linha de GRUPO nao e "nao atribuido": e despesa que LEGITIMAMENTE nao tem
+    // CNPJ (rateio do grupo). Dado faltando e outra coisa, e o rotulo tem de
+    // distinguir — ver o rotulo mais abaixo.
+    const chave = grupo ? "__grupo" : String(r.company_id);
+    let b = accDesp.get(chave);
+    if (!b) {
+      b = { grupo, porCat: new Map() };
+      accDesp.set(chave, b);
+    }
+    const ck = String(r.category_id ?? "__sem_categoria");
+    b.porCat.set(ck, toNumber(b.porCat.get(ck)) + toNumber(r.amount));
+  }
+
+  const COLS_DESPESA: MatrizColuna[] = [
+    ...catsColuna.map((id) => ({
+      chave: `cat:${id}`,
+      rotulo: rotuloCat(id),
+      fonte: "financial_expenses (por company_id + category_id)",
+    })),
+    ...(catsOutros.length
+      ? [
+          {
+            chave: "outros",
+            rotulo: "Outros",
+            expansivel: true,
+            fonte: `${catsOutros.length} categoria(s) de menor valor nesta competencia`,
+          } as MatrizColuna,
+        ]
+      : []),
+  ];
+
+  const linhasDespesa: MatrizLinha[] = [];
+  for (const [chave, b] of accDesp) {
+    const outros = catsOutros.map((id) => ({
+      chave: id,
+      rotulo: rotuloCat(id),
+      valor: roundMoney(toNumber(b.porCat.get(id))),
+    }));
+    const raw: Record<string, number> = {};
+    for (const id of catsColuna) raw[`cat:${id}`] = toNumber(b.porCat.get(id));
+    if (catsOutros.length) raw.outros = outros.reduce((a, o) => a + o.valor, 0);
+    const fech = fecharLinha(raw, Object.values(raw).reduce((a, v) => a + v, 0));
+    linhasDespesa.push({
+      chave,
+      // ROTULO DELIBERADO: "Grupo (sem empresa)", nunca "nao atribuido". A primeira
+      // diz "esta despesa nao pertence a uma empresa"; a segunda diria "faltou o
+      // dado". Sao coisas diferentes e so uma delas e verdade aqui.
+      rotulo: b.grupo ? "Grupo (sem empresa)" : nomePorId.get(chave) || `ID ${chave.slice(0, 8)}`,
+      avulso: b.grupo,
+      celulas: fech.celulas,
+      outrosDetalhe: outros,
+      total: fech.total,
+    });
+  }
+  linhasDespesa.sort(ordenar);
+
   const rotuloPrev = `${MONTH_NAMES[prevMat.month - 1]}/${String(prevMat.year).slice(2)}`;
+  const rotuloAtual = `${MONTH_NAMES[selectedPeriod.month - 1]}/${String(selectedPeriod.year).slice(2)}`;
   const detalhamento: FinanceDetalhamento = {
-    entrada: montarMatriz("Recebido", `fechamento de ${rotuloPrev}`, COLS_ENTRADA, linhasEntrada, summary.receivedNet),
-    saida: montarMatriz("Comissoes pagas", `competencia ${rotuloPrev}`, COLS_SAIDA, linhasSaida, summary.comissoesPagas),
+    entrada: montarMatriz(
+      "Recebido",
+      `fechamento de ${rotuloPrev} (M-1)`,
+      COLS_ENTRADA,
+      linhasEntrada,
+      summary.receivedNet
+    ),
+    saida: montarMatriz(
+      "Comissoes pagas",
+      `competencia ${rotuloPrev} (M-1)`,
+      COLS_SAIDA,
+      linhasSaida,
+      summary.comissoesPagas
+    ),
+    despesa: montarMatriz(
+      "Despesas",
+      `competencia ${rotuloAtual} — o mes CORRENTE, nao M-1`,
+      COLS_DESPESA,
+      linhasDespesa,
+      summary.totalExpenses
+    ),
   };
 
   return {
