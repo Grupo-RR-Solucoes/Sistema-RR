@@ -25,10 +25,33 @@ type FinSummary = {
   openingBalance: number;
   cashBalance: number;
 };
+type MatrizCelula = { chave: string; rotulo: string; valor: number };
+type MatrizLinha = {
+  chave: string;
+  rotulo: string;
+  avulso?: boolean;
+  celulas: Record<string, number>;
+  outrosDetalhe: MatrizCelula[];
+  total: number;
+};
+type MatrizColuna = { chave: string; rotulo: string; expansivel?: boolean };
+type Matriz = {
+  titulo: string;
+  subtitulo: string;
+  colunas: MatrizColuna[];
+  linhas: MatrizLinha[];
+  totaisColuna: Record<string, number>;
+  total: number;
+  cardTotal: number;
+  delta: number;
+};
+type Detalhamento = { entrada: Matriz; saida: Matriz };
+
 type CashTrend = { key: string; label: string; receivedNet: number; totalExpenses: number; comissoesPagas: number };
 type CatTotal = Record<string, unknown>;
 type FinPayload = {
   periods: Period[];
+  detalhamento?: Detalhamento;
   selectedPeriod: Period | null;
   summary: FinSummary;
   cashTrend: CashTrend[];
@@ -61,6 +84,107 @@ type DrePayload = {
     receitaSeguro: ResultadoDelta;
   } | null;
 };
+
+
+
+/**
+ * Matriz EMPRESA x COMPONENTE.
+ *
+ * DECISOES DE LEITURA (ver HANDOFF_FINANCEIRO_DETALHAMENTO.md):
+ *  - total de LINHA em negrito, total de COLUNA discreto: a pergunta e "de onde
+ *    veio", e "de onde" e empresa.
+ *  - empresa na 1a coluna, STICKY: quando "Outros" expande, a empresa nao sai da
+ *    vista.
+ *  - zero vira "—", nao "0,00": a matriz tem muita celula vazia e o traco deixa o
+ *    preenchido saltar. E o vazio da ADS nas colunas de produto E informacao: ela
+ *    nao vende consorcio nem BBCAP.
+ *  - lancamento avulso em LINHA PROPRIA, marcada: nao e producao de empresa.
+ *  - NENHUM delta vs mes anterior. So a linha de conferencia (matriz x card).
+ */
+function MatrizTabela({ m, tom }: { m: Matriz; tom: "in" | "out" }) {
+  const [aberta, setAberta] = useState(false);
+  const fecha = Math.abs(m.delta) < 0.005;
+  const colunas = aberta
+    ? m.colunas.flatMap((c) =>
+        c.expansivel
+          ? (m.linhas[0]?.outrosDetalhe ?? []).map((o) => ({ chave: `__d:${o.chave}`, rotulo: o.rotulo }))
+          : [c]
+      )
+    : m.colunas;
+  const valorDe = (l: MatrizLinha, chave: string) =>
+    chave.startsWith("__d:")
+      ? (l.outrosDetalhe.find((o) => o.chave === chave.slice(4))?.valor ?? 0)
+      : (l.celulas[chave] ?? 0);
+  const totalDe = (chave: string) =>
+    chave.startsWith("__d:")
+      ? m.linhas.reduce((a, l) => a + valorDe(l, chave), 0)
+      : (m.totaisColuna[chave] ?? 0);
+  const cel = (v: number) => (Math.abs(v) < 0.005 ? "—" : brl2(v));
+
+  return (
+    <section className="mtx">
+      <div className="mtx-head">
+        <h3>
+          {m.titulo} <span className="sub">{m.subtitulo}</span>
+        </h3>
+        <span className={`mtx-total ${tom}`}>{brl2(m.total)}</span>
+      </div>
+      <div className="mtx-scroll">
+        <table className="mtx-tbl">
+          <thead>
+            <tr>
+              <th className="emp">Empresa</th>
+              {colunas.map((c) => (
+                <th key={c.chave} className="num">
+                  {(c as MatrizColuna).expansivel ? (
+                    <button type="button" className="mtx-exp" onClick={() => setAberta((x) => !x)}>
+                      {c.rotulo} {aberta ? "▾" : "▸"}
+                    </button>
+                  ) : (
+                    c.rotulo
+                  )}
+                </th>
+              ))}
+              <th className="num tot">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {m.linhas.map((l) => (
+              <tr key={l.chave} className={l.avulso ? "avulso" : undefined}>
+                <td className="emp">
+                  {l.rotulo}
+                  {l.avulso ? <span className="tagav">avulso</span> : null}
+                </td>
+                {colunas.map((c) => (
+                  <td key={c.chave} className="num">
+                    {cel(valorDe(l, c.chave))}
+                  </td>
+                ))}
+                <td className="num tot">{brl2(l.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td className="emp">Total</td>
+              {colunas.map((c) => (
+                <td key={c.chave} className="num">
+                  {cel(totalDe(c.chave))}
+                </td>
+              ))}
+              <td className="num tot">{brl2(m.total)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div className={`mtx-conf ${fecha ? "ok" : "bad"}`}>
+        {fecha ? "✓" : "⚠"} conferencia: matriz {brl2(m.total)} · card{" "}
+        {brl2(m.cardTotal)} · delta {brl2(m.delta)}
+        {fecha ? "" : " — o card tem origem que a matriz nao explica"}
+      </div>
+    </section>
+  );
+}
 
 const brl = (v: number | null | undefined) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(Number(v ?? 0));
@@ -98,7 +222,7 @@ function pick(o: Record<string, unknown>, keys: string[]): number | string | und
 }
 
 export default function FinanceiroPage() {
-  const [tab, setTab] = useState<"caixa" | "dre">("caixa");
+  const [tab, setTab] = useState<"caixa" | "detalhe" | "dre">("caixa");
   const [selectedKey, setSelectedKey] = useState("");
   const [fin, setFin] = useState<FinPayload | null>(null);
   const [dre, setDre] = useState<DrePayload | null>(null);
@@ -281,6 +405,9 @@ export default function FinanceiroPage() {
             <button className="tab" role="tab" aria-selected={tab === "caixa"} onClick={() => setTab("caixa")}>
               Caixa &amp; Resultado
             </button>
+            <button className="tab" role="tab" aria-selected={tab === "detalhe"} onClick={() => setTab("detalhe")}>
+              De onde veio
+            </button>
             <button className="tab" role="tab" aria-selected={tab === "dre"} onClick={() => setTab("dre")}>
               DRE
             </button>
@@ -348,6 +475,34 @@ export default function FinanceiroPage() {
         {error ? <div className="banner err">{error}</div> : null}
         {loading ? <div className="state">Carregando financeiro…</div> : null}
 
+        {/* ===================== ABA "De onde veio" =====================
+            Matriz EMPRESA x COMPONENTE, entrada e saida. A pergunta que ela
+            responde e "de onde veio cada real", e "de onde" e EMPRESA — por isso
+            a leitura e POR LINHA: total de linha em destaque, total de coluna
+            discreto no rodape.
+
+            SEM DELTA. Regra transversal: variacao vs mes anterior so em card,
+            nunca em tabela. O unico numero comparativo aqui e a linha de
+            CONFERENCIA, que e reconciliacao da MESMA competencia (matriz x card),
+            nao serie temporal. */}
+        {!loading && tab === "detalhe" && fin?.detalhamento ? (
+          <div className="panes">
+            <MatrizTabela m={fin.detalhamento.entrada} tom="in" />
+            <MatrizTabela m={fin.detalhamento.saida} tom="out" />
+            <p className="note">
+              <span className="dot" />
+              Cada linha e uma <b>empresa</b>; cada coluna, um <b>componente</b> do total. A
+              linha de <b>conferencia</b> compara a soma da matriz com o card da mesma
+              competencia — se divergir, o numero do card tem origem que a matriz nao
+              explica. <b>Outros</b> abre no clique.
+            </p>
+          </div>
+        ) : null}
+        {!loading && tab === "detalhe" && !fin?.detalhamento ? (
+          <div className="panes">
+            <p className="note"><span className="dot" />Sem detalhamento para esta competencia. A matriz aparece quando ha fechamento importado no mes anterior.</p>
+          </div>
+        ) : null}
         {!loading && tab === "caixa" && fin ? (
           <div className="panes">
             {/* Os KPIs (incl. os 2 de seguro, agora promovidos) vivem no <KpiBand>
@@ -640,6 +795,34 @@ const CSS = `
 .rrfin .note{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-3);margin:-4px 4px;}
 .rrfin .note .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(60,157,107,.13);}
 .rrfin .note b{color:var(--ink-2);font-weight:600;}
+/* ---- Matriz EMPRESA x COMPONENTE (aba "De onde veio") ----
+   A empresa e sticky na 1a coluna: quando "Outros" expande, ela nao sai da vista.
+   Total de LINHA em negrito (a pergunta e "de onde veio"); total de COLUNA no
+   tfoot, discreto. Sem cor de variacao — nao ha delta nesta tabela. */
+.rrfin .mtx{background:#fff;border:1px solid var(--line,#e6e9f0);border-radius:14px;padding:16px 18px;}
+.rrfin .mtx-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px;}
+.rrfin .mtx-head h3{margin:0;font-size:15px;font-weight:700;}
+.rrfin .mtx-head .sub{font-weight:400;font-size:12px;color:#6b7280;margin-left:6px;}
+.rrfin .mtx-total{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;}
+.rrfin .mtx-total.in{color:var(--kpi-in,#1d4ed8);}
+.rrfin .mtx-total.out{color:var(--kpi-out,#b91c1c);}
+.rrfin .mtx-scroll{overflow-x:auto;}
+.rrfin .mtx-tbl{width:100%;border-collapse:collapse;font-size:13px;}
+.rrfin .mtx-tbl th,.rrfin .mtx-tbl td{padding:7px 10px;white-space:nowrap;}
+.rrfin .mtx-tbl thead th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;border-bottom:1px solid var(--line,#e6e9f0);text-align:right;}
+.rrfin .mtx-tbl th.emp,.rrfin .mtx-tbl td.emp{text-align:left;position:sticky;left:0;background:#fff;z-index:1;}
+.rrfin .mtx-tbl td.num,.rrfin .mtx-tbl th.num{text-align:right;font-variant-numeric:tabular-nums;}
+.rrfin .mtx-tbl td.tot,.rrfin .mtx-tbl th.tot{font-weight:700;border-left:1px solid var(--line,#e6e9f0);}
+.rrfin .mtx-tbl tbody tr+tr td{border-top:1px solid #f1f3f7;}
+.rrfin .mtx-tbl tbody tr.avulso td{background:#fafbfd;font-style:italic;}
+.rrfin .mtx-tbl tbody tr.avulso td.emp{background:#fafbfd;}
+.rrfin .tagav{margin-left:8px;font-style:normal;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;border:1px solid var(--line,#e6e9f0);border-radius:6px;padding:1px 5px;}
+.rrfin .mtx-tbl tfoot td{border-top:2px solid var(--line,#e6e9f0);font-weight:700;}
+.rrfin .mtx-exp{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-transform:inherit;letter-spacing:inherit;}
+.rrfin .mtx-exp:hover{text-decoration:underline;}
+.rrfin .mtx-conf{margin-top:10px;font-size:12px;font-variant-numeric:tabular-nums;}
+.rrfin .mtx-conf.ok{color:#166534;}
+.rrfin .mtx-conf.bad{color:#b91c1c;font-weight:700;}
 .rrfin .dre-tbl{margin-top:18px;}
 .rrfin .dhead,.rrfin .dr{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr 1fr;align-items:center;gap:14px;}
 .rrfin .dhead{padding:0 2px 11px;border-bottom:1px solid var(--bd);}

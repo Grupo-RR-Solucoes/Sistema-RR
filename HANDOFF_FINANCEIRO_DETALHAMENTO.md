@@ -101,3 +101,58 @@ source_filename | NAO EXISTE
 
 Nenhum dos três caminhos de derivação (contrato, chave J/MCI, arquivo de origem)
 existe. **O conserto é na ESCRITA, não na leitura.**
+
+---
+
+## 5. IMPLEMENTADO — aba "De onde veio" (26/08/2026)
+
+Aba nova em `/financeiro`, ao lado de "Caixa & Resultado" e "DRE". Duas matrizes
+EMPRESA × COMPONENTE: entrada (Recebido) e saída (Comissões pagas).
+
+### Decisões de leitura
+
+- **Por LINHA.** A pergunta é "de onde veio cada real", e "de onde" é EMPRESA — é
+  como a NF é emitida e como o Diego somou à mão quando descobriu que a ADS faltava.
+  Total de linha em negrito; total de coluna no rodapé, discreto.
+- **Empresa sticky** na 1ª coluna: quando "Outros" expande, ela não sai da vista.
+- **Zero vira `—`**, não `0,00`. O vazio da ADS nas colunas de produto É informação:
+  ela não vende consórcio nem BBCAP.
+- **ADS por último**; é a diferente em gestora, fonte e cobertura de colunas.
+- **SEM DELTA.** Regra transversal respeitada: nenhuma variação vs mês anterior. O
+  único número comparativo é a conferência, que é reconciliação da MESMA competência.
+
+### Lançamentos avulsos em linha própria (decisão do Diego)
+
+A receita manual NÃO é distribuída entre as empresas — linha própria, marcada
+`avulso`, desdobrada por CATEGORIA (não por produto). NOTA FACTUAL: a tabela
+`receita_lancamento_manual` TEM `company_id`, então atribuir não seria inventar
+procedência — mas a decisão se sustenta pela NATUREZA: o ressarcimento de
+R$ 1.509,44 tem competência de origem 06/2026 e caixa 07/2026, e diluir na linha da
+empresa esconderia isso.
+
+### Dois defeitos que a implementação revelou
+
+1. **Descontos caíam em "sem empresa".** `promoter_discounts` tem `company_id`, mas
+   o select de `financialAnalytics.ts` não o trazia — a matriz jogava R$ 1.664,99
+   numa linha órfã. Corrigido no select (`company_id` adicionado).
+2. **Resíduo de arredondamento de R$ 0,01** em jul/26 na saída. O card faz
+   `round(Σ A) − round(Σ B)`; a matriz fazia `Σ round(A_empresa − B_empresa)`. Um
+   centavo em R$ 115 mil é irrelevante como dinheiro e FATAL como matriz — o Diego
+   confere somando a coluna. Resolvido por `fecharLinha()`, que devolve o resíduo
+   para a MAIOR célula, e por reconciliação em `montarMatriz()` limitada a
+   1 centavo por linha. **Acima disso o delta SOBREVIVE e a tela mostra** — aí é
+   divergência de verdade, e a linha de conferência existe para denunciar.
+
+### Gate — `scripts/financeiro_matriz_fecha_gate.cjs` (needs-db)
+
+30 asserções em 3 competências × 2 lados. Nenhuma constante congelada: o lado
+esperado é sempre o card do MESMO payload.
+
+| mutação | resultado |
+|---|---|
+| componente novo no Recebido, matriz intacta (`+1.234,56`) | **VERMELHO, 3 falhas** — as 3 competências da entrada |
+| coluna "Consórcio" removida das `COLS_SAIDA` | **VERMELHO, 4 falhas** — células ≠ total e linhas ≠ colunas |
+| revertido | VERDE |
+
+A primeira mutação é exatamente o cenário que o Diego nomeou: "se alguém
+acrescentar componente ao Recebido e esquecer da matriz, o portão reprova".

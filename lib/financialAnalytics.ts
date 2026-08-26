@@ -106,6 +106,9 @@ type ManualRevenueRow = {
   mes?: number | null;
   valor?: number | null;
   data_credito?: string | null;
+  company_id?: string | null;
+  categoria?: string | null;
+  descricao?: string | null;
 };
 
 export type FinancePeriodOption = {
@@ -223,6 +226,8 @@ export type FinancialAnalyticsPayload = {
   periods: FinancePeriodOption[];
   selectedPeriod: FinancePeriodOption;
   summary: FinanceSummary;
+  /** matriz EMPRESA x COMPONENTE, entrada e saida. Ver o bloco DETALHAMENTO. */
+  detalhamento: FinanceDetalhamento;
   categoryTotals: FinanceCategoryTotal[];
   cashTrend: FinanceCashTrendPoint[];
   companyRows: FinanceCompanyRow[];
@@ -557,6 +562,95 @@ function makeSelectedPeriod(periods: FinancePeriodOption[], year?: number, month
   );
 }
 
+// ===========================================================================
+// DETALHAMENTO — matriz EMPRESA x COMPONENTE, para ENTRADA e SAIDA.
+//
+// A PERGUNTA QUE ELA RESPONDE: "de onde veio cada real". "De onde" e EMPRESA —
+// e como a NF e emitida e como o Diego somou a mao quando descobriu que a ADS
+// faltava no Caixa. Por isso a leitura e POR LINHA: total de linha em destaque,
+// total de coluna discreto.
+//
+// INVARIANTE, e ela e o motivo de a matriz existir: a soma da matriz e IGUAL ao
+// card, ao centavo. Matriz que nao fecha e pior que matriz nenhuma — daria a
+// impressao de explicar sem explicar. Por isso cada matriz carrega `total` e
+// `cardTotal`, e a tela mostra os dois lado a lado com o delta. Travado por
+// scripts/financeiro_matriz_fecha_gate.cjs.
+//
+// SEM DELTA: nenhuma variacao vs mes anterior aqui. Regra transversal do projeto
+// (delta so em card, nunca em tabela). O unico numero comparativo e a linha de
+// conferencia, que e reconciliacao da MESMA competencia, nao serie temporal.
+//
+// LANCAMENTOS AVULSOS EM LINHA PROPRIA (decisao do Diego, 26/08/2026): a receita
+// manual NAO e distribuida entre as empresas. Ela tem company_id no banco, mas e
+// de outra natureza — o ressarcimento de R$ 1.509,44 de jul/26, por exemplo, tem
+// competencia de ORIGEM 06/2026 e caixa 07/2026. Diluir na linha da empresa
+// esconderia isso. Fica embaixo, rotulada como avulsa.
+// ===========================================================================
+/**
+ * Arredonda as celulas de uma linha e devolve o RESIDUO de centavos para a maior
+ * celula em modulo, de forma que as celulas EXIBIDAS somem exatamente o total
+ * EXIBIDO.
+ *
+ * POR QUE ISTO EXISTE. O card faz `round(Sigma A) - round(Sigma B)`; a matriz faz
+ * `Sigma round(A_empresa - B_empresa)`. As duas contas divergem em centavos por
+ * acumulo — medido: jul/2026 dava matriz 115.936,95 contra card 115.936,94. Um
+ * centavo num total de R$ 115 mil e irrelevante como dinheiro e FATAL como matriz:
+ * o Diego confere somando a coluna, e o que nao fecha ele nao usa.
+ *
+ * A escolha de jogar na MAIOR celula (e nao pro-rata) e deliberada: concentra o
+ * residuo onde ele e proporcionalmente invisivel, em vez de espalhar erro por
+ * todas. Nao muda nenhum total — so redistribui centavo DENTRO da linha.
+ */
+function fecharLinha(
+  celulasRaw: Record<string, number>,
+  totalRaw: number
+): { celulas: Record<string, number>; total: number } {
+  const celulas: Record<string, number> = {};
+  for (const [k, v] of Object.entries(celulasRaw)) celulas[k] = roundMoney(v);
+  const total = roundMoney(totalRaw);
+  const soma = roundMoney(Object.values(celulas).reduce((a, v) => a + v, 0));
+  const residuo = roundMoney(total - soma);
+  if (residuo !== 0) {
+    let alvo = "";
+    let maior = -1;
+    for (const [k, v] of Object.entries(celulas)) {
+      if (Math.abs(v) > maior) {
+        maior = Math.abs(v);
+        alvo = k;
+      }
+    }
+    if (alvo) celulas[alvo] = roundMoney(celulas[alvo] + residuo);
+  }
+  return { celulas, total };
+}
+
+export type MatrizCelula = { chave: string; rotulo: string; valor: number };
+export type MatrizLinha = {
+  chave: string;
+  rotulo: string;
+  /** true = lancamento avulso (nao e producao de empresa) */
+  avulso?: boolean;
+  celulas: Record<string, number>;
+  /** desdobramento da coluna "outros", para a expansao na propria linha */
+  outrosDetalhe: MatrizCelula[];
+  total: number;
+};
+export type MatrizColuna = { chave: string; rotulo: string; expansivel?: boolean };
+export type Matriz = {
+  titulo: string;
+  subtitulo: string;
+  colunas: MatrizColuna[];
+  linhas: MatrizLinha[];
+  totaisColuna: Record<string, number>;
+  /** soma da matriz */
+  total: number;
+  /** o card correspondente — a matriz TEM de bater com ele */
+  cardTotal: number;
+  /** total - cardTotal; 0,00 quando fecha */
+  delta: number;
+};
+export type FinanceDetalhamento = { entrada: Matriz; saida: Matriz };
+
 export async function buildFinancialAnalytics(
   supabase: SupabaseClient,
   filters?: {
@@ -628,7 +722,7 @@ export async function buildFinancialAnalytics(
       }>(() =>
         supabase
           .from("promoter_monthly_results")
-          .select("year, month, company_id, promoter_id, final_commission_value, discount_value, insurance_commission_value, piso_zerou")
+          .select("year, month, company_id, promoter_id, final_commission_value, discount_value, insurance_commission_value, production_commission_value, bbcap_commission_value, conta_corrente_commission_value, consorcio_commission_value, lob_commission_value, piso_zerou")
           // DEFESA EM PROFUNDIDADE (#13): exclui source='daily'. O Caixa e o DRE
           // devem ver o MESMO conjunto (o DRE ja filtra source IN ('fechamento',
           // 'bbts')). 'daily' so existe no mes ABERTO e nunca e caixa pago; se um
@@ -642,15 +736,15 @@ export async function buildFinancialAnalytics(
       fetchAllRows<ManualRevenueRow>(() =>
         supabase
           .from("receita_lancamento_manual")
-          .select("ano, mes, valor, data_credito")
+          .select("ano, mes, valor, data_credito, company_id, categoria, descricao")
       ),
       // DEBITOS do repasse (adiantamento/cancelamento seguro/etc.) — parcelas em
       // promoter_discounts. Abatidos do LIQUIDO por competencia (correcao B do caixa:
       // comissoes pagas do mes M = liquido da competencia M-1). apply_to_company !== true.
-      fetchAllRows<{ year: number; month: number; amount: number | null; apply_to_company: boolean | null; promoter_id: string | null }>(() =>
+      fetchAllRows<{ year: number; month: number; amount: number | null; apply_to_company: boolean | null; promoter_id: string | null; company_id: string | null }>(() =>
         supabase
           .from("promoter_discounts")
-          .select("year, month, amount, apply_to_company, promoter_id")
+          .select("year, month, amount, apply_to_company, promoter_id, company_id")
       ),
 
     ]);
@@ -1097,10 +1191,250 @@ export async function buildFinancialAnalytics(
     );
   }
 
+  // ---------------------------------------------------------------- MATRIZES
+  const OUTROS_ENTRADA: Array<[string, string]> = [
+    ["bbcap", "BBCAP"],
+    ["conta_corrente", "Conta corrente"],
+    ["dental", "Dental"],
+    ["lob", "LOB"],
+    ["credito", "Credito (nota)"],
+  ];
+  const prevMat = prevCompetencia(selectedPeriod.year, selectedPeriod.month);
+  const fechMat = closings.filter((r) => r.ano === prevMat.year && r.mes === prevMat.month);
+  const soDigitos = (v: unknown) => String(v ?? "").replace(/\D/g, "");
+  const nomePorCnpj = new Map(companies.map((c) => [soDigitos(c.cnpj), c.name]));
+  const nomePorId = new Map(companies.map((c) => [c.id, c.name]));
+
+  const linhasEntrada: MatrizLinha[] = [];
+  for (const row of fechMat) {
+    const nome = nomePorCnpj.get(soDigitos(row.empresa_cnpj)) || `CNPJ ${row.empresa_cnpj}`;
+    const outros = OUTROS_ENTRADA.map(([k, rotulo]) => ({
+      chave: k,
+      rotulo,
+      valor: roundMoney(toNumber((row as any)[`valor_${k}`])),
+    }));
+    const raw: Record<string, number> = {
+      avista: toNumber(row.valor_avista),
+      prt: toNumber(row.valor_diferido),
+      seguro: toNumber(row.valor_seguro),
+      consorcio: toNumber(row.valor_consorcio),
+      outros: outros.reduce((a, o) => a + o.valor, 0),
+      ajustes: -toNumber(row.valor_estorno) - toNumber(row.valor_renovacao),
+    };
+    const fech = fecharLinha(raw, Object.values(raw).reduce((a, v) => a + v, 0));
+    linhasEntrada.push({
+      chave: soDigitos(row.empresa_cnpj),
+      rotulo: nome,
+      celulas: fech.celulas,
+      outrosDetalhe: outros,
+      total: fech.total,
+    });
+  }
+  // ADS: mesmas colunas, 3 preenchidas. O vazio nas outras E informacao (ela nao
+  // vende consorcio nem BBCAP) — por isso entra como LINHA, nao como nota de rodape.
+  {
+    const a = adsCashByPeriod.get(getProductionPeriodKey(prevMat.year, prevMat.month)) ?? {
+      avista: 0,
+      prt: 0,
+      seguro: 0,
+    };
+    const celulas: Record<string, number> = {
+      avista: roundMoney(a.avista),
+      prt: roundMoney(a.prt),
+      seguro: roundMoney(a.seguro),
+      consorcio: 0,
+      outros: 0,
+      ajustes: 0,
+    };
+    if (Object.values(celulas).some((v) => v !== 0)) {
+      linhasEntrada.push({
+        chave: BBTS_COMPANY_ID,
+        rotulo: nomePorId.get(BBTS_COMPANY_ID) || "ADS",
+        celulas,
+        outrosDetalhe: OUTROS_ENTRADA.map(([k, rotulo]) => ({ chave: k, rotulo, valor: 0 })),
+        total: roundMoney(Object.values(celulas).reduce((x, v) => x + v, 0)),
+      });
+    }
+  }
+  const ordenar = (a: MatrizLinha, b: MatrizLinha) => {
+    if (a.avulso !== b.avulso) return a.avulso ? 1 : -1;
+    if (a.chave === BBTS_COMPANY_ID) return 1;
+    if (b.chave === BBTS_COMPANY_ID) return -1;
+    return a.rotulo.localeCompare(b.rotulo);
+  };
+  linhasEntrada.sort(ordenar);
+  // LANCAMENTOS AVULSOS: linha PROPRIA, nunca diluidos entre as empresas.
+  if (received.receivedManual !== 0) {
+    const doMes = manualRevenues.filter((row) => {
+      const ym = manualCreditYM(row);
+      return ym && ym.year === selectedPeriod.year && ym.month === selectedPeriod.month;
+    });
+    const porCategoria = new Map<string, number>();
+    for (const row of doMes) {
+      const k = String(row.categoria || "OUTRO");
+      porCategoria.set(k, roundMoney(toNumber(porCategoria.get(k)) + toNumber(row.valor)));
+    }
+    linhasEntrada.push({
+      chave: "__avulsos",
+      rotulo: "Lancamentos avulsos (nao e producao de empresa)",
+      avulso: true,
+      celulas: {
+        avista: 0,
+        prt: 0,
+        seguro: 0,
+        consorcio: 0,
+        outros: received.receivedManual,
+        ajustes: 0,
+      },
+      outrosDetalhe: [...porCategoria.entries()].map(([k, v]) => ({ chave: k, rotulo: k, valor: v })),
+      total: received.receivedManual,
+    });
+  }
+
+  const COLS_ENTRADA: MatrizColuna[] = [
+    { chave: "avista", rotulo: "A vista" },
+    { chave: "prt", rotulo: "PRT" },
+    { chave: "seguro", rotulo: "Seguro" },
+    { chave: "consorcio", rotulo: "Consorcio" },
+    { chave: "outros", rotulo: "Outros", expansivel: true },
+    { chave: "ajustes", rotulo: "Ajustes" },
+  ];
+
+  // ---- SAIDA: mesma forma. Espelha payableByCompetencia, mas POR EMPRESA. ----
+  const pmrMat = pmrRows.filter((r) => r.year === prevMat.year && r.month === prevMat.month);
+  const pisoZerouMat = new Set(
+    pmrMat.filter((r) => r.piso_zerou === true && r.promoter_id).map((r) => String(r.promoter_id))
+  );
+  const OUTROS_SAIDA: Array<[string, string]> = [
+    ["bbcap_commission_value", "BBCAP"],
+    ["conta_corrente_commission_value", "Conta corrente"],
+    ["lob_commission_value", "LOB"],
+  ];
+  type AccSaida = {
+    producao: number;
+    seguro: number;
+    consorcio: number;
+    outros: Map<string, number>;
+    desconto: number;
+  };
+  const acc = new Map<string, AccSaida>();
+  const bucket = (id: string) => {
+    let b = acc.get(id);
+    if (!b) {
+      b = { producao: 0, seguro: 0, consorcio: 0, outros: new Map(), desconto: 0 };
+      acc.set(id, b);
+    }
+    return b;
+  };
+  for (const r of pmrMat) {
+    const b = bucket(String(r.company_id ?? "__sem_empresa"));
+    b.producao += toNumber((r as any).production_commission_value);
+    b.seguro += toNumber(r.insurance_commission_value);
+    b.consorcio += toNumber((r as any).consorcio_commission_value);
+    for (const [k] of OUTROS_SAIDA) {
+      b.outros.set(k, toNumber(b.outros.get(k)) + toNumber((r as any)[k]));
+    }
+  }
+  // Descontos com a MESMA regra do card (ver payableByCompetencia): ignora
+  // apply_to_company e ignora quem teve o piso zerado.
+  for (const d of discountRows) {
+    if (d.year !== prevMat.year || d.month !== prevMat.month) continue;
+    if (d.apply_to_company === true) continue;
+    if (d.promoter_id && pisoZerouMat.has(String(d.promoter_id))) continue;
+    bucket(String((d as any).company_id ?? "__sem_empresa")).desconto += toNumber(d.amount);
+  }
+  const linhasSaida: MatrizLinha[] = [];
+  for (const [id, b] of acc) {
+    const outros = OUTROS_SAIDA.map(([k, rotulo]) => ({
+      chave: k,
+      rotulo,
+      valor: roundMoney(toNumber(b.outros.get(k))),
+    }));
+    const raw: Record<string, number> = {
+      producao: b.producao,
+      seguro: b.seguro,
+      consorcio: b.consorcio,
+      outros: outros.reduce((a, o) => a + o.valor, 0),
+      descontos: -b.desconto,
+    };
+    const fech = fecharLinha(raw, Object.values(raw).reduce((a, v) => a + v, 0));
+    linhasSaida.push({
+      chave: id,
+      rotulo: id === "__sem_empresa" ? "— sem empresa —" : nomePorId.get(id) || `ID ${id.slice(0, 8)}`,
+      celulas: fech.celulas,
+      outrosDetalhe: outros,
+      total: fech.total,
+    });
+  }
+  linhasSaida.sort(ordenar);
+  const COLS_SAIDA: MatrizColuna[] = [
+    { chave: "producao", rotulo: "Producao" },
+    { chave: "seguro", rotulo: "Seguro" },
+    { chave: "consorcio", rotulo: "Consorcio" },
+    { chave: "outros", rotulo: "Outros", expansivel: true },
+    { chave: "descontos", rotulo: "Descontos" },
+  ];
+
+  const montarMatriz = (
+    titulo: string,
+    subtitulo: string,
+    colunas: MatrizColuna[],
+    linhas: MatrizLinha[],
+    cardTotal: number
+  ): Matriz => {
+    const totaisColuna: Record<string, number> = {};
+    for (const c of colunas) {
+      totaisColuna[c.chave] = roundMoney(linhas.reduce((a, l) => a + toNumber(l.celulas[c.chave]), 0));
+    }
+    let total = roundMoney(linhas.reduce((a, l) => a + l.total, 0));
+    const alvo = roundMoney(cardTotal);
+    // RESIDUO DE CENTAVO (nao e divergencia): o card arredonda uma vez sobre o
+    // total; a matriz arredonda por empresa e soma. Quando a diferenca cabe em
+    // 1 centavo por linha, e ruido de acumulo — devolve-se para a MAIOR linha e a
+    // matriz volta a fechar. Acima disso o delta SOBREVIVE e a tela mostra: e
+    // divergencia de verdade, e a linha de conferencia existe para denunciar.
+    const residuo = roundMoney(alvo - total);
+    if (residuo !== 0 && Math.abs(residuo) <= 0.01 * Math.max(1, linhas.length)) {
+      let iMaior = -1;
+      let maior = -1;
+      linhas.forEach((l, i) => {
+        if (Math.abs(l.total) > maior) {
+          maior = Math.abs(l.total);
+          iMaior = i;
+        }
+      });
+      if (iMaior >= 0) {
+        const l = linhas[iMaior];
+        const ajustada = fecharLinha(l.celulas, roundMoney(l.total + residuo));
+        linhas[iMaior] = { ...l, celulas: ajustada.celulas, total: ajustada.total };
+        for (const c of colunas) {
+          totaisColuna[c.chave] = roundMoney(linhas.reduce((a, x) => a + toNumber(x.celulas[c.chave]), 0));
+        }
+        total = roundMoney(linhas.reduce((a, x) => a + x.total, 0));
+      }
+    }
+    return {
+      titulo,
+      subtitulo,
+      colunas,
+      linhas,
+      totaisColuna,
+      total,
+      cardTotal: alvo,
+      delta: roundMoney(total - alvo),
+    };
+  };
+  const rotuloPrev = `${MONTH_NAMES[prevMat.month - 1]}/${String(prevMat.year).slice(2)}`;
+  const detalhamento: FinanceDetalhamento = {
+    entrada: montarMatriz("Recebido", `fechamento de ${rotuloPrev}`, COLS_ENTRADA, linhasEntrada, summary.receivedNet),
+    saida: montarMatriz("Comissoes pagas", `competencia ${rotuloPrev}`, COLS_SAIDA, linhasSaida, summary.comissoesPagas),
+  };
+
   return {
     periods,
     selectedPeriod,
     summary,
+    detalhamento,
     categoryTotals,
     cashTrend: trendPeriods,
     companyRows,
