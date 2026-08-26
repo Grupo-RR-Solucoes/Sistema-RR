@@ -34,10 +34,11 @@ type MatrizLinha = {
   outrosDetalhe: MatrizCelula[];
   total: number;
 };
-type MatrizColuna = { chave: string; rotulo: string; expansivel?: boolean };
+type MatrizColuna = { chave: string; rotulo: string; expansivel?: boolean; fonte?: string; marca?: string };
 type Matriz = {
   titulo: string;
   subtitulo: string;
+  notaMarca?: string;
   colunas: MatrizColuna[];
   linhas: MatrizLinha[];
   totaisColuna: Record<string, number>;
@@ -143,6 +144,11 @@ function MatrizTabela({ m, tom }: { m: Matriz; tom: "in" | "out" }) {
                   ) : (
                     c.rotulo
                   )}
+                  {(c as MatrizColuna).marca ? (
+                    <sup className="mtx-marca" title={(c as MatrizColuna).fonte}>
+                      {(c as MatrizColuna).marca}
+                    </sup>
+                  ) : null}
                 </th>
               ))}
               <th className="num tot">Total</th>
@@ -177,6 +183,19 @@ function MatrizTabela({ m, tom }: { m: Matriz; tom: "in" | "out" }) {
           </tfoot>
         </table>
       </div>
+      {m.notaMarca ? <p className="mtx-nota">{m.notaMarca}</p> : null}
+      <details className="mtx-fontes">
+        <summary>Fonte de cada coluna</summary>
+        <ul>
+          {m.colunas
+            .filter((c) => c.fonte)
+            .map((c) => (
+              <li key={c.chave}>
+                <b>{c.rotulo}</b>: {c.fonte}
+              </li>
+            ))}
+        </ul>
+      </details>
       <div className={`mtx-conf ${fecha ? "ok" : "bad"}`}>
         {fecha ? "✓" : "⚠"} conferencia: matriz {brl2(m.total)} · card{" "}
         {brl2(m.cardTotal)} · delta {brl2(m.delta)}
@@ -820,6 +839,12 @@ const CSS = `
 .rrfin .mtx-tbl tfoot td{border-top:2px solid var(--line,#e6e9f0);font-weight:700;}
 .rrfin .mtx-exp{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-transform:inherit;letter-spacing:inherit;}
 .rrfin .mtx-exp:hover{text-decoration:underline;}
+.rrfin .mtx-marca{color:#6b7280;margin-left:2px;cursor:help;}
+.rrfin .mtx-nota{margin:10px 0 0;font-size:11px;line-height:1.5;color:#6b7280;}
+.rrfin .mtx-fontes{margin-top:6px;font-size:11px;color:#6b7280;}
+.rrfin .mtx-fontes summary{cursor:pointer;}
+.rrfin .mtx-fontes ul{margin:6px 0 0;padding-left:18px;}
+.rrfin .mtx-fontes li{margin:2px 0;}
 .rrfin .mtx-conf{margin-top:10px;font-size:12px;font-variant-numeric:tabular-nums;}
 .rrfin .mtx-conf.ok{color:#166534;}
 .rrfin .mtx-conf.bad{color:#b91c1c;font-weight:700;}

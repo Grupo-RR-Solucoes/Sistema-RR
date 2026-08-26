@@ -635,10 +635,20 @@ export type MatrizLinha = {
   outrosDetalhe: MatrizCelula[];
   total: number;
 };
-export type MatrizColuna = { chave: string; rotulo: string; expansivel?: boolean };
+export type MatrizColuna = {
+  chave: string;
+  rotulo: string;
+  expansivel?: boolean;
+  /** de onde o numero sai. Exibido no rodape da matriz. */
+  fonte?: string;
+  /** marca discreta na coluna (ex.: "*") ligando a nota de rodape. */
+  marca?: string;
+};
 export type Matriz = {
   titulo: string;
   subtitulo: string;
+  /** rodape: o que a marca "*" significa. */
+  notaMarca?: string;
   colunas: MatrizColuna[];
   linhas: MatrizLinha[];
   totaisColuna: Record<string, number>;
@@ -1291,13 +1301,47 @@ export async function buildFinancialAnalytics(
     });
   }
 
+  // A FONTE DE CADA COLUNA E EXIBIDA NO RODAPE — e nao e detalhe cosmetico.
+  //
+  // A matriz poe lado a lado numeros de DUAS ORIGENS: as 4 RR saem de
+  // `fechamento_mensal_empresa`, um agregado JA POR CNPJ; a ADS sai de
+  // `daily_production_records` + `bbts_prt_parcelas`, por linha, agregada aqui.
+  // As duas sao LIDAS (nunca derivadas por juncao), mas nao sao a mesma coisa: a
+  // primeira e o que a Promotiva declarou no fechamento, a segunda e o que a BBTS
+  // pagou, somado por nos. Quem confere precisa saber qual esta olhando.
+  //
+  // ATRIBUICAO DE EMPRESA — MEDIDO 26/08/2026, e o registro importa:
+  //   `fechamento_mensal_empresa` : por `empresa_cnpj`, LIDO.
+  //   `bbts_prt_parcelas`         : `company_id`, LIDO.
+  //   `monthly_closing_entries`   : `company_id` nao-nulo em 10.258/10.258 no PRT
+  //                                 de jul/2026, LIDO. E essa tabela NAO TEM coluna
+  //                                 `promoter_id` — logo nao existe, nem seria
+  //                                 possivel, atribuir PRT a empresa via promotor.
+  //   `diferido_parcelas`         : VAZIA (0 linhas) e fora do Recebido; alem
+  //                                 disso nao tem empresa, contrato, chave J, MCI
+  //                                 nem arquivo de origem. Se um dia for populada,
+  //                                 a empresa NAO sera derivavel de nada — o
+  //                                 conserto e na ESCRITA. Ver secao 4 do
+  //                                 HANDOFF_FINANCEIRO_DETALHAMENTO.md.
+  //
+  // PROMOTOR MULTI-EMPRESA: e real (8 de 50 em jul/2026; CAMILA GOMES, MARIA
+  // LETICIA e FABIANA tem competencia com duas empresas, e MARIA LETICIA aparece
+  // em tres empresas distintas ao longo de 2026). Isso NAO afeta esta matriz,
+  // porque o PMR ja esta no grao (promotor x empresa), com linha e `company_id`
+  // proprios — agrupar por empresa soma certo. E AUSENCIA CIRCUNSTANCIAL DE
+  // PROBLEMA, NAO PROTECAO PROJETADA: no dia em que chegar uma fonte de PRT por
+  // parcela SEM `company_id`, atribui-la via promotor fica AMBIGUO exatamente para
+  // esses casos, e vai precisar de criterio (contrato original? empresa de maior
+  // producao? nao-atribuido?). Nada no codigo impede isso hoje.
+  const FONTE_RR_ADS =
+    "RR: fechamento_mensal_empresa (por CNPJ) · ADS: daily_production_records / bbts_prt_parcelas (por company_id)";
   const COLS_ENTRADA: MatrizColuna[] = [
-    { chave: "avista", rotulo: "A vista" },
-    { chave: "prt", rotulo: "PRT" },
-    { chave: "seguro", rotulo: "Seguro" },
-    { chave: "consorcio", rotulo: "Consorcio" },
-    { chave: "outros", rotulo: "Outros", expansivel: true },
-    { chave: "ajustes", rotulo: "Ajustes" },
+    { chave: "avista", rotulo: "A vista", marca: "*", fonte: FONTE_RR_ADS },
+    { chave: "prt", rotulo: "PRT", marca: "*", fonte: FONTE_RR_ADS },
+    { chave: "seguro", rotulo: "Seguro", marca: "*", fonte: FONTE_RR_ADS },
+    { chave: "consorcio", rotulo: "Consorcio", fonte: "fechamento_mensal_empresa (por CNPJ)" },
+    { chave: "outros", rotulo: "Outros", expansivel: true, fonte: "fechamento_mensal_empresa (por CNPJ)" },
+    { chave: "ajustes", rotulo: "Ajustes", fonte: "fechamento_mensal_empresa: estorno + renovacao (por CNPJ)" },
   ];
 
   // ---- SAIDA: mesma forma. Espelha payableByCompetencia, mas POR EMPRESA. ----
@@ -1367,12 +1411,13 @@ export async function buildFinancialAnalytics(
     });
   }
   linhasSaida.sort(ordenar);
+  const FONTE_PMR = "promoter_monthly_results (por company_id)";
   const COLS_SAIDA: MatrizColuna[] = [
-    { chave: "producao", rotulo: "Producao" },
-    { chave: "seguro", rotulo: "Seguro" },
-    { chave: "consorcio", rotulo: "Consorcio" },
-    { chave: "outros", rotulo: "Outros", expansivel: true },
-    { chave: "descontos", rotulo: "Descontos" },
+    { chave: "producao", rotulo: "Producao", fonte: FONTE_PMR },
+    { chave: "seguro", rotulo: "Seguro", fonte: FONTE_PMR },
+    { chave: "consorcio", rotulo: "Consorcio", fonte: FONTE_PMR },
+    { chave: "outros", rotulo: "Outros", expansivel: true, fonte: FONTE_PMR },
+    { chave: "descontos", rotulo: "Descontos", fonte: "promoter_discounts (por company_id)" },
   ];
 
   const montarMatriz = (
@@ -1416,6 +1461,9 @@ export async function buildFinancialAnalytics(
     return {
       titulo,
       subtitulo,
+      notaMarca: colunas.some((c) => c.marca)
+        ? "* coluna com DUAS fontes: as 4 RR vem do fechamento da Promotiva (agregado por CNPJ); a ADS vem do que a BBTS pagou, somado por linha. Nos dois casos a empresa e LIDA do dado, nunca derivada."
+        : undefined,
       colunas,
       linhas,
       totaisColuna,

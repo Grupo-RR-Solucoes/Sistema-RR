@@ -156,3 +156,58 @@ esperado é sempre o card do MESMO payload.
 
 A primeira mutação é exatamente o cenário que o Diego nomeou: "se alguém
 acrescentar componente ao Recebido e esquecer da matriz, o portão reprova".
+
+---
+
+## 6. A MARCA DE FONTE NA COLUNA — o que ela diz, e o que ela NÃO diz
+
+Pedido original: marcar a coluna PRT dizendo que a atribuição por empresa é
+*derivada do promotor*, porque `diferido_parcelas` não guarda a empresa.
+
+**Esse texto não foi para a tela porque é falso.** Medido:
+
+| caminho do PRT | atribuição de empresa |
+|---|---|
+| coluna PRT da matriz (RR) | `fechamento_mensal_empresa.valor_diferido`, por `empresa_cnpj` — **LIDO** |
+| PRT por entrada | `monthly_closing_entries.company_id`, **10.258/10.258** — **LIDO** |
+| PRT da ADS | `bbts_prt_parcelas.company_id` — **LIDO** |
+| `diferido_parcelas` | **vazia (0 linhas)** e fora do Recebido |
+
+E a junção que a nota descreveria **não existe**: `monthly_closing_entries` **não tem
+coluna `promoter_id`**. Não há de onde derivar — nem necessidade.
+
+Uma nota de rodapé alegando derivação faria a tela declarar uma incerteza inventada
+e descrever um mecanismo inexistente. É o mesmo dano que a marca pretendia evitar,
+na direção contrária.
+
+### O que FOI marcado, porque é verdade e estava invisível
+
+A coluna mistura **duas fontes**. As colunas com `*` (À vista, PRT, Seguro) trazem
+RR e ADS de origens diferentes:
+
+> `*` coluna com DUAS fontes: as 4 RR vêm do fechamento da Promotiva (agregado por
+> CNPJ); a ADS vem do que a BBTS pagou, somado por linha. Nos dois casos a empresa é
+> LIDA do dado, nunca derivada.
+
+Mais um `<details>` "Fonte de cada coluna" com a tabela/coluna de origem de cada uma.
+A distinção que isso preserva: o número do RR é **o que a Promotiva declarou**; o da
+ADS é **o que a BBTS pagou, somado por nós**. As duas são lidas, mas não são a mesma
+coisa, e quem confere precisa saber qual está olhando.
+
+### Promotor multi-empresa — registrado no código, não na tela
+
+Está em comentário em `lib/financialAnalytics.ts`, junto das colunas:
+
+- É real: 8 de 50 em jul/2026. **CAMILA GOMES**, **MARIA LETICIA** e **FABIANA** têm
+  competência com duas empresas; MARIA LETICIA aparece em **três** empresas
+  distintas ao longo de 2026. (Os nomes estão em `promoters.name`, não `full_name` —
+  uma busca no campo errado dá zero e engana.)
+- **Não afeta esta matriz**, porque o PMR já está no grão `(promotor × empresa)`,
+  com linha e `company_id` próprios.
+- **É ausência circunstancial de problema, não proteção projetada.** No dia em que
+  chegar uma fonte de PRT por parcela SEM `company_id`, atribuí-la via promotor fica
+  ambíguo exatamente para esses casos e vai precisar de critério — contrato original,
+  empresa de maior produção, ou não-atribuído. Nada no código impede isso hoje.
+
+Não vai para a tela porque hoje não há número derivado a sinalizar; marcar seria
+avisar sobre um risco que não está no dado exibido.
