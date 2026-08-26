@@ -674,3 +674,94 @@ entre uma vez, quanto mais duas.
 E os 6 sítios que filtram o PMR por `source` **não alimentam o `receivedEmpresa`** —
 ele não lê o PMR, lê `fechamento_mensal_empresa`. Travado pelo
 `ads_no_regime_fechado_gate.cjs`.
+
+---
+
+## 17. `bbts_prt_parcelas` — RLS default-deny, e isso NÃO estava documentado fora da migration
+
+**Quebrou /financeiro em 26/08/2026.** Ao incluir a ADS no Caixa, li
+`bbts_prt_parcelas` com o cliente do guard — e a tela inteira caiu com
+`42501 permission denied for table bbts_prt_parcelas`.
+
+### O que a tabela é
+
+`supabase/migrations/20260712_000004_bbts_prt_parcelas.sql:40`:
+
+```sql
+alter table bbts_prt_parcelas enable row level security;   -- default-deny: sem policy
+```
+
+O cabeçalho da migration: *"RLS default-deny (só service_role)"*. A verificação
+pós-execução até prevê `select count(*) from pg_policies where tablename='bbts_prt_parcelas'; -- 0`.
+
+**É intencional. Mas está documentado SÓ dentro da migration** — um arquivo que
+ninguém abre ao escrever uma tela. Todos os leitores anteriores usam service_role
+(`lib/dre.ts:352` via `withSocioAdmin`, `conferenciaBbts.ts:394`,
+`sobraCaixa.ts:102`, `bbtsClosingImport.ts:622`), então o buraco nunca aparecera.
+**Qualquer leitura futura dela pelo caminho da página vai quebrar igual.**
+
+### O cliente das telas
+
+`app/api/financeiro/route.ts:109` -> `withSocioOrFuncionarioAnon()` ->
+`createSupabaseServerClient()` = chave ANON + cookie => papel `authenticated`, RLS
+ativo. As QUATRO rotas que chamam `buildFinancialAnalytics` usam guard anon
+(`/api/financeiro`, `/api/recebiveis`, `/api/relatorios`, `/api/relatorios/export`),
+então o erro alcançava todas.
+
+### Estado de permissão das duas tabelas que a mudança introduziu
+
+| tabela | grant p/ `authenticated` | evidência |
+|---|---|---|
+| `daily_production_records` | **SIM** | Dashboard lê pelo caminho anon (`app/api/dashboard/route.ts:238` -> `:330/:347/:362`) |
+| `bbts_prt_parcelas` | **NÃO** | migration `:40`, 0 policies, só service_role |
+
+NOTA: `bbts_pag_avista` **não é tabela** — é COLUNA de `daily_production_records`.
+É por isso que "funciona": pega carona numa tabela que já tem grant.
+
+### O CONTEXTO (padrão repetido)
+
+A memória do projeto registra que `bbts_rule_versions` já teve ZERO políticas e
+**zerou comissões de seguro em produção SILENCIOSAMENTE**. O padrão é o mesmo —
+tabela da ADS sem política — mas o desfecho foi melhor: aqui falhou ALTO, com
+42501 e a tela fora do ar, em vez de devolver zero linhas e um número errado.
+Tabela vazia por RLS e tabela sem grant falham DIFERENTE: a primeira mente, a
+segunda grita. `bbts_prt_parcelas` grita porque não tem grant, não só policy.
+
+### O conserto (decisão do Diego, opção b)
+
+`buildFinancialAnalytics` lê as DUAS fontes da ADS por `getSupabaseAdmin()`
+dirigido — não pelo cliente da página. Não é escalada de privilégio: a
+AUTORIZAÇÃO segue no guard de cada rota; muda só o canal de leitura de dois
+agregados. Mesmo padrão de `app/api/dre/route.ts:8-13` e `promotores/route.ts:98`.
+
+Rejeitada a alternativa de abrir policy: é a única tabela do grupo deliberadamente
+fechada, e afrouxar isso de passagem num conserto de card merece contexto próprio.
+
+**NÃO foi possível fazer pelo PMR**, como se cogitou: `bbts_prt_total` e
+`bbts_avista_total` **não existem** em `promoter_monthly_results` (medido), e os
+agregados que existem são de outra grandeza — `production_commission_value` da ADS
+em jul/26 é R$ 10.450,19 (comissão do PROMOTOR), não os R$ 18.737,33 que a BBTS
+pagou à EMPRESA.
+
+Travado por `scripts/ads_caixa_sem_rls_gate.cjs` (faixa needs-db): cliente espião
+que estoura se o cliente da página tocar tabela restrita, e que ainda exige que a
+ADS continue no número — para "não ler" não virar "remover". Mutação provada:
+voltar a ler pelo cliente da página derruba o gate com 3 falhas.
+
+### Gate existente atualizado, não aposentado
+
+`scripts/test_caixa_recebido_empresa.cjs` foi de **6/6 para 3/6** com a mudança — as
+três asserções do bloco (a) descreviam a COMPOSIÇÃO antiga (`valor_avista + valor_seguro`,
+só as 4 RR). Seguindo a regra "varrer antes de aposentar": as de (b) e (c) são
+INVARIANTES e ficaram intactas; só as de (a) foram reescritas para a composição nova,
+com o lado esperado computado NO PRÓPRIO RUN (nenhuma constante congelada). Agora
+**8/8** — duas asserções a MAIS que antes:
+  - "o SEGURO ficou de FORA do receivedEmpresa (decisão 26/08)"
+  - "a ADS ENTRA no receivedEmpresa (o conserto não virou remoção)"
+
+**As outras 4 falhas da faixa `--db` NÃO são desta frente** — nenhuma importa
+`financialAnalytics` (`grep -c` = 0 em `produto_pmr_empresa_dona_gate.cjs`,
+`reatribuicao_precedencia_gate.cjs`, `gate-srcc-ads.mts`, `check_audit_v9_tables.cjs`).
+A memória do projeto já registrava `gate-srcc-ads` vermelho antes. A faixa também
+estourou o teto de tempo (238,1s de 90s) — dívida anterior, agravada em 1,6s pelo
+gate novo.

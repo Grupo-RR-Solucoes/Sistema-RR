@@ -1,5 +1,12 @@
 /*
- * CARD "Comissoes recebidas pela empresa" = valor_avista(M-1) + valor_seguro(M-1).
+ * CARD "Comissoes recebidas pela empresa".
+ *
+ * ATUALIZADO 26/08/2026 (decisao do Diego — ver HANDOFF_ADS_FECHAMENTO_CAIXA.md secao 16+):
+ *   ANTES: valor_avista(M-1) + valor_seguro(M-1), so as 4 RR.
+ *   AGORA: valor_avista(M-1) das 4 RR + bbts_pag_avista(M-1) da ADS. SEM seguro —
+ *          o seguro saiu do "Recebido" e virou card PROPRIO, nao mais "do qual".
+ * As assercoes (b) e (c) sao INVARIANTES e ficaram intactas; so as de (a), que
+ * descreviam a COMPOSICAO antiga, foram reescritas para a composicao nova.
  * Roda o buildFinancialAnalytics REAL (jul/26, M-1=junho) e confronta com o banco.
  * So leitura. Mostra o valor_estorno(jun) pro Diego decidir se abate.
  */
@@ -46,10 +53,43 @@ async function main() {
   const s = fin.summary;
   console.log(`  buildFinancialAnalytics(jul): receivedEmpresa=${brl(s.receivedEmpresa)} receivedNet=${brl(s.receivedNet)} receivedInsurance=${brl(s.receivedInsurance)} comissoesPagas=${brl(s.comissoesPagas)}\n`);
 
-  // a) receivedEmpresa == avista(jun) + seguro(jun)
-  ok("a) receivedEmpresa == valor_avista(jun) + valor_seguro(jun)", near(s.receivedEmpresa, recEmpresa), `code=${s.receivedEmpresa} calc=${recEmpresa}`);
-  ok("a) NAO abate estorno por ora (codigo = puro, TODO no comentario)", near(s.receivedEmpresa, recEmpresa) && !near(s.receivedEmpresa, recEmpresaSemEstorno) || estorno === 0, `estorno=${estorno}`);
-  ok("a) receivedInsurance == valor_seguro(jun) (do qual do card)", near(s.receivedInsurance, seguro), `${s.receivedInsurance} vs ${seguro}`);
+  // ---- ADS da mesma competencia M-1, pela MESMA regua do codigo (janela) ----
+  // Lado B computado AQUI, no mesmo run: nenhuma constante congelada.
+  const { getProductionPeriodFromValue, getProductionPeriodKey } = require("../lib/productionPeriod.ts");
+  const ADS_ID = "375aea6d-3b9c-4490-87f0-e739e312c8ef";
+  const adsRows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb
+      .from("daily_production_records")
+      .select("bbts_pag_avista, bbts_seguro_pago, movement_date, contract_date, proposal_date")
+      .eq("company_id", ADS_ID)
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    adsRows.push(...data);
+    if (data.length < 1000) break;
+  }
+  const compAlvo = getProductionPeriodKey(2026, 6)  // M-1 desta medicao, igual ao resto do gate;
+  let adsAvista = 0, adsSeguro = 0;
+  for (const r of adsRows) {
+    const pp =
+      getProductionPeriodFromValue(r.movement_date) ||
+      getProductionPeriodFromValue(r.contract_date) ||
+      getProductionPeriodFromValue(r.proposal_date);
+    if (!pp || getProductionPeriodKey(pp.year, pp.month) !== compAlvo) continue;
+    adsAvista += Number(r.bbts_pag_avista) || 0;
+    adsSeguro += Number(r.bbts_seguro_pago) || 0;
+  }
+  adsAvista = r2(adsAvista); adsSeguro = r2(adsSeguro);
+  console.log(`    ADS ${compAlvo}: a-vista = ${brl(adsAvista)} | seguro = ${brl(adsSeguro)}
+`);
+
+  // a) COMPOSICAO NOVA: avista das 4 RR + a-vista da ADS, SEM seguro.
+  const esperadoEmpresa = r2(avista + adsAvista);
+  ok("a) receivedEmpresa == valor_avista(RR) + bbts_pag_avista(ADS)", near(s.receivedEmpresa, esperadoEmpresa), `code=${s.receivedEmpresa} calc=${esperadoEmpresa}`);
+  ok("a) o SEGURO ficou de FORA do receivedEmpresa (decisao 26/08)", !near(s.receivedEmpresa, r2(esperadoEmpresa + seguro + adsSeguro)) || (seguro === 0 && adsSeguro === 0), `seguro RR=${seguro} ADS=${adsSeguro}`);
+  ok("a) NAO abate estorno por ora (codigo = puro, TODO no comentario)", near(s.receivedEmpresa, esperadoEmpresa) && !near(s.receivedEmpresa, r2(esperadoEmpresa - estorno)) || estorno === 0, `estorno=${estorno}`);
+  ok("a) receivedInsurance == valor_seguro(RR) + bbts_seguro_pago(ADS) (card PROPRIO)", near(s.receivedInsurance, r2(seguro + adsSeguro)), `${s.receivedInsurance} vs ${r2(seguro + adsSeguro)}`);
+  ok("a) a ADS ENTRA no receivedEmpresa (o conserto nao virou remocao)", adsAvista === 0 || s.receivedEmpresa > avista, `avista RR=${avista} code=${s.receivedEmpresa}`);
 
   // b) subconjunto do Recebido (sem PRT, produtos, manual)
   ok("b) receivedEmpresa < Recebido (subconjunto)", s.receivedEmpresa < s.receivedNet, `${s.receivedEmpresa} vs ${s.receivedNet}`);

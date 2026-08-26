@@ -1,5 +1,5 @@
 diff --git a/lib/financialAnalytics.ts b/lib/financialAnalytics.ts
-index 0f2b722..36ea453 100644
+index 0f2b722..8be7528 100644
 --- a/lib/financialAnalytics.ts
 +++ b/lib/financialAnalytics.ts
 @@ -2,6 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
@@ -31,7 +31,7 @@ index 0f2b722..36ea453 100644
  type ExpenseCategoryRow = {
    id: string;
    name: string;
-@@ -358,27 +373,96 @@ function manualCreditYM(row: ManualRevenueRow): { year: number; month: number }
+@@ -358,27 +373,129 @@ function manualCreditYM(row: ManualRevenueRow): { year: number; month: number }
    return null;
  }
  
@@ -88,6 +88,34 @@ index 0f2b722..36ea453 100644
 +  return out;
 +}
 +
++// ===========================================================================
++// GRANDEZA DO CARD "Recebido" — DECISAO DO DIEGO, 26/08/2026. NAO REABRIR SEM ELE.
++//
++// O card mede COMISSAO PAGA PELA GESTORA na competencia M-1 — o que a Promotiva
++// pagou ao RR e o que a BBTS pagou a ADS. NAO e volume financiado: em jul/2026 o
++// financiado do grupo foi R$ 6.477.490,15 e a comissao R$ 299.736,82 (4,63%).
++//
++// O QUE ENTRA (e por que):
++//   a-vista .......... SIM. E o nucleo da comissao.
++//   PRT / diferido ... SIM. E comissao paga, so diferida; deixar de fora
++//                      SUBESTIMA (R$ 51.806,30 do RR em jul/2026).
++//   Abertura de Conta  SIM por decisao — mas HOJE NAO ENTRA por falta de coluna
++//                      no banco (R$ 100,00 em jul/2026). Ver secao 5a do
++//                      HANDOFF_ADS_FECHAMENTO_CAIXA.md: exige captura do
++//                      cabecalho do PDF + MIGRATION.
++//   produtos (6) ..... SIM. Consorcio/BBCAP/conta corrente/dental/LOB/credito.
++//   estorno/renovacao  SUBTRAI.
++//
++// O QUE NAO ENTRA:
++//   SEGURO ........... NAO. Tem card proprio ("Seguro recebido"); somar aqui
++//                      seria duplicidade. Por isso o Recebido usa
++//                      valor_liquido MENOS valor_seguro, e a ADS entra so com
++//                      a-vista + PRT.
++//                      ATENCAO: o subtitulo do card de seguro diz "do qual das
++//                      comissoes recebidas" (app/financeiro/page.tsx:306) — com o
++//                      seguro FORA do Recebido esse "do qual" ficou incorreto e
++//                      precisa virar rotulo proprio. Nomeado no handoff.
++// ===========================================================================
  // "Recebido" (caixa) da competencia M: fechamento(M-1) + manuais(data_credito em M).
 -// receivedClosing = valor_liquido(M-1) + Σ produtos(M-1).
 +// receivedClosing = valor_liquido(M-1) + Σ produtos(M-1) + ADS(M-1).
@@ -109,11 +137,18 @@ index 0f2b722..36ea453 100644
 +  };
 +  // ADS: avista + PRT + seguro = o analogo do valor_liquido do RR (que tambem soma
 +  // avista + diferido + seguro). Nao ha estorno/renovacao do lado da ADS.
-+  const receivedAds = roundMoney(ads.avista + ads.prt + ads.seguro);
-+  const receivedLiquido = roundMoney(sumClosingNet(closingRows) + receivedAds);
++  // SEGURO FORA (decisao 26/08): a ADS entra so com a-vista + PRT.
++  const receivedAds = roundMoney(ads.avista + ads.prt);
++  // RR: valor_liquido JA inclui valor_seguro (avista+diferido+seguro-estorno-renov),
++  // entao o seguro sai por SUBTRACAO — nao ha coluna "liquido sem seguro".
++  const receivedLiquido = roundMoney(
++    sumClosingNet(closingRows) - sumClosingInsurance(closingRows) + receivedAds
++  );
    const receivedProdutos = roundMoney(sumClosingProdutos(closingRows));
    // INFORMATIVO: parcela de seguro JA dentro de receivedLiquido (mesmas M-1 rows).
 -  const receivedInsurance = roundMoney(sumClosingInsurance(closingRows));
++  // Card PROPRIO "Seguro recebido" — RR + ADS. Desde 26/08 ele NAO e mais um
++  // subconjunto do Recebido: e uma linha INDEPENDENTE (o seguro saiu do Recebido).
 +  const receivedInsurance = roundMoney(sumClosingInsurance(closingRows) + ads.seguro);
    // COMISSOES RECEBIDAS PELA EMPRESA (M-1) — so o que gera repasse ao promotor:
    // valor_avista + valor_seguro. PRT (valor_diferido) FICA DE FORA (e da empresa,
@@ -127,13 +162,11 @@ index 0f2b722..36ea453 100644
 +  // hoje (onde os dois ignoram a ADS por igual).
    const receivedEmpresa = roundMoney(
 -    closingRows.reduce((sum, r) => sum + toNumber(r.valor_avista) + toNumber(r.valor_seguro), 0)
-+    closingRows.reduce((sum, r) => sum + toNumber(r.valor_avista) + toNumber(r.valor_seguro), 0) +
-+      ads.avista +
-+      ads.seguro
++    closingRows.reduce((sum, r) => sum + toNumber(r.valor_avista), 0) + ads.avista
    );
    const receivedClosing = roundMoney(receivedLiquido + receivedProdutos);
    const receivedManual = roundMoney(
-@@ -389,6 +473,7 @@ function cashReceivedFor(
+@@ -389,6 +506,7 @@ function cashReceivedFor(
    );
    return {
      receivedLiquido,
@@ -141,7 +174,7 @@ index 0f2b722..36ea453 100644
      receivedProdutos,
      receivedInsurance,
      receivedEmpresa,
-@@ -433,7 +518,7 @@ export async function buildFinancialAnalytics(
+@@ -433,7 +551,7 @@ export async function buildFinancialAnalytics(
      month?: number;
    }
  ): Promise<FinancialAnalyticsPayload> {
@@ -150,7 +183,7 @@ index 0f2b722..36ea453 100644
      await Promise.all([
        fetchAllRows<CompanyRow>(() =>
          supabase
-@@ -521,6 +606,15 @@ export async function buildFinancialAnalytics(
+@@ -521,6 +639,15 @@ export async function buildFinancialAnalytics(
            .from("promoter_discounts")
            .select("year, month, amount, apply_to_company, promoter_id")
        ),
@@ -166,7 +199,7 @@ index 0f2b722..36ea453 100644
      ]);
  
    const companyById = new Map(companies.map((company) => [company.id, company]));
-@@ -621,12 +715,17 @@ export async function buildFinancialAnalytics(
+@@ -621,12 +748,17 @@ export async function buildFinancialAnalytics(
      }
    );
  
@@ -186,7 +219,7 @@ index 0f2b722..36ea453 100644
    );
  
    const totalExpenses = roundMoney(
-@@ -865,7 +964,7 @@ export async function buildFinancialAnalytics(
+@@ -865,7 +997,7 @@ export async function buildFinancialAnalytics(
  
        // mesmo regime de caixa do KPI: fechamento(M-1) + manuais(M). Mantém o
        // gráfico coerente com o "Recebido" do summary.

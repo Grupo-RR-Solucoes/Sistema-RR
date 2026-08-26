@@ -49,6 +49,16 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/ads_caixa_sem_rls_gate.cjs",
+    nome: "o Caixa nao le bbts_prt_parcelas pelo cliente da PAGINA (42501)",
+    modo: "needs-db",
+    motivo:
+      "cliente ESPIAO (Proxy sobre service_role) que estoura se .from() tocar tabela " +
+      "RLS default-deny; roda buildFinancialAnalytics real e ainda exige que a ADS " +
+      "continue no numero, para 'nao ler' nao virar 'remover'. createClient, sem " +
+      "caminho absoluto",
+  },
+  {
     arquivo: "scripts/ads_no_regime_fechado_gate.cjs",
     nome: "a ADS ('bbts') entra em todo leitor do regime FECHADO",
     modo: "self-contained",
