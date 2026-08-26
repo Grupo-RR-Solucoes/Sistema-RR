@@ -610,3 +610,67 @@ O card lê `fechamento_mensal_empresa` (`financialAnalytics.ts:451-460`), que **
 tem coluna `source`** e não passa por nenhum dos 6 sítios de regime. Nenhuma mudança
 em filtro de `source` — `'cms'`, `'bbts'` ou qualquer outro — move este número em
 um centavo. O que falta é a ADS ter LINHA/CAMINHO no caixa, não passar num filtro.
+
+---
+
+## 16. DECISÃO 26/08 — a ADS NÃO entra no card "Recebido" por enquanto
+
+**Decisão do Diego.** O código que a incluía foi escrito, medido e REVERTIDO. Está
+preservado em `docs-ads-caixa.patch` (aplicável com `git apply`), e o efeito medido
+em ago/26 era:
+
+| campo | sem ADS | com ADS | delta |
+|---|---|---|---|
+| Recebido | 299.736,82 | 318.596,26 | +18.859,44 (+6,29%) |
+| Comissões recebidas | 232.525,62 | 251.378,05 | +18.852,43 (+8,11%) |
+| Seguro recebido | 5.131,69 | 5.246,79 | +115,10 (+2,24%) |
+
+### O MOTIVO REGISTRADO NÃO SOBREVIVEU À MEDIÇÃO — registrar isso importa
+
+O motivo dado foi "somar pagamento da ADS a valor FINANCIADO do RR seria misturar
+grandezas". **Medido (`scripts/diag-ads-33-grandeza.cjs`), não é o que o card faz:**
+
+```
+RR  jul/26: valor_avista    227.393,93  sobre financiado 5.957.691,80  ->  3,82%
+ADS jul/26: bbts_pag_avista  18.737,33  sobre financiado   547.798,35  ->  3,42%
+
+repasse liquido aos promotores jul = 141.116,15
+repasse / (valor_avista + valor_seguro) = 60,69%   <- so faz sentido se for COMISSAO
+```
+
+`fechamento_mensal_empresa.valor_avista` é **comissão da empresa**, não desembolso.
+Se fosse volume financiado, o card de ago/26 mostraria R$ 5,96 milhões, não
+R$ 299 mil. As duas pontas são a MESMA grandeza (~3,8% e ~3,4% de comissão sobre
+financiado), e somá-las seria maçã com maçã.
+
+**Fica registrado assim de propósito:** se alguém reabrir esta frente citando
+"mistura de grandezas" como impedimento, o impedimento não existe — a medição está
+acima. O que existe é uma decisão, que pode ser revista.
+
+### O que É verdade e continua aberto
+
+1. **O rótulo "crédito recebido (bruto)" está errado HOJE, para o RR.** O card soma
+   à-vista (227.393,93) + diferido/PRT (51.806,30) + seguro (5.131,69) + os 6
+   produtos. Não é "crédito", não é só "à-vista", e não é caixa — é comissão
+   reconhecida na competência M-1. Corrigir o rótulo é frente própria.
+2. **A cobertura segue incompleta**: o grupo tem 5 empresas e o card mostra 4. O DRE
+   mostra as 5 (`lib/dre.ts:314-365`). Duas telas do mesmo sistema, respostas
+   diferentes para a mesma competência — isso permanece.
+3. Se a ADS entrar um dia, os R$ 139,97 das seções 5a e 3 continuam faltando
+   (Abertura de Conta R$ 100,00 sem coluna no banco; seguro só-seguro R$ 89,42 só
+   no `raw_payload`).
+
+### PROVA de que não há dupla contagem no `receivedEmpresa`
+
+`bbts_avista_total` **não existe no repo** (`grep -rn` em `.ts/.tsx/.cjs/.sql` -> 0
+ocorrências). `receivedEmpresa` (`financialAnalytics.ts:380-382`) soma
+`valor_avista + valor_seguro` das linhas de `fechamento_mensal_empresa` da
+competência M-1 — e a ADS **nunca teve linha** nessa tabela (0 no histórico inteiro).
+
+Medido depois da reversão: `receivedEmpresa` ago/26 = **R$ 232.525,62**, idêntico ao
+valor de antes de qualquer alteração (delta 0,00). Não há caminho por onde a ADS
+entre uma vez, quanto mais duas.
+
+E os 6 sítios que filtram o PMR por `source` **não alimentam o `receivedEmpresa`** —
+ele não lê o PMR, lê `fechamento_mensal_empresa`. Travado pelo
+`ads_no_regime_fechado_gate.cjs`.
