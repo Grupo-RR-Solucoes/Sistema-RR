@@ -512,3 +512,41 @@ de dinheiro exige dígitos e os placeholders `R$ -` / `-R$` NÃO casam, deslocan
 tudo. Foi exatamente o erro que minha 1ª varredura cometeu (leu ABERTURA=7.714,04
 em junho, que na verdade é o TOTAL). O conserto tem de casar RÓTULO->VALOR por
 pareamento, tolerando placeholder, e conferir contra o `Pagamento Total`.
+
+---
+
+## 14. PORTÃO DA FRENTE A — `scripts/ads_no_regime_fechado_gate.cjs` (26/08)
+
+Os 6 sítios já aceitavam `'bbts'`, então não havia conserto. O que NÃO existia era
+vigia: nada impedia o PRÓXIMO leitor de nascer só com `'fechamento'` — e a ADS
+sumiria daquela tela em silêncio, sem erro e sem linha faltando, só um número menor.
+Foi exatamente essa a suspeita que abriu a frente.
+
+Duas partes, ambas lendo os arquivos REAIS (nenhuma lista congelada de esperado):
+
+- **(A)** os 6 sítios mapeados + a forma PERMISSIVA do Caixa (`.neq("source","daily")`).
+  Estreitar para `.eq("source","fechamento")` tiraria a ADS do Caixa sem sintoma.
+- **(B)** VARREDURA de `lib/` e `app/` (256 arquivos): reprova qualquer array literal
+  que cite `"fechamento"` sem `"bbts"`, e qualquer `.eq("source","fechamento")` —
+  **inclusive em arquivo que ainda não existe**. É a regra "enumerar por exaustão"
+  virada em portão.
+
+**Mutação testada:**
+
+| mutação | resultado |
+|---|---|
+| tirar `'bbts'` de `lib/dre.ts:486` | **VERMELHO, 2 falhas** — (A) e (B); a (B) nomeia `lib/dre.ts:486` |
+| Caixa -> `.eq("source","fechamento")` | **VERMELHO, 2 falhas** |
+| revertido | VERDE |
+
+### O que este gate DELIBERADAMENTE não vigia
+
+- `semAds` (`app/api/calculate/monthly/route.ts:711`) — exclui a ADS da escrita do
+  motor RR de propósito.
+- `detectMonthRegime` ignorar a ADS via `companies.active = false`
+  (`lib/cmsMonthly.ts:54`: "as 4 RR bastam").
+- o ramo `cms` dos seletores de regime — jan-mai/2026 lê o SEED do financeiro;
+  somar `'bbts'` ali recalcularia por cima do ground truth (`cmsMonthly.ts:52-54`).
+  A ADS tem 1 linha `source='cms'` no banco, com produção R$ 0,00.
+
+Estão nomeadas no cabeçalho do próprio gate, para que ninguém "conserte" as três.

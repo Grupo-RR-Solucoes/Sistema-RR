@@ -49,6 +49,16 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/ads_no_regime_fechado_gate.cjs",
+    nome: "a ADS ('bbts') entra em todo leitor do regime FECHADO",
+    modo: "self-contained",
+    motivo:
+      "le os arquivos REAIS do repo: (A) os 6 sitios mapeados + a forma permissiva " +
+      "do Caixa, (B) VARRE lib/ e app/ (256 arquivos) e reprova qualquer lista de " +
+      "source que cite 'fechamento' sem 'bbts' — inclusive sitio que ainda nao " +
+      "existe; sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/bbts_sinal_negativo_gate.cjs",
     nome: "sinal negativo sobrevive ao parser da BBTS (linha CANCELADA do seguro)",
     modo: "self-contained",
