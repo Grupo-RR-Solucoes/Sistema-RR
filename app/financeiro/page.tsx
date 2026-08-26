@@ -102,6 +102,59 @@ type DrePayload = {
  *  - lancamento avulso em LINHA PROPRIA, marcada: nao e producao de empresa.
  *  - NENHUM delta vs mes anterior. So a linha de conferencia (matriz x card).
  */
+/**
+ * A subtracao das DUAS matrizes que acabaram de ser exibidas.
+ *
+ * POR QUE ELE EXISTE E POR QUE VEM POR ULTIMO: o saldo e o resultado das duas
+ * tabelas acima; mostrar a conta escrita fecha o raciocinio na mesma tela, sem o
+ * leitor ter de voltar aos cards e subtrair de cabeca.
+ *
+ * ATENCAO AO ROTULO. Esta conta e `Recebido - Comissoes pagas`, que corresponde ao
+ * card "Saldo" (que ainda abate DESPESAS). NAO e o card "Saldo de comissoes a
+ * vista", que usa `receivedEmpresa` — um SUBCONJUNTO do Recebido (so a-vista +
+ * seguro, sem PRT nem produtos). Os dois numeros sao diferentes e confundi-los
+ * daria um saldo errado: em ago/2026, 179.145,10 contra 111.926,89.
+ */
+function SaldoDasMatrizes({
+  entrada,
+  saida,
+  despesas,
+  cardSaldo,
+}: {
+  entrada: number;
+  saida: number;
+  despesas: number;
+  cardSaldo: number;
+}) {
+  const subtotal = Math.round((entrada - saida) * 100) / 100;
+  const saldo = Math.round((subtotal - despesas) * 100) / 100;
+  const fecha = Math.abs(saldo - cardSaldo) < 0.005;
+  return (
+    <section className="mtx mtx-saldo">
+      <div className="mtx-head">
+        <h3>
+          Saldo <span className="sub">o que sobrou das duas tabelas acima</span>
+        </h3>
+        <span className={`mtx-total ${saldo >= 0 ? "pos" : "neg"}`}>{brl2(saldo)}</span>
+      </div>
+      <p className="mtx-conta">
+        Recebido <b>{brl2(entrada)}</b> &minus; Comissoes pagas <b>{brl2(saida)}</b>
+        {despesas ? (
+          <>
+            {" "}
+            = {brl2(subtotal)} &minus; Despesas <b>{brl2(despesas)}</b>
+          </>
+        ) : null}{" "}
+        = <b>{brl2(saldo)}</b>
+      </p>
+      <div className={`mtx-conf ${fecha ? "ok" : "bad"}`}>
+        {fecha ? "\u2713" : "\u26a0"} confere com o card &ldquo;Saldo&rdquo;: {brl2(cardSaldo)}
+        {fecha ? "" : " — divergencia"}
+      </div>
+    </section>
+  );
+}
+
 function MatrizTabela({ m, tom }: { m: Matriz; tom: "in" | "out" }) {
   const [aberta, setAberta] = useState(false);
   const fecha = Math.abs(m.delta) < 0.005;
@@ -241,7 +294,7 @@ function pick(o: Record<string, unknown>, keys: string[]): number | string | und
 }
 
 export default function FinanceiroPage() {
-  const [tab, setTab] = useState<"caixa" | "detalhe" | "dre">("caixa");
+  const [tab, setTab] = useState<"caixa" | "dre">("caixa");
   const [selectedKey, setSelectedKey] = useState("");
   const [fin, setFin] = useState<FinPayload | null>(null);
   const [dre, setDre] = useState<DrePayload | null>(null);
@@ -424,9 +477,6 @@ export default function FinanceiroPage() {
             <button className="tab" role="tab" aria-selected={tab === "caixa"} onClick={() => setTab("caixa")}>
               Caixa &amp; Resultado
             </button>
-            <button className="tab" role="tab" aria-selected={tab === "detalhe"} onClick={() => setTab("detalhe")}>
-              De onde veio
-            </button>
             <button className="tab" role="tab" aria-selected={tab === "dre"} onClick={() => setTab("dre")}>
               DRE
             </button>
@@ -494,36 +544,34 @@ export default function FinanceiroPage() {
         {error ? <div className="banner err">{error}</div> : null}
         {loading ? <div className="state">Carregando financeiro…</div> : null}
 
-        {/* ===================== ABA "De onde veio" =====================
-            Matriz EMPRESA x COMPONENTE, entrada e saida. A pergunta que ela
-            responde e "de onde veio cada real", e "de onde" e EMPRESA — por isso
-            a leitura e POR LINHA: total de linha em destaque, total de coluna
-            discreto no rodape.
-
-            SEM DELTA. Regra transversal: variacao vs mes anterior so em card,
-            nunca em tabela. O unico numero comparativo aqui e a linha de
-            CONFERENCIA, que e reconciliacao da MESMA competencia (matriz x card),
-            nao serie temporal. */}
-        {!loading && tab === "detalhe" && fin?.detalhamento ? (
-          <div className="panes">
-            <MatrizTabela m={fin.detalhamento.entrada} tom="in" />
-            <MatrizTabela m={fin.detalhamento.saida} tom="out" />
-            <p className="note">
-              <span className="dot" />
-              Cada linha e uma <b>empresa</b>; cada coluna, um <b>componente</b> do total. A
-              linha de <b>conferencia</b> compara a soma da matriz com o card da mesma
-              competencia — se divergir, o numero do card tem origem que a matriz nao
-              explica. <b>Outros</b> abre no clique.
-            </p>
-          </div>
-        ) : null}
-        {!loading && tab === "detalhe" && !fin?.detalhamento ? (
-          <div className="panes">
-            <p className="note"><span className="dot" />Sem detalhamento para esta competencia. A matriz aparece quando ha fechamento importado no mes anterior.</p>
-          </div>
-        ) : null}
         {!loading && tab === "caixa" && fin ? (
           <div className="panes">
+            {/* ---------------- DETALHAMENTO: de onde veio cada real ----------------
+                Mora AQUI, dentro de "Caixa & Resultado", porque explica os cards que
+                estao logo acima (decisao do Diego, 26/08/2026 — antes era aba
+                separada).
+
+                ORDEM: ENTRADA -> SAIDA -> SALDO. O saldo e a subtracao das duas que
+                acabaram de ser mostradas, entao vem depois delas.
+
+                ABERTAS POR PADRAO: matriz recolhida e matriz que ninguem abre, e ela
+                existe justamente para o total nao ser aceito as cegas.
+
+                SEM DELTA: nenhuma variacao vs mes anterior (regra transversal). O
+                unico numero comparativo e a conferencia matriz x card, que e
+                reconciliacao da MESMA competencia. */}
+            {fin.detalhamento ? (
+              <>
+                <MatrizTabela m={fin.detalhamento.entrada} tom="in" />
+                <MatrizTabela m={fin.detalhamento.saida} tom="out" />
+                <SaldoDasMatrizes
+                  entrada={fin.detalhamento.entrada.total}
+                  saida={fin.detalhamento.saida.total}
+                  despesas={fin.summary.totalExpenses}
+                  cardSaldo={fin.summary.operatingResult}
+                />
+              </>
+            ) : null}
             {/* Os KPIs (incl. os 2 de seguro, agora promovidos) vivem no <KpiBand>
                 dentro do <HeaderNavy>. "Seguro recebido" e um "do qual" das Comissoes
                 recebidas; "Seguro repassado" e um "do qual" das Comissoes pagas —
@@ -814,7 +862,7 @@ const CSS = `
 .rrfin .note{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-3);margin:-4px 4px;}
 .rrfin .note .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(60,157,107,.13);}
 .rrfin .note b{color:var(--ink-2);font-weight:600;}
-/* ---- Matriz EMPRESA x COMPONENTE (aba "De onde veio") ----
+/* ---- Matriz EMPRESA x COMPONENTE (dentro de "Caixa & Resultado") ----
    A empresa e sticky na 1a coluna: quando "Outros" expande, ela nao sai da vista.
    Total de LINHA em negrito (a pergunta e "de onde veio"); total de COLUNA no
    tfoot, discreto. Sem cor de variacao — nao ha delta nesta tabela. */
@@ -839,6 +887,9 @@ const CSS = `
 .rrfin .mtx-tbl tfoot td{border-top:2px solid var(--line,#e6e9f0);font-weight:700;}
 .rrfin .mtx-exp{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-transform:inherit;letter-spacing:inherit;}
 .rrfin .mtx-exp:hover{text-decoration:underline;}
+.rrfin .mtx-total.pos{color:var(--kpi-pos,#15803d);}
+.rrfin .mtx-total.neg{color:var(--kpi-neg,#b91c1c);}
+.rrfin .mtx-saldo .mtx-conta{margin:0;font-size:13px;color:#374151;font-variant-numeric:tabular-nums;}
 .rrfin .mtx-marca{color:#6b7280;margin-left:2px;cursor:help;}
 .rrfin .mtx-nota{margin:10px 0 0;font-size:11px;line-height:1.5;color:#6b7280;}
 .rrfin .mtx-fontes{margin-top:6px;font-size:11px;color:#6b7280;}

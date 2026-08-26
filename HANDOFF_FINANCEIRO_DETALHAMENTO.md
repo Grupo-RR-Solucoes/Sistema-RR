@@ -211,3 +211,44 @@ Está em comentário em `lib/financialAnalytics.ts`, junto das colunas:
 
 Não vai para a tela porque hoje não há número derivado a sinalizar; marcar seria
 avisar sobre um risco que não está no dado exibido.
+
+---
+
+## 7. A matriz voltou para DENTRO de "Caixa & Resultado" (26/08, decisão do Diego)
+
+A aba "De onde veio" foi removida — a tela volta a ter **2 abas** (Caixa & Resultado,
+DRE). O detalhamento explica os cards, então mora no mesmo lugar que eles.
+
+**Ordem: ENTRADA → SAÍDA → SALDO.** O saldo é a subtração das duas tabelas que
+acabaram de ser mostradas, então vem depois delas.
+
+**Abertas por padrão.** Matriz recolhida é matriz que ninguém abre, e ela existe
+justamente para o total não ser aceito às cegas.
+
+### ARMADILHA DE RÓTULO no bloco Saldo — nomeada no código
+
+A subtração das duas matrizes é `Recebido − Comissões pagas`, que corresponde ao card
+**"Saldo"** (que ainda abate despesas). **NÃO** é o card **"Saldo de comissões à
+vista"**, que usa `receivedEmpresa` — um SUBCONJUNTO do Recebido (só à-vista +
+seguro, sem PRT nem produtos).
+
+Em ago/2026 os dois são: **179.145,10** (Saldo) contra **111.926,89** (Saldo de
+comissões à vista). Confundi-los daria um saldo errado em R$ 67 mil. O bloco
+`SaldoDasMatrizes` escreve a conta na tela e confere contra o card "Saldo".
+
+### Custo de altura — calculado a partir do CSS, não renderizado
+
+| bloco | altura |
+|---|---|
+| matriz ENTRADA | ~360px |
+| matriz SAÍDA | ~317px |
+| bloco SALDO | ~112px |
+| gaps (3 × 22) | ~66px |
+| **total abaixo dos cards** | **~855px** |
+
+Expandir "Outros" não custa altura (troca colunas, não linhas) — mas em 1366 passa a
+rolar horizontalmente dentro da matriz (~1385px de conteúdo contra ~1270px úteis).
+
+**Em 1366 isso é mais de uma tela extra de rolagem** (viewport útil ~630px). Foi o
+atrito que motivou a proposta de aba separada; a decisão foi aceitá-lo em troca de o
+detalhamento ficar junto do que ele explica.
