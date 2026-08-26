@@ -1,12 +1,14 @@
 /*
  * CARD "Comissoes recebidas pela empresa".
  *
- * ATUALIZADO 26/08/2026 (decisao do Diego — ver HANDOFF_ADS_FECHAMENTO_CAIXA.md secao 16+):
- *   ANTES: valor_avista(M-1) + valor_seguro(M-1), so as 4 RR.
- *   AGORA: valor_avista(M-1) das 4 RR + bbts_pag_avista(M-1) da ADS. SEM seguro —
- *          o seguro saiu do "Recebido" e virou card PROPRIO, nao mais "do qual".
- * As assercoes (b) e (c) sao INVARIANTES e ficaram intactas; so as de (a), que
- * descreviam a COMPOSICAO antiga, foram reescritas para a composicao nova.
+ * HISTORICO (as duas decisoes do MESMO dia — ver HANDOFF secao 16+ e 19):
+ *   ate 26/08 manha : valor_avista(M-1) + valor_seguro(M-1), so as 4 RR.
+ *   26/08 manha     : + ADS, e SEM seguro (revogada na mesma tarde).
+ *   26/08 tarde (VIGENTE): valor_avista + valor_seguro das 4 RR
+ *                     + bbts_pag_avista + bbts_seguro_pago da ADS.
+ * As assercoes (b) e (c) sao INVARIANTES e nunca mudaram nas duas viradas; so as
+ * de (a) — que descrevem a COMPOSICAO — foram reescritas, sempre com o lado
+ * esperado computado NO PROPRIO RUN (nenhuma constante congelada).
  * Roda o buildFinancialAnalytics REAL (jul/26, M-1=junho) e confronta com o banco.
  * So leitura. Mostra o valor_estorno(jun) pro Diego decidir se abate.
  */
@@ -83,13 +85,15 @@ async function main() {
   console.log(`    ADS ${compAlvo}: a-vista = ${brl(adsAvista)} | seguro = ${brl(adsSeguro)}
 `);
 
-  // a) COMPOSICAO NOVA: avista das 4 RR + a-vista da ADS, SEM seguro.
-  const esperadoEmpresa = r2(avista + adsAvista);
-  ok("a) receivedEmpresa == valor_avista(RR) + bbts_pag_avista(ADS)", near(s.receivedEmpresa, esperadoEmpresa), `code=${s.receivedEmpresa} calc=${esperadoEmpresa}`);
-  ok("a) o SEGURO ficou de FORA do receivedEmpresa (decisao 26/08)", !near(s.receivedEmpresa, r2(esperadoEmpresa + seguro + adsSeguro)) || (seguro === 0 && adsSeguro === 0), `seguro RR=${seguro} ADS=${adsSeguro}`);
+  // a) COMPOSICAO VIGENTE (26/08 tarde): avista+seguro das 4 RR + avista+seguro da ADS.
+  const esperadoEmpresa = r2(avista + seguro + adsAvista + adsSeguro);
+  const esperadoSeguro = r2(seguro + adsSeguro);
+  ok("a) receivedEmpresa == (avista+seguro) RR + (avista+seguro) ADS", near(s.receivedEmpresa, esperadoEmpresa), `code=${s.receivedEmpresa} calc=${esperadoEmpresa}`);
+  ok("a) o SEGURO esta DENTRO do receivedEmpresa (decisao 26/08 tarde)", (seguro === 0 && adsSeguro === 0) || !near(s.receivedEmpresa, r2(avista + adsAvista)), `sem seguro daria ${r2(avista + adsAvista)}, code=${s.receivedEmpresa}`);
   ok("a) NAO abate estorno por ora (codigo = puro, TODO no comentario)", near(s.receivedEmpresa, esperadoEmpresa) && !near(s.receivedEmpresa, r2(esperadoEmpresa - estorno)) || estorno === 0, `estorno=${estorno}`);
-  ok("a) receivedInsurance == valor_seguro(RR) + bbts_seguro_pago(ADS) (card PROPRIO)", near(s.receivedInsurance, r2(seguro + adsSeguro)), `${s.receivedInsurance} vs ${r2(seguro + adsSeguro)}`);
-  ok("a) a ADS ENTRA no receivedEmpresa (o conserto nao virou remocao)", adsAvista === 0 || s.receivedEmpresa > avista, `avista RR=${avista} code=${s.receivedEmpresa}`);
+  ok("a) receivedInsurance == valor_seguro(RR) + bbts_seguro_pago(ADS)", near(s.receivedInsurance, esperadoSeguro), `${s.receivedInsurance} vs ${esperadoSeguro}`);
+  ok("a) 'do qual': receivedInsurance e SUBCONJUNTO do receivedEmpresa", esperadoSeguro === 0 || s.receivedInsurance < s.receivedEmpresa, `seguro=${s.receivedInsurance} empresa=${s.receivedEmpresa}`);
+  ok("a) a ADS ENTRA no receivedEmpresa (o conserto nao virou remocao)", (adsAvista === 0 && adsSeguro === 0) || s.receivedEmpresa > r2(avista + seguro), `RR=${r2(avista + seguro)} code=${s.receivedEmpresa}`);
 
   // b) subconjunto do Recebido (sem PRT, produtos, manual)
   ok("b) receivedEmpresa < Recebido (subconjunto)", s.receivedEmpresa < s.receivedNet, `${s.receivedEmpresa} vs ${s.receivedNet}`);
