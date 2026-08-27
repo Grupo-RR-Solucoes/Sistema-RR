@@ -181,3 +181,67 @@ A rota de cancelamento (`app/api/import/closing/cancel/route.ts:49-56`) apaga
 `fechamento_mensal_empresa`. É o que deixou 2025-02 AL1 com total certo e detalhe
 zerado. Um check `fechamento_sem_entries` pegaria as 2 competências nessa
 situação hoje (2023-12 e 2025-02, ambas AL1).
+
+---
+
+## 6. A LIÇÃO — a varredura devia ter vindo na primeira suspeita
+
+Quatro números foram tratados como buraco medido ao longo desta frente, em ordem
+crescente: R$ 10.102,33 → R$ 24.591,60 → R$ 128.128,20 → R$ 138.245,63. Nenhum
+sobreviveu. O que os derrubou foi uma varredura exaustiva
+(`scripts/diag-residuo-32-varredura-100.cjs`) que compara, para as 100
+competências-empresa, a coluna do arquivo contra as linhas do banco separadas por
+`sheet_name` de origem — e que levou minutos para escrever e rodar.
+
+Ela veio na QUINTA rodada de suspeita. Devia ter vindo na primeira. Cada rodada
+intermediária produziu uma medição parcial que parecia confirmar o buraco e que,
+por ser parcial, alimentou a rodada seguinte com um número maior.
+
+O erro estruturante foi sempre o mesmo: **somar o que o arquivo declara sem
+verificar, linha a linha e por origem, o que o banco já tem**. Foi assim que o
+meu R$ 10.102,33 nasceu (o mesmo arquivo somado duas vezes por existir em duas
+árvores de diretório) e é a forma de erro que os outros três também tinham —
+contar como faltante o que já estava gravado.
+
+**REGRA:** diante de suspeita de dinheiro faltando, a primeira medição é a
+varredura exaustiva do universo inteiro, cruzando documento contra banco pela
+chave de origem. Amostra e soma agregada vêm depois, para explicar o que a
+varredura achar — nunca antes, para decidir se há o que achar.
+
+Mesmo padrão dos números invalidados da FRENTE 3.
+
+---
+
+## 7. ERRATA DO ITEM 4 — os débitos de cancelamento
+
+Uma versão anterior deste registro dizia que os débitos "sobrevivem à
+reimportação porque `promoter_discounts` é reconstruído a partir de
+`promoter_debits`, que a reimportação não toca". As duas metades estão erradas.
+Medido em 27/08/2026:
+
+- o resolver **apaga** `promoter_debits` (`debitInsuranceResolver.ts:416-428`),
+  com predicado `kind='AUTO'` + `debit_type=CANCELAMENTO_SEGURO` + competência +
+  `company_id != ADS`; parcelas e sources caem por CASCADE
+- `promoter_discounts` recebe **insert** do resolver (`:454`) — o fluxo é o
+  contrário do descrito
+
+```
+promoter_debits hoje:
+  2026-06 | CANCELAMENTO_SEGURO | RR      17      899,21
+  2026-07 | CANCELAMENTO_SEGURO | ADS      3       49,45
+  2026-07 | CANCELAMENTO_SEGURO | RR      16      370,85
+```
+
+O que de fato acontece:
+
+- **2026-06 sobrevive** — mas pela trava de competência
+  (`DEBITO_AUTO_PRIMEIRA_COMPETENCIA = "2026-07"`), que impede
+  `persistAutoInsuranceDebits` de chamar o resolver. Não é a tabela que está
+  protegida; é a competência.
+- **2026-07 NÃO sobrevive** — 16 linhas RR (R$ 370,85) apagadas e recriadas a
+  partir do mesmo fechamento. Débitos com `kind` diferente de `AUTO` (lançados à
+  mão) não são alcançados pelo predicado.
+- **Os 3 débitos da ADS (R$ 49,45) sobrevivem** — `.neq("company_id", BBTS)`.
+
+A 2ª trava (`:1856`, competência com parcela `APPLIED`) segue inoperante: não há
+nenhum `CANCELAMENTO_SEGURO` com status APPLIED em todo o banco.
