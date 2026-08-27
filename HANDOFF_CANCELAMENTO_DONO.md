@@ -184,3 +184,71 @@ Os **dois modos de falhar em silêncio** estão travados: lançar em quem não t
 repasse de onde descontar, e sumir com o item sem ninguém saber que existiu. Mais um
 CONTROLE: o promotor ativo tem de continuar lançando, senão a regra teria virado
 trava geral.
+
+---
+
+## 8. O R$ 1,40 GRAVADO — e o que a investigação corrigiu (27/08)
+
+### Onde ele estava: em lugar nenhum
+
+```
+promoter_debits com total_amount = 1,40      : 0
+promoter_debit_sources com operacao 211689509: 0
+ainda na FILA (PENDING, promoter_id NULO)    : 1
+```
+
+**A rotina não tinha rodado.** Não foi recálculo apagando: `/api/calculate/monthly`
+**não toca** `promoter_debits` nem `promoter_discounts` (grep = 0 ocorrências). Ele
+escreve em `promoter_monthly_results` e mais nada de débito.
+
+O débito **já era** gravado em `promoter_debits` desde sempre — a rotina nunca gravou
+em outro lugar. E `promoterAnalytics.ts:1833` filtra por `promoter_id + ano + mes`,
+**sem `company_id`**: um débito da ADS apareceria normalmente na tela do promotor.
+Não havia débito volátil nem débito escondido por empresa.
+
+### A ARMADILHA que quase destruiu dado
+
+A gravação é *delete-and-replace* escopada a `(kind=AUTO, CANCELAMENTO_SEGURO,
+start_year, start_month, company_id=ADS)`. **Chamar a rotina com um SUBCONJUNTO
+apaga o que ficou de fora.** Rodar só com o R$ 1,40 teria deletado os R$ 48,05 da
+MARIA LETICIA.
+
+**A chamada correta passa o conjunto COMPLETO** de linhas `tratamento=debito` do PDF
+da competência — que é o que o importador faz. Qualquer script de reprocessamento
+tem de fazer o mesmo.
+
+### O resultado
+
+```
+ANTES  : 2 debitos, Sigma 48,05  | fila PENDING: 3
+DEPOIS : 3 debitos, Sigma 49,45  | BRUNA ALVES 1,40 (via cms) + MARIA LETICIA 24,05 + 24,00
+```
+
+### Sobrevive ao recálculo — provado por execução
+
+```
+reconsolidarCompetenciaFechada(2026-07) -> ran=true regime=fechamento
+DEPOIS DO RECALCULO: 3 debitos, Sigma 49,45   [intactos]
+```
+
+### As duas telas concordam
+
+```
+/financeiro (matriz, caixa ago/26): linha ADS descontos = -49,45
+/promotores BRUNA ALVES jul/26   : discountRows = 1 -> CANCELAMENTO_SEGURO 1,40
+conferencia da matriz: 139.405,05 · card 139.405,05 · delta 0,00
+```
+
+Os R$ 48,05 viraram **R$ 49,45** — antes NÃO incluíam o R$ 1,40; agora incluem.
+
+### RESÍDUO CONHECIDO — a fila não é limpa
+
+```
+fila DAILY_CANCEL PENDING: 3 -> 209867885(20,70), 209621970(20,83), 211689509(1,40)
+```
+
+O `211689509` **continua marcado PENDING** em `promoter_debit_assignments` mesmo já
+tendo virado débito. A rotina cria entradas na fila para o que não resolve, mas
+**não fecha** as que passou a resolver. Hoje é cosmético (a fila é lista de trabalho,
+não fonte de cálculo), mas confunde quem a usa para saber o que falta. **Nomeado,
+não consertado.**
