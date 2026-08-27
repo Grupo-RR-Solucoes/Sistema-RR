@@ -49,6 +49,16 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/financeiro_matriz_fecha_gate.cjs",
+    nome: "a matriz do Financeiro fecha com os cards, nos dois lados",
+    modo: "needs-db",
+    motivo:
+      "roda buildFinancialAnalytics real em 3 competencias e confere matriz == card " +
+      "ao centavo (entrada e saida), celulas == total de linha, linhas == colunas, " +
+      "expansao de Outros == a celula, e zero orfao. Lado direito e sempre o card do " +
+      "MESMO payload — nenhuma constante congelada. createClient, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/ads_caixa_sem_rls_gate.cjs",
     nome: "o Caixa nao le bbts_prt_parcelas pelo cliente da PAGINA (42501)",
     modo: "needs-db",

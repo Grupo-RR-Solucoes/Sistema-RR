@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { UiStyles, HeaderNavy, KpiBand, DeltaBadge } from "@/components/ui";
+import EmptyStatePanel from "@/components/EmptyStatePanel";
 import type { ResultadoDelta } from "@/lib/delta/calcularDelta";
 
 // Etapa 8 (enxugar menu) Fase 3 — Tela A "Financeiro" (socio): consolida o antigo
@@ -25,10 +26,34 @@ type FinSummary = {
   openingBalance: number;
   cashBalance: number;
 };
+type MatrizCelula = { chave: string; rotulo: string; valor: number };
+type MatrizLinha = {
+  chave: string;
+  rotulo: string;
+  avulso?: boolean;
+  celulas: Record<string, number>;
+  outrosDetalhe: MatrizCelula[];
+  total: number;
+};
+type MatrizColuna = { chave: string; rotulo: string; expansivel?: boolean; fonte?: string; marca?: string };
+type Matriz = {
+  titulo: string;
+  subtitulo: string;
+  notaMarca?: string;
+  colunas: MatrizColuna[];
+  linhas: MatrizLinha[];
+  totaisColuna: Record<string, number>;
+  total: number;
+  cardTotal: number;
+  delta: number;
+};
+type Detalhamento = { entrada: Matriz; saida: Matriz; despesa: Matriz };
+
 type CashTrend = { key: string; label: string; receivedNet: number; totalExpenses: number; comissoesPagas: number };
 type CatTotal = Record<string, unknown>;
 type FinPayload = {
   periods: Period[];
+  detalhamento?: Detalhamento;
   selectedPeriod: Period | null;
   summary: FinSummary;
   cashTrend: CashTrend[];
@@ -61,6 +86,201 @@ type DrePayload = {
     receitaSeguro: ResultadoDelta;
   } | null;
 };
+
+
+
+/**
+ * Matriz EMPRESA x COMPONENTE.
+ *
+ * DECISOES DE LEITURA (ver HANDOFF_FINANCEIRO_DETALHAMENTO.md):
+ *  - total de LINHA em negrito, total de COLUNA discreto: a pergunta e "de onde
+ *    veio", e "de onde" e empresa.
+ *  - empresa na 1a coluna, STICKY: quando "Outros" expande, a empresa nao sai da
+ *    vista.
+ *  - zero vira "—", nao "0,00": a matriz tem muita celula vazia e o traco deixa o
+ *    preenchido saltar. E o vazio da ADS nas colunas de produto E informacao: ela
+ *    nao vende consorcio nem BBCAP.
+ *  - lancamento avulso em LINHA PROPRIA, marcada: nao e producao de empresa.
+ *  - NENHUM delta vs mes anterior. So a linha de conferencia (matriz x card).
+ */
+/**
+ * A subtracao das DUAS matrizes que acabaram de ser exibidas.
+ *
+ * POR QUE ELE EXISTE E POR QUE VEM POR ULTIMO: o saldo e o resultado das duas
+ * tabelas acima; mostrar a conta escrita fecha o raciocinio na mesma tela, sem o
+ * leitor ter de voltar aos cards e subtrair de cabeca.
+ *
+ * ATENCAO AO ROTULO. Esta conta e `Recebido - Comissoes pagas`, que corresponde ao
+ * card "Saldo" (que ainda abate DESPESAS). NAO e o card "Saldo de comissoes a
+ * vista", que usa `receivedEmpresa` — um SUBCONJUNTO do Recebido (so a-vista +
+ * seguro, sem PRT nem produtos). Os dois numeros sao diferentes e confundi-los
+ * daria um saldo errado: em ago/2026, 179.145,10 contra 111.926,89.
+ */
+function SaldoDasMatrizes({
+  entrada,
+  saida,
+  despesas,
+  cardSaldo,
+}: {
+  entrada: number;
+  saida: number;
+  despesas: number;
+  cardSaldo: number;
+}) {
+  const subtotal = Math.round((entrada - saida) * 100) / 100;
+  const saldo = Math.round((subtotal - despesas) * 100) / 100;
+  const fecha = Math.abs(saldo - cardSaldo) < 0.005;
+  return (
+    <section className="mtx mtx-saldo">
+      <div className="mtx-head">
+        <h3>
+          Saldo <span className="sub">o que sobrou das duas tabelas acima</span>
+        </h3>
+        <span className={`mtx-total ${saldo >= 0 ? "pos" : "neg"}`}>{brl2(saldo)}</span>
+      </div>
+      <p className="mtx-conta">
+        Recebido <b>{brl2(entrada)}</b> &minus; Comissoes pagas <b>{brl2(saida)}</b>
+        {despesas ? (
+          <>
+            {" "}
+            = {brl2(subtotal)} &minus; Despesas <b>{brl2(despesas)}</b>
+          </>
+        ) : null}{" "}
+        = <b>{brl2(saldo)}</b>
+      </p>
+      <div className={`mtx-conf ${fecha ? "ok" : "bad"}`}>
+        {fecha ? "\u2713" : "\u26a0"} confere com o card &ldquo;Saldo&rdquo;: {brl2(cardSaldo)}
+        {fecha ? "" : " — divergencia"}
+      </div>
+    </section>
+  );
+}
+
+function MatrizTabela({ m, tom, vazio }: { m: Matriz; tom: "in" | "out"; vazio?: string }) {
+  const [aberta, setAberta] = useState(false);
+  const fecha = Math.abs(m.delta) < 0.005;
+  const colunas = aberta
+    ? m.colunas.flatMap((c) =>
+        c.expansivel
+          ? (m.linhas[0]?.outrosDetalhe ?? []).map((o) => ({ chave: `__d:${o.chave}`, rotulo: o.rotulo }))
+          : [c]
+      )
+    : m.colunas;
+  const valorDe = (l: MatrizLinha, chave: string) =>
+    chave.startsWith("__d:")
+      ? (l.outrosDetalhe.find((o) => o.chave === chave.slice(4))?.valor ?? 0)
+      : (l.celulas[chave] ?? 0);
+  const totalDe = (chave: string) =>
+    chave.startsWith("__d:")
+      ? m.linhas.reduce((a, l) => a + valorDe(l, chave), 0)
+      : (m.totaisColuna[chave] ?? 0);
+  const cel = (v: number) => (Math.abs(v) < 0.005 ? "—" : brl2(v));
+
+  return (
+    <section className="mtx">
+      <div className="mtx-head">
+        <h3>
+          {m.titulo} <span className="sub">{m.subtitulo}</span>
+        </h3>
+        <span className={`mtx-total ${tom}`}>{brl2(m.total)}</span>
+      </div>
+      {m.linhas.length === 0 ? (
+        // ESTADO VAZIO EXPLICITO, e a SECAO NUNCA SOME.
+        //
+        // POR QUE NAO ESCONDER (decisao do Diego, 26/08/2026): secao que aparece em
+        // alguns meses e some em outros cria comportamento inconsistente — quem olha
+        // nao sabe se nao ha despesa ou se a tela quebrou. A matriz vazia responde
+        // sozinha. E ha o caso pratico: quando o Diego lancar despesa na competencia
+        // corrente, ele precisa ter ONDE conferir depois de lancar; se a secao so
+        // nascesse com dado, ele nao acharia o lugar.
+        //
+        // Nao deixar so a tabela com traços: traço em celula significa "esta celula
+        // e zero", e uma tabela inteira de traços significaria "todas as empresas
+        // gastaram zero" — que e diferente de "ninguem lancou nada".
+        <EmptyStatePanel
+          compact
+          eyebrow="Sem lancamento"
+          title={vazio || "Nada lancado nesta competencia."}
+          description="Assim que houver lancamento, ele aparece aqui por empresa e categoria, e o total desta tabela passa a bater com o card."
+          actionLabel="Ir para Despesas"
+          actionHref="/despesas"
+        />
+      ) : (
+      <div className="mtx-scroll">
+        <table className="mtx-tbl">
+          <thead>
+            <tr>
+              <th className="emp">Empresa</th>
+              {colunas.map((c) => (
+                <th key={c.chave} className="num">
+                  {(c as MatrizColuna).expansivel ? (
+                    <button type="button" className="mtx-exp" onClick={() => setAberta((x) => !x)}>
+                      {c.rotulo} {aberta ? "▾" : "▸"}
+                    </button>
+                  ) : (
+                    c.rotulo
+                  )}
+                  {(c as MatrizColuna).marca ? (
+                    <sup className="mtx-marca" title={(c as MatrizColuna).fonte}>
+                      {(c as MatrizColuna).marca}
+                    </sup>
+                  ) : null}
+                </th>
+              ))}
+              <th className="num tot">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {m.linhas.map((l) => (
+              <tr key={l.chave} className={l.avulso ? "avulso" : undefined}>
+                <td className="emp">
+                  {l.rotulo}
+                  {l.avulso ? <span className="tagav">avulso</span> : null}
+                </td>
+                {colunas.map((c) => (
+                  <td key={c.chave} className="num">
+                    {cel(valorDe(l, c.chave))}
+                  </td>
+                ))}
+                <td className="num tot">{brl2(l.total)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td className="emp">Total</td>
+              {colunas.map((c) => (
+                <td key={c.chave} className="num">
+                  {cel(totalDe(c.chave))}
+                </td>
+              ))}
+              <td className="num tot">{brl2(m.total)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      )}
+      {m.notaMarca ? <p className="mtx-nota">{m.notaMarca}</p> : null}
+      <details className="mtx-fontes">
+        <summary>Fonte de cada coluna</summary>
+        <ul>
+          {m.colunas
+            .filter((c) => c.fonte)
+            .map((c) => (
+              <li key={c.chave}>
+                <b>{c.rotulo}</b>: {c.fonte}
+              </li>
+            ))}
+        </ul>
+      </details>
+      <div className={`mtx-conf ${fecha ? "ok" : "bad"}`}>
+        {fecha ? "✓" : "⚠"} conferencia: matriz {brl2(m.total)} · card{" "}
+        {brl2(m.cardTotal)} · delta {brl2(m.delta)}
+        {fecha ? "" : " — o card tem origem que a matriz nao explica"}
+      </div>
+    </section>
+  );
+}
 
 const brl = (v: number | null | undefined) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }).format(Number(v ?? 0));
@@ -350,6 +570,33 @@ export default function FinanceiroPage() {
 
         {!loading && tab === "caixa" && fin ? (
           <div className="panes">
+            {/* ---------------- DETALHAMENTO: de onde veio cada real ----------------
+                Mora AQUI, dentro de "Caixa & Resultado", porque explica os cards que
+                estao logo acima (decisao do Diego, 26/08/2026 — antes era aba
+                separada).
+
+                ORDEM: ENTRADA -> SAIDA -> SALDO. O saldo e a subtracao das duas que
+                acabaram de ser mostradas, entao vem depois delas.
+
+                ABERTAS POR PADRAO: matriz recolhida e matriz que ninguem abre, e ela
+                existe justamente para o total nao ser aceito as cegas.
+
+                SEM DELTA: nenhuma variacao vs mes anterior (regra transversal). O
+                unico numero comparativo e a conferencia matriz x card, que e
+                reconciliacao da MESMA competencia. */}
+            {fin.detalhamento ? (
+              <>
+                <MatrizTabela m={fin.detalhamento.entrada} tom="in" />
+                <MatrizTabela m={fin.detalhamento.saida} tom="out" />
+                <MatrizTabela m={fin.detalhamento.despesa} tom="out" vazio={`Nenhuma despesa lancada na competencia ${fin.selectedPeriod?.label ?? ""}.`} />
+                <SaldoDasMatrizes
+                  entrada={fin.detalhamento.entrada.total}
+                  saida={fin.detalhamento.saida.total}
+                  despesas={fin.summary.totalExpenses}
+                  cardSaldo={fin.summary.operatingResult}
+                />
+              </>
+            ) : null}
             {/* Os KPIs (incl. os 2 de seguro, agora promovidos) vivem no <KpiBand>
                 dentro do <HeaderNavy>. "Seguro recebido" e um "do qual" das Comissoes
                 recebidas; "Seguro repassado" e um "do qual" das Comissoes pagas —
@@ -640,6 +887,44 @@ const CSS = `
 .rrfin .note{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink-3);margin:-4px 4px;}
 .rrfin .note .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(60,157,107,.13);}
 .rrfin .note b{color:var(--ink-2);font-weight:600;}
+/* ---- Matriz EMPRESA x COMPONENTE (dentro de "Caixa & Resultado") ----
+   A empresa e sticky na 1a coluna: quando "Outros" expande, ela nao sai da vista.
+   Total de LINHA em negrito (a pergunta e "de onde veio"); total de COLUNA no
+   tfoot, discreto. Sem cor de variacao — nao ha delta nesta tabela. */
+.rrfin .mtx{background:#fff;border:1px solid var(--line,#e6e9f0);border-radius:14px;padding:16px 18px;}
+.rrfin .mtx-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px;}
+.rrfin .mtx-head h3{margin:0;font-size:15px;font-weight:700;}
+.rrfin .mtx-head .sub{font-weight:400;font-size:12px;color:#6b7280;margin-left:6px;}
+.rrfin .mtx-total{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;}
+.rrfin .mtx-total.in{color:var(--kpi-in,#1d4ed8);}
+.rrfin .mtx-total.out{color:var(--kpi-out,#b91c1c);}
+.rrfin .mtx-scroll{overflow-x:auto;}
+.rrfin .mtx-tbl{width:100%;border-collapse:collapse;font-size:13px;}
+.rrfin .mtx-tbl th,.rrfin .mtx-tbl td{padding:7px 10px;white-space:nowrap;}
+.rrfin .mtx-tbl thead th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;border-bottom:1px solid var(--line,#e6e9f0);text-align:right;}
+.rrfin .mtx-tbl th.emp,.rrfin .mtx-tbl td.emp{text-align:left;position:sticky;left:0;background:#fff;z-index:1;}
+.rrfin .mtx-tbl td.num,.rrfin .mtx-tbl th.num{text-align:right;font-variant-numeric:tabular-nums;}
+.rrfin .mtx-tbl td.tot,.rrfin .mtx-tbl th.tot{font-weight:700;border-left:1px solid var(--line,#e6e9f0);}
+.rrfin .mtx-tbl tbody tr+tr td{border-top:1px solid #f1f3f7;}
+.rrfin .mtx-tbl tbody tr.avulso td{background:#fafbfd;font-style:italic;}
+.rrfin .mtx-tbl tbody tr.avulso td.emp{background:#fafbfd;}
+.rrfin .tagav{margin-left:8px;font-style:normal;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;border:1px solid var(--line,#e6e9f0);border-radius:6px;padding:1px 5px;}
+.rrfin .mtx-tbl tfoot td{border-top:2px solid var(--line,#e6e9f0);font-weight:700;}
+.rrfin .mtx-exp{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-transform:inherit;letter-spacing:inherit;}
+.rrfin .mtx-exp:hover{text-decoration:underline;}
+.rrfin .mtx-total.pos{color:var(--kpi-pos,#15803d);}
+.rrfin .mtx-total.neg{color:var(--kpi-neg,#b91c1c);}
+.rrfin .mtx-saldo .mtx-conta{margin:0;font-size:13px;color:#374151;font-variant-numeric:tabular-nums;}
+.rrfin .mtx-vazio{margin:0;font-size:13px;color:#6b7280;font-style:italic;}
+.rrfin .mtx-marca{color:#6b7280;margin-left:2px;cursor:help;}
+.rrfin .mtx-nota{margin:10px 0 0;font-size:11px;line-height:1.5;color:#6b7280;}
+.rrfin .mtx-fontes{margin-top:6px;font-size:11px;color:#6b7280;}
+.rrfin .mtx-fontes summary{cursor:pointer;}
+.rrfin .mtx-fontes ul{margin:6px 0 0;padding-left:18px;}
+.rrfin .mtx-fontes li{margin:2px 0;}
+.rrfin .mtx-conf{margin-top:10px;font-size:12px;font-variant-numeric:tabular-nums;}
+.rrfin .mtx-conf.ok{color:#166534;}
+.rrfin .mtx-conf.bad{color:#b91c1c;font-weight:700;}
 .rrfin .dre-tbl{margin-top:18px;}
 .rrfin .dhead,.rrfin .dr{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr 1fr;align-items:center;gap:14px;}
 .rrfin .dhead{padding:0 2px 11px;border-bottom:1px solid var(--bd);}
