@@ -328,3 +328,111 @@ MARIA LETICIA | RR ALAGOAS 3 | final=  406,66 | desconto=48,05 | liquido=  358,6
 **O R$ 1,40 é da BRUNA ALVES**, não da Aldalene — o contrato `211689509` é dela no
 `cms` (`j_key JJ552710`, competência 2026-05). A Aldalene não tem linha de PMR na ADS
 em competência alguma, e seu único débito é de **junho** (R$ 28,01).
+
+---
+
+## A PREMISSA QUE TRAVOU A FRENTE (27/08/2026)
+
+Durante a tarde inteira a frente ficou parada numa tese: **"no RR o cms já traz o
+desconto embutido, então lançar débito lá subtrai duas vezes."** A tese era do
+**Diego**, foi afirmada **sem verificação**, e chegou a virar ordem de reverter 28
+débitos. O registro fica aqui porque o custo não foi o dado — foi o tempo, e a
+reversão teria sido o erro.
+
+**A tese não sobreviveu à medição.** Diego mesmo a derrubou ao propor o teste
+decisivo — comparar o PMR contra o líquido do cms para um promotor concreto.
+
+### O que a medição mostrou
+
+```
+CONSULTA: .from("cms_promoter_entries").select("prod_year, prod_month")  [3.045 linhas]
+  2026-01: 676 | 2026-02: 949 | 2026-03: 775 | 2026-05: 645
+```
+
+**O cms não cobre junho nem julho** — as duas competências dos 36 débitos. Não há
+segunda fonte onde o desconto pudesse estar embutido. E onde o cms existe, ele não
+traz estorno nenhum:
+
+```
+promoter_credit    < 0 : 0     MENOR da tabela: 0,00
+promoter_insurance < 0 : 0     MENOR da tabela: 0,00
+```
+
+### O caso concreto que fechou a questão
+
+```
+JARLES MARLON DE OLIVEIRA, jun/2026
+  (a) PMR: prod 4.105,38 + seguro 1,77 + consorcio 289,48 = FINAL 4.396,63
+      discount_value = 0,00 | residuo (final - parcelas) = 0,00
+  (b) estorno dele na aba "Seguro" do fechamento = 320,04
+```
+
+Os 320,04 **não estão subtraídos em lugar nenhum**. Pelo critério do próprio Diego
+("se (a) > (b), o débito é legítimo"), **as 36 ficam**.
+
+### A causa
+
+Não foi mudança de entendimento nem falta de guarda no código: foi **afirmação sem
+consulta**, repetida por seis rodadas contra medições que já a contradiziam. A regra
+que a frente já carregava — *todo número vem com o comando que o produziu* — vale
+para quem pede, não só para quem executa.
+
+---
+
+## O MECANISMO REAL DE DUPLICIDADE (existe, e está a uma linha de nascer)
+
+A medição que derrubou a tese revelou um risco verdadeiro. Os estornos **existem**
+como linhas negativas no fechamento:
+
+```
+CONSULTA: .eq("year",2026).eq("month",6).eq("entry_type","INSURANCE").eq("sheet_name","Seguro").lt("commission_value",0)
+SAIDA: 30 linhas | SOMA = -901,24
+   a rotina lancou em jun/26 = -899,21
+   diferenca: 2,03  <- exatamente o item da ANA CLARA que a regra do inativo segurou
+```
+
+O que impede a dupla contagem hoje é **uma linha**:
+
+```
+lib/closingPromoterBase.ts:160     .eq("entry_type", "CASH")
+```
+
+Junho tem `{"CASH":707, "INSURANCE":224, ...}`. O consolidador do PMR lê só CASH, então
+as 224 INSURANCE nunca chegam ao promotor. Varredura de **todos** os consumidores de
+`monthly_closing_entries` confirmou: o **único** leitor da aba `Seguro` é a própria
+rotina (`debitInsuranceResolver.ts:184`); `remuneracaoLideranca.ts:312` aceita
+INSURANCE só quando a aba é `A Vista`.
+
+### As duas proteções instaladas
+
+**1. `scripts/estorno_sem_leitor_gate.cjs`** (registrado em `run_all_gates.cjs`,
+faixa `needs-db`, 1,1s). Varre `lib/` e `app/` atrás de qualquer consumidor novo que
+leia `entry_type='INSURANCE'` sem excluir a aba, exige que o filtro CASH continue no
+consolidador, e confere no banco que a aba não está vazia (senão passaria por
+vacuidade).
+
+- **Provado por mutação:** com um leitor que não exclui, `exit=1`; sem ele, `exit=0`.
+- **Falso positivo corrigido na 1ª execução:** `app/api/promotores/route.ts` usa
+  `"INSURANCE"` como `agreement_type`. O detector passou a exigir a amarra com
+  `entry_type`.
+- **Armadilha registrada:** `process.exit()` com o cliente Supabase de handle aberto
+  estoura o libuv no Windows e o runner recebe `exit 3221226505` — gate VERMELHO com
+  todas as asserções verdes. Usar `process.exitCode`.
+- **Limite declarado:** o gate lê TEXTO. Um filtro montado por variável escapa.
+
+**2. Trava `competenciaConsolidadaPorCms`** nos dois resolvedores: recusa competência
+cujo PMR tenha `source='cms'`. Medido:
+
+```
+2026-05 | PMR source=cms? SIM | RECUSADO? SIM | debitos: 0
+2026-06 | PMR source=cms? nao | RECUSADO? nao | debitos: 17
+2026-07 | PMR source=cms? nao | RECUSADO? nao | debitos: 16
+```
+
+Recusa **0 dos 36** hoje. É trava de futuro — para quando 2026-05 ou anterior for
+reprocessado.
+
+### Dívida nomeada (não é desta frente)
+
+A faixa `--db` do runner estourou o teto: **216,9s de 90s**. O gate novo custa 1,1s;
+o dominante é `detalhamento por produto` com **92,6s**. Fica registrado, não tratado.

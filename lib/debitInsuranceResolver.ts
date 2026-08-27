@@ -165,6 +165,48 @@ export function promotorInativoNaData(
   return String(promotor.dismissed_at).slice(0, 10) < String(dataDoDebito).slice(0, 10);
 }
 
+/**
+ * TRAVA SECUNDARIA — nao lanca debito em competencia consolidada pelo CMS.
+ *
+ * O QUE ELA IMPEDE. O universo do CMS (`cms_promoter_entries`) e o do FECHAMENTO
+ * (`monthly_closing_entries`) sao arquivos DIFERENTES da Promotiva. Os estornos
+ * que esta rotina lanca vivem so no segundo, na aba "Seguro". Medido em
+ * 27/08/2026: o CMS cobre 2026-01 (676 linhas), 2026-02 (949), 2026-03 (775) e
+ * 2026-05 (645) — 3.045 no total, ZERO linha com valor negativo em
+ * promoter_credit ou promoter_insurance. Junho e julho NAO tem CMS nenhum.
+ *
+ * Por isso a rotina nunca poderia duplicar em 2026-06/07: nao ha segunda fonte
+ * la. Mas se alguem REPROCESSAR 2026-05 ou anterior — competencias cujo PMR tem
+ * source='cms' — a rotina passaria a lancar debito sobre um PMR que nasceu de um
+ * arquivo que esta rotina nao inspeciona. Nao esta provado que ha embutido la
+ * (o CMS nao tem negativos); esta apenas NAO PROVADO que nao ha. A trava recusa
+ * por precaucao, em vez de decidir no escuro.
+ *
+ * CUSTO MEDIDO: recusa 0 dos 36 debitos existentes em 27/08/2026 — nenhum deles
+ * esta em competencia com source='cms'. E trava de futuro, nao de hoje.
+ *
+ * NAO E A PROTECAO PRINCIPAL. A duplicidade real nasceria de um CONSUMIDOR novo
+ * que passasse a ler entry_type='INSURANCE' da aba "Seguro" — hoje o unico leitor
+ * e este arquivo, e o que separa o lancamento legitimo da dupla contagem e a
+ * linha `closingPromoterBase.ts:160` (`.eq("entry_type","CASH")`). Quem guarda
+ * isso e scripts/estorno_sem_leitor_gate.cjs.
+ */
+export async function competenciaConsolidadaPorCms(
+  supabase: SupabaseLike,
+  year: number,
+  month: number
+): Promise<boolean> {
+  const { data, error } = await (supabase as any)
+    .from("promoter_monthly_results")
+    .select("source")
+    .eq("year", year)
+    .eq("month", month)
+    .eq("source", "cms")
+    .limit(1);
+  if (error) throw error;
+  return Array.isArray(data) && data.length > 0;
+}
+
 export async function resolveInsuranceDebits(
   supabase: SupabaseLike,
   params: { year: number; month: number; dryRun?: boolean; createdBy?: string | null }
@@ -173,6 +215,25 @@ export async function resolveInsuranceDebits(
   const dryRun = params.dryRun !== false; // default dry-run
   const competencia = `${year}-${String(month).padStart(2, "0")}`;
   const avisos: string[] = [];
+
+  // TRAVA: competencia consolidada pelo CMS nao recebe debito. Ver o comentario
+  // longo de competenciaConsolidadaPorCms.
+  if (await competenciaConsolidadaPorCms(supabase, year, month)) {
+    return {
+      competencia,
+      dryRun,
+      rule: null,
+      ruleVersionId: null,
+      debits: [],
+      fila: [],
+      totals: { individuais: 0, somaIndividuais: 0, fila: 0, somaFila: 0 },
+      avisos: [
+        `RECUSADO — a competencia ${competencia} tem PMR com source='cms'. Esta ` +
+          `rotina so inspeciona a aba "Seguro" do FECHAMENTO; o que o arquivo do ` +
+          `CMS embute nao esta provado. Nenhum debito foi lancado.`,
+      ],
+    };
+  }
 
   // 1. Aba Seguro (CANCELADO), dedup por operação.
   const segRaw = await pagedOrdered<any>(() =>
@@ -503,6 +564,25 @@ export async function resolveAdsCancelDebits(
   const dryRun = params.dryRun !== false;
   const competencia = `${year}-${String(month).padStart(2, "0")}`;
   const avisos: string[] = [];
+
+  // TRAVA: competencia consolidada pelo CMS nao recebe debito. Ver o comentario
+  // longo de competenciaConsolidadaPorCms.
+  if (await competenciaConsolidadaPorCms(supabase, year, month)) {
+    return {
+      competencia,
+      dryRun,
+      rule: null,
+      ruleVersionId: null,
+      debits: [],
+      fila: [],
+      totals: { individuais: 0, somaIndividuais: 0, fila: 0, somaFila: 0 },
+      avisos: [
+        `RECUSADO — a competencia ${competencia} tem PMR com source='cms'. Esta ` +
+          `rotina so inspeciona a aba "Seguro" do FECHAMENTO; o que o arquivo do ` +
+          `CMS embute nao esta provado. Nenhum debito foi lancado.`,
+      ],
+    };
+  }
   const debitosRaw = params.debitos || [];
 
   const ops = debitosRaw.map((d) => String(d.contrato).trim());
