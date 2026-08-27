@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { UiStyles, HeaderNavy, KpiBand, DeltaBadge } from "@/components/ui";
+import EmptyStatePanel from "@/components/EmptyStatePanel";
 import type { ResultadoDelta } from "@/lib/delta/calcularDelta";
 
 // Etapa 8 (enxugar menu) Fase 3 — Tela A "Financeiro" (socio): consolida o antigo
@@ -183,8 +184,27 @@ function MatrizTabela({ m, tom, vazio }: { m: Matriz; tom: "in" | "out"; vazio?:
         </h3>
         <span className={`mtx-total ${tom}`}>{brl2(m.total)}</span>
       </div>
-      {vazio && m.linhas.length === 0 ? (
-        <p className="mtx-vazio">{vazio}</p>
+      {m.linhas.length === 0 ? (
+        // ESTADO VAZIO EXPLICITO, e a SECAO NUNCA SOME.
+        //
+        // POR QUE NAO ESCONDER (decisao do Diego, 26/08/2026): secao que aparece em
+        // alguns meses e some em outros cria comportamento inconsistente — quem olha
+        // nao sabe se nao ha despesa ou se a tela quebrou. A matriz vazia responde
+        // sozinha. E ha o caso pratico: quando o Diego lancar despesa na competencia
+        // corrente, ele precisa ter ONDE conferir depois de lancar; se a secao so
+        // nascesse com dado, ele nao acharia o lugar.
+        //
+        // Nao deixar so a tabela com traços: traço em celula significa "esta celula
+        // e zero", e uma tabela inteira de traços significaria "todas as empresas
+        // gastaram zero" — que e diferente de "ninguem lancou nada".
+        <EmptyStatePanel
+          compact
+          eyebrow="Sem lancamento"
+          title={vazio || "Nada lancado nesta competencia."}
+          description="Assim que houver lancamento, ele aparece aqui por empresa e categoria, e o total desta tabela passa a bater com o card."
+          actionLabel="Ir para Despesas"
+          actionHref="/despesas"
+        />
       ) : (
       <div className="mtx-scroll">
         <table className="mtx-tbl">
@@ -568,7 +588,7 @@ export default function FinanceiroPage() {
               <>
                 <MatrizTabela m={fin.detalhamento.entrada} tom="in" />
                 <MatrizTabela m={fin.detalhamento.saida} tom="out" />
-                <MatrizTabela m={fin.detalhamento.despesa} tom="out" vazio={`Nenhuma despesa lancada em ${fin.selectedPeriod?.label ?? ""}.`} />
+                <MatrizTabela m={fin.detalhamento.despesa} tom="out" vazio={`Nenhuma despesa lancada na competencia ${fin.selectedPeriod?.label ?? ""}.`} />
                 <SaldoDasMatrizes
                   entrada={fin.detalhamento.entrada.total}
                   saida={fin.detalhamento.saida.total}

@@ -343,3 +343,49 @@ zerado fecha trivialmente).
 mutá-la para `"nao atribuido"` mantém o gate VERDE, porque não existe despesa de
 grupo no banco. Ela é uma trava POSICIONADA para quando a primeira aparecer, não uma
 prova de que o rótulo funciona. Está declarado no cabeçalho do próprio gate.
+
+---
+
+## 9. A matriz de despesa NUNCA some (26/08/2026)
+
+**Decisão do Diego.** Seção que aparece em alguns meses e some em outros cria
+comportamento inconsistente — quem olha não sabe se não há despesa ou se a tela
+quebrou. E há o caso prático: quando houver lançamento na competência corrente, o
+Diego precisa ter ONDE conferir depois de lançar; se a seção só nascesse com dado,
+ele não acharia o lugar.
+
+Estado vazio com `EmptyStatePanel` (`components/EmptyStatePanel.tsx`, o do kit),
+`compact`, com ação para `/despesas`:
+
+> **Sem lançamento** · Nenhuma despesa lançada na competência ago/26.
+> Assim que houver lançamento, ele aparece aqui por empresa e categoria, e o total
+> desta tabela passa a bater com o card. → *Ir para Despesas*
+
+**Não é tabela com traços.** Traço em célula significa "esta célula é zero"; uma
+tabela inteira de traços diria "todas as empresas gastaram zero", que é diferente de
+"ninguém lançou nada". A linha de conferência continua visível no vazio
+(`0,00 · card 0,00 · delta 0,00`) — é ela que prova que o vazio é vazio de verdade.
+
+CORREÇÃO DE REGISTRO: em mensagem anterior eu disse que não havia `Table` no kit.
+**Havia** — `components/ui/Table.tsx` exporta `Table` e `Num`. A `MatrizTabela`
+segue própria porque precisa de coluna sticky, cabeçalho clicável e rodapé de
+conferência, mas a afirmação estava errada.
+
+### As três competências, medidas
+
+```
+CAIXA ago/26   entrada 318.596,26 | saida 139.451,16 | despesa VAZIA (0,00)
+               saldo 318.596,26 - 139.451,16 - 0,00 = 179.145,10 = card [FECHA]
+
+CAIXA jun/26   entrada 249.566,80 | saida 105.773,30 | despesa VAZIA (0,00)
+               saldo 249.566,80 - 105.773,30 - 0,00 = 143.793,50 = card [FECHA]
+
+CAIXA mai/26   entrada 238.727,01 | saida  93.540,18 | despesa 34.132,28
+               Folha 26.974,35 · Pro-labore 5.000,00 · FGTS 2.157,93
+               saldo 238.727,01 - 93.540,18 - 34.132,28 = 111.054,55 = card [FECHA]
+```
+
+**jun/26 está VAZIO de despesa** — 0 linhas, R$ 0,00. Não há R$ 55 mil em junho; a
+tabela `financial_expenses` tem 5 linhas no total e todas são de **mai/26**
+(contagem exata, medida três vezes). A competência a conferir com dado real é
+**mai/26**, não jun/26.
