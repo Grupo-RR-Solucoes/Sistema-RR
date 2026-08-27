@@ -1,0 +1,438 @@
+# Cancelamento com dono automático — ADS
+
+Frente medida e implementada em 27/08/2026, ramificação `feat/cancelamento-dono`
+(a partir de `af3c19e`). Scripts em `scripts/diag-canc-*.cjs` (SOMENTE SELECT).
+
+## A frente NÃO é sobre R$ 1,40
+
+O valor em jogo hoje é um cancelamento de R$ 1,40. **O objetivo é eliminar o passo
+manual**: até aqui, quem descobria de quem era o contrato cancelado e abatia na
+planilha era o financeiro, à mão, todo mês. A rotina automática assume esse passo.
+
+---
+
+## 1. A FILA — fechada, e o motivo REAL
+
+As duas operações de jun/2026 (`209867885` R$ 20,70 e `209621970` R$ 20,83) **não
+serão processadas**. Medido:
+
+```
+209867885 : 0 linhas em daily_production_records, cms_promoter_entries,
+            bbts_prt_parcelas e monthly_closing_entries
+209621970 : 0 linhas em todas as quatro
+```
+
+**O motivo NÃO é "o cms já traz o desconto embutido".** Isso foi testado e é falso —
+ver seção 3. O motivo é mais forte: **essas operações nunca existiram como produção**,
+então o promotor **nunca recebeu comissão por elas** e não há o que estornar.
+Debitá-las seria cobrança indevida.
+
+Além disso, elas são da ADS (`source_kind = DAILY_CANCEL`), não do RR — o cms nem
+se aplica a elas.
+
+Ficam em `promoter_debit_assignments` com `status = PENDING`. **O gate trava que elas
+continuem lá** — se algum dia virarem débito, é regressão.
+
+## 2. O que foi implementado
+
+`lib/debitInsuranceResolver.ts`:
+
+- **`resolveAdsCancelDebits` ganhou a cascata do RR.** Até 27/08 olhava SÓ
+  `daily.assigned_promoter_id`. Agora: fila-atribuída → `daily.assigned` → 
+  `cms.promoter_id` → `j_keys` INDIVIDUAL. A ordem importa: o `daily` é o dado VIVO
+  (reatribuição manual mora nele); o `cms` é seed histórico.
+- **`promotorInativoNaData()`** — helper exportado com a regra do critério.
+
+Efeito medido (dry-run, sem gravar):
+
+```
+jul/2026 — 211689509 (R$ 1,40)  -> BRUNA ALVES, resolvedVia="cms"   [sai da fila]
+jun/2026 — as 2 sem producao    -> 0 debitos, 2 na fila             [continua]
+jul/2026 — as 2 ja debitadas    -> MARIA LETICIA, resolvedVia="daily"
+```
+
+**O R$ 1,40 é gravado no próximo import do fechamento da ADS** — não escrevi no banco.
+
+## 3. O cms NÃO traz o desconto embutido — provado por 4 ângulos
+
+Isto foi afirmado duas vezes ao longo da frente e é **falso**. Medido:
+
+```
+promoter_credit  < 0 : 0 de 3.045 linhas
+promoter_insurance < 0: 0 de 3.045
+chaves do raw_payload com cara de estorno/desconto: NENHUMA
+  (as 18 sao de VENDA: COMISSAO PF, COMISSAO SEGURO, VALOR BRUTO, % PENETRACAO...)
+os 141 contratos cancelados em jan/26 presentes no cms: 0
+PMR do cms x soma CRUA do cms: jan delta 0,02 | mai delta 0,05 (arredondamento)
+```
+
+**Consequência:** as competências `source='cms'` mostram a comissão **BRUTA**. A
+desatualização é real: **76 casos, R$ 1.175,30** em 2026, concentrada em jan-mai
+(0,02% a 0,32% da comissão de cada competência).
+
+**DÍVIDA ACEITA, não problema resolvido.** O backfill foi descartado por mérito — o
+dinheiro já saiu certo no fluxo manual, o valor é irrisório em proporção, e lançar
+retroativo mexeria em números de caixa de meses fechados. Mas o histórico **segue
+mostrando comissão maior que a real**, e isso não deve ser reaberto como "já está
+redondo".
+
+## 4. O promotor inativo — VALIDA E PARA (opção (a))
+
+**A regra:** vale o estado do promotor **quando o débito chega**, não quando o
+cancelamento ocorreu. Desativado em maio + débito em junho → **empresa**.
+
+**O campo é `promoters.dismissed_at`** (com data, preenchido em 14/14 dos inativos),
+ao lado de `active` e `status`. **NÃO é `is_active`** — essa coluna não existe. E
+**não é `app_users.active`**: essa tabela tem 7 linhas para 72 promotores, só 1
+ligada a promotor, e nenhuma coluna de data — ela corta LOGIN, não vínculo.
+
+**ONDE CAI O DÉBITO DA EMPRESA: ainda não há lugar, e isso é DELIBERADO.**
+`promoter_debits.promoter_id` é NOT NULL (`20260709_000001:35`). O caminho previsto é
+`promoter_discounts.apply_to_company = true` — campo que já existe e que o
+`payableByCompetencia` já respeita, hoje `false` em 74/74.
+
+**Por que não foi implementado:** ZERO casos. Os 33 débitos AUTO apontam todos para
+promotor ativo, e **13 dos 14 inativos não têm chave J** — o caminho que os alcançaria
+mal existe. Criar estrutura para hipótese é dívida gratuita.
+
+**Quando o primeiro caso aparecer**, `promotorInativoNaData()` devolve `true` e o
+resolvedor **sobe um aviso** dizendo que o débito deveria ser da empresa e que é hora
+de criar o lugar. Até lá ele lança no promotor para não perder o rastro.
+
+## 5. O gate — `scripts/ads_cancelamento_dono_gate.cjs` (needs-db)
+
+| mutação | resultado |
+|---|---|
+| tirar o degrau `cms` da cascata | **VERMELHO** — o R$ 1,40 volta para a fila |
+| inverter o critério do inativo | **VERMELHO** |
+| resolvedor ganancioso (aceita MASTER) | **VERDE — não pega** |
+| revertido | VERDE |
+
+**LIMITE DECLARADO no cabeçalho do gate:** a asserção "não inventa dono" **não pega**
+um resolvedor que aceite chave MASTER, porque as duas operações de junho não têm
+chave J nenhuma e o ramo da chave nem executa. Cobrir isso exigiria um caso com chave
+MASTER não resolvido antes pelo `cms` — não existe no dado de hoje.
+
+**VACUIDADE DECLARADA:** o critério do inativo é exercitado com casos sintéticos; o
+caminho de PRODUÇÃO não dispara hoje (0 casos).
+
+## 6. Fora do escopo
+
+**Cancelamento de PROPOSTA (crédito) não existe em lugar nenhum.** Os dois
+resolvedores tratam só seguro. Se a regra é "proposta ou seguro", essa metade é
+frente própria e maior que esta.
+
+---
+
+## 7. A DECISÃO SOBRE O DÉBITO DA EMPRESA — opção (a), com as três registradas
+
+**Decisão do Diego, 27/08/2026: (a) validar e parar com aviso.**
+
+Motivo: hoje há ZERO casos reais na fila de cancelamento. Não é adiar problema — é
+reconhecer que não há problema para resolver.
+
+### O comportamento implementado
+
+Promotor **ATIVO** → débito em `promoter_debits` com `company_id` da ADS, idempotente.
+
+Promotor **INATIVO na data do débito** → **NÃO lança**. O item vai para a fila com
+motivo explícito e sobe aviso em alto e bom som:
+
+```
+motivo: "promotor inativo desde 2026-06-13, debito e da empresa,
+         sem estrutura para receber"
+
+aviso : "PENDENTE — operacao 212540080 (1): o dono e ANA CLARA, INATIVO desde
+         2026-06-13. Pela regra o debito e da EMPRESA, e NAO HA estrutura para
+         debito de empresa. O item NAO foi lancado e ficou na fila. PRIMEIRO CASO:
+         decidir a estrutura (ver as tres opcoes em promotorInativoNaData)."
+```
+
+### As três opções, com custo — para quem decidir não começar do zero
+
+Estão registradas em comentário em `lib/debitInsuranceResolver.ts`, junto de
+`promotorInativoNaData()`:
+
+| opção | o que é | custo |
+|---|---|---|
+| **(a) validar e parar** *(escolhida)* | o item não vira débito; fila + aviso | o valor fica pendente até alguém decidir. Nada se perde, nada se lança errado. **Reversível**: havendo estrutura, a fila é reprocessada |
+| **(b) linha "Empresa" em `promoters`** | promotor sintético por empresa | **ALTO E DIFUSO** — vira dado sujo em TODA consulta que conta promotores, calcula penetração ou monta ranking. 67 viram 68, e um não é pessoa. Espalha por /promotores, /equipe, /projecao e pelo PMR |
+| **(c) `promoter_id` nullable** | migration tornando a coluna opcional | exige migration **e** quebra todo leitor que assume não-nulo. Mais correto que (b), mais caro que (a) |
+
+**Caminho mais barato se (c) for escolhida:** `promoter_discounts.apply_to_company`
+já existe e o `payableByCompetencia` já o respeita — resolve o lado do REPASSE sem
+migration. Falta só onde ancorar o débito em si.
+
+**Quando o primeiro caso aparecer, a decisão tem de ser CONSCIENTE, não de passagem.**
+É por isso que o item para em vez de ser lançado em quem já saiu.
+
+### O gate — caso REAL, não sintético
+
+`212540080` é um contrato da ADS cujo dono (**ANA CLARA**) saiu em **13/06/2026**.
+Um cancelamento dele hoje chega depois da saída. Há 4 contratos assim na ADS e 57 no
+cms — o caso não é hipotético, só ainda não foi cancelado.
+
+| mutação | resultado |
+|---|---|
+| lança mesmo assim no inativo | **VERMELHO — 3 falhas** |
+| para, mas em SILÊNCIO (sem motivo e sem aviso) | **VERMELHO — 2 falhas** |
+| tirar o degrau `cms` da cascata | **VERMELHO** |
+| inverter o critério do inativo | **VERMELHO** |
+| revertido | VERDE |
+
+Os **dois modos de falhar em silêncio** estão travados: lançar em quem não tem mais
+repasse de onde descontar, e sumir com o item sem ninguém saber que existiu. Mais um
+CONTROLE: o promotor ativo tem de continuar lançando, senão a regra teria virado
+trava geral.
+
+---
+
+## 8. O R$ 1,40 GRAVADO — e o que a investigação corrigiu (27/08)
+
+### Onde ele estava: em lugar nenhum
+
+```
+promoter_debits com total_amount = 1,40      : 0
+promoter_debit_sources com operacao 211689509: 0
+ainda na FILA (PENDING, promoter_id NULO)    : 1
+```
+
+**A rotina não tinha rodado.** Não foi recálculo apagando: `/api/calculate/monthly`
+**não toca** `promoter_debits` nem `promoter_discounts` (grep = 0 ocorrências). Ele
+escreve em `promoter_monthly_results` e mais nada de débito.
+
+O débito **já era** gravado em `promoter_debits` desde sempre — a rotina nunca gravou
+em outro lugar. E `promoterAnalytics.ts:1833` filtra por `promoter_id + ano + mes`,
+**sem `company_id`**: um débito da ADS apareceria normalmente na tela do promotor.
+Não havia débito volátil nem débito escondido por empresa.
+
+### A ARMADILHA que quase destruiu dado
+
+A gravação é *delete-and-replace* escopada a `(kind=AUTO, CANCELAMENTO_SEGURO,
+start_year, start_month, company_id=ADS)`. **Chamar a rotina com um SUBCONJUNTO
+apaga o que ficou de fora.** Rodar só com o R$ 1,40 teria deletado os R$ 48,05 da
+MARIA LETICIA.
+
+**A chamada correta passa o conjunto COMPLETO** de linhas `tratamento=debito` do PDF
+da competência — que é o que o importador faz. Qualquer script de reprocessamento
+tem de fazer o mesmo.
+
+### O resultado
+
+```
+ANTES  : 2 debitos, Sigma 48,05  | fila PENDING: 3
+DEPOIS : 3 debitos, Sigma 49,45  | BRUNA ALVES 1,40 (via cms) + MARIA LETICIA 24,05 + 24,00
+```
+
+### Sobrevive ao recálculo — provado por execução
+
+```
+reconsolidarCompetenciaFechada(2026-07) -> ran=true regime=fechamento
+DEPOIS DO RECALCULO: 3 debitos, Sigma 49,45   [intactos]
+```
+
+### As duas telas concordam
+
+```
+/financeiro (matriz, caixa ago/26): linha ADS descontos = -49,45
+/promotores BRUNA ALVES jul/26   : discountRows = 1 -> CANCELAMENTO_SEGURO 1,40
+conferencia da matriz: 139.405,05 · card 139.405,05 · delta 0,00
+```
+
+Os R$ 48,05 viraram **R$ 49,45** — antes NÃO incluíam o R$ 1,40; agora incluem.
+
+### RESÍDUO CONHECIDO — a fila não é limpa
+
+```
+fila DAILY_CANCEL PENDING: 3 -> 209867885(20,70), 209621970(20,83), 211689509(1,40)
+```
+
+O `211689509` **continua marcado PENDING** em `promoter_debit_assignments` mesmo já
+tendo virado débito. A rotina cria entradas na fila para o que não resolve, mas
+**não fecha** as que passou a resolver. Hoje é cosmético (a fila é lista de trabalho,
+não fonte de cálculo), mas confunde quem a usa para saber o que falta. **Nomeado,
+não consertado.**
+
+---
+
+## 9. A FILA MENTIA — reconciliação implementada (27/08)
+
+### O sintoma
+
+A tela `/promotores` mostrava `211689509` como *"estorno aguardando atribuição"*,
+com seletor de promotor, **mesmo já tendo virado débito**:
+
+```
+promoter_debit_sources p/ 211689509: 1  resolved_via=cms
+debito: BRUNA ALVES | 1,40 | ACTIVE
+E na fila: 2026-07 | DAILY_CANCEL | 211689509 | PENDING | promoter_id NULO
+```
+
+**Os dois ao mesmo tempo.** O casamento funcionou; o que faltou foi fechar a fila.
+
+### A causa
+
+Os dois resolvedores **inserem** pendência para o que não resolvem, mas **não
+existia caminho que retirasse** a linha de quem passou a ser resolvido num run
+posterior. O *delete-and-replace* cobre `promoter_debits`;
+`promoter_debit_assignments` ficava de fora dele.
+
+### O conserto
+
+Nos DOIS resolvedores, antes do laço que popula a fila: as operações resolvidas
+neste run têm a linha `PENDING` **removida**. Não se marca "resolvido" — remove-se,
+porque a fila é a lista do que FALTA, e o rastro de quem pagou vive em
+`promoter_debit_sources`. **Atribuição manual (`status != PENDING`) é preservada.**
+
+### E o RR ganhou a cascata `cms` + o critério do inativo
+
+O degrau que a ADS recebeu em 27/08 faltava no RR pelo mesmo motivo: a cascata pegava
+a **chave J** do `cms` e parava, porque nessas operações a chave é MASTER — mas a
+mesma linha carrega `promoter_id` preenchido, lido no select e nunca usado.
+
+### Resultado medido
+
+```
+RR jun/2026: 17 debitos resolvidos | fila: 1 (ANA CLARA, inativa -> PARA com aviso)
+RR jul/2026: 16 debitos resolvidos | fila: 1 (ANA CLARA, inativa -> PARA com aviso)
+ADS jun    :  0 debitos            | fila: 2 (sem fonte nenhuma)
+ADS jul    :  3 debitos            | fila: 0
+
+A FILA: de 7 para 4 linhas
+  2026-06 | CLOSING_INSURANCE | 208875852 | 2,03  <- ANA CLARA inativa
+  2026-06 | DAILY_CANCEL      | 209867885 | 20,70 <- sem fonte
+  2026-06 | DAILY_CANCEL      | 209621970 | 20,83 <- sem fonte
+  2026-07 | CLOSING_INSURANCE | 211780610 | 2,03  <- ANA CLARA inativa
+```
+
+**Os 4 que sobraram são os corretos**: 2 sem origem possível e 2 de promotora
+inativa, que param com aviso por decisão.
+
+### Sobrevive ao recálculo
+
+```
+reconsolidarCompetenciaFechada(2026-07) -> ran=true
+DEPOIS: promoter_debits ADS jul = 3, Sigma 49,45   [intactos]
+        211689509 na fila? NAO
+```
+
+### As telas
+
+```
+ALDALENE      | RR ALAGOAS 3 | final=4.615,63 | desconto=0,00  | liquido=4.615,63
+BRUNA ALVES   | ADS          | final=2.361,72 | desconto=1,40  | liquido=2.360,32
+MARIA LETICIA | RR ALAGOAS 3 | final=  406,66 | desconto=48,05 | liquido=  358,61
+/financeiro ago/26: ADS descontos=-49,45 | conferencia delta 0,00
+```
+
+**O R$ 1,40 é da BRUNA ALVES**, não da Aldalene — o contrato `211689509` é dela no
+`cms` (`j_key JJ552710`, competência 2026-05). A Aldalene não tem linha de PMR na ADS
+em competência alguma, e seu único débito é de **junho** (R$ 28,01).
+
+---
+
+## A PREMISSA QUE TRAVOU A FRENTE (27/08/2026)
+
+Durante a tarde inteira a frente ficou parada numa tese: **"no RR o cms já traz o
+desconto embutido, então lançar débito lá subtrai duas vezes."** A tese era do
+**Diego**, foi afirmada **sem verificação**, e chegou a virar ordem de reverter 28
+débitos. O registro fica aqui porque o custo não foi o dado — foi o tempo, e a
+reversão teria sido o erro.
+
+**A tese não sobreviveu à medição.** Diego mesmo a derrubou ao propor o teste
+decisivo — comparar o PMR contra o líquido do cms para um promotor concreto.
+
+### O que a medição mostrou
+
+```
+CONSULTA: .from("cms_promoter_entries").select("prod_year, prod_month")  [3.045 linhas]
+  2026-01: 676 | 2026-02: 949 | 2026-03: 775 | 2026-05: 645
+```
+
+**O cms não cobre junho nem julho** — as duas competências dos 36 débitos. Não há
+segunda fonte onde o desconto pudesse estar embutido. E onde o cms existe, ele não
+traz estorno nenhum:
+
+```
+promoter_credit    < 0 : 0     MENOR da tabela: 0,00
+promoter_insurance < 0 : 0     MENOR da tabela: 0,00
+```
+
+### O caso concreto que fechou a questão
+
+```
+JARLES MARLON DE OLIVEIRA, jun/2026
+  (a) PMR: prod 4.105,38 + seguro 1,77 + consorcio 289,48 = FINAL 4.396,63
+      discount_value = 0,00 | residuo (final - parcelas) = 0,00
+  (b) estorno dele na aba "Seguro" do fechamento = 320,04
+```
+
+Os 320,04 **não estão subtraídos em lugar nenhum**. Pelo critério do próprio Diego
+("se (a) > (b), o débito é legítimo"), **as 36 ficam**.
+
+### A causa
+
+Não foi mudança de entendimento nem falta de guarda no código: foi **afirmação sem
+consulta**, repetida por seis rodadas contra medições que já a contradiziam. A regra
+que a frente já carregava — *todo número vem com o comando que o produziu* — vale
+para quem pede, não só para quem executa.
+
+---
+
+## O MECANISMO REAL DE DUPLICIDADE (existe, e está a uma linha de nascer)
+
+A medição que derrubou a tese revelou um risco verdadeiro. Os estornos **existem**
+como linhas negativas no fechamento:
+
+```
+CONSULTA: .eq("year",2026).eq("month",6).eq("entry_type","INSURANCE").eq("sheet_name","Seguro").lt("commission_value",0)
+SAIDA: 30 linhas | SOMA = -901,24
+   a rotina lancou em jun/26 = -899,21
+   diferenca: 2,03  <- exatamente o item da ANA CLARA que a regra do inativo segurou
+```
+
+O que impede a dupla contagem hoje é **uma linha**:
+
+```
+lib/closingPromoterBase.ts:160     .eq("entry_type", "CASH")
+```
+
+Junho tem `{"CASH":707, "INSURANCE":224, ...}`. O consolidador do PMR lê só CASH, então
+as 224 INSURANCE nunca chegam ao promotor. Varredura de **todos** os consumidores de
+`monthly_closing_entries` confirmou: o **único** leitor da aba `Seguro` é a própria
+rotina (`debitInsuranceResolver.ts:184`); `remuneracaoLideranca.ts:312` aceita
+INSURANCE só quando a aba é `A Vista`.
+
+### As duas proteções instaladas
+
+**1. `scripts/estorno_sem_leitor_gate.cjs`** (registrado em `run_all_gates.cjs`,
+faixa `needs-db`, 1,1s). Varre `lib/` e `app/` atrás de qualquer consumidor novo que
+leia `entry_type='INSURANCE'` sem excluir a aba, exige que o filtro CASH continue no
+consolidador, e confere no banco que a aba não está vazia (senão passaria por
+vacuidade).
+
+- **Provado por mutação:** com um leitor que não exclui, `exit=1`; sem ele, `exit=0`.
+- **Falso positivo corrigido na 1ª execução:** `app/api/promotores/route.ts` usa
+  `"INSURANCE"` como `agreement_type`. O detector passou a exigir a amarra com
+  `entry_type`.
+- **Armadilha registrada:** `process.exit()` com o cliente Supabase de handle aberto
+  estoura o libuv no Windows e o runner recebe `exit 3221226505` — gate VERMELHO com
+  todas as asserções verdes. Usar `process.exitCode`.
+- **Limite declarado:** o gate lê TEXTO. Um filtro montado por variável escapa.
+
+**2. Trava `competenciaConsolidadaPorCms`** nos dois resolvedores: recusa competência
+cujo PMR tenha `source='cms'`. Medido:
+
+```
+2026-05 | PMR source=cms? SIM | RECUSADO? SIM | debitos: 0
+2026-06 | PMR source=cms? nao | RECUSADO? nao | debitos: 17
+2026-07 | PMR source=cms? nao | RECUSADO? nao | debitos: 16
+```
+
+Recusa **0 dos 36** hoje. É trava de futuro — para quando 2026-05 ou anterior for
+reprocessado.
+
+### Dívida nomeada (não é desta frente)
+
+A faixa `--db` do runner estourou o teto: **216,9s de 90s**. O gate novo custa 1,1s;
+o dominante é `detalhamento por produto` com **92,6s**. Fica registrado, não tratado.

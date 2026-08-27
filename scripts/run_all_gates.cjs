@@ -49,6 +49,26 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/estorno_sem_leitor_gate.cjs",
+    nome: "os estornos da aba Seguro tem UM leitor so (nao duplicam)",
+    modo: "needs-db",
+    motivo:
+      "a nao-duplicidade do desconto de cancelamento depende de UMA linha de " +
+      "filtro (closingPromoterBase.ts:160, .eq entry_type CASH). O gate varre lib/ " +
+      "e app/ atras de qualquer consumidor novo que leia entry_type INSURANCE da " +
+      "aba Seguro, e confere no banco que a aba nao esta vazia (senao passaria por " +
+      "vacuidade). Provado por mutacao em 27/08/2026",
+  },
+  {
+    arquivo: "scripts/ads_cancelamento_dono_gate.cjs",
+    nome: "cancelamento da ADS: casa o dono, nao duplica, nao invade o RR",
+    modo: "needs-db",
+    motivo:
+      "roda resolveAdsCancelDebits real em dryRun sobre 3 casos de PRODUCAO: o que " +
+      "tem dono no cms, os 2 que nao existem em fonte nenhuma, e a idempotencia. " +
+      "Nenhuma constante congelada. createClient, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/financeiro_matriz_fecha_gate.cjs",
     nome: "a matriz do Financeiro fecha com os cards, nos dois lados",
     modo: "needs-db",
