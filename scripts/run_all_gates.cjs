@@ -49,6 +49,15 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/ads_cancelamento_dono_gate.cjs",
+    nome: "cancelamento da ADS: casa o dono, nao duplica, nao invade o RR",
+    modo: "needs-db",
+    motivo:
+      "roda resolveAdsCancelDebits real em dryRun sobre 3 casos de PRODUCAO: o que " +
+      "tem dono no cms, os 2 que nao existem em fonte nenhuma, e a idempotencia. " +
+      "Nenhuma constante congelada. createClient, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/financeiro_matriz_fecha_gate.cjs",
     nome: "a matriz do Financeiro fecha com os cards, nos dois lados",
     modo: "needs-db",

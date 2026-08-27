@@ -97,6 +97,46 @@ export type InsuranceDebitPlan = {
  * da competência a partir do fechamento. READ das fontes + WRITE em
  * promoter_debits / promoter_debit_sources / promoter_discounts / _assignments.
  */
+/**
+ * CRITERIO DO PROMOTOR INATIVO — decisao do Diego, 27/08/2026.
+ *
+ * A REGRA: vale o estado do promotor QUANDO O DEBITO CHEGA, nao quando o
+ * cancelamento ocorreu. Se ele foi desativado em maio e o debito chega em junho, o
+ * debito e da EMPRESA — nao adianta lancar contra quem nao tem mais repasse de onde
+ * descontar.
+ *
+ * O CAMPO e `promoters.dismissed_at` (com DATA, preenchido em 14/14 dos inativos),
+ * ao lado de `active` e `status`. NAO e `is_active` — essa coluna nao existe. E NAO
+ * e `app_users.active`: essa tabela tem 7 linhas para 72 promotores, so 1 ligada a
+ * promotor, e nenhuma coluna de data — ela corta LOGIN, nao vinculo.
+ *
+ * ONDE CAI O DEBITO DA EMPRESA: ainda NAO HA LUGAR, e isso e DELIBERADO.
+ * `promoter_debits.promoter_id` e NOT NULL (migration 20260709_000001:35), entao
+ * debito sem promotor nao entra la. O caminho previsto e
+ * `promoter_discounts.apply_to_company = true`, campo que ja existe e que o
+ * payableByCompetencia ja respeita (lib/financialAnalytics.ts: "debito da EMPRESA
+ * nao abate o repasse") — hoje false em 74/74.
+ *
+ * POR QUE NAO ESTA IMPLEMENTADO: medido em 27/08/2026, ZERO casos. Os 33 debitos
+ * AUTO existentes apontam todos para promotor ativo, e 13 dos 14 inativos nao tem
+ * chave J — o caminho que os alcancaria mal existe. Criar estrutura para hipotese e
+ * divida gratuita. QUANDO O PRIMEIRO CASO APARECER, esta funcao devolve `true` e o
+ * chamador tem de decidir o lugar; ate la ela serve de DETECTOR, e o aviso sobe no
+ * retorno em vez de o debito cair silenciosamente em quem ja saiu.
+ */
+export function promotorInativoNaData(
+  promotor: { active?: boolean | null; dismissed_at?: string | null } | undefined,
+  dataDoDebito: string
+): boolean {
+  if (!promotor) return false;
+  if (promotor.active !== false) return false;
+  // Sem data de saida nao da para afirmar que ja estava fora QUANDO o debito chegou.
+  // Trata como ATIVO: errar para o lado de manter o rastro no promotor e reversivel;
+  // mandar para a empresa por suposicao, nao.
+  if (!promotor.dismissed_at) return false;
+  return String(promotor.dismissed_at).slice(0, 10) < String(dataDoDebito).slice(0, 10);
+}
+
 export async function resolveInsuranceDebits(
   supabase: SupabaseLike,
   params: { year: number; month: number; dryRun?: boolean; createdBy?: string | null }
@@ -367,13 +407,34 @@ export async function resolveAdsCancelDebits(
   const ops = debitosRaw.map((d) => String(d.contrato).trim());
   const daily = ops.length
     ? await pagedOrdered<any>(() =>
-        supabase.from("daily_production_records").select("id, proposal_number, assigned_promoter_id").eq("company_id", BBTS_COMPANY_ID).in("proposal_number", ops)
+        supabase.from("daily_production_records").select("id, proposal_number, j_key, assigned_promoter_id").eq("company_id", BBTS_COMPANY_ID).in("proposal_number", ops)
       )
     : [];
   const dailyByOp = new Map<string, any>();
   for (const e of daily) if (!dailyByOp.has(String(e.proposal_number))) dailyByOp.set(String(e.proposal_number), e);
-  const { data: proms } = await supabase.from("promoters").select("id, name");
+
+  // CASCATA DA ADS — ate 27/08/2026 ela olhava SO `daily.assigned_promoter_id`,
+  // enquanto o RR tinha tres niveis. Consequencia medida: o cancelamento 211689509
+  // (R$ 1,40, jul/2026) ficou na fila mesmo tendo dono — a producao dele esta em
+  // `cms_promoter_entries` com `promoter_id` preenchido (BRUNA ALVES), e ninguem
+  // olhava la. Agora olha.
+  //
+  // A ORDEM importa: `daily` primeiro porque e o dado VIVO da ADS (reatribuicao
+  // manual mora nele); `cms` depois, porque e o seed historico e nao acompanha
+  // reatribuicao posterior.
+  const cms = ops.length
+    ? await pagedOrdered<any>(() =>
+        supabase.from("cms_promoter_entries").select("contract_number, j_key, promoter_id").in("contract_number", ops)
+      )
+    : [];
+  const cmsByOp = new Map<string, any>();
+  for (const e of cms) if (!cmsByOp.has(String(e.contract_number))) cmsByOp.set(String(e.contract_number), e);
+  const { data: jkeys } = await supabase.from("j_keys").select("j_key, promoter_id, key_type");
+  const jkMap = new Map((jkeys || []).map((k: any) => [String(k.j_key).toUpperCase(), k]));
+
+  const { data: proms } = await supabase.from("promoters").select("id, name, active, dismissed_at");
   const nameById = new Map((proms || []).map((p: any) => [p.id, p.name]));
+  const promById = new Map((proms || []).map((p: any) => [p.id, p]));
   const { data: assigns } = await supabase.from("promoter_debit_assignments").select("operation, promoter_id, status").eq("year", year).eq("month", month);
   const assignByOp = new Map((assigns || []).map((a: any) => [String(a.operation), a]));
 
@@ -390,8 +451,40 @@ export async function resolveAdsCancelDebits(
     let promoterId: string | null = null;
     let resolvedVia = "";
     const manual = assignByOp.get(op);
-    if (manual && manual.status === "ASSIGNED" && manual.promoter_id) { promoterId = manual.promoter_id; resolvedVia = "fila-atribuida"; }
-    else if (dailyByOp.get(op)?.assigned_promoter_id) { promoterId = dailyByOp.get(op).assigned_promoter_id; resolvedVia = "daily"; }
+    if (manual && manual.status === "ASSIGNED" && manual.promoter_id) {
+      promoterId = manual.promoter_id;
+      resolvedVia = "fila-atribuida";
+    } else if (dailyByOp.get(op)?.assigned_promoter_id) {
+      promoterId = dailyByOp.get(op).assigned_promoter_id;
+      resolvedVia = "daily";
+    } else if (cmsByOp.get(op)?.promoter_id) {
+      promoterId = cmsByOp.get(op).promoter_id;
+      resolvedVia = "cms";
+    } else {
+      // ultimo recurso: chave J INDIVIDUAL. MASTER nao resolve (aponta para a chave
+      // da empresa, nao para quem vendeu) — por isso o key_type e conferido.
+      const cj = dailyByOp.get(op)?.j_key ?? cmsByOp.get(op)?.j_key ?? null;
+      const info = cj ? jkMap.get(String(cj).toUpperCase()) : undefined;
+      if (info && info.key_type === "INDIVIDUAL" && info.promoter_id) {
+        promoterId = info.promoter_id;
+        resolvedVia = "j_key-individual";
+      }
+    }
+
+    // CRITERIO DO INATIVO. Hoje NENHUM caso dispara (medido: os 33 debitos AUTO
+    // apontam para promotor ativo). Fica como DETECTOR: em vez de o debito cair em
+    // silencio sobre quem ja saiu, ele vira aviso e o chamador decide.
+    if (promoterId) {
+      const dataDoDebito = new Date().toISOString().slice(0, 10);
+      if (promotorInativoNaData(promById.get(promoterId), dataDoDebito)) {
+        avisos.push(
+          `Operacao ${op}: o promotor ${nameById.get(promoterId) ?? promoterId} esta INATIVO desde ` +
+            `${promById.get(promoterId)?.dismissed_at} — pela regra o debito de ${estorno} e da EMPRESA, ` +
+            `mas ainda NAO HA estrutura para debito de empresa (promoter_debits.promoter_id e NOT NULL). ` +
+            `Lancado no promotor para nao perder o rastro. PRIMEIRO CASO: hora de criar o lugar.`
+        );
+      }
+    }
     const rec: ResolvedOperation = {
       operation: op,
       estorno,
