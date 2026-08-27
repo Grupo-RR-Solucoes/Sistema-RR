@@ -76,7 +76,7 @@ retroativo mexeria em números de caixa de meses fechados. Mas o histórico **se
 mostrando comissão maior que a real**, e isso não deve ser reaberto como "já está
 redondo".
 
-## 4. O promotor inativo — regra escrita, estrutura NÃO criada
+## 4. O promotor inativo — VALIDA E PARA (opção (a))
 
 **A regra:** vale o estado do promotor **quando o débito chega**, não quando o
 cancelamento ocorreu. Desativado em maio + débito em junho → **empresa**.
@@ -121,3 +121,66 @@ caminho de PRODUÇÃO não dispara hoje (0 casos).
 **Cancelamento de PROPOSTA (crédito) não existe em lugar nenhum.** Os dois
 resolvedores tratam só seguro. Se a regra é "proposta ou seguro", essa metade é
 frente própria e maior que esta.
+
+---
+
+## 7. A DECISÃO SOBRE O DÉBITO DA EMPRESA — opção (a), com as três registradas
+
+**Decisão do Diego, 27/08/2026: (a) validar e parar com aviso.**
+
+Motivo: hoje há ZERO casos reais na fila de cancelamento. Não é adiar problema — é
+reconhecer que não há problema para resolver.
+
+### O comportamento implementado
+
+Promotor **ATIVO** → débito em `promoter_debits` com `company_id` da ADS, idempotente.
+
+Promotor **INATIVO na data do débito** → **NÃO lança**. O item vai para a fila com
+motivo explícito e sobe aviso em alto e bom som:
+
+```
+motivo: "promotor inativo desde 2026-06-13, debito e da empresa,
+         sem estrutura para receber"
+
+aviso : "PENDENTE — operacao 212540080 (1): o dono e ANA CLARA, INATIVO desde
+         2026-06-13. Pela regra o debito e da EMPRESA, e NAO HA estrutura para
+         debito de empresa. O item NAO foi lancado e ficou na fila. PRIMEIRO CASO:
+         decidir a estrutura (ver as tres opcoes em promotorInativoNaData)."
+```
+
+### As três opções, com custo — para quem decidir não começar do zero
+
+Estão registradas em comentário em `lib/debitInsuranceResolver.ts`, junto de
+`promotorInativoNaData()`:
+
+| opção | o que é | custo |
+|---|---|---|
+| **(a) validar e parar** *(escolhida)* | o item não vira débito; fila + aviso | o valor fica pendente até alguém decidir. Nada se perde, nada se lança errado. **Reversível**: havendo estrutura, a fila é reprocessada |
+| **(b) linha "Empresa" em `promoters`** | promotor sintético por empresa | **ALTO E DIFUSO** — vira dado sujo em TODA consulta que conta promotores, calcula penetração ou monta ranking. 67 viram 68, e um não é pessoa. Espalha por /promotores, /equipe, /projecao e pelo PMR |
+| **(c) `promoter_id` nullable** | migration tornando a coluna opcional | exige migration **e** quebra todo leitor que assume não-nulo. Mais correto que (b), mais caro que (a) |
+
+**Caminho mais barato se (c) for escolhida:** `promoter_discounts.apply_to_company`
+já existe e o `payableByCompetencia` já o respeita — resolve o lado do REPASSE sem
+migration. Falta só onde ancorar o débito em si.
+
+**Quando o primeiro caso aparecer, a decisão tem de ser CONSCIENTE, não de passagem.**
+É por isso que o item para em vez de ser lançado em quem já saiu.
+
+### O gate — caso REAL, não sintético
+
+`212540080` é um contrato da ADS cujo dono (**ANA CLARA**) saiu em **13/06/2026**.
+Um cancelamento dele hoje chega depois da saída. Há 4 contratos assim na ADS e 57 no
+cms — o caso não é hipotético, só ainda não foi cancelado.
+
+| mutação | resultado |
+|---|---|
+| lança mesmo assim no inativo | **VERMELHO — 3 falhas** |
+| para, mas em SILÊNCIO (sem motivo e sem aviso) | **VERMELHO — 2 falhas** |
+| tirar o degrau `cms` da cascata | **VERMELHO** |
+| inverter o critério do inativo | **VERMELHO** |
+| revertido | VERDE |
+
+Os **dois modos de falhar em silêncio** estão travados: lançar em quem não tem mais
+repasse de onde descontar, e sumir com o item sem ninguém saber que existiu. Mais um
+CONTROLE: o promotor ativo tem de continuar lançando, senão a regra teria virado
+trava geral.

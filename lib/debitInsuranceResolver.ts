@@ -63,6 +63,8 @@ async function pagedOrdered<T = any>(build: () => any): Promise<T[]> {
 type SupabaseLike = SupabaseClient;
 
 export type ResolvedOperation = {
+  /** por que este item ficou pendente, quando ficou. Vazio = resolvido. */
+  motivo?: string;
   operation: string;
   estorno: number;              // |COMISSÃO|
   chaveJ: string | null;
@@ -110,19 +112,45 @@ export type InsuranceDebitPlan = {
  * e `app_users.active`: essa tabela tem 7 linhas para 72 promotores, so 1 ligada a
  * promotor, e nenhuma coluna de data — ela corta LOGIN, nao vinculo.
  *
- * ONDE CAI O DEBITO DA EMPRESA: ainda NAO HA LUGAR, e isso e DELIBERADO.
- * `promoter_debits.promoter_id` e NOT NULL (migration 20260709_000001:35), entao
- * debito sem promotor nao entra la. O caminho previsto e
- * `promoter_discounts.apply_to_company = true`, campo que ja existe e que o
- * payableByCompetencia ja respeita (lib/financialAnalytics.ts: "debito da EMPRESA
- * nao abate o repasse") — hoje false em 74/74.
+ * ONDE CAI O DEBITO DA EMPRESA: ainda NAO HA LUGAR, e isso e DECISAO, nao omissao.
  *
- * POR QUE NAO ESTA IMPLEMENTADO: medido em 27/08/2026, ZERO casos. Os 33 debitos
- * AUTO existentes apontam todos para promotor ativo, e 13 dos 14 inativos nao tem
- * chave J — o caminho que os alcancaria mal existe. Criar estrutura para hipotese e
- * divida gratuita. QUANDO O PRIMEIRO CASO APARECER, esta funcao devolve `true` e o
- * chamador tem de decidir o lugar; ate la ela serve de DETECTOR, e o aviso sobe no
- * retorno em vez de o debito cair silenciosamente em quem ja saiu.
+ * POR QUE NAO FOI CRIADO AGORA (decisao do Diego, 27/08/2026): ZERO casos reais.
+ * Os 33 debitos AUTO existentes apontam todos para promotor ATIVO, e 13 dos 14
+ * inativos nao tem chave J — o caminho que os alcancaria mal existe. Nao e adiar
+ * problema: e reconhecer que nao ha problema para resolver.
+ *
+ * ============================================================================
+ * AS TRES OPCOES, COM CUSTO, PARA QUEM DECIDIR NAO COMECAR DO ZERO
+ * ============================================================================
+ *
+ * (a) VALIDAR E PARAR COM AVISO   <-- ESCOLHIDA, e o que este arquivo faz
+ *     O item NAO vira debito. Vai para a fila com motivo explicito e sobe aviso.
+ *     CUSTO: o valor fica pendente ate alguem decidir. Nada se perde, nada se
+ *     lanca errado. E reversivel: no dia em que houver estrutura, a fila e
+ *     reprocessada.
+ *
+ * (b) LINHA "EMPRESA" EM promoters
+ *     Criar um promotor sintetico por empresa para receber esses debitos.
+ *     CUSTO ALTO E DIFUSO — foi o que descartou a opcao: essa linha vira DADO SUJO
+ *     em TODA consulta que conta promotores, calcula penetracao ou monta ranking.
+ *     67 viram 68, e um nao e pessoa. O estrago nao fica contido no modulo de
+ *     debito; espalha por /promotores, /equipe, /projecao e pelo PMR.
+ *
+ * (c) promoter_id NULLABLE em promoter_debits
+ *     Migration tornando a coluna opcional, e debito sem promotor.
+ *     CUSTO: exige migration E quebra todo leitor que hoje assume nao-nulo (sao
+ *     varios: o resolvedor, o agrupador por promotor, as telas de debito). Mais
+ *     correto conceitualmente que (b), mais caro que (a), e so se paga quando
+ *     houver volume que justifique.
+ *
+ * O CAMINHO MAIS BARATO se (c) for escolhida um dia:
+ * `promoter_discounts.apply_to_company = true` — campo que JA existe e que o
+ * payableByCompetencia JA respeita (lib/financialAnalytics.ts: "debito da EMPRESA
+ * nao abate o repasse"), hoje false em 74/74. Ele resolve o LADO DO REPASSE sem
+ * migration; o que falta e so onde ancorar o debito em si.
+ *
+ * QUANDO O PRIMEIRO CASO APARECER: a decisao tem de ser CONSCIENTE, nao de
+ * passagem. Por isso o item PARA aqui em vez de ser lancado em quem ja saiu.
  */
 export function promotorInativoNaData(
   promotor: { active?: boolean | null; dismissed_at?: string | null } | undefined,
@@ -471,23 +499,34 @@ export async function resolveAdsCancelDebits(
       }
     }
 
-    // CRITERIO DO INATIVO. Hoje NENHUM caso dispara (medido: os 33 debitos AUTO
-    // apontam para promotor ativo). Fica como DETECTOR: em vez de o debito cair em
-    // silencio sobre quem ja saiu, ele vira aviso e o chamador decide.
+    // CRITERIO DO INATIVO — VALIDA E PARA (opcao (a); ver o bloco de opcoes acima).
+    //
+    // O item NAO vira debito e NAO e lancado em quem ja saiu. Vai para a fila com
+    // motivo explicito, e o aviso sobe em alto e bom som. Silencio aqui seria o pior
+    // dos mundos: ou o debito cairia em quem nao tem mais repasse de onde descontar,
+    // ou sumiria sem ninguem saber que existiu.
+    let motivoPendencia: string | undefined;
     if (promoterId) {
       const dataDoDebito = new Date().toISOString().slice(0, 10);
-      if (promotorInativoNaData(promById.get(promoterId), dataDoDebito)) {
+      const p = promById.get(promoterId);
+      if (promotorInativoNaData(p, dataDoDebito)) {
+        const quem = nameById.get(promoterId) ?? promoterId;
+        motivoPendencia =
+          `promotor inativo desde ${p?.dismissed_at}, debito e da empresa, ` +
+          `sem estrutura para receber`;
         avisos.push(
-          `Operacao ${op}: o promotor ${nameById.get(promoterId) ?? promoterId} esta INATIVO desde ` +
-            `${promById.get(promoterId)?.dismissed_at} — pela regra o debito de ${estorno} e da EMPRESA, ` +
-            `mas ainda NAO HA estrutura para debito de empresa (promoter_debits.promoter_id e NOT NULL). ` +
-            `Lancado no promotor para nao perder o rastro. PRIMEIRO CASO: hora de criar o lugar.`
+          `PENDENTE — operacao ${op} (${estorno}): o dono e ${quem}, INATIVO desde ` +
+            `${p?.dismissed_at}. Pela regra o debito e da EMPRESA, e NAO HA estrutura para ` +
+            `debito de empresa. O item NAO foi lancado e ficou na fila. PRIMEIRO CASO: ` +
+            `decidir a estrutura (ver as tres opcoes em promotorInativoNaData).`
         );
+        promoterId = null; // <- nao lanca; cai na fila abaixo
       }
     }
     const rec: ResolvedOperation = {
       operation: op,
       estorno,
+      motivo: motivoPendencia,
       chaveJ: null,
       keyType: null,
       promoterId,

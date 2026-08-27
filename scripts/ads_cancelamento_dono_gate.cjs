@@ -42,10 +42,17 @@
  *      do fechamento do RR); se os dois passarem a lancar sobre a mesma operacao, o
  *      promotor e debitado duas vezes pelo mesmo cancelamento.
  *
- *   5. O CRITERIO DO INATIVO EXISTE E FUNCIONA. `promotorInativoNaData` e exercitada
- *      com casos sinteticos nos dois sentidos. VACUIDADE DECLARADA: nenhum
- *      cancelamento real dispara a regra hoje (0 casos medidos em 27/08/2026), entao
- *      o caminho de PRODUCAO dela nao esta coberto — o que esta coberto e a funcao.
+ *   5. O INATIVO PARA, COM AVISO — e o caso e REAL, nao sintetico. 212540080 e um
+ *      contrato da ADS cujo dono (ANA CLARA) saiu em 13/06/2026; um cancelamento
+ *      dele hoje chega DEPOIS da saida, logo o debito seria da empresa. O gate trava
+ *      os DOIS modos de falhar em silencio: lancar assim mesmo em quem nao tem mais
+ *      repasse de onde descontar, ou sumir com o item sem ninguem saber que existiu.
+ *      Exige tambem que a fila carregue MOTIVO e que o aviso NOMEIE a operacao.
+ *      Mais um CONTROLE: o caso de promotor ativo tem de continuar lancando — senao
+ *      a regra teria virado trava geral.
+ *
+ *   6. `promotorInativoNaData` exercitada nos dois sentidos com casos sinteticos
+ *      (incluindo o de saida SEM data, que NAO deve mandar para a empresa).
  *
  * needs-db: createClient, dado de PRODUCAO.
  */
@@ -152,8 +159,48 @@ async function main() {
     }
   });
 
-  // --------------------------------------- (5) o criterio do inativo funciona
-  ok("(5) inativo ANTES do debito -> true; DEPOIS -> false; ativo -> false", () => {
+  // ------------------------------- (5) o INATIVO para, com aviso — CASO REAL
+  // 212540080 e um contrato REAL da ADS cujo dono (ANA CLARA) saiu em 13/06/2026.
+  // Se ele for cancelado hoje, o debito chega DEPOIS da saida dela -> pela regra e
+  // da empresa. O que este caso trava sao os DOIS modos de falhar em silencio:
+  //   - lancar assim mesmo, em quem nao tem mais repasse de onde descontar;
+  //   - sumir com o item, sem ninguem saber que existiu.
+  const pInat = await resolveAdsCancelDebits(sb, {
+    year: 2026,
+    month: 7,
+    debitos: [{ contrato: "212540080", valor_seguro: -1.0, tipo: "ESTOQUE D0" }],
+    dryRun: true,
+  });
+  ok("(5) promotor INATIVO: NAO lanca debito", () => {
+    assert.equal(
+      pInat.debits.length,
+      0,
+      `lancou ${pInat.debits.length} debito(s) em quem ja saiu: ` +
+        pInat.debits.map((d) => d.promoterName).join(", ")
+    );
+  });
+  ok("(5) promotor INATIVO: o item NAO some — fica na fila", () => {
+    assert.equal(pInat.fila.length, 1, `esperava 1 na fila, veio ${pInat.fila.length}`);
+    assert.equal(String(pInat.fila[0].operation), "212540080");
+  });
+  ok("(5) promotor INATIVO: a fila carrega MOTIVO explicito", () => {
+    const m = String(pInat.fila[0].motivo || "");
+    assert.ok(m.length > 0, "item pendente SEM motivo — silencio e exatamente o que este gate proibe");
+    assert.match(m, /inativo/i, `o motivo nao menciona inatividade: "${m}"`);
+    assert.match(m, /empresa/i, `o motivo nao diz de quem e o debito: "${m}"`);
+  });
+  ok("(5) promotor INATIVO: sobe AVISO nomeando a operacao", () => {
+    const av = (pInat.avisos || []).join(" | ");
+    assert.match(av, /212540080/, `nenhum aviso cita a operacao: "${av}"`);
+    assert.match(av, /PENDENTE/, `o aviso nao se anuncia como pendencia: "${av}"`);
+  });
+  ok("(5) CONTROLE: promotor ATIVO continua lancando (a regra nao virou trava geral)", () => {
+    assert.equal(p1.debits.length, 1, "o caso de promotor ativo parou de lancar");
+    assert.equal(p1.fila.length, 0);
+  });
+
+  // --------------------------------------- (6) o criterio do inativo funciona
+  ok("(6) inativo ANTES do debito -> true; DEPOIS -> false; ativo -> false", () => {
     assert.equal(
       promotorInativoNaData({ active: false, dismissed_at: "2026-05-10" }, "2026-06-01"),
       true,
