@@ -263,6 +263,125 @@ export async function extractColunasCredito(data: Uint8Array): Promise<Map<strin
   return out;
 }
 
+// ---- CABEÇALHO "Valor para Emissão da Nota Fiscal" --------------------------
+//
+// O bloco de totais do PDF de crédito. O parser LIA só as duas primeiras colunas,
+// por POSIÇÃO (vals[0], vals[1]), e usava "Abertura de Conta" apenas como marcador
+// de parada da seção PRT — o valor ia para o lixo (R$ 100,00 em jul/2026).
+//
+// LER POR POSIÇÃO NÃO SERVE: o próprio código já admitia que o conjunto de colunas
+// varia ("PDF sem coluna PRT (mês sem PRT)"). Num mês sem PRT, o 3o valor deixaria
+// de ser a Abertura e passaria a ser o Pagamento Total — errado e plausível.
+// LER POR NOME TAMBÉM NÃO BASTA: medido nos dois PDFs em disco (27/08/2026), o 4o
+// rótulo mudou de "Valor Descontado" (06/26) para "Glosa" (07/26).
+//
+// Então: pareia RÓTULO com VALOR por GEOMETRIA e VALIDA pela IDENTIDADE DA SOMA.
+//   06/26   7.707,03 + 7,01 +   0,00 + 0,00 =  7.714,04 = Pagamento Total   fecha
+//   07/26  18.737,33 + 7,01 + 100,00 + 0,00 = 18.844,34 = Pagamento Total   fecha
+// Se a BBTS renomear, reordenar ou acrescentar coluna e o pareamento sair errado,
+// a identidade QUEBRA e isto LANÇA — em vez de gravar um número plausível e errado.
+// É a mesma disciplina das âncoras AVT/PRT que já existiam.
+//
+// UM DETALHE MEDIDO que mata o pareamento ingênuo "o rótulo mais à esquerda do
+// valor": em 07/26 o rótulo "Glosa" começa em x=565,1, à DIREITA do seu próprio
+// valor (x=562,6). Por isso o desempate é por |Δx| (proximidade), não por ordem de
+// x. Quando as contagens batem (5 e 5 nas duas competências) o pareamento é
+// ORDINAL, que é exato; a proximidade é só o plano B.
+
+export interface CabecalhoNf {
+  /** rótulo -> valor, CRU e na ordem de leitura. Guarda o layout como ele veio. */
+  rotulos: Array<{ rotulo: string; valor: number }>;
+  pagamentoAvt: number;
+  pagamentoPrt: number;
+  aberturaConta: number;
+  /** "Valor Descontado" (06/26) / "Glosa" (07/26) e o que mais aparecer. */
+  outrasDeducoes: number;
+  pagamentoTotal: number;
+}
+
+const RX_AVT = /Pagamento\s*AVT/i;
+const RX_PRT = /Pagamento\s*PRT/i;
+const RX_ABERTURA = /Abertura\s*de\s*Conta/i;
+const RX_TOTAL = /Pagamento\s*Total/i;
+
+/** Itens na mesma linha do PDF (o y de uma linha varia por arredondamento). */
+function mesmaLinhaPdf(a: number, b: number): boolean {
+  return Math.abs(a - b) <= 1;
+}
+
+export async function extractCabecalhoNf(data: Uint8Array): Promise<CabecalhoNf> {
+  const pages = await extractItemsByPage(data);
+  for (const itens of pages) {
+    const avt = itens.find((i) => RX_AVT.test(i.str));
+    if (!avt) continue;
+
+    const rotulos = itens.filter((i) => mesmaLinhaPdf(i.y, avt.y)).sort((a, b) => a.x - b.x);
+    // linha de VALORES = a faixa de y imediatamente ABAIXO dos rótulos que traga "R$"
+    const abaixo = itens.filter((i) => i.y < avt.y - 1 && /R\$/.test(i.str));
+    if (abaixo.length === 0) break;
+    const yValores = Math.max(...abaixo.map((i) => i.y));
+    const valores = abaixo.filter((i) => mesmaLinhaPdf(i.y, yValores)).sort((a, b) => a.x - b.x);
+
+    const pares: Array<{ rotulo: string; valor: number }> = [];
+    if (rotulos.length === valores.length) {
+      for (let k = 0; k < rotulos.length; k++) {
+        pares.push({ rotulo: rotulos[k].str, valor: money(valores[k].str) });
+      }
+    } else {
+      // contagens diferentes (rótulo fragmentado?): cada valor vai ao rótulo mais
+      // próximo em x. A identidade da soma, abaixo, é quem diz se deu certo.
+      for (const v of valores) {
+        let melhor = rotulos[0];
+        let d = Infinity;
+        for (const r of rotulos) {
+          const dd = Math.abs(v.x - r.x);
+          if (dd < d) {
+            d = dd;
+            melhor = r;
+          }
+        }
+        pares.push({ rotulo: melhor ? melhor.str : "", valor: money(v.str) });
+      }
+    }
+
+    const achar = (rx: RegExp) => pares.find((p) => rx.test(p.rotulo));
+    const hitAvt = achar(RX_AVT);
+    if (!hitAvt) break; // o rótulo existe na página mas não casou com valor nenhum
+    const hitTotal = achar(RX_TOTAL);
+    const conhecido = (r: string) =>
+      RX_AVT.test(r) || RX_PRT.test(r) || RX_ABERTURA.test(r) || RX_TOTAL.test(r);
+    const outrasDeducoes = round2(
+      pares.filter((p) => !conhecido(p.rotulo)).reduce((a, p) => a + p.valor, 0)
+    );
+
+    const cab: CabecalhoNf = {
+      rotulos: pares,
+      pagamentoAvt: hitAvt.valor,
+      pagamentoPrt: achar(RX_PRT)?.valor ?? 0, // PDF sem coluna PRT (mês sem PRT)
+      aberturaConta: achar(RX_ABERTURA)?.valor ?? 0,
+      outrasDeducoes,
+      pagamentoTotal: hitTotal?.valor ?? 0,
+    };
+
+    // IDENTIDADE — só quando o PDF traz o "Pagamento Total" para conferir contra.
+    if (hitTotal) {
+      const soma = round2(
+        cab.pagamentoAvt + cab.pagamentoPrt + cab.aberturaConta + cab.outrasDeducoes
+      );
+      if (Math.abs(soma - cab.pagamentoTotal) > 0.01) {
+        throw new BbtsPdfError(
+          `Cabeçalho da NF: Σ dos componentes ${soma} != "Pagamento Total" ` +
+            `${cab.pagamentoTotal} do PDF — pareamento rótulo/valor inconsistente ` +
+            `(layout mudou?). Lido: ` +
+            pares.map((p) => `${p.rotulo}=${p.valor}`).join(" | ")
+        );
+      }
+    }
+    return cab;
+  }
+  throw new BbtsPdfError("Âncora 'Pagamento AVT' não encontrada no PDF de crédito.");
+}
+
 // ---- PRT --------------------------------------------------------------------
 // Seção "Propostas do PAGAMENTO PRT" (a 2a perna do pagamento: o excedente do teto
 // de 6% que a BBTS paga a prazo, uma parcela por mês).
@@ -272,6 +391,7 @@ const PRT_RE = /^(\d{6,})\s+(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(-?R\$\s*[\d.,]+)\s*
 export type CreditoExtract = {
   rows: BbtsCreditoRow[];
   prt: BbtsPrtRow[];
+  cabecalho: CabecalhoNf;
   pagAvistaAnchor: number;
   pagPrtAnchor: number;
   year: number;
@@ -283,6 +403,7 @@ export async function extractBbtsCreditoPdf(data: Uint8Array): Promise<CreditoEx
   // Como lemos o PDF duas vezes (por linha e por coordenada), cada leitura recebe
   // a sua própria cópia — senão a 2a estoura DataCloneError.
   const bytesParaColunas = new Uint8Array(data);
+  const bytesParaCabecalho = new Uint8Array(data);
   const lines = await extractLinesFromPdf(data);
   if (lines.length === 0) {
     throw new BbtsPdfError("PDF de crédito sem texto (imagem/escaneado?) — extração abortada.");
@@ -296,22 +417,13 @@ export async function extractBbtsCreditoPdf(data: Uint8Array): Promise<CreditoEx
   }
   if (!year || !month) throw new BbtsPdfError("Competência não encontrada no PDF de crédito (rótulo 'mês MM/AA').");
 
-  // âncoras: linha "Pagamento AVT  Pagamento PRT  …" (rótulos) → valores na PRÓXIMA
-  // linha, na MESMA ordem: 1º R$ = AVT, 2º R$ = PRT.
-  let pagAvistaAnchor = NaN;
-  let pagPrtAnchor = NaN;
-  for (let i = 0; i < lines.length; i++) {
-    if (/Pagamento\s+AVT/i.test(lines[i])) {
-      const vals = moneysIn(lines[i + 1] || "");
-      if (vals.length) pagAvistaAnchor = vals[0];
-      if (vals.length > 1) pagPrtAnchor = vals[1];
-      break;
-    }
-  }
-  if (!Number.isFinite(pagAvistaAnchor)) {
-    throw new BbtsPdfError("Âncora 'Pagamento AVT' não encontrada no PDF de crédito.");
-  }
-  if (!Number.isFinite(pagPrtAnchor)) pagPrtAnchor = 0; // PDF sem coluna PRT (mês sem PRT)
+  // âncoras: vêm do CABEÇALHO, pareadas rótulo<->valor por geometria e validadas
+  // pela identidade da soma (ver extractCabecalhoNf). Antes era por POSIÇÃO na
+  // linha de valores — o que só funciona enquanto o conjunto de colunas não muda,
+  // e ele muda: o 4o rótulo virou "Glosa" em 07/26.
+  const cabecalho = await extractCabecalhoNf(bytesParaCabecalho);
+  const pagAvistaAnchor = cabecalho.pagamentoAvt;
+  const pagPrtAnchor = cabecalho.pagamentoPrt;
 
   // colunas quebradas (produto / linha de crédito / nome do convênio), por geometria
   const colunas = await extractColunasCredito(bytesParaColunas);
@@ -406,7 +518,7 @@ export async function extractBbtsCreditoPdf(data: Uint8Array): Promise<CreditoEx
     );
   }
 
-  return { rows, prt, pagAvistaAnchor, pagPrtAnchor, year, month };
+  return { rows, prt, cabecalho, pagAvistaAnchor, pagPrtAnchor, year, month };
 }
 
 // ---- SEGURO -----------------------------------------------------------------
@@ -490,6 +602,11 @@ export async function extractBbtsClosingFromPdfs(
     credito: cred.rows,
     seguro: seg.rows,
     prt: cred.prt,
+    cabecalho: cred.cabecalho,
+    // AUSENCIA != ZERO. As ancoras saem do proprio arquivo, entao sem esta
+    // bandeira "nao mandaram o PDF de seguro" e "mandaram e nao tinha seguro"
+    // sao a MESMA coisa para o gate. Ver BbtsClosingInput.seguro_pdf_ausente.
+    seguro_pdf_ausente: seguroData === null,
     _ancoras: {
       credito_propostas: cred.rows.length,
       credito_valor_financiado: somaVfin,

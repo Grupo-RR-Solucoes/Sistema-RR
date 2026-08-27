@@ -60,6 +60,14 @@ type AdsPrtRow = {
   valor_parcela?: number | null;
 };
 
+// Cabecalho "Valor para Emissao da Nota Fiscal" do PDF de credito, por competencia.
+// A Abertura de Conta e grandeza de COMPETENCIA, nao de contrato — por isso vem de
+// tabela propria e nao de daily_production_records. Mesma chave do PRT.
+type AdsCabecalhoRow = {
+  competencia?: string | null;
+  abertura_conta?: number | null;
+};
+
 type ExpenseCategoryRow = {
   id: string;
   name: string;
@@ -395,23 +403,27 @@ function manualCreditYM(row: ManualRevenueRow): { year: number; month: number } 
 // COMPETENCIA por JANELA (getProductionPeriodFromValue), igual ao dre.ts: a linha
 // de 30/06 e julho e a de 31/07 e agosto. Nao usar o mes de calendario.
 //
-// LIMITE CONHECIDO (nao e estimativa — esta medido em julho/2026):
-//   - Abertura de Conta (R$ 100,00 em jul) NAO entra: o parser le o rotulo so como
-//     marcador de parada (bbtsPdfExtract.ts:376-377) e o valor nao tem coluna no
-//     banco. Fechar isso exige captura do cabecalho + MIGRATION.
-//   - o seguro das linhas SO-SEGURO (R$ 89,42 em jul) fica de fora enquanto
-//     bbtsClosingImport nao gravar bbts_seguro_pago nelas.
-// Ambos estao nomeados em HANDOFF_ADS_FECHAMENTO_CAIXA.md.
-type AdsCash = { avista: number; prt: number; seguro: number };
+// O de-para tem uma 4a perna desde 27/08/2026:
+//   abertura_conta -> bbts_fechamento_cabecalho.abertura_conta  (por competencia
+//   LITERAL, igual ao PRT — nao ha contrato a que anexar).
+//
+// LIMITE CONHECIDO (medido, nao estimado):
+//   - a Abertura de Conta so entra nas competencias cujo fechamento foi importado
+//     DEPOIS da captura do cabecalho. Para as anteriores, reimportar o PDF de
+//     credito. O check ads_cabecalho_nf_ausente (ledgerHealth) lista quais sao.
+//   - os cancelamentos do PDF de seguro (-R$ 49,45 em jul/2026) nao sao abatidos
+//     aqui: viram debito ao promotor.
+type AdsCash = { avista: number; prt: number; seguro: number; abertura: number };
 
 function buildAdsCashByPeriod(
   adsDaily: AdsDailyRow[],
-  adsPrt: AdsPrtRow[]
+  adsPrt: AdsPrtRow[],
+  adsCabecalho: AdsCabecalhoRow[] = []
 ): Map<string, AdsCash> {
   const out = new Map<string, AdsCash>();
   const bucket = (k: string) => {
     let b = out.get(k);
-    if (!b) { b = { avista: 0, prt: 0, seguro: 0 }; out.set(k, b); }
+    if (!b) { b = { avista: 0, prt: 0, seguro: 0, abertura: 0 }; out.set(k, b); }
     return b;
   };
   for (const r of adsDaily) {
@@ -428,6 +440,14 @@ function buildAdsCashByPeriod(
     const comp = String(r.competencia || "").slice(0, 7);
     if (!/^\d{4}-\d{2}$/.test(comp)) continue;
     bucket(comp).prt += toNumber(r.valor_parcela);
+  }
+  // Abertura de Conta: pela competencia LITERAL do fechamento, igual ao PRT — nao
+  // pela janela. Sao os dois valores do cabecalho que nao tem contrato a que se
+  // ancorar, entao seguem a mesma regra.
+  for (const r of adsCabecalho) {
+    const comp = String(r.competencia || "").slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(comp)) continue;
+    bucket(comp).abertura += toNumber(r.abertura_conta);
   }
   return out;
 }
@@ -459,15 +479,22 @@ function buildAdsCashByPeriod(
 //   valor_diferido -> bbts_prt_parcelas.valor_parcela
 //   valor_seguro   -> daily_production_records.bbts_seguro_pago
 //
-// LIMITE CONHECIDO (medido em jul/2026, nao e estimativa): faltam R$ 139,97 da ADS.
-//   - Abertura de Conta R$ 100,00: o parser le o rotulo so como marcador de parada
-//     (bbtsPdfExtract.ts:376-377) e o valor NAO tem coluna no banco. Exige captura
-//     do cabecalho + MIGRATION.
-//   - seguro das linhas SO-SEGURO R$ 89,42: bbtsClosingImport.ts:521-569 nao grava
-//     bbts_seguro_pago nelas; o valor fica so no raw_payload.
+// DE-PARA RR -> ADS, 4a perna (27/08/2026):
+//   abertura_conta -> bbts_fechamento_cabecalho.abertura_conta
+//
+// ERRATA — a versao anterior deste bloco dizia "faltam R$ 139,97 da ADS em
+// jul/2026", somando R$ 100,00 de Abertura com R$ 89,42 de linha so-seguro. A
+// medicao de 27/08/2026 mostra que SO OS R$ 100,00 eram de julho:
+//   - Abertura de Conta R$ 100,00 (competencia 2026-07): CONFIRMADO. Era isso que
+//     separava o card do total do PDF (18.737,33 + 7,01 = 18.744,34 contra
+//     18.844,34). Agora entra, via bbts_fechamento_cabecalho.
+//   - os R$ 89,42 da unica linha SO-SEGURO do banco (contrato 221262790) NAO
+//     faltavam em julho: aquela linha esta com movement_date=2026-07-31, e a
+//     janela manda 31/07 para AGOSTO. As 12 irmas dela, do mesmo fechamento,
+//     estao em 2026-07-15. O importador ja grava a coluna; a linha existente
+//     depende de decisao sobre a competencia (ver HANDOFF).
 //   - os cancelamentos (-R$ 49,45) reduziram o pagamento da BBTS e nao sao abatidos
 //     aqui: viram debito ao promotor.
-//   Ver HANDOFF_ADS_FECHAMENTO_CAIXA.md.
 // ===========================================================================
 // "Recebido" (caixa) da competencia M: fechamento(M-1) + manuais(data_credito em M).
 // receivedClosing = valor_liquido(M-1) + Σ produtos(M-1) + ADS(M-1).
@@ -484,12 +511,13 @@ function cashReceivedFor(
     avista: 0,
     prt: 0,
     seguro: 0,
+    abertura: 0,
   };
   // ADS: avista + PRT + seguro = o analogo do valor_liquido do RR (que tambem soma
   // avista + diferido + seguro). Nao ha estorno/renovacao do lado da ADS.
   // ADS = a-vista + PRT + SEGURO — o analogo do valor_liquido do RR, que tambem
   // soma os tres. Nao ha estorno/renovacao do lado da ADS.
-  const receivedAds = roundMoney(ads.avista + ads.prt + ads.seguro);
+  const receivedAds = roundMoney(ads.avista + ads.prt + ads.seguro + ads.abertura);
   // RR: valor_liquido JA inclui valor_seguro. Nada a subtrair (decisao da tarde).
   const receivedLiquido = roundMoney(sumClosingNet(closingRows) + receivedAds);
   const receivedProdutos = roundMoney(sumClosingProdutos(closingRows));
@@ -887,9 +915,10 @@ export async function buildFinancialAnalytics(
   // ============================================================================
   let adsDaily: AdsDailyRow[] = [];
   let adsPrt: AdsPrtRow[] = [];
+  let adsCabecalho: AdsCabecalhoRow[] = [];
   if (hasSupabaseEnv()) {
     const admin = getSupabaseAdmin();
-    [adsDaily, adsPrt] = await Promise.all([
+    [adsDaily, adsPrt, adsCabecalho] = await Promise.all([
       fetchAllRows<AdsDailyRow>(() =>
         admin
           .from("daily_production_records")
@@ -899,12 +928,26 @@ export async function buildFinancialAnalytics(
       fetchAllRows<AdsPrtRow>(() =>
         admin.from("bbts_prt_parcelas").select("competencia, valor_parcela").eq("company_id", BBTS_COMPANY_ID)
       ),
+      // TOLERA APENAS A TABELA INEXISTENTE (migration ainda nao aplicada): nesse
+      // caso a Abertura entra como 0 e o card fica como estava. Qualquer OUTRO
+      // erro (RLS, grant, rede) e RELANCADO — engolir tudo esconderia justamente
+      // o tipo de falha que ja zerou comissao de seguro em producao uma vez.
+      fetchAllRows<AdsCabecalhoRow>(() =>
+        admin
+          .from("bbts_fechamento_cabecalho")
+          .select("competencia, abertura_conta")
+          .eq("company_id", BBTS_COMPANY_ID)
+      ).catch((e: unknown) => {
+        const msg = String((e as Error)?.message || e);
+        if (/schema cache|does not exist|PGRST205/i.test(msg)) return [] as AdsCabecalhoRow[];
+        throw e;
+      }),
     ]);
   }
 
   // ADS: um balde por competencia, construido UMA vez e reusado pelo KPI e pela
   // serie do grafico — os dois tem de ver o mesmo numero.
-  const adsCashByPeriod = buildAdsCashByPeriod(adsDaily, adsPrt);
+  const adsCashByPeriod = buildAdsCashByPeriod(adsDaily, adsPrt, adsCabecalho);
 
   // REGIME DE CAIXA: "Recebido" = fechamento(M-1) + ADS(M-1) + manuais(data_credito em M).
   const received = cashReceivedFor(
@@ -1247,13 +1290,16 @@ export async function buildFinancialAnalytics(
       avista: 0,
       prt: 0,
       seguro: 0,
+      abertura: 0,
     };
     const celulas: Record<string, number> = {
       avista: roundMoney(a.avista),
       prt: roundMoney(a.prt),
       seguro: roundMoney(a.seguro),
       consorcio: 0,
-      outros: 0,
+      // Abertura de Conta entra em "outros": e receita da ADS que nao e credito,
+      // nem PRT, nem seguro. R$ 100,00 na competencia 2026-07.
+      outros: roundMoney(a.abertura),
       ajustes: 0,
     };
     if (Object.values(celulas).some((v) => v !== 0)) {
