@@ -51,7 +51,21 @@
  *      Mais um CONTROLE: o caso de promotor ativo tem de continuar lancando — senao
  *      a regra teria virado trava geral.
  *
- *   6. `promotorInativoNaData` exercitada nos dois sentidos com casos sinteticos
+ *   6. A FILA E RECONCILIADA. Operacao que virou debito NAO pode continuar PENDING
+ *      em promoter_debit_assignments. Ate 27/08/2026 nao existia caminho que
+ *      retirasse a linha de quem passou a ser resolvido: o delete-and-replace
+ *      cobria promoter_debits e deixava a fila de fora. A tela lia a fila e
+ *      mostrava como "a atribuir" um item ja lancado.
+ *
+ *      LIMITE DECLARADO: esta assercao verifica o ESTADO FINAL, nao o mecanismo.
+ *      Testado por mutacao em 27/08/2026 — remover o bloco de reconciliacao manteve
+ *      o gate VERDE, porque a linha da fila JA havia sido apagada pelo run correto e
+ *      tirar o codigo nao a recria. Ela pega uma REGRESSAO DE DADO (alguem
+ *      reintroduzir pendencia de item lancado), nao a remocao do codigo. Para pegar
+ *      o codigo seria preciso semear a fila antes do run — escrita de teste em
+ *      producao, que nao se faz aqui.
+ *
+ *   7. `promotorInativoNaData` exercitada nos dois sentidos com casos sinteticos
  *      (incluindo o de saida SEM data, que NAO deve mandar para a empresa).
  *
  * needs-db: createClient, dado de PRODUCAO.
@@ -94,6 +108,10 @@ const SEM_FONTE = [
 
 async function main() {
   console.log("GATE: cancelamento da ADS — casa o dono, nao duplica, nao invade o RR\n");
+
+  // conjunto de operacoes que JA tem debito lancado — usado pela assercao (6)
+  const srcDb = await sb.from("promoter_debit_sources").select("operation");
+  const opsComDebito = new Set((srcDb.data || []).map((r) => String(r.operation)));
 
   // ---------------------------------------------------------------- (1) casa
   const p1 = await resolveAdsCancelDebits(sb, {
@@ -199,8 +217,36 @@ async function main() {
     assert.equal(p1.fila.length, 0);
   });
 
-  // --------------------------------------- (6) o criterio do inativo funciona
-  ok("(6) inativo ANTES do debito -> true; DEPOIS -> false; ativo -> false", () => {
+  // ----------------- (6) A FILA E RECONCILIADA: resolvido nao fica pendente
+  // O defeito visto na tela em 27/08/2026: 211689509 aparecia em /promotores como
+  // "estorno aguardando atribuicao", com seletor de promotor, MESMO ja tendo
+  // virado debito (BRUNA ALVES, ACTIVE). A fila MENTIA — e o passo manual que esta
+  // frente existe para ELIMINAR continuava aparecendo na tela.
+  const filaDb = await sb
+    .from("promoter_debit_assignments")
+    .select("operation, status")
+    .eq("year", 2026)
+    .eq("month", 7);
+  const pendentes = (filaDb.data || [])
+    .filter((r) => r.status === "PENDING")
+    .map((r) => String(r.operation));
+  ok("(6) operacao que virou debito NAO fica pendente na fila", () => {
+    assert.ok(
+      !pendentes.includes("211689509"),
+      "211689509 tem debito ACTIVE e continua PENDING na fila — a fila esta mentindo"
+    );
+  });
+  ok("(6) a fila SO guarda o que nao foi resolvido", () => {
+    const conflito = pendentes.filter((op) => opsComDebito.has(op));
+    assert.equal(
+      conflito.length,
+      0,
+      "operacoes com debito lancado E pendentes ao mesmo tempo: " + conflito.join(", ")
+    );
+  });
+
+  // --------------------------------------- (7) o criterio do inativo funciona
+  ok("(7) inativo ANTES do debito -> true; DEPOIS -> false; ativo -> false", () => {
     assert.equal(
       promotorInativoNaData({ active: false, dismissed_at: "2026-05-10" }, "2026-06-01"),
       true,

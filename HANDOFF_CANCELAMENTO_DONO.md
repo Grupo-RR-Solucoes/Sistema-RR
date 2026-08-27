@@ -252,3 +252,79 @@ tendo virado débito. A rotina cria entradas na fila para o que não resolve, ma
 **não fecha** as que passou a resolver. Hoje é cosmético (a fila é lista de trabalho,
 não fonte de cálculo), mas confunde quem a usa para saber o que falta. **Nomeado,
 não consertado.**
+
+---
+
+## 9. A FILA MENTIA — reconciliação implementada (27/08)
+
+### O sintoma
+
+A tela `/promotores` mostrava `211689509` como *"estorno aguardando atribuição"*,
+com seletor de promotor, **mesmo já tendo virado débito**:
+
+```
+promoter_debit_sources p/ 211689509: 1  resolved_via=cms
+debito: BRUNA ALVES | 1,40 | ACTIVE
+E na fila: 2026-07 | DAILY_CANCEL | 211689509 | PENDING | promoter_id NULO
+```
+
+**Os dois ao mesmo tempo.** O casamento funcionou; o que faltou foi fechar a fila.
+
+### A causa
+
+Os dois resolvedores **inserem** pendência para o que não resolvem, mas **não
+existia caminho que retirasse** a linha de quem passou a ser resolvido num run
+posterior. O *delete-and-replace* cobre `promoter_debits`;
+`promoter_debit_assignments` ficava de fora dele.
+
+### O conserto
+
+Nos DOIS resolvedores, antes do laço que popula a fila: as operações resolvidas
+neste run têm a linha `PENDING` **removida**. Não se marca "resolvido" — remove-se,
+porque a fila é a lista do que FALTA, e o rastro de quem pagou vive em
+`promoter_debit_sources`. **Atribuição manual (`status != PENDING`) é preservada.**
+
+### E o RR ganhou a cascata `cms` + o critério do inativo
+
+O degrau que a ADS recebeu em 27/08 faltava no RR pelo mesmo motivo: a cascata pegava
+a **chave J** do `cms` e parava, porque nessas operações a chave é MASTER — mas a
+mesma linha carrega `promoter_id` preenchido, lido no select e nunca usado.
+
+### Resultado medido
+
+```
+RR jun/2026: 17 debitos resolvidos | fila: 1 (ANA CLARA, inativa -> PARA com aviso)
+RR jul/2026: 16 debitos resolvidos | fila: 1 (ANA CLARA, inativa -> PARA com aviso)
+ADS jun    :  0 debitos            | fila: 2 (sem fonte nenhuma)
+ADS jul    :  3 debitos            | fila: 0
+
+A FILA: de 7 para 4 linhas
+  2026-06 | CLOSING_INSURANCE | 208875852 | 2,03  <- ANA CLARA inativa
+  2026-06 | DAILY_CANCEL      | 209867885 | 20,70 <- sem fonte
+  2026-06 | DAILY_CANCEL      | 209621970 | 20,83 <- sem fonte
+  2026-07 | CLOSING_INSURANCE | 211780610 | 2,03  <- ANA CLARA inativa
+```
+
+**Os 4 que sobraram são os corretos**: 2 sem origem possível e 2 de promotora
+inativa, que param com aviso por decisão.
+
+### Sobrevive ao recálculo
+
+```
+reconsolidarCompetenciaFechada(2026-07) -> ran=true
+DEPOIS: promoter_debits ADS jul = 3, Sigma 49,45   [intactos]
+        211689509 na fila? NAO
+```
+
+### As telas
+
+```
+ALDALENE      | RR ALAGOAS 3 | final=4.615,63 | desconto=0,00  | liquido=4.615,63
+BRUNA ALVES   | ADS          | final=2.361,72 | desconto=1,40  | liquido=2.360,32
+MARIA LETICIA | RR ALAGOAS 3 | final=  406,66 | desconto=48,05 | liquido=  358,61
+/financeiro ago/26: ADS descontos=-49,45 | conferencia delta 0,00
+```
+
+**O R$ 1,40 é da BRUNA ALVES**, não da Aldalene — o contrato `211689509` é dela no
+`cms` (`j_key JJ552710`, competência 2026-05). A Aldalene não tem linha de PMR na ADS
+em competência alguma, e seu único débito é de **junho** (R$ 28,01).

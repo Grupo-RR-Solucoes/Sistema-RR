@@ -212,8 +212,9 @@ export async function resolveInsuranceDebits(
 
   const { data: jkeys } = await supabase.from("j_keys").select("j_key, promoter_id, key_type");
   const jkMap = new Map((jkeys || []).map((k: any) => [String(k.j_key).toUpperCase(), k]));
-  const { data: proms } = await supabase.from("promoters").select("id, name");
+  const { data: proms } = await supabase.from("promoters").select("id, name, active, dismissed_at");
   const nameById = new Map((proms || []).map((p: any) => [p.id, p.name]));
+  const promInfoById = new Map((proms || []).map((p: any) => [p.id, p]));
 
   // Atribuições MANUAIS já feitas pelo Diego (respeitar).
   const { data: assigns } = await supabase
@@ -255,11 +256,47 @@ export async function resolveInsuranceDebits(
     } else if (dailyByOp.get(op)?.assigned_promoter_id) {
       promoterId = dailyByOp.get(op).assigned_promoter_id;
       keyType = keyType ? `${keyType}+daily` : "MASTER+daily";
+    } else if (cmsByOp.get(op)?.promoter_id) {
+      // DEGRAU cms.promoter_id — o mesmo que a ADS ganhou em 27/08/2026.
+      //
+      // POR QUE ELE FALTAVA AQUI TAMBEM: a cascata pegava a CHAVE J do cms (:174)
+      // e parava, porque nessas operacoes a chave e MASTER — ela aponta para a
+      // chave da empresa, nao para quem vendeu. Mas a MESMA linha do cms carrega
+      // `promoter_id` PREENCHIDO, e ele era lido no select (:135) e nunca usado.
+      //
+      // Medido em 27/08/2026: 4 operacoes do RR estavam na fila exatamente assim —
+      // 211243326 (22,50), 208875852 (2,03), 207047003 (4,00) e 211780610 (2,03),
+      // todas com dono no cms e chave J MASTER.
+      promoterId = cmsByOp.get(op).promoter_id;
+      resolvedVia = "cms";
+      keyType = keyType ? `${keyType}+cms` : "cms";
+    }
+
+    // CRITERIO DO INATIVO — valida e PARA (mesma regra da ADS; ver
+    // promotorInativoNaData). O item NAO vira debito e NAO some: vai para a fila
+    // com motivo, e o aviso sobe nomeando a operacao.
+    let motivoPendencia: string | undefined;
+    if (promoterId) {
+      const dataDoDebito = new Date().toISOString().slice(0, 10);
+      const pInfo = promInfoById.get(promoterId);
+      if (promotorInativoNaData(pInfo, dataDoDebito)) {
+        const quem = nameById.get(promoterId) ?? promoterId;
+        motivoPendencia =
+          `promotor inativo desde ${pInfo?.dismissed_at}, debito e da empresa, ` +
+          `sem estrutura para receber`;
+        avisos.push(
+          `PENDENTE — operacao ${op} (${estorno}): o dono e ${quem}, INATIVO desde ` +
+            `${pInfo?.dismissed_at}. Pela regra o debito e da EMPRESA, e NAO HA estrutura ` +
+            `para debito de empresa. O item NAO foi lancado e ficou na fila.`
+        );
+        promoterId = null;
+      }
     }
 
     const rec: ResolvedOperation = {
       operation: op,
       estorno,
+      motivo: motivoPendencia,
       chaveJ,
       keyType,
       promoterId,
@@ -381,6 +418,42 @@ export async function resolveInsuranceDebits(
       }))
     );
     if (e3) throw e3;
+  }
+
+  // 7. FILA — RECONCILIA e depois faz upsert dos pendentes.
+  // ==========================================================================
+  // RECONCILIACAO DA FILA — fecha o que passou a ter dono.
+  //
+  // O DEFEITO QUE ISTO CORRIGE (visto na tela em 27/08/2026): a operacao 211689509
+  // aparecia em /promotores como "estorno aguardando atribuicao", com seletor de
+  // promotor, MESMO JA TENDO VIRADO DEBITO (BRUNA ALVES, R$ 1,40, ACTIVE,
+  // resolved_via=cms). O laco abaixo INSERE pendencia para o que nao resolveu, mas
+  // ate aqui NAO EXISTIA nenhum caminho que RETIRASSE a linha de quem passou a ser
+  // resolvido num run posterior. O delete-and-replace cobre `promoter_debits`;
+  // `promoter_debit_assignments` ficava de fora dele.
+  //
+  // Efeito pratico: a fila MENTIA. Quem a usava como lista de trabalho via item
+  // pendente que ja estava lancado — e o passo manual que esta frente existe para
+  // ELIMINAR continuava aparecendo na tela.
+  //
+  // A REGRA: se a operacao virou debito neste run, a linha da fila SAI. Nao se
+  // marca "resolvido" — remove-se, porque a fila e a lista do que FALTA, e o
+  // rastro de quem pagou vive em promoter_debit_sources, que e o lugar dele.
+  //
+  // NAO REMOVE atribuicao MANUAL (status != PENDING): se o Diego escolheu o
+  // promotor na mao, aquela linha e a decisao dele e o resolvedor a respeita
+  // (mesma precedencia do inicio da cascata).
+  // ==========================================================================
+  const resolvidas = resolved.map((r) => String(r.operation));
+  if (resolvidas.length) {
+    const { error: eDelFila } = await supabase
+      .from("promoter_debit_assignments")
+      .delete()
+      .eq("year", year)
+      .eq("month", month)
+      .eq("status", "PENDING")
+      .in("operation", resolvidas);
+    if (eDelFila) throw eDelFila;
   }
 
   // 7. FILA — upsert dos MASTER pendentes (não recria os já ASSIGNED).
@@ -610,6 +683,19 @@ export async function resolveAdsCancelDebits(
     );
     if (e3) throw e3;
   }
+  // RECONCILIACAO DA FILA — mesma regra do resolvedor do RR (ver comentario longo la).
+  const resolvidasAds = resolved.map((r) => String(r.operation));
+  if (resolvidasAds.length) {
+    const { error: eDelFila } = await supabase
+      .from("promoter_debit_assignments")
+      .delete()
+      .eq("year", year)
+      .eq("month", month)
+      .eq("status", "PENDING")
+      .in("operation", resolvidasAds);
+    if (eDelFila) throw eDelFila;
+  }
+
   for (const r of fila) {
     const existing = assignByOp.get(r.operation);
     if (existing && existing.status !== "PENDING") continue;
