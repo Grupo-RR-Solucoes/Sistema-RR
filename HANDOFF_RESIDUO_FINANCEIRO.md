@@ -1,4 +1,4 @@
-# HANDOFF — feat/residuo-financeiro (27/08/2026)
+# HANDOFF — feat/residuo-financeiro (27–28/08/2026)
 
 Três resíduos do fechamento da ADS, mais uma investigação de seguro do RR que
 consumiu a maior parte da frente e terminou sem buraco.
@@ -7,6 +7,13 @@ consumiu a maior parte da frente e terminou sem buraco.
 > e o script que o produziu está nomeado. Onde a medição contradisse o que se
 > acreditava, a contradição está registrada — inclusive quando o que se acreditava
 > era meu. A seção 8 lista o que eu corrigi em relação ao ditado deste handoff.
+>
+> **As seções são de 27/08 e trazem ERRATA de 28/08 onde a medição mudou** — a
+> errata fica no lugar do texto velho, nunca no fim: quem lê a §2 ou a §5 tem de
+> ver o estado de hoje ali, não três seções adiante. As mudanças de 28/08 são o
+> backfill executado (§2 e §5.1), a Abertura virando coluna própria com o defeito
+> que isso revelou (§5.2), o bloco 3 finalmente exercitado (§5.3) e a lição de
+> ferramenta do `.next` (§9).
 
 ---
 
@@ -15,7 +22,7 @@ consumiu a maior parte da frente e terminou sem buraco.
 **Branch:** `feat/residuo-financeiro`, criada de `origin/main` em `5221676`
 (que já continha a PR #157, confirmada por `git log --grep`: merge `5b95ac4`).
 
-**Nada foi pushado.** Os 15 commits estão só local.
+**Nada foi pushado.** Os **20** commits estão só local (eram 15 em 27/08).
 
 | commit | entrega |
 |---|---|
@@ -33,12 +40,24 @@ consumiu a maior parte da frente e terminou sem buraco.
 | `5b45862` | pós-UPDATE do R$ 89,42 e o estorno não abatido |
 | `2d9772f` | âncora permanente (`ads_ancora_totais`) |
 | `1f9ad19` | alinhamento à tabela REAL `bbts_fechamento_totais` |
-| *(este)* | handoff |
+| `f67305c` | handoff da rodada de 27/08 |
+| `8a958d7` | **prova por mutação** do apagamento: banco espelho + gate no caminho real |
+| `bc75fdf` | a recusa do só-crédito nomeia a empresa, escreve o dano no campo que a tela exibe, e a interface ganha o caminho de confirmação |
+| `b27f4cd` | conferência do backfill contra os PDFs, antes de rodar o SQL |
+| `1faba4a` | pós-backfill: o caixa bate 318.785,68, e o detalhe de "Outros" não |
+| `3c09a5c` | Abertura de Conta vira **coluna** na matriz; gate das duas identidades |
+| *(este)* | handoff atualizado |
 
 **Arquivos de produção tocados:** `lib/bbtsPdfExtract.ts`, `lib/bbtsClosingImport.ts`,
 `lib/dre.ts`, `lib/financialAnalytics.ts`, `lib/diagnostico/ledgerHealth.ts`,
-`lib/diagnostico/fechamentoParcial.ts` (novo), `app/api/import/closing/ads/route.ts`.
-`npx tsc --noEmit` limpo.
+`lib/diagnostico/fechamentoParcial.ts` (novo), `app/api/import/closing/ads/route.ts`,
+`app/importacoes/page.tsx`.
+
+**Gates novos, os dois self-contained (entram no CI):**
+`scripts/ads_import_so_credito_gate.cjs` (17 asserções, 982 ms) e
+`scripts/financeiro_matriz_detalhe_gate.cjs` (14 asserções, 982 ms), mais o
+utilitário `scripts/_fakeDpr.cjs`. Medido em 28/08: `npm run gates` →
+**28 executados, 28 passaram**; `npm run build` OK; `npx tsc --noEmit` = 0.
 
 ---
 
@@ -119,32 +138,47 @@ comp     | AVT declarado   AVT nas linhas  delta | PRT declarado  PRT linhas  de
 E o check permanente `ads_ancora_totais` em `fechamentoParcial.ts` faz a mesma
 comparação a qualquer momento, contra o declarado gravado.
 
-### **NÃO FEITO** — o backfill, e portanto a Abertura no card
+### FEITO — o backfill, e a Abertura no card  *(era "NÃO FEITO"; executado em 28/08)*
 
-Medido em 27/08, última verificação da frente:
+**ERRATA de 28/08/2026.** Esta seção dizia "a tabela está vazia" e "não foi
+executado". O Diego rodou o SQL no Studio em **28/08 01:33 UTC**. O texto anterior
+está substituído; o que ele previa virou medição, e a previsão bateu ao centavo.
+
+Estado ANTES (27/08, última medição da rodada anterior):
 
 ```
 === bbts_fechamento_totais: 0 linhas  (a tabela INTEIRA, sem filtro) ===
-=== receivedClosing 2026-08 AGORA: 318.685,68 ===
-
-A LINHA DA ADS na matriz de ENTRADA, célula a célula:
-  avista 18.737,33 | prt 7,01 | seguro 204,52 | consorcio 0,00 | outros 0,00 | ajustes 0,00
-  Σ das células = 18.948,86  |  total da linha = 18.948,86  -> FECHA
+=== receivedClosing 2026-08: 318.685,68 ===
+  ADS: avista 18.737,33 | prt 7,01 | seguro 204,52 | consorcio 0,00 | outros 0,00 | ajustes 0,00
+       Σ células = total da linha = 18.948,86
 ```
 
-**A tabela está vazia.** O SQL do backfill existe
-(`supabase/migrations/20260827_000004_bbts_totais_backfill.sql`, 2 competências,
-âncora já conferida no cabeçalho) e **não foi executado**. Sem ele:
+Estado DEPOIS (`scripts/diag-residuo-45-pos-backfill.cjs`):
 
-- `outros` da ADS = `0,00` — a Abertura não está em coluna nenhuma **nem no total**
-- `receivedClosing` de ago/26 = **318.685,68**, não 318.696,26
+```
+=== bbts_fechamento_totais: 2 linha(s) ===
+  2026-06-01  avt=7.707,03  prt=7,01  abertura=0,00    glosa=0,00  total=7.714,04   soma=7.714,04   delta=0,00  insert=true
+  2026-07-01  avt=18.737,33 prt=7,01  abertura=100,00  glosa=0,00  total=18.844,34  soma=18.844,34  delta=0,00  insert=true
 
-A matriz **não está quebrada**: Σ das células = total da linha, ao centavo, e não há
-chave em `celulas` sem coluna declarada. O zero é o valor correto da origem vazia.
+=== /api/financeiro 2026-08 ===
+  receivedClosing   318.785,68     (previsto 318.785,68 — delta 0,00)
+  receivedNet       318.785,68
+  receivedEmpresa   251.467,47     (inalterado)
+  receivedInsurance   5.336,21     (inalterado)
 
-**Depois de rodar o backfill, o esperado é:** `outros` = 100,00 · total da linha =
-19.048,86 · `receivedClosing` = **318.785,68** · `ads_cabecalho_nf_ausente` = 0 ·
-`ads_ancora_totais` = 0.
+  ADS: avista 18.737,33 | prt 7,01 | seguro 204,52 | abertura 100,00 | consorcio 0,00 | outros 0,00 | ajustes 0,00
+       Σ células = total da linha = 19.048,86
+
+  [ads_cabecalho_nf_ausente] count=0     [ads_ancora_totais] count=0
+```
+
+`created_at == updated_at` nas duas linhas: foi **INSERT**, o ramo `do update` do
+`on conflict` não rodou. A única `uq_bbts_totais (company_id, competencia)`
+confirmada pelo Diego no Studio — o OpenAPI do PostgREST **não expõe constraint**,
+então isso não era mensurável daqui; o modo de falha era seguro (sem a única, o
+`on conflict` estoura `42P10` dentro do `begin` e nada é gravado).
+
+**A Abertura NÃO ficou em "Outros"** — ver a errata do item 2 da §5.
 
 ---
 
@@ -156,8 +190,8 @@ DEPÓSITO DECLARADO pela BBTS em 07/2026 : 18.999,41
    +    155,07 (âncora TOTAL do PDF de seguro = 204,52 de cálculo − 49,45 de cancelamento)
 
 O SISTEMA, competência 2026-07
-   hoje                : 18.948,86   →  diferença  −50,55
-   após o backfill     : 19.048,86   →  diferença  +49,45
+   antes do backfill   : 18.948,86   →  diferença  −50,55
+   HOJE (28/08, medido): 19.048,86   →  diferença  +49,45
 ```
 
 Os R$ 139,97 originais eram `100,00 (Abertura) + 89,42 (só-seguro) − 49,45
@@ -205,21 +239,90 @@ essa é a decisão que estaria sendo reaberta.
 
 ## 5. PENDENTE
 
-1. **Rodar o backfill** (`20260827_000004`). É o que falta para a Abertura entrar.
-2. **Abertura na matriz: "Outros" ou coluna própria.** Hoje está em `outros`, a
-   mesma célula que agrega Conta Corrente/BBCAP/Dental/LOB do RR. Decisão sua.
-3. **BLOCO 3 — implementado, nunca exercitado em produção.** Está no commit
-   `bf7b65c` e medido: `ownedColumnsFor(FULL, registro SEM seguro)` toca **0**
-   colunas de seguro (antes 5), e a rota devolve 409 com o dano medido na hora
-   (hoje: 12 linhas, R$ 115,10 de `bbts_seguro_pago` e R$ 113.345,57 de
-   `insurance_value`). O que nunca aconteceu foi um import real só-crédito
-   passando por esse caminho.
-4. **Os +49,45** contra o extrato — §4, decisão de negócio.
-5. **R$ 372,31 em 2025-02 AL1** — §6.
-6. **Dívida nomeada:** a rota de cancelamento
+> **ERRATA DE 28/08/2026 — esta lista é a de 27/08 e envelheceu.** Os itens 1, 2
+> e 3 estão RESOLVIDOS, e um defeito que ela não previa apareceu e foi consertado.
+> Cada item traz o que mudou; o que continua aberto está marcado.
+
+1. ~~**Rodar o backfill** (`20260827_000004`).~~ **MORTO em 28/08 01:33 UTC.**
+   Executado pelo Diego no Studio: 2 linhas, identidade da soma fechando nas
+   duas, `created_at == updated_at` (INSERT). O caixa de ago/26 foi de
+   **318.685,68 para 318.785,68** — a previsão desta frente, ao centavo. Ver a
+   errata da §2.
+
+2. ~~**Abertura na matriz: "Outros" ou coluna própria.**~~ **DECIDIDO em 28/08:
+   COLUNA PRÓPRIA**, `abertura` / "Abertura de conta", entre `seguro` e
+   `consorcio`. Motivo do Diego: é totalizador do fechamento da BBTS, mesma
+   natureza do AVT e do PRT — não é produto.
+
+   **E havia uma razão técnica que só apareceu depois de o backfill rodar:**
+   "Outros" tem CONTRATO DE AGREGADO. A célula é DERIVADA do próprio detalhe
+   (`financialAnalytics.ts:1274`, `outros.reduce`), e a tela **troca a coluna
+   pelas linhas do detalhe** quando o leitor a expande
+   (`app/financeiro/page.tsx:163-167`). A Abertura violava esse contrato:
+
+   ```
+   ADS, medido em 28/08 logo depois do backfill:
+     celulas.outros        = 100,00      <- a Abertura
+     Σ(outrosDetalhe)      =   0,00      (bbcap, conta_corrente, dental, lob, credito)
+     delta                 = -100,00
+     Σ(celulas) = total    = 19.048,86   <- ESTA fechava; só a outra quebrava
+   ```
+
+   Na tela expandida os R$ 100,00 **sumiam** — a coluna vira as cinco do detalhe,
+   todas zero na ADS — enquanto a coluna Total continuava com eles. A linha do RR
+   nunca teve o defeito, e a diferença é estrutural: lá a célula nasce do detalhe,
+   então os dois lados não têm como divergir. Consertado: `celulas.outros` da ADS
+   voltou a `0,00`, a Abertura foi para a coluna nova, e a `fonte` de "Outros" foi
+   corrigida (dizia `fechamento_mensal_empresa (por CNPJ)` para uma coluna cuja
+   linha da ADS nunca teve entrada nessa tabela e cuja linha de avulsos vem de
+   `receita_lancamento_manual`). Validado no navegador pelo Diego em 28/08.
+
+   Vigia: `scripts/financeiro_matriz_detalhe_gate.cjs` (self-contained, 14
+   asserções) cobra em TODA linha `Σ(outrosDetalhe) == celulas.outros` e
+   `Σ(celulas) == total`. Provado por mutação: devolver a Abertura para `outros`
+   derruba 4 asserções.
+
+3. ~~**BLOCO 3 — implementado, nunca exercitado.**~~ **EXERCITADO em 27/08.** O
+   apagamento foi REPRODUZIDO no caminho real, contra um banco espelho semeado
+   com produção (`scripts/_fakeDpr.cjs`, que reproduz o upsert parcial do
+   PostgREST), com o fechamento REAL de julho:
+
+   ```
+   codigo de HOJE     : 0 de 12 linhas alteradas
+   codigo de 1212c1f  : 12 de 12   bbts_seguro_pago 115,10 -> 0,00
+                                   insurance_value  113.345,57 -> 0,00
+                                   has_insurance    true -> false
+                                   insurance_type   "SLIP" -> null
+   nos DOIS casos: ancora_ok=true, gravadas=43, nenhum aviso
+   ```
+
+   E a recusa da rota ganhou o que faltava: **empresa** pelo nome (lida de
+   `companies`), os números **dentro do campo `error`** — o único que a tela
+   renderiza; antes moravam em `detalhe`, que ninguém exibia — e **caminho de
+   confirmação na interface** (bloco com o dano em números + botão "Confirmo:
+   importar SÓ o crédito", que nasce nulo, só existe depois de uma recusa e morre
+   a cada troca de arquivo). Vigia: `scripts/ads_import_so_credito_gate.cjs`
+   (self-contained, 17 asserções, com a função POST real da rota).
+
+4. **ABERTO — os +49,45** contra o extrato. §4, decisão de negócio sobre os
+   cancelamentos de julho. Não é defeito.
+
+5. **ABERTO — R$ 372,31 em 2025-02 AL1.** §6. É o único dinheiro de seguro do RR
+   fora do sistema.
+
+6. **ABERTO — dívida nomeada:** a rota de cancelamento
    (`app/api/import/closing/cancel/route.ts:49-56`) apaga
    `monthly_closing_entries` sem recompor `fechamento_mensal_empresa`. É a origem
    do item anterior e das 6.491 linhas de detalhe perdidas.
+
+7. **ARESTA NOMEADA, não aberta — o resíduo de centavo e a coluna expansível.**
+   `fecharLinha` (`financialAnalytics.ts:632-653`) devolve resíduo de arredondamento
+   para a **maior célula** da linha, e o fechamento da matriz (`:1487-1500`) pode
+   reaplicá-lo. Se um dia a maior célula de alguma linha for `outros`, a identidade
+   `Σ(detalhe) == célula` cai por 1 centavo — e o gate ficará vermelho **com razão**:
+   seria o resíduo entrando numa coluna agregada sem entrada no detalhe. A resposta
+   certa é manter o resíduo **fora de coluna expansível**, nunca afrouxar a
+   asserção. Hoje não acontece: a maior célula é sempre `avista`.
 
 ---
 
@@ -379,3 +482,69 @@ Registrado para você poder discordar com o número à vista:
 | "43 competências sem linha de seguro em jan-mai/2026" | são **3**, e são 2023-09, 2023-12 e 2025-02 |
 | "as abas de jan-mai/2026 estão vazias" | **não estão** — jan/2026 AL1 tem 249 linhas na aba "Seguro", AL3 tem 54 |
 | "três ids que não existiam" | **um** id citado não existe (`0dc42962…`), e não foi produzido por mim |
+
+---
+
+## 9. LIÇÃO DE FERRAMENTA — `next build` corrompe o `next dev` em execução
+
+**Aconteceu em 27/08/2026, 22:46.** O `/financeiro` em `localhost:3000` ficou
+parado em "Carregando financeiro..." **e sem CSS**. Não era a rota, não era
+permissão, não era o backfill, não era a coluna nova da matriz: era o `.next`.
+
+`next build` e `next dev` **escrevem no mesmo `.next`**. Rodar o build com o dev
+server de pé substitui, debaixo dele, os artefatos que ele está servindo. O
+processo continua vivo e respondendo — por isso o sintoma não parece de build.
+
+**A causa foi cumprir a regra "npm run build com tsc em 0 antes de qualquer
+commit" sem antes olhar se havia dev server rodando.** Dois builds nesta frente,
+antes de `bc75fdf` e de `3c09a5c`.
+
+### O quadro clínico, medido
+
+```
+processo na porta 3000 (PID 23140)   next dev, vivo desde 27/08 15:58:39
+.next/BUILD_ID                       22:46:39   <- marcador de `next build`
+.next/export-marker.json             22:46:52   <- idem
+.next/server/app/financeiro.html     22:46:49   <- pagina PRE-RENDERIZADA (dev nao gera)
+.next/server/chunks/1331.js          22:46:04   <- layout de PRODUCAO (chunks/)
+.next/server/webpack-runtime.js      22:50:37   <- reescrito pelo DEV, depois
+.next/static/t-AbTIOGfbj-5k-X2uwgL/  22:46      <- buildId de producao
+.next/static/development/            22:50      <- ... lado a lado com o do dev
+```
+
+No log, na ordem: quatro `GET /api/financeiro 200`, um `✓ Compiled in 588ms`, e
+então `TypeError: Cannot read properties of undefined (reading 'call')` no
+`/financeiro` e `Cannot find module './1331.js'` (o `webpack-runtime.js` do dev
+procura o chunk ao lado dele; o build o pôs em `server/chunks/`).
+
+**O que explica os DOIS sintomas de uma vez:**
+
+```
+GET /_next/static/chunks/main-app.js  ->  404
+```
+
+Sem o bundle raiz o React não inicializa: o HTML chega (por isso `GET /financeiro
+200`), o estado inicial "Carregando…" fica na tela para sempre, e o CSS do App
+Router não é aplicado. **Tela sem CSS + spinner eterno + rota que respondia 200
+minutos antes = `.next` corrompido, não defeito de código.**
+
+### A REGRA
+
+> **Antes de `npm run build`, confira se há `next dev` rodando** (`netstat -ano |
+> grep :3000`). Ou o dev está parado, ou o build vai para diretório separado:
+> `next build --distDir .next-build`.
+
+### O conserto, quando acontecer
+
+`npm run dev:clean` (já existe no `package.json:7` — `rm -rf .next && next dev`).
+Se o dev estiver de pé, derrube antes: o `rm -rf` não conserta um processo que já
+carregou os módulos velhos na memória.
+
+### O que NÃO ajudou a diagnosticar, e por quê
+
+Rodar `buildFinancialAnalytics` pelo cliente ANON para procurar um 42501 como o
+de 26/08 (§17 do `HANDOFF_ADS_FECHAMENTO_CAIXA.md`). Sem sessão o papel é `anon`,
+não `authenticated`, e **as 12 tabelas negam** — inclusive as que a página lê bem
+todo dia. O teste é inconclusivo por construção e diria "permission denied" com o
+sistema perfeitamente saudável. Um resultado que aparece igual nos dois mundos
+não separa nada.
