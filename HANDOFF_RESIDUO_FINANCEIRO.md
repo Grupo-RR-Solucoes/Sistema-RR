@@ -307,13 +307,23 @@ essa é a decisão que estaria sendo reaberta.
 4. **ABERTO — os +49,45** contra o extrato. §4, decisão de negócio sobre os
    cancelamentos de julho. Não é defeito.
 
-5. **ABERTO — R$ 372,31 em 2025-02 AL1.** §6. É o único dinheiro de seguro do RR
-   fora do sistema.
+5. **RETRATADO — os R$ 372,31 em 2025-02 AL1 NÃO se reproduzem.** Ver a errata
+   de 28/08/2026 em §6. O número tem a mesma procedência dos quatro que já
+   morreram: não é reprodutível a partir dos arquivos em disco. O que **é**
+   verificável nessa competência é outra coisa — o agregado órfão do item 6.
 
-6. **ABERTO — dívida nomeada:** a rota de cancelamento
-   (`app/api/import/closing/cancel/route.ts:49-56`) apaga
-   `monthly_closing_entries` sem recompor `fechamento_mensal_empresa`. É a origem
-   do item anterior e das 6.491 linhas de detalhe perdidas.
+6. **FECHADO em 28/08/2026 — a perda de detalhe de 2025-02 AL1.** A dívida
+   nomeada aqui dizia que a rota de cancelamento
+   (`app/api/import/closing/cancel/route.ts:49-56`) apagava
+   `monthly_closing_entries` sem recompor `fechamento_mensal_empresa`. **Meia
+   verdade**: a rota de fato não recompõe, mas o delete destrutivo estava no
+   **IMPORT** — `monthlyClosingImport.ts` apagava por `company+year+month`, sem
+   filtro de `importId`, **antes** de inserir. O cancel só removia o substituto.
+   Consertado em três commits: o import passou a INSERIR primeiro e APAGAR
+   depois (janela reversível); o cancel RECUSA com 409 quando deixaria agregado
+   órfão; e o vigia `agregado_sem_detalhe` acende para o estado que sobrou.
+   **A competência NÃO foi reparada** — sem fonte verificada, recompor
+   escreveria 0,00 sobre 97.535,61 e completaria a perda.
 
 7. **ARESTA NOMEADA, não aberta — o resíduo de centavo e a coluna expansível.**
    `fecharLinha` (`financialAnalytics.ts:632-653`) devolve resíduo de arredondamento
@@ -340,17 +350,67 @@ linhas do banco **separadas por `sheet_name` de origem**):
  8 sem arquivo em disco (2026-04 e 2026-05 das 4 empresas)
 ```
 
-**Divergência real: 1**, e não é zero:
+**Divergência real: nenhuma confirmada.** O que esta seção afirmava:
 
 ```
 2025-02 RR ALAGOAS 1   A Vista arq 2.549,61  bd 0,00
                        Seguro  arq   372,31  bd 0,00
 ```
 
-Competência esvaziada por um cancelamento de import (`operacoes = 6491` prova que as
-linhas existiram). O total está certo (`valor_seguro 2.549,61` dentro de
-`valor_liquido 97.535,61`), mas os **R$ 372,31 da aba "Seguro" nunca entraram** no
-`valor_seguro`. É o único dinheiro de seguro do RR fora do sistema.
+### ERRATA — 28/08/2026: os R$ 372,31 NÃO se reproduzem
+
+Tentei reproduzir o número a partir do arquivo cancelado, o
+`C23677_48357275000103_Todos_2_2025.xlsx`. Ele existe em **duas** cópias em
+disco (`RRCRED/Relatório de Produção/ALAGOAS` e
+`RRCRED/producao/Relatório de Produção/ALAGOAS`) — a mesma duplicação que já
+produziu o artefato dos R$ 10.102,33. As duas são idênticas:
+
+```
+    tamanho: 1740724 bytes   mtime: 2025-03-07T14:19:30.000Z   (as duas)
+    celulas numericas na aba Resumo: L30C2=847822962           (so o MCI)
+    aba Seguro: 317 linhas   Sigma COMISSAO = -355.09
+```
+
+Ou seja: **a aba Resumo do arquivo não tem valor nenhum** (só o MCI), e a soma da
+coluna COMISSÃO da aba "Seguro" é **−355,09**, não +372,31. Não reproduzi nem os
+372,31 nem os 2.549,61 a partir do arquivo. O `valor_seguro = 2.549,61` que está
+no banco não veio desta cópia.
+
+**O número fica REBAIXADO de "única divergência real da varredura das 100" para
+"não reproduzido"**, com a mesma procedência dos quatro da tabela abaixo. Não é
+prova de que o dinheiro está certo — é o registro de que a afirmação não se
+sustenta com o que há em disco, e de que qualquer reparo baseado nela seria
+reparo sem fonte.
+
+**O que sobrou verificável nessa competência** não é o 372,31, é o AGREGADO
+ÓRFÃO: `fechamento_mensal_empresa` de 2025-02 AL1 tem `operacoes = 6.491` e
+`valor_liquido = 97.535,61` com **zero** linhas em `monthly_closing_entries`.
+Varridas as 100 linhas de FME, é a única quebrada (2023-12 AL1 também está sem
+entries, mas com o agregado zerado — não é perda). Isso agora tem vigia
+permanente: `agregado_sem_detalhe`, em `lib/diagnostico/fechamentoParcial.ts`.
+
+### ABERTO — 2026-05 AL1 diverge entre o agregado e o detalhe
+
+Achado novo de 28/08/2026, **não investigado, não tocado nesta frente**. Ao
+medir se `fechamento_mensal_empresa` é reconstituível a partir das entries em
+competências consideradas sadias:
+
+```
+   RR ALAGOAS 1  2026-04   operacoes(FME)=6025 x chaves(entries)=6025 => IGUAIS
+                           valor_avista 34.123,96 == Sigma CASH 34.123,96
+   RR PERNAMBUCO 2026-02   operacoes(FME)=2891 x chaves(entries)=2891 => IGUAIS
+                           valor_avista 57.232,43 == Sigma CASH 57.232,43
+   RR ALAGOAS 1  2026-05   operacoes(FME)=5970 x chaves(entries)=5963 => DIFERENTES (delta -7)
+                           valor_diferido 34.622,63  x  Sigma PRT 36.373,45  (delta -1.750,82)
+```
+
+Duas das três batem exatamente; **2026-05 AL1 não**. São 7 operações e
+R$ 1.750,82 de diferença entre o que o agregado declara e o que o detalhe soma,
+numa competência que ninguém considera quebrada. Parte do delta de `valor_diferido`
+tem explicação plausível na régua (`isPayablePrtRow` filtra COD EST = 1, negativos
+vão para estorno), mas **as 7 operações não foram explicadas**, e a hipótese não
+foi verificada. Foi este achado que derrubou os dois desenhos de "recompor o
+agregado": recompor sempre reescreveria esta competência.
 
 ### Os quatro números que circularam como buraco
 
@@ -476,7 +536,7 @@ Registrado para você poder discordar com o número à vista:
 | "ago/26 foi de 318.596,26 para 318.696,26" | está em **318.685,68**; 318.596,26 era o valor **antes** do UPDATE do 89,42. Após o backfill: **318.785,68** |
 | "a diferença caiu de 139,97 para 39,97" | hoje **−50,55**; após o backfill **+49,45** — inverte o sinal |
 | "varredura de 41 competências" | foram **100**: 74 batem, 18 divergem (17 por centavos), 8 sem arquivo |
-| "bateu ao centavo / buraco zero" | **1 divergência real: R$ 372,31** em 2025-02 AL1 |
+| "bateu ao centavo / buraco zero" | ~~1 divergência real: R$ 372,31 em 2025-02 AL1~~ **RETRATADO em 28/08/2026**: o número não se reproduz do arquivo em disco (Resumo sem valores; Σ COMISSÃO da aba Seguro = −355,09). Ver a errata em §6 |
 | "os três números contavam linhas já gravadas" | três **nunca foram reproduzidos**; a causa é desconhecida. Só o meu (10.102,33) foi diagnosticado |
 | "o DRE lê `insurance_commission_amount`" | `dre.ts` tem **zero** ocorrências desse identificador; lê `bbts_seguro_pago`, bruto |
 | "43 competências sem linha de seguro em jan-mai/2026" | são **3**, e são 2023-09, 2023-12 e 2025-02 |
