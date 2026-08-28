@@ -1,48 +1,40 @@
 /* ============================================================================
- * cancel_agregado_orfao_gate — NENHUMA competencia pode ficar com AGREGADO
- * ORFAO: linha em fechamento_mensal_empresa sem uma unica entry de detalhe.
+ * cancel_agregado_orfao_gate — a metade que NAO cabe no CI.
  *
  * Rodar:
  *   node scripts/cancel_agregado_orfao_gate.cjs
  *
- * O DANO MEDIDO (28/08/2026): 2025-02 RR ALAGOAS 1 tem
- * `fechamento_mensal_empresa` com operacoes=6.491 e valor_liquido=97.535,61 e
- * ZERO linhas em monthly_closing_entries. Varridas as 100 linhas de FME, e a
- * UNICA competencia quebrada (2023-12 AL1 tambem esta sem entries, mas com FME
- * legitimamente ZERADA: operacoes=0, valor_liquido=0,00 — nao e perda).
+ * needs-local + needs-db, e por isso o CI NUNCA executa este arquivo:
+ *   - le C:/Users/diego/Downloads/... (o xlsx do fechamento de 2025-02 AL1, que
+ *     nao esta versionado e nao pode estar: 1,7 MB de dado de cliente);
+ *   - chama createClient para medir o estado de PRODUCAO.
+ * As duas provas daqui so acontecem quando ALGUEM RODA A MAO. Isso esta dito com
+ * todas as letras no `motivo` do registro em scripts/run_all_gates.cjs, e e uma
+ * limitacao real, nao um detalhe: o bloco 2 (o vigia acendendo em PRODUCAO) e
+ * justamente o que impede o check de nascer verde por vacuidade, e ele nao roda
+ * em push nenhum.
  *
- * A CAUSA, em duas metades:
- *   (H1) o IMPORT apagava o detalhe legado ANTES de inserir o novo
- *        (monthlyClosingImport.ts), deixando a competencia vazia numa janela;
- *   (H2) o CANCEL apaga as entries do import e NAO recompoe o agregado
- *        (cancel/route.ts:49-57; reconsolidarCompetenciaFechada so toca
- *        promoter_monthly_results — linhas 194 e 247 sao os unicos `.from`).
+ * O QUE E CI-AVEL FOI SEPARADO em scripts/agregado_orfao_gate.cjs
+ * (self-contained, 38 assercoes): as ancoras no fonte do import, a funcao POST
+ * REAL do cancel contra o espelho com os tres controles positivos, e o vigia
+ * contra dados controlados. Aquele arquivo e o que roda em todo push.
  *
- * O RECORTE AMPLO DO DELETE DO IMPORT E DELIBERADO e NAO foi mexido: reimportar
- * a competencia SUBSTITUI o detalhe legado. Medido: 2026-01 AL1 tem 14 imports
- * COMPLETED e 6.433 entries legadas de UM UNICO import. O que mudou foi a ORDEM.
- *
- * OS BLOCOS:
- *   1. ORDEM      — no fonte do import, o delete vem DEPOIS do insert, carrega
- *                   `.neq(importId)` e o guard de `rowsToInsert.length > 0`; e o
- *                   recorte amplo continua la (nao viramos `.eq(importId)`).
- *   2. TRACE      — o import REAL roda contra o espelho e o observador prova que
- *                   a contagem de entries NUNCA passa por zero tendo comecado
- *                   com detalhe. Reverter a ordem faz a contagem tocar o zero.
- *   3. RECUSA     — a funcao POST REAL do cancel recusa (409) quando apagar
- *                   deixaria o agregado orfao, com o dano em numeros no campo
- *                   `error`. Tres controles positivos impedem que isto vire uma
- *                   trava geral: cancel legitimo passa, FME zerada nao trava, e
- *                   a competencia vizinha sai byte-identica.
- *   4. VIGIA      — o check 'agregado_sem_detalhe' de
- *                   lib/diagnostico/fechamentoParcial.ts acende para 2025-02 AL1
- *                   e fica quieto para 2023-12 AL1 (FME zerada). Rodado contra
- *                   dados controlados E contra a PRODUCAO — o bloco de producao
- *                   e o que impede o vigia de nascer verde por vacuidade.
+ * OS BLOCOS QUE SOBRARAM AQUI:
+ *   1. TRACE     — importMonthlyClosingWorkbook REAL, com o arquivo REAL, contra
+ *                  o espelho scripts/_fakeFechamento.cjs, com um observador que
+ *                  registra a contagem de monthly_closing_entries apos CADA
+ *                  escrita. A invariante: a contagem nunca toca ZERO tendo
+ *                  comecado com detalhe. Reverter a ordem do import faz o trace
+ *                  mostrar `delete 400 -> 0` antes de qualquer insert.
+ *   2. PRODUCAO  — o vigia 'agregado_sem_detalhe' acende para 2025-02 RR
+ *                  ALAGOAS 1 AGORA, e NAO acende para 2023-12 AL1 (FME zerada).
  * ========================================================================== */
 require("./_ts_register.cjs");
 const fs = require("fs");
 const path = require("path");
+const Module = require("node:module");
+const { createClient } = require("@supabase/supabase-js");
+const { createFakeFechamento } = require("./_fakeFechamento.cjs");
 
 const linha = (c) => c.repeat(84);
 let falhas = 0;
@@ -52,66 +44,17 @@ const ok = (cond, rotulo, extra) => {
 };
 
 const ROOT = path.resolve(__dirname, "..");
-const SRC = fs.readFileSync(path.join(ROOT, "lib/monthlyClosingImport.ts"), "utf8");
+
+function stubModule(spec, exports) {
+  const p = require.resolve(spec.startsWith("@/") ? path.join(ROOT, spec.slice(2)) : spec);
+  const m = new Module(p);
+  m.filename = p;
+  m.loaded = true;
+  m.exports = exports;
+  require.cache[p] = m;
+}
 
 (async () => {
-  // ---- 1. ORDEM ----
-  console.log(linha("="));
-  console.log("1) ORDEM — no import, o delete do detalhe legado vem DEPOIS do insert");
-  console.log(linha("="));
-
-  // ANCORAS UNICAS. `insert(slice)` aparece DUAS vezes no arquivo — a outra e a de
-  // syncProductLines (:754), e ancorar nela dava um offset ANTERIOR ao delete: a
-  // assercao de ordem passava mesmo com o codigo defeituoso. A ancora do loop
-  // legado e `rowsToInsert.slice(`, que so existe la; e o gate agora CONTA as
-  // ocorrencias, para a ancora nao poder deslizar de novo em silencio.
-  const nInsertLegado = (SRC.match(/rowsToInsert\.slice\(/g) || []).length;
-  const nDelete = (SRC.match(/entry_type\.not\.in\.\(BBCAP,CONTA_CORRENTE,CONSORCIO\)/g) || []).length;
-  const iInsert = SRC.indexOf("rowsToInsert.slice(");
-  const iDelete = SRC.indexOf('.or("entry_type.is.null,entry_type.not.in.(BBCAP,CONTA_CORRENTE,CONSORCIO)")');
-  ok(nInsertLegado === 1, "ANTI-DESLIZE: a ancora do insert legado e UNICA", `n=${nInsertLegado}`);
-  ok(nDelete === 1, "ANTI-DESLIZE: a ancora do delete legado e UNICA", `n=${nDelete}`);
-  ok(iInsert > 0, "ANTI-VACUIDADE: achei o insert em chunk das entries legadas", `pos=${iInsert}`);
-  ok(iDelete > 0, "ANTI-VACUIDADE: achei o delete do detalhe legado", `pos=${iDelete}`);
-  ok(iDelete > iInsert, "o DELETE vem DEPOIS do INSERT (janela reversivel)", `insert=${iInsert} delete=${iDelete}`);
-
-  const bloco = SRC.slice(iDelete - 1200, iDelete + 200);
-  ok(
-    /\.neq\("monthly_closing_import_id", importId\)/.test(bloco),
-    "o delete exclui as linhas RECEM-INSERIDAS (.neq monthly_closing_import_id)"
-  );
-  ok(
-    /\.eq\("company_id", company\.id\)/.test(bloco) &&
-      /\.eq\("year", targetYear\)/.test(bloco) &&
-      /\.eq\("month", targetMonth\)/.test(bloco),
-    "o RECORTE AMPLO (company+year+month) continua — reimport ainda SUBSTITUI"
-  );
-  ok(
-    !/\.delete\(\)[\s\S]{0,200}\.eq\("monthly_closing_import_id"/.test(SRC),
-    "o delete NAO foi estreitado para `.eq(importId)` (deixaria duplicata viva)"
-  );
-  ok(
-    /if \(rowsToInsert\.length > 0\) \{[\s\S]{0,400}\.delete\(\)/.test(SRC),
-    "o delete so roda quando HA substituto (guard rowsToInsert.length > 0)"
-  );
-
-  // ---- 2. TRACE — o import REAL contra o espelho ----
-  console.log("\n" + linha("="));
-  console.log("2) TRACE — importMonthlyClosingWorkbook REAL: a contagem nunca toca o zero");
-  console.log(linha("="));
-
-  const { createClient } = require("@supabase/supabase-js");
-  const { createFakeFechamento } = require("./_fakeFechamento.cjs");
-  const Module = require("node:module");
-
-  function stubModule(spec, exports) {
-    const p = require.resolve(spec.startsWith("@/") ? path.join(ROOT, spec.slice(2)) : spec);
-    const m = new Module(p);
-    m.filename = p;
-    m.loaded = true;
-    m.exports = exports;
-    require.cache[p] = m;
-  }
   stubModule("@/lib/reconsolidarCompetencia", {
     reconsolidarCompetenciaFechada: async () => ({ stub: true }),
   });
@@ -121,6 +64,11 @@ const SRC = fs.readFileSync(path.join(ROOT, "lib/monthlyClosingImport.ts"), "utf
     process.env.SUPABASE_SERVICE_ROLE_KEY,
     { auth: { persistSession: false } }
   );
+
+  // ---- 1. TRACE ----
+  console.log(linha("="));
+  console.log("1) TRACE — importMonthlyClosingWorkbook REAL: a contagem nunca toca o zero");
+  console.log(linha("="));
 
   const ARQ = path.join(
     "C:/Users/diego/Downloads/RRCRED/Relatório de Produção/ALAGOAS",
@@ -163,7 +111,7 @@ const SRC = fs.readFileSync(path.join(ROOT, "lib/monthlyClosingImport.ts"), "utf
 
   const fake = createFakeFechamento(real, semente);
   // A lib pega o cliente por getSupabaseAdmin() — injeto o espelho por stub,
-  // ANTES do require (mesma tecnica de ads_import_so_credito_gate.cjs:243).
+  // ANTES do require.
   stubModule("@/lib/supabaseAdmin", { getSupabaseAdmin: () => fake });
   const { importMonthlyClosingWorkbook } = require(path.join("..", "lib", "monthlyClosingImport.ts"));
 
@@ -183,13 +131,12 @@ const SRC = fs.readFileSync(path.join(ROOT, "lib/monthlyClosingImport.ts"), "utf
 
   const tr = fake._store.get("__trace") || [];
   console.log(`   escritas em monthly_closing_entries observadas: ${tr.length}`);
-  for (const t of tr.slice(0, 12)) console.log(`      ${t.op.padEnd(7)} ${t.antes} -> ${t.depois}`);
-  if (tr.length > 12) console.log(`      ... (+${tr.length - 12})`);
+  for (const t of tr.slice(0, 6)) console.log(`      ${t.op.padEnd(7)} ${t.antes} -> ${t.depois}`);
+  if (tr.length > 6) console.log(`      ... (+${tr.length - 6})`);
   if (erroImport) console.log(`   NOTA: o import terminou com erro: ${erroImport.message}`);
 
   ok(tr.length > 0, "ANTI-VACUIDADE: o import REAL escreveu em monthly_closing_entries", `escritas=${tr.length}`);
-  const tocouZero = tr.some((t) => t.depois === 0);
-  ok(!tocouZero, "a contagem de entries NUNCA chega a ZERO durante o import");
+  ok(!tr.some((t) => t.depois === 0), "a contagem de entries NUNCA chega a ZERO durante o import");
   const final = fake._rows("monthly_closing_entries").length;
   const sobrouAntiga = fake._rows("monthly_closing_entries").filter(
     (r) => r.monthly_closing_import_id === IMPORT_ANTIGO
@@ -202,253 +149,25 @@ const SRC = fs.readFileSync(path.join(ROOT, "lib/monthlyClosingImport.ts"), "utf
     `sobraram=${sobrouAntiga}`
   );
 
-  // ---- 3. RECUSA — o cancel nao deixa agregado orfao ----
-  // Quatro cenarios contra a funcao POST REAL da rota. O que separa este bloco de
-  // uma trava burra sao os TRES controles positivos: cancel legitimo continua
-  // passando, FME zerada nao trava, e competencia vizinha nao e tocada.
+  // ---- 2. PRODUCAO ----
   console.log("\n" + linha("="));
-  console.log("3) RECUSA — POST real de /api/import/closing/cancel");
+  console.log("2) PRODUCAO — o vigia acende para 2025-02 RR ALAGOAS 1 AGORA");
   console.log(linha("="));
-
-  const ALVO = "cccccccc-cccc-cccc-cccc-cccccccccccc";
-  const OUTRO = "dddddddd-dddd-dddd-dddd-dddddddddddd";
-
-  // Monta um espelho por cenario: as entries da competencia 2025-02 vem SO do
-  // import ALVO (ou tambem do OUTRO, no controle positivo), mais uma competencia
-  // VIZINHA (2026-05) que nao pode ser tocada por nada disto.
-  const montar = ({ comOutro, fmeZerada }) => ({
-    monthly_closing_entries: [
-      ...Array.from({ length: 300 }, (_, i) => ({
-        id: `alvo-${i}`, monthly_closing_import_id: ALVO,
-        company_id: AL1.id, company_cnpj: AL1.cnpj, year: 2025, month: 2,
-        entry_type: "CASH", commission_value: 1, sheet_name: "A Vista",
-      })),
-      ...(comOutro
-        ? Array.from({ length: 120 }, (_, i) => ({
-            id: `outro-${i}`, monthly_closing_import_id: OUTRO,
-            company_id: AL1.id, company_cnpj: AL1.cnpj, year: 2025, month: 2,
-            entry_type: "PRT", commission_value: 2, sheet_name: "PRT",
-          }))
-        : []),
-      // VIZINHA — competencia sadia, intocavel.
-      ...Array.from({ length: 90 }, (_, i) => ({
-        id: `vizinha-${i}`, monthly_closing_import_id: OUTRO,
-        company_id: AL1.id, company_cnpj: AL1.cnpj, year: 2026, month: 5,
-        entry_type: "CASH", commission_value: 7, sheet_name: "A Vista",
-      })),
-    ],
-    fechamento_mensal_empresa: [
-      {
-        id: "fme-2025-02", empresa_cnpj: AL1.cnpj, ano: 2025, mes: 2,
-        operacoes: fmeZerada ? 0 : 6491,
-        valor_liquido: fmeZerada ? 0 : 97535.61,
-        valor_avista: fmeZerada ? 0 : 56535.69, valor_seguro: fmeZerada ? 0 : 2549.61,
-      },
-      {
-        id: "fme-2026-05", empresa_cnpj: AL1.cnpj, ano: 2026, mes: 5,
-        operacoes: 5970, valor_liquido: 60765.54, valor_avista: 25762.88, valor_seguro: 562.37,
-      },
-    ],
-    monthly_closing_imports: [
-      { id: ALVO, company_id: AL1.id, year: 2025, month: 2, file_name: "alvo.xlsx", status: "PROCESSING", created_at: "2026-05-01T00:00:00Z" },
-      { id: OUTRO, company_id: AL1.id, year: 2025, month: 2, file_name: "outro.xlsx", status: "COMPLETED", created_at: "2026-04-01T00:00:00Z" },
-    ],
-  });
-
-  // A rota pega o cliente do proprio guard. Um stub por cenario.
-  let clienteAtual = null;
-  stubModule("@/lib/auth/guards", {
-    withSocioAdmin: async () => ({
-      user: { session: { appUser: { email: "gate@local" } } },
-      supabase: clienteAtual,
-    }),
-    apiGuardErrorResponse: (e) => ({
-      status: 500,
-      json: async () => ({ error: String((e && e.message) || e) }),
-    }),
-  });
-  const cancelRota = require(path.join("..", "app", "api", "import", "closing", "cancel", "route.ts"));
-
-  const rodarCancel = async (semente, body) => {
-    clienteAtual = createFakeFechamento(real, semente);
-    const resp = await cancelRota.POST({ json: async () => body });
-    const corpo = typeof resp.json === "function" ? await resp.json() : resp;
-    return { status: resp.status, corpo, cli: clienteAtual };
-  };
-
-  const contarEnt = (cli, y, m) =>
-    cli._rows("monthly_closing_entries").filter((r) => r.year === y && r.month === m).length;
-  const fmeDe = (cli, y, m) =>
-    cli._rows("fechamento_mensal_empresa").find((r) => r.ano === y && r.mes === m);
-
-  // 3a. RECUSA — cancelar zeraria a competencia e ha agregado com valor.
-  console.log("\n   3a) RECUSA: cancelar deixaria 0 entries e o agregado tem valor");
   {
-    const semente = montar({ comOutro: false, fmeZerada: false });
-    const { status, corpo, cli } = await rodarCancel(semente, { importId: ALVO });
-    console.log(`      status=${status}`);
-    console.log(`      error: ${String(corpo.error || "").slice(0, 150)}...`);
-    ok(status === 409, "   status 409 (recusa)", `status=${status}`);
-    ok(corpo.confirmacao_necessaria === true, "   pede confirmacao explicita");
-    ok(/6491/.test(String(corpo.error)), "   o `error` traz as OPERACOES do agregado (6491)");
-    ok(/97\.535,61/.test(String(corpo.error)), "   o `error` traz o VALOR LIQUIDO (97.535,61)");
-    ok(/RR ALAGOAS 1/.test(String(corpo.error)), "   o `error` nomeia a EMPRESA");
-    ok(/02\/2025/.test(String(corpo.error)), "   o `error` nomeia a COMPETENCIA");
-    ok(contarEnt(cli, 2025, 2) === 300, "   NADA foi apagado", `entries=${contarEnt(cli, 2025, 2)}`);
-    ok(
-      cli._rows("monthly_closing_imports").find((r) => r.id === ALVO).status === "PROCESSING",
-      "   o import continua PROCESSING (a recusa nao destravou pela metade)"
-    );
-  }
-
-  // 3b. CONTROLE POSITIVO — cancel LEGITIMO segue funcionando.
-  //     Sem este bloco, uma trava geral (recusar sempre) passaria em 3a.
-  console.log("\n   3b) CONTROLE POSITIVO: cancel que NAO deixa orfao continua passando");
-  {
-    const semente = montar({ comOutro: true, fmeZerada: false });
-    const antesVizinha = contarEnt(createFakeFechamento(real, semente), 2026, 5);
-    const { status, corpo, cli } = await rodarCancel(semente, { importId: ALVO });
-    console.log(`      status=${status}  corpo=${JSON.stringify(corpo).slice(0, 120)}`);
-    ok(status === 200 || corpo.success === true, "   o cancel PASSOU", `status=${status}`);
-    ok(contarEnt(cli, 2025, 2) === 120, "   apagou so as do import cancelado", `restam=${contarEnt(cli, 2025, 2)}`);
-    ok(
-      cli._rows("monthly_closing_imports").find((r) => r.id === ALVO).status === "CANCELLED",
-      "   o import ficou CANCELLED (destravou o zumbi)"
-    );
-    // CONTROLE POSITIVO — a competencia VIZINHA sai byte-identica.
-    const vizinhaDepois = cli._rows("monthly_closing_entries").filter((r) => r.year === 2026 && r.month === 5);
-    ok(vizinhaDepois.length === antesVizinha, "   competencia VIZINHA intacta (contagem)", `${antesVizinha} -> ${vizinhaDepois.length}`);
-    const fmeVizinha = fmeDe(cli, 2026, 5);
-    ok(
-      Number(fmeVizinha.operacoes) === 5970 && Number(fmeVizinha.valor_liquido) === 60765.54,
-      "   agregado da VIZINHA byte-identico (nao houve recomposicao)",
-      `operacoes=${fmeVizinha.operacoes} liquido=${fmeVizinha.valor_liquido}`
-    );
-    const fmeAlvo = fmeDe(cli, 2025, 2);
-    ok(
-      Number(fmeAlvo.operacoes) === 6491 && Number(fmeAlvo.valor_liquido) === 97535.61,
-      "   agregado da PROPRIA competencia tambem intacto (NAO recompomos)",
-      `operacoes=${fmeAlvo.operacoes}`
-    );
-  }
-
-  // 3c. CONTROLE POSITIVO — FME zerada nao e dano, entao nao pode travar.
-  //     E o caso de 2023-12 AL1 (operacoes=0, valor_liquido=0,00).
-  console.log("\n   3c) CONTROLE POSITIVO: FME ZERADA nao trava (o caso 2023-12 AL1)");
-  {
-    const semente = montar({ comOutro: false, fmeZerada: true });
-    const { status, corpo, cli } = await rodarCancel(semente, { importId: ALVO });
-    console.log(`      status=${status}  corpo=${JSON.stringify(corpo).slice(0, 120)}`);
-    ok(status === 200 || corpo.success === true, "   o cancel PASSOU (agregado sem dinheiro)", `status=${status}`);
-    ok(contarEnt(cli, 2025, 2) === 0, "   apagou normalmente", `restam=${contarEnt(cli, 2025, 2)}`);
-  }
-
-  // 3d. A confirmacao explicita destrava — e SO ela.
-  console.log("\n   3d) a confirmacao explicita destrava (nunca e padrao ligado)");
-  {
-    const semente = montar({ comOutro: false, fmeZerada: false });
-    const semConfirmar = await rodarCancel(semente, { importId: ALVO, confirmarAgregadoOrfao: false });
-    ok(semConfirmar.status === 409, "   confirmarAgregadoOrfao=false NAO destrava", `status=${semConfirmar.status}`);
-    const comConfirmar = await rodarCancel(montar({ comOutro: false, fmeZerada: false }), {
-      importId: ALVO,
-      confirmarAgregadoOrfao: true,
-    });
-    ok(
-      comConfirmar.status === 200 || comConfirmar.corpo.success === true,
-      "   confirmarAgregadoOrfao=true destrava",
-      `status=${comConfirmar.status}`
-    );
-    ok(
-      contarEnt(comConfirmar.cli, 2025, 2) === 0,
-      "   e ai sim apaga (a decisao fica com quem confirmou)"
-    );
-  }
-
-  // ---- 4. VIGIA — agregado_sem_detalhe ----
-  // O check tem de ACENDER para 2025-02 AL1 e FICAR QUIETO para 2023-12 AL1
-  // (FME legitimamente zerada). Rodado duas vezes: contra dados CONTROLADOS no
-  // espelho (para poder mutar o estado) e contra a PRODUCAO (para provar que
-  // acende de verdade, hoje, e nao so no laboratorio).
-  console.log("\n" + linha("="));
-  console.log("4) VIGIA — detectFechamentoParcial: 'agregado_sem_detalhe'");
-  console.log(linha("="));
-
-  const { detectFechamentoParcial } = require(path.join("..", "lib", "diagnostico", "fechamentoParcial.ts"));
-  const acharCheck = (res) => res.find((c) => c.id === "agregado_sem_detalhe");
-
-  // 4a. CONTROLADO — os dois casos lado a lado, no MESMO run.
-  console.log("\n   4a) CONTROLADO: 2025-02 (com valor) acende; 2023-12 (zerada) nao");
-  {
-    const semente = {
-      // 2026-05 tem detalhe; 2025-02 e 2023-12 nao tem.
-      monthly_closing_entries: Array.from({ length: 40 }, (_, i) => ({
-        id: `viva-${i}`, monthly_closing_import_id: "im-1",
-        company_id: AL1.id, company_cnpj: AL1.cnpj, year: 2026, month: 5,
-        entry_type: "CASH", commission_value: 1, sheet_name: "A Vista",
-      })),
-      fechamento_mensal_empresa: [
-        { id: "f1", empresa_cnpj: AL1.cnpj, ano: 2025, mes: 2, operacoes: 6491, valor_liquido: 97535.61, valor_avista: 56535.69, valor_seguro: 2549.61 },
-        { id: "f2", empresa_cnpj: AL1.cnpj, ano: 2023, mes: 12, operacoes: 0, valor_liquido: 0, valor_avista: 0, valor_seguro: 0 },
-        { id: "f3", empresa_cnpj: AL1.cnpj, ano: 2026, mes: 5, operacoes: 5970, valor_liquido: 60765.54, valor_avista: 25762.88, valor_seguro: 562.37 },
-      ],
-      monthly_closing_imports: [],
-    };
-    const cli = createFakeFechamento(real, semente);
-    const res = await detectFechamentoParcial(cli);
-    // AUSENCIA DO CHECK E FALHA, NAO EXCECAO. Quando a mutacao remove o vigia,
-    // um `check.severity` cru joga e o gate morre sem placar — vermelho por
-    // crash nao diz QUANTAS assercoes o conserto sustenta. Cai limpo.
-    const check = acharCheck(res) || { severity: "(ausente)", count: -1, detalhe: [] };
-    const comps = (check.detalhe || []).map((d) => d.competencia);
-    console.log(`      severity=${check && check.severity}  count=${check && check.count}  competencias=${JSON.stringify(comps)}`);
-    ok(acharCheck(res) !== undefined, "   o check existe no detector");
-    ok(check.severity === "erro", "   severity e 'erro' (nao e descontinuidade, e perda)", `sev=${check.severity}`);
-    ok(check.count === 1, "   ACENDE exatamente 1 vez", `count=${check.count}`);
-    ok(comps.includes("2025-02"), "   ACENDE para 2025-02 (agregado com valor, zero detalhe)");
-    ok(!comps.includes("2023-12"), "   NAO acende para 2023-12 (FME zerada — nao ha detalhe a perder)");
-    ok(!comps.includes("2026-05"), "   NAO acende para competencia COM detalhe");
-    const achado = (check.detalhe || [])[0] || {};
-    ok(Number(achado.operacoes) === 6491, "   o achado traz as OPERACOES", `operacoes=${achado.operacoes}`);
-    ok(Number(achado.valor_liquido) === 97535.61, "   o achado traz o VALOR LIQUIDO", `liquido=${achado.valor_liquido}`);
-    ok(String(achado.empresa) === "RR ALAGOAS 1", "   o achado NOMEIA a empresa", `empresa=${achado.empresa}`);
-  }
-
-  // 4b. MUTACAO DO ESTADO — se a competencia GANHA detalhe, o vigia apaga.
-  //     Sem isto, um check que acendesse SEMPRE passaria em 4a.
-  console.log("\n   4b) MUTACAO DO ESTADO: dar detalhe a 2025-02 APAGA o vigia");
-  {
-    const semente = {
-      monthly_closing_entries: [
-        { id: "x1", monthly_closing_import_id: "im-9", company_id: AL1.id, company_cnpj: AL1.cnpj, year: 2025, month: 2, entry_type: "CASH", commission_value: 1, sheet_name: "A Vista" },
-      ],
-      fechamento_mensal_empresa: [
-        { id: "f1", empresa_cnpj: AL1.cnpj, ano: 2025, mes: 2, operacoes: 6491, valor_liquido: 97535.61, valor_avista: 0, valor_seguro: 0 },
-      ],
-      monthly_closing_imports: [],
-    };
-    const cli = createFakeFechamento(real, semente);
-    const check = acharCheck(await detectFechamentoParcial(cli)) || { count: -1 };
-    console.log(`      count=${check.count}`);
-    ok(check.count === 0, "   com UMA linha de detalhe o vigia NAO acende", `count=${check.count}`);
-  }
-
-  // 4c. PRODUCAO — o estado REAL de hoje. E o que prova que o vigia nao nasceu
-  //     verde por vacuidade: se o count vier 0 aqui, ou o dano sumiu ou o check
-  //     esta vazio, e nos dois casos o gate tem de reprovar.
-  console.log("\n   4c) PRODUCAO: o vigia acende para 2025-02 RR ALAGOAS 1 AGORA");
-  {
-    const check = acharCheck(await detectFechamentoParcial(real)) || { count: -1, detalhe: [] };
+    const { detectFechamentoParcial } = require(path.join("..", "lib", "diagnostico", "fechamentoParcial.ts"));
+    const res = await detectFechamentoParcial(real);
+    const check = res.find((c) => c.id === "agregado_sem_detalhe") || { count: -1, detalhe: [] };
     const comps = (check.detalhe || []).map((d) => `${d.empresa} ${d.competencia}`);
-    console.log(`      count=${check.count}  ${JSON.stringify(comps)}`);
-    ok(check.count >= 1, "   ANTI-VACUIDADE: acende em producao (o dano existe hoje)", `count=${check.count}`);
+    console.log(`   count=${check.count}  ${JSON.stringify(comps)}`);
+    // Esta e a assercao que NAO tem equivalente no gate self-contained: la o dano
+    // e uma FIXTURE, aqui e o BANCO. Se o count vier 0, ou o dano sumiu (e o gate
+    // deve ser revisto) ou o check esta vazio — nos dois casos, reprovar.
+    ok(check.count >= 1, "ANTI-VACUIDADE: acende em producao (o dano existe hoje)", `count=${check.count}`);
     ok(
       comps.some((c) => c.includes("2025-02") && c.includes("RR ALAGOAS 1")),
-      "   e o achado e 2025-02 RR ALAGOAS 1"
+      "e o achado e 2025-02 RR ALAGOAS 1"
     );
-    ok(
-      !comps.some((c) => c.includes("2023-12")),
-      "   e 2023-12 AL1 NAO aparece em producao (FME zerada)"
-    );
+    ok(!comps.some((c) => c.includes("2023-12")), "e 2023-12 AL1 NAO aparece em producao (FME zerada)");
   }
 
   console.log("\n" + linha("="));

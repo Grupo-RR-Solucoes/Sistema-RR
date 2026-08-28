@@ -759,6 +759,49 @@ const GATES = [
     motivo:
       "33,1s; createClient; exercita 5 resolvedores de competencia (promoterAnalytics, closingAnalytics, financialAnalytics, projecaoMetas, getClosingPeriods) em 3 competencias cada. LENTO por isso, nao por ineficiencia: cortar competencia ou resolvedor e cortar cobertura. Fora da --db para nao estourar o teto de 90s, mesmo motivo do gate_projecao_gestor",
   },
+  {
+    arquivo: "scripts/agregado_orfao_gate.cjs",
+    nome: "agregado orfao: o import nao esvazia, o cancel recusa, o vigia acende",
+    modo: "self-contained",
+    motivo:
+      "38 assercoes, 3 blocos. (1) ANCORAS no fonte de monthlyClosingImport.ts: o " +
+      "delete do detalhe legado vem DEPOIS do insert, tem .neq(importId) e guard de " +
+      "rowsToInsert, e o recorte AMPLO continua la — as ancoras sao CONTADAS, porque " +
+      "`insert(slice)` aparece duas vezes no arquivo e ancorar na de syncProductLines " +
+      "fazia a assercao de ORDEM passar COM o codigo defeituoso. (2) a funcao POST " +
+      "REAL do cancel contra o espelho scripts/_fakeFechamento.cjs, com TRES controles " +
+      "positivos para nao virar trava geral: cancel legitimo passa, FME zerada nao " +
+      "trava (o caso 2023-12 AL1) e a competencia vizinha sai byte-identica. (3) o " +
+      "vigia 'agregado_sem_detalhe' acende para agregado COM VALOR e fica quieto para " +
+      "o ZERADO. Empresa e dados sao FIXTURE (stubReal), nao o banco. Provado por " +
+      "mutacao em 28/08/2026, medido NESTE arquivo (nao no gate combinado de antes " +
+      "da separacao): reverter a ordem do import derruba 3; tirar a guarda do cancel " +
+      "derruba 9; remover o vigia derruba 8; remover a distincao da FME zerada derruba " +
+      "2. Sem banco, sem .env, sem caminho absoluto",
+  },
+  {
+    arquivo: "scripts/cancel_agregado_orfao_gate.cjs",
+    nome: "agregado orfao: o import REAL nunca zera a competencia, e o dano existe hoje",
+    modo: "needs-local",
+    motivo:
+      "A METADE NAO CI-AVEL do gate acima, e o registro existe para que essa metade " +
+      "seja NOMEADA em vez de esquecida. needs-local E needs-db ao mesmo tempo: le o " +
+      "xlsx C23677_..._Todos_2_2025.xlsx em C:/Users/diego/Downloads (1,7 MB de dado " +
+      "de cliente, que nao esta e nao pode estar versionado) E chama createClient para " +
+      "medir producao. CONSEQUENCIA, dita com todas as letras: o CI NUNCA executa " +
+      "estas 8 assercoes — elas so acontecem quando alguem roda `npm run gates:full` a " +
+      "mao. E o bloco 2, o vigia acendendo em PRODUCAO (2025-02 RR ALAGOAS 1, " +
+      "operacoes=6.491, valor_liquido=97.535,61, zero entries), e justamente o que " +
+      "impede o check de nascer verde por vacuidade: no gate self-contained o dano e " +
+      "fixture, aqui e o banco. O bloco 1 roda importMonthlyClosingWorkbook REAL contra " +
+      "o espelho com um observador de contagem apos cada escrita (invariante: nunca " +
+      "toca ZERO tendo comecado com detalhe; a ordem antiga mostra `delete 400 -> 0`). " +
+      "Mutacoes medidas NESTE arquivo em 28/08/2026: reverter a ordem do import derruba " +
+      "1 assercao (a do trace); remover o vigia derruba 2; remover a distincao da FME " +
+      "zerada derruba 1. " +
+      "So vira CI-avel se o xlsx virar fixture no repo — o que exigiria versionar dado " +
+      "de cliente, entao fica como divida NOMEADA, nao como plano",
+  },
 ];
 
 // ---------------------------------------------------------------------------
