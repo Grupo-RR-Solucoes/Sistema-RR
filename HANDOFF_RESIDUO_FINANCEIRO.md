@@ -497,6 +497,54 @@ em todo o banco — os 6 APPLIED são ADIANTAMENTO (5) e LIQUIDACAO_ANTECIPADA (
 
 ---
 
+## 6b. O PADRÃO — nota de projeto que não é remedida volta como pista errada
+
+Registrado em 28/08/2026, depois da **terceira** ocorrência na mesma frente. Três
+anotações abriram um bloco de trabalho como se o defeito estivesse vivo, e nas três
+o defeito **já tinha sido consertado** ou **estava em outro lugar**. Nenhuma era
+mentira quando foi escrita; todas apodreceram porque ninguém as remediu quando o
+conserto entrou.
+
+| # | a anotação dizia | o que a medição de 28/08 mostrou |
+|---|---|---|
+| 1 | "o fechamento atribui por chave J e ignora `assigned_promoter_id`" | **já consertado** em `4cb31c3` (23/08), que É ancestral de `main`, e o PMR de julho já tinha sido reconsolidado. Sobrava um QUARTO sítio, na EXIBIÇÃO (`closingProposalRows`), que a anotação não mencionava |
+| 2 | "a rota de cancelamento apaga `monthly_closing_entries` sem recompor" | **meia verdade**: a rota de fato não recompõe, mas o delete destrutivo estava no **IMPORT** (`monthlyClosingImport.ts`, por `company+year+month` sem filtro de `importId`, ANTES do insert). Consertar a rota sozinha não teria fechado nada |
+| 3 | "'Comissões pagas' mostra M e deveria mostrar M-1" | **já consertado** pela CORRECAO B (`financialAnalytics.ts:990-995`). Medido nas três últimas competências: o card bate ao centavo com o líquido de M-1 e não bate com M em nenhuma |
+
+E há uma quarta, no outro handoff: a §16 do `HANDOFF_ADS_FECHAMENTO_CAIXA` dizia "a
+ADS NÃO entra no card Recebido", falso desde 28/08 — a ADS entra com R$ 18.959,44
+em ago/26.
+
+### A medição do item 3, para não precisar refazer
+
+```
+   MES NA TELA    comissoesPagas    liquido de M  liquido de M-1   veredito
+   2026-08            139.405,05       -1.024,09      139.405,05   LE M-1 (certo)
+   2026-07            117.769,41      139.405,05      117.769,41   LE M-1 (certo)
+   2026-06            105.773,30      117.769,41      105.773,30   LE M-1 (certo)
+```
+
+Árbitro: o líquido do PMR (`final_commission_value` − `promoter_discounts`) por
+competência, somado por script independente, não pelo código da tela. Os cards
+vizinhos foram medidos junto: `receivedEmpresa` também lê M-1 (bate ao centavo com
+`Σ(valor_avista+valor_seguro)` do fechamento M-1 em jun/26; em jul e ago fica acima
+porque a ADS entrou no card e a ADS **não tem linha** em `fechamento_mensal_empresa`).
+**As duas metades do painel estão na mesma competência.**
+
+### O custo, e o que fazer a respeito
+
+Cada uma dessas três custou uma FASE A inteira de medição para ser derrubada — e o
+custo é justo, porque a alternativa (acreditar na nota) teria produzido um conserto
+em cima de código já correto. O que é evitável é a nota continuar lá depois.
+
+**A regra:** quando um conserto entra, a anotação que o pediu é **remedida ou
+riscada no mesmo commit** — com data e com o número que a derrubou. Nota sem data de
+medição não é pista, é boato. As revogações deste arquivo e da §16/§19 do
+`HANDOFF_ADS_FECHAMENTO_CAIXA` são o formato: texto original preservado, marcado
+REVOGADO/RETRATADO com a data, e o estado vigente em cima.
+
+---
+
 ## 7. A LIÇÃO
 
 Quatro números crescentes tratados como buraco medido — R$ 10.102,33 → R$ 24.591,60
