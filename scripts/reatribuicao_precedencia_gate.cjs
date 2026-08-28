@@ -26,8 +26,13 @@
  *                     a regra velha. E o bloco que impede o conserto de evaporar
  *                     a producao dos meses anteriores ao diario (que so comeca
  *                     em 2026-03-31).
- *   4. SEM DUPLICATA— os tres consumidores do PMR chamam o helper; nenhum
- *                     reimplementa a precedencia.
+ *   4. SEM DUPLICATA— TODOS os consumidores chamam o helper; nenhum reimplementa
+ *                     a precedencia. A lista de sitios e COMPUTADA por varredura
+ *                     de lib/, nao escrita a mao — ver o bloco.
+ *   5. EXIBICAO     — o QUARTO sitio, lib/closingProposalRows.ts (aba
+ *                     Detalhamento). Ficou com a regra VELHA de 23/08 a 28/08 e
+ *                     fazia a TELA contradizer o contracheque. Bloco com prova
+ *                     por mutacao E dois controles positivos.
  * ========================================================================== */
 require("./_ts_register.cjs");
 const fs = require("fs");
@@ -281,9 +286,35 @@ const naoBbts = (c) => semAcento(c.chaveJ) !== BBTS_KEY;
 
   // ---- 4. SEM DUPLICATA ----
   console.log("\n" + linha("="));
-  console.log("4) SEM DUPLICATA — os tres consumidores chamam o helper, ninguem reimplementa");
+  console.log("4) SEM DUPLICATA — a lista de consumidores e VARRIDA, e cada um chama o helper");
   console.log(linha("="));
-  for (const rel of ["lib/closingMonthly.ts", "lib/bbtsOrchestrator.ts"]) {
+  // A LISTA E COMPUTADA, NAO ESCRITA A MAO. Varre lib/ atras de QUALQUER arquivo
+  // que decida dono de linha de fechamento, e exige que cada um chame o helper.
+  // Escrita a mao, a lista envelhece em silencio: closingProposalRows decidia dono
+  // desde sempre e NUNCA esteve nesta varredura — foi assim que o quarto sitio
+  // passou cinco dias com a regra velha sem nenhum gate reclamar.
+  const CONSUMIDORES = fs
+    .readdirSync(path.join(ROOT, "lib"))
+    .filter((f) => f.endsWith(".ts"))
+    .map((f) => `lib/${f}`)
+    .filter((rel) => {
+      if (rel === "lib/herancaMaster.ts") return false; // o helper da precedencia
+      const src = fs.readFileSync(path.join(ROOT, rel), "utf8");
+      // closingPromoterBase PRODUZ o promoterId da chave J; nao decide dono.
+      if (/export async function loadClosingPromoterBase/.test(src)) return false;
+      return /loadClosingPromoterBase\(/.test(src) && /promoterId/.test(src);
+    });
+  console.log(`   consumidores encontrados por varredura: ${CONSUMIDORES.join(", ")}`);
+  ok(
+    CONSUMIDORES.length >= 3,
+    "ANTI-VACUIDADE: a varredura achou os consumidores (nao lista vazia)",
+    `n=${CONSUMIDORES.length}`
+  );
+  ok(
+    CONSUMIDORES.includes("lib/closingProposalRows.ts"),
+    "a varredura cobre o sitio de EXIBICAO (o que ficou de fora ate 28/08/2026)"
+  );
+  for (const rel of CONSUMIDORES) {
     const src = fs.readFileSync(path.join(ROOT, rel), "utf8");
     ok(/resolvePromotorEfetivo\(/.test(src), `${rel} consome resolvePromotorEfetivo`);
     ok(/from "\.\/herancaMaster\.ts"/.test(src), `${rel} importa de herancaMaster.ts (fonte unica)`);
@@ -297,16 +328,220 @@ const naoBbts = (c) => semAcento(c.chaveJ) !== BBTS_KEY;
       `${rel} nao recorta o diario por chave MASTER (era o recorte do defeito)`
     );
   }
+  // OS DOIS LADOS COMPUTADOS NO MESMO RUN — nao uma constante congelada.
+  // Ate 28/08/2026 este bloco exigia `chamadas >= 3` em closingMonthly, numero
+  // escrito a mao quando havia 3 sitios la. O 62f65f7 (24/08) removeu o terceiro
+  // (addSeguroAvulso, campo morto) e o gate ficou VERMELHO por 4 dias sem que
+  // nada estivesse errado no codigo — a constante e que apodreceu.
+  // A INVARIANTE DURAVEL: em todo consumidor, todo mapa montado e CONSUMIDO, e
+  // toda decisao de dono passa pelo helper. Os dois numeros saem do MESMO run.
   {
-    const src = fs.readFileSync(path.join(ROOT, "lib/closingMonthly.ts"), "utf8");
-    const chamadas = (src.match(/resolvePromotorEfetivo\(/g) || []).length;
-    ok(
-      chamadas >= 3,
-      "closingMonthly usa o helper nos 3 sitios (PMR, dona-da-empresa, seguro avulso)",
-      `chamadas=${chamadas}`
+    let mapasTotal = 0;
+    let chamadasTotal = 0;
+    for (const rel of CONSUMIDORES) {
+      const src = fs.readFileSync(path.join(ROOT, rel), "utf8");
+      const mapas = (src.match(/buildDonoDoDiarioMap\(/g) || []).length;
+      const chamadas = (src.match(/resolvePromotorEfetivo\(/g) || []).length;
+      mapasTotal += mapas;
+      chamadasTotal += chamadas;
+      ok(
+        mapas >= 1 && chamadas >= 1,
+        `${rel}: monta o mapa e consome o helper`,
+        `mapas=${mapas} chamadas=${chamadas}`
+      );
+      ok(
+        chamadas >= mapas,
+        `${rel}: nenhum mapa montado fica SEM uso (mapa orfao = decisao tomada fora do helper)`,
+        `mapas=${mapas} chamadas=${chamadas}`
+      );
+    }
+    console.log(`   total na arvore: mapas=${mapasTotal} chamadas=${chamadasTotal}`);
+    ok(chamadasTotal >= 4, "a arvore tem os QUATRO sitios de chamada", `chamadas=${chamadasTotal}`);
+  }
+
+  // ---- 5. EXIBICAO — o QUARTO sitio (lib/closingProposalRows.ts) ----
+  // A TELA nao pode contradizer o CONTRACHEQUE. Este bloco roda a funcao REAL
+  // (buildClosingProposalRows, a mesma que /api/commissions/proposals chama no
+  // mes fechado) e confere DE QUEM e cada linha, alem da soma.
+  console.log("\n" + linha("="));
+  console.log("5) EXIBICAO — buildClosingProposalRows REAL: a tela concorda com o pagamento");
+  console.log(linha("="));
+  const CPR = require("../lib/closingProposalRows.ts");
+
+  // A tela inclui as RESTRITAS (SRCC="Sim", status FATURAR) alem das pagaveis —
+  // buildClosingProposalRows monta `belongsToPromoter` sobre os DOIS conjuntos.
+  // Comparar contra `contratos` sozinho deixava 1 linha de fora e reprovava o
+  // controle positivo por recorte errado do GATE, nao por defeito do codigo.
+  const restritasRR = base.restritas.filter(naoBbts);
+  const linhasTela = [...contratos, ...restritasRR];
+  const donoTela = await HM.buildDonoDoDiarioMap(sb, linhasTela, JUL.year, JUL.month);
+  const orfasTela = linhasTela.filter((c) => !c.promoterId && String(c.contrato || "").trim());
+  const donoOrfasTela = await HM.buildDonoDoDiarioMap(sb, orfasTela, JUL.year, JUL.month);
+
+  const idPorNome = new Map();
+  for (const [id, nome] of nomeDe) idPorNome.set(semAcento(nome), id);
+  const pidDe = (nome) => idPorNome.get(semAcento(nome)) || null;
+
+  // 5a. MUTACAO — os 5 contratos medidos TROCAM de dono na tela.
+  //     A prova por mutacao e COMPORTAMENTAL, nao textual: para cada caso, o
+  //     contrato tem de ESTAR na tela de quem recebeu a reatribuicao e ESTAR
+  //     AUSENTE da tela do dono da chave. Reverter belongsToPromoter para a
+  //     precedencia antiga inverte AS DUAS assercoes de cada caso.
+  console.log("\n   5a) MUTACAO — os 5 contratos reatribuidos trocam de dono NA TELA");
+  const telaDe = new Map();
+  const alvos = new Set();
+  for (const c of CASOS) {
+    alvos.add(semAcento(c.deDaChave));
+    alvos.add(semAcento(c.paraDoDiario));
+  }
+  for (const nome of alvos) {
+    const pid = pidDe(nome);
+    if (!pid) {
+      ok(false, `promotor ${nome} existe no cadastro`, "-> AUSENTE");
+      continue;
+    }
+    telaDe.set(nome, await CPR.buildClosingProposalRows(sb, pid, JUL.year, JUL.month));
+  }
+  const contratosNaTela = (nome) =>
+    new Set(
+      (telaDe.get(nome) || [])
+        .filter((r) => r.commission_rule_source === "fechamento")
+        .map((r) => String(r.contract_number).trim())
     );
-    const mapas = (src.match(/buildDonoDoDiarioMap\(/g) || []).length;
-    ok(mapas >= 3, "e monta o mapa do diario nos 3 sitios", `mapas=${mapas}`);
+  let trocaram = 0;
+  for (const caso of CASOS) {
+    const doDono = contratosNaTela(semAcento(caso.paraDoDiario));
+    const daChave = contratosNaTela(semAcento(caso.deDaChave));
+    const entrou = doDono.has(caso.ctr);
+    const saiu = !daChave.has(caso.ctr);
+    if (entrou && saiu) trocaram += 1;
+    ok(entrou, `   ${caso.ctr}: APARECE na tela de ${caso.paraDoDiario} (quem recebeu)`);
+    ok(saiu, `   ${caso.ctr}: SUMIU da tela de ${caso.deDaChave} (dono so da CHAVE J)`);
+  }
+  ok(trocaram === CASOS.length, "os 5 contratos trocaram de tela", `${trocaram}/${CASOS.length}`);
+
+  // 5b. CONTROLE POSITIVO 1 — quem NAO foi reatribuido nao pode se mexer.
+  //     Sem este bloco, um belongsToPromoter que devolvesse `false` para tudo
+  //     passaria em 5a (o contrato sumiria da tela do dono da chave e a
+  //     assercao "SUMIU" ficaria verde por vacuidade).
+  //     Escolhido por VARREDURA, nao a dedo: o promotor com mais linhas de
+  //     fechamento em jul/2026 que nao aparece em nenhum dos 5 casos.
+  console.log("\n   5b) CONTROLE POSITIVO — promotor cuja CHAVE J E o dono nao muda nada");
+  const envolvidos = new Set([...alvos]);
+  const porPromotor = new Map();
+  for (const c of contratos) {
+    const pid = HM.resolvePromotorEfetivo(
+      { promoterIdDaChave: c.promoterId, contrato: c.contrato, companyId: c.companyId },
+      donoTodas
+    );
+    if (!pid || envolvidos.has(semAcento(nomeDe.get(pid)))) continue;
+    porPromotor.set(pid, (porPromotor.get(pid) || 0) + 1);
+  }
+  const [pidControle, nLinhas] =
+    [...porPromotor.entries()].sort((a, b) => b[1] - a[1])[0] || [null, 0];
+  ok(!!pidControle, "ANTI-VACUIDADE: ha promotor de controle fora dos 5 casos", `linhas=${nLinhas}`);
+  ok(nLinhas >= 5, "ANTI-VACUIDADE: o promotor de controle tem linhas de verdade", `linhas=${nLinhas}`);
+  if (pidControle) {
+    console.log(`      controle = ${nomeDe.get(pidControle)} (${nLinhas} linhas de fechamento)`);
+    const velhaSet = new Set(
+      linhasTela
+        .filter((c) => regraVelha(c, donoOrfasTela) === pidControle)
+        .map((c) => String(c.contrato || "").trim())
+    );
+    const novaSet = new Set(
+      linhasTela
+        .filter(
+          (c) =>
+            HM.resolvePromotorEfetivo(
+              { promoterIdDaChave: c.promoterId, contrato: c.contrato, companyId: c.companyId },
+              donoTela
+            ) === pidControle
+        )
+        .map((c) => String(c.contrato || "").trim())
+    );
+    const iguais = velhaSet.size === novaSet.size && [...velhaSet].every((k) => novaSet.has(k));
+    ok(
+      iguais,
+      "   regra VELHA e NOVA dao o MESMO conjunto p/ o promotor de controle",
+      `velha=${velhaSet.size} nova=${novaSet.size}`
+    );
+    const telaControle = await CPR.buildClosingProposalRows(sb, pidControle, JUL.year, JUL.month);
+    const naTela = new Set(
+      telaControle
+        .filter((r) => r.commission_rule_source === "fechamento")
+        .map((r) => String(r.contract_number).trim())
+    );
+    ok(naTela.size > 0, "   a tela do controle NAO esta vazia (o conserto nao zerou ninguem)", `linhas=${naTela.size}`);
+    ok(
+      naTela.size === novaSet.size && [...novaSet].every((k) => naTela.has(k)),
+      "   a tela do controle traz exatamente as linhas da chave J dele",
+      `tela=${naTela.size} esperado=${novaSet.size}`
+    );
+  }
+
+  // 5c. CONTROLE POSITIVO 2 — a ORFA de chave MASTER continua casando, e o
+  //     FALLBACK a chave J sobrevive. Sem eles o conserto evaporaria producao:
+  //     2.787 linhas de jan-mai/2026 nao tem NENHUMA linha no diario.
+  console.log("\n   5c) CONTROLE POSITIVO — ORFA de chave MASTER e FALLBACK sem diario");
+  const orfasComDono = linhasTela.filter(
+    (c) =>
+      !c.promoterId &&
+      String(c.contrato || "").trim() &&
+      donoTela.get(`${c.companyId}|${String(c.contrato).trim()}`)
+  );
+  ok(orfasComDono.length > 0, "ANTI-VACUIDADE: jul/2026 tem orfa de chave master herdada", `orfas=${orfasComDono.length}`);
+  for (const c of orfasComDono.slice(0, 3)) {
+    const pid = donoTela.get(`${c.companyId}|${String(c.contrato).trim()}`);
+    const tela = await CPR.buildClosingProposalRows(sb, pid, JUL.year, JUL.month);
+    const achou = tela.some(
+      (r) =>
+        r.commission_rule_source === "fechamento" &&
+        String(r.contract_number).trim() === String(c.contrato).trim()
+    );
+    ok(achou, `   orfa ${c.contrato} (chave ${c.chaveJ}) aparece na tela de ${nomeDe.get(pid)}`);
+  }
+  {
+    const cSDTela = [...cSD, ...baseSD.restritas.filter(naoBbts)];
+    const comChaveSD = cSDTela.filter((c) => c.promoterId);
+    const pidSD = comChaveSD.length ? comChaveSD[0].promoterId : null;
+    ok(!!pidSD, "ANTI-VACUIDADE: 2026-01 tem promotor resolvido pela chave J");
+    if (pidSD) {
+      const telaSD = await CPR.buildClosingProposalRows(sb, pidSD, SEM_DIARIO.year, SEM_DIARIO.month);
+      const nSD = telaSD.filter((r) => r.commission_rule_source === "fechamento").length;
+      const esperadoSD = cSDTela.filter((c) => c.promoterId === pidSD).length;
+      ok(
+        nSD === esperadoSD && nSD > 0,
+        `   2026-01 (sem diario): ${nomeDe.get(pidSD)} exibe as linhas da chave J`,
+        `tela=${nSD} esperado=${esperadoSD}`
+      );
+    }
+  }
+
+  // 5d. INVARIANTE DA SOMA — o conserto muda DE QUEM e a linha, nunca o TOTAL.
+  //     Sigma das linhas de fechamento da tela == comissao gravada no PMR
+  //     (source 'fechamento'), somando as empresas. Se o rateio quebrar, cai aqui.
+  console.log("\n   5d) INVARIANTE — Sigma das linhas da tela == total do PMR gravado");
+  for (const nome of alvos) {
+    const pid = pidDe(nome);
+    if (!pid) continue;
+    const { data: pmrRows } = await sb
+      .from("promoter_monthly_results")
+      .select("production_commission_value, insurance_commission_value")
+      .eq("promoter_id", pid)
+      .eq("year", JUL.year)
+      .eq("month", JUL.month)
+      .eq("source", "fechamento");
+    const pmrCred = (pmrRows || []).reduce((t, r) => t + Number(r.production_commission_value || 0), 0);
+    const pmrSeg = (pmrRows || []).reduce((t, r) => t + Number(r.insurance_commission_value || 0), 0);
+    const linhasFech = (telaDe.get(nome) || []).filter((r) => r.commission_rule_source === "fechamento");
+    const telaCred = linhasFech.reduce((t, r) => t + Number(r.promoter_commission_amount || 0), 0);
+    const telaSeg = linhasFech.reduce((t, r) => t + Number(r.insurance_commission_amount || 0), 0);
+    console.log(
+      `      ${String(nomeDe.get(pid)).padEnd(38)} PMR ${brl(pmrCred).padStart(10)}/${brl(pmrSeg).padStart(9)}` +
+        `   tela ${brl(telaCred).padStart(10)}/${brl(telaSeg).padStart(9)}  (${linhasFech.length} linhas)`
+    );
+    ok(Math.abs(telaCred - pmrCred) < 0.02, `   ${nomeDe.get(pid)}: credito da tela == PMR`, `d=${brl(telaCred - pmrCred)}`);
+    ok(Math.abs(telaSeg - pmrSeg) < 0.02, `   ${nomeDe.get(pid)}: seguro da tela == PMR`, `d=${brl(telaSeg - pmrSeg)}`);
   }
 
   console.log("\n" + linha("="));

@@ -37,10 +37,18 @@ import { getProductionPeriodFromValue } from "./productionPeriod.ts";
 // — a mesma regua que o resto do sistema usa.
 // Gate: scripts/heranca_master_janela_gate.cjs
 //
-// Os consumidores dependem desta decisao e nenhum pode ter copia propria:
-//   lib/closingMonthly.ts      (PMR do fechamento + a empresa dona do debito)
-//   lib/bbtsOrchestrator.ts    (bloco A, producao RR consolidada RR+ADS)
-//   lib/closingProposalRows.ts (linhas da aba Detalhamento no mes fechado)
+// Os consumidores dependem desta decisao e nenhum pode ter copia propria. Sao
+// QUATRO sitios de chamada em TRES arquivos, e em DOIS caminhos distintos:
+//   PAGAMENTO
+//     lib/closingMonthly.ts      (2 sitios: PMR do fechamento; empresa dona)
+//     lib/bbtsOrchestrator.ts    (1 sitio: bloco A, producao RR consolidada)
+//   EXIBICAO
+//     lib/closingProposalRows.ts (1 sitio: aba Detalhamento no mes fechado)
+// O sitio da EXIBICAO so passou a chamar resolvePromotorEfetivo em 28/08/2026: o
+// 4cb31c3 inverteu a precedencia nos dois do pagamento e deixou este com a regra
+// VELHA, entao a tela contradizia o contracheque em jul/2026 (CARLA exibia
+// 113.574,10 e foi paga sobre 73.468,54). Consumidor de caminho de exibicao
+// ESQUECE: foi a mesma omissao do 5b7f229 (janela), corrigida so em 18/08.
 // Um consumidor original saiu da lista: addSeguroAvulso, em closingMonthly,
 // REMOVIDO em 24/08/2026 — as linhas INSURANCE/"A Vista" eram a MESMA linha do
 // CASH desdobrada pelo importador. Ver o bloco 5b de lib/closingMonthly.ts.
