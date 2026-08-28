@@ -151,6 +151,53 @@ export type InsuranceDebitPlan = {
  *
  * QUANDO O PRIMEIRO CASO APARECER: a decisao tem de ser CONSCIENTE, nao de
  * passagem. Por isso o item PARA aqui em vez de ser lancado em quem ja saiu.
+ *
+ * ============================================================================
+ * O PRIMEIRO CASO APARECEU — e a decisao FOI reafirmada (28/08/2026)
+ * ============================================================================
+ *
+ * A metade final da regra de 28/08/2026 ("todo contrato foi digitado na chave de
+ * um promotor, entao o cancelamento lanca o debito para AQUELE promotor; SE ELE
+ * JA SAIU, O NEGATIVO FICA COM A EMPRESA") esta CONSCIENTEMENTE NAO
+ * IMPLEMENTADA. A primeira metade esta: a cascata acha o dono, e o criterio de
+ * corte e o estado do promotor na data em que o DEBITO CHEGA (`dataDoDebito` =
+ * hoje, no chamador). A segunda metade — o negativo ficar com a EMPRESA — nao
+ * existe, e o item vai para a fila.
+ *
+ * O GATILHO QUE ESTA NOTA PEDIA JA DISPAROU. Nao e mais hipotese:
+ *   09/07/2026  op 208875852, competencia 2026-06, R$ 2,03
+ *   04/08/2026  op 211780610, competencia 2026-07, R$ 2,03
+ * Os DOIS do MESMO promotor — ANA CLARA, saida em 13/06/2026 — e os dois
+ * resolvidos ate o fim da cascata (chave J MASTER, dono achado em
+ * `cms_promoter_entries`, degrau `+cms`), parados so pelo criterio do inativo.
+ * Total parado por promotor inativo: R$ 4,06.
+ *
+ * O QUE E ZERO NAO E O CASO, E A ESTRUTURA: `promoter_discounts.apply_to_company`
+ * esta em 0 de 77 linhas — nunca foi usada uma vez. Medido em 28/08/2026.
+ *
+ * A DECISAO SE MANTEM POR VOLUME, NAO POR AUSENCIA DE CASO (Diego, 28/08/2026).
+ * O custo da opcao (b) — 67 promotores virarem 68 em /promotores, /equipe,
+ * /projecao e no PMR — continua ordens de grandeza acima de R$ 4,06 de um unico
+ * promotor. Trocar a razao ("nao ha caso") pela razao certa ("o caso e pequeno
+ * demais") importa: a primeira envelhece sozinha e ja envelheceu.
+ *
+ * GATILHO NOVO PARA REVISITAR — o antigo veio e nao bastou:
+ *   (1) a soma dos itens parados por promotor inativo passar de R$ 500 numa
+ *       competencia; OU
+ *   (2) aparecer item de MAIS DE UM promotor inativo.
+ * ESTES DOIS NUMEROS SAO ARBITRARIOS. Sao um LIMIAR DE ATENCAO escolhido para
+ * dar um ponto de parada objetivo a quem ler isto depois — NAO sao regra de
+ * negocio de Diego, e nao precisam ser defendidos como se fossem. Quem chegar
+ * neles reabre a conversa; nao executa nada automaticamente.
+ *
+ * ERRATA DA INSTRUCAO QUE ORIGINOU ESTA NOTA. O pedido de registro dizia, em
+ * 28/08/2026, "volume medido (zero)" e "gatilho para revisitar: o primeiro item
+ * que cair na fila por promotor inativo" — ou seja, assumia que o gatilho ainda
+ * NAO tinha ocorrido. A medicao do mesmo dia derrubou isso: ele ocorreu em
+ * 09/07, sete semanas antes. E a QUARTA anotacao desta frente derrubada por
+ * medicao, e a unica escrita no proprio dia em vez de herdada — o que mostra que
+ * o padrao da secao 6b do HANDOFF_RESIDUO_FINANCEIRO nao e so sobre nota velha:
+ * e sobre nota nao MEDIDA, de qualquer idade.
  */
 export function promotorInativoNaData(
   promotor: { active?: boolean | null; dismissed_at?: string | null } | undefined,

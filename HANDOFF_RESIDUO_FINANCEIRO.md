@@ -515,6 +515,31 @@ E há uma quarta, no outro handoff: a §16 do `HANDOFF_ADS_FECHAMENTO_CAIXA` diz
 ADS NÃO entra no card Recebido", falso desde 28/08 — a ADS entra com R$ 18.959,44
 em ago/26.
 
+### A quinta, escrita NO PRÓPRIO DIA — o padrão não é sobre idade
+
+Em 28/08/2026, ao mandar registrar a regra do débito de empresa, a instrução dizia
+*"o volume medido (zero)"* e *"o gatilho para revisitar — o primeiro item que cair
+na fila por promotor inativo"*, assumindo que o gatilho ainda **não** tinha ocorrido.
+A medição do mesmo dia derrubou a premissa:
+
+```
+   FILA op=208875852  2026-06  R$ 2,03  motivo: promotor inativo desde 2026-06-13
+   FILA op=211780610  2026-07  R$ 2,03  motivo: promotor inativo desde 2026-06-13
+   (os dois de ANA CLARA — total R$ 4,06; o primeiro entrou na fila em 09/07/2026)
+```
+
+O gatilho tinha disparado **sete semanas antes**. O que é zero é outra coisa: a
+ESTRUTURA (`apply_to_company` em 0 de 77 linhas), nunca o caso.
+
+Esta é a única das cinco que **não foi herdada** — nasceu e morreu no mesmo dia.
+E é a que corrige o enunciado do padrão: **não se trata de nota VELHA, e sim de
+nota NÃO MEDIDA.** Uma anotação escrita há cinco minutos sobre um estado que
+ninguém consultou é tão frágil quanto uma de abril. A regra abaixo vale para as
+duas idades.
+
+O registro foi escrito com o texto CERTO em `lib/debitInsuranceResolver.ts`
+(bloco "O PRIMEIRO CASO APARECEU"), incluindo a errata da própria instrução.
+
 ### A medição do item 3, para não precisar refazer
 
 ```
