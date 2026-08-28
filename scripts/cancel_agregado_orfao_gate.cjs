@@ -29,6 +29,11 @@
  *   2. TRACE      — o import REAL roda contra o espelho e o observador prova que
  *                   a contagem de entries NUNCA passa por zero tendo comecado
  *                   com detalhe. Reverter a ordem faz a contagem tocar o zero.
+ *   3. RECUSA     — a funcao POST REAL do cancel recusa (409) quando apagar
+ *                   deixaria o agregado orfao, com o dano em numeros no campo
+ *                   `error`. Tres controles positivos impedem que isto vire uma
+ *                   trava geral: cancel legitimo passa, FME zerada nao trava, e
+ *                   a competencia vizinha sai byte-identica.
  * ========================================================================== */
 require("./_ts_register.cjs");
 const fs = require("fs");
@@ -191,6 +196,168 @@ const SRC = fs.readFileSync(path.join(ROOT, "lib/monthlyClosingImport.ts"), "utf
     "as entries do import ANTERIOR foram substituidas (o recorte amplo faz trabalho)",
     `sobraram=${sobrouAntiga}`
   );
+
+  // ---- 3. RECUSA — o cancel nao deixa agregado orfao ----
+  // Quatro cenarios contra a funcao POST REAL da rota. O que separa este bloco de
+  // uma trava burra sao os TRES controles positivos: cancel legitimo continua
+  // passando, FME zerada nao trava, e competencia vizinha nao e tocada.
+  console.log("\n" + linha("="));
+  console.log("3) RECUSA — POST real de /api/import/closing/cancel");
+  console.log(linha("="));
+
+  const ALVO = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+  const OUTRO = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+
+  // Monta um espelho por cenario: as entries da competencia 2025-02 vem SO do
+  // import ALVO (ou tambem do OUTRO, no controle positivo), mais uma competencia
+  // VIZINHA (2026-05) que nao pode ser tocada por nada disto.
+  const montar = ({ comOutro, fmeZerada }) => ({
+    monthly_closing_entries: [
+      ...Array.from({ length: 300 }, (_, i) => ({
+        id: `alvo-${i}`, monthly_closing_import_id: ALVO,
+        company_id: AL1.id, company_cnpj: AL1.cnpj, year: 2025, month: 2,
+        entry_type: "CASH", commission_value: 1, sheet_name: "A Vista",
+      })),
+      ...(comOutro
+        ? Array.from({ length: 120 }, (_, i) => ({
+            id: `outro-${i}`, monthly_closing_import_id: OUTRO,
+            company_id: AL1.id, company_cnpj: AL1.cnpj, year: 2025, month: 2,
+            entry_type: "PRT", commission_value: 2, sheet_name: "PRT",
+          }))
+        : []),
+      // VIZINHA — competencia sadia, intocavel.
+      ...Array.from({ length: 90 }, (_, i) => ({
+        id: `vizinha-${i}`, monthly_closing_import_id: OUTRO,
+        company_id: AL1.id, company_cnpj: AL1.cnpj, year: 2026, month: 5,
+        entry_type: "CASH", commission_value: 7, sheet_name: "A Vista",
+      })),
+    ],
+    fechamento_mensal_empresa: [
+      {
+        id: "fme-2025-02", empresa_cnpj: AL1.cnpj, ano: 2025, mes: 2,
+        operacoes: fmeZerada ? 0 : 6491,
+        valor_liquido: fmeZerada ? 0 : 97535.61,
+        valor_avista: fmeZerada ? 0 : 56535.69, valor_seguro: fmeZerada ? 0 : 2549.61,
+      },
+      {
+        id: "fme-2026-05", empresa_cnpj: AL1.cnpj, ano: 2026, mes: 5,
+        operacoes: 5970, valor_liquido: 60765.54, valor_avista: 25762.88, valor_seguro: 562.37,
+      },
+    ],
+    monthly_closing_imports: [
+      { id: ALVO, company_id: AL1.id, year: 2025, month: 2, file_name: "alvo.xlsx", status: "PROCESSING", created_at: "2026-05-01T00:00:00Z" },
+      { id: OUTRO, company_id: AL1.id, year: 2025, month: 2, file_name: "outro.xlsx", status: "COMPLETED", created_at: "2026-04-01T00:00:00Z" },
+    ],
+  });
+
+  // A rota pega o cliente do proprio guard. Um stub por cenario.
+  let clienteAtual = null;
+  stubModule("@/lib/auth/guards", {
+    withSocioAdmin: async () => ({
+      user: { session: { appUser: { email: "gate@local" } } },
+      supabase: clienteAtual,
+    }),
+    apiGuardErrorResponse: (e) => ({
+      status: 500,
+      json: async () => ({ error: String((e && e.message) || e) }),
+    }),
+  });
+  const cancelRota = require(path.join("..", "app", "api", "import", "closing", "cancel", "route.ts"));
+
+  const rodarCancel = async (semente, body) => {
+    clienteAtual = createFakeFechamento(real, semente);
+    const resp = await cancelRota.POST({ json: async () => body });
+    const corpo = typeof resp.json === "function" ? await resp.json() : resp;
+    return { status: resp.status, corpo, cli: clienteAtual };
+  };
+
+  const contarEnt = (cli, y, m) =>
+    cli._rows("monthly_closing_entries").filter((r) => r.year === y && r.month === m).length;
+  const fmeDe = (cli, y, m) =>
+    cli._rows("fechamento_mensal_empresa").find((r) => r.ano === y && r.mes === m);
+
+  // 3a. RECUSA — cancelar zeraria a competencia e ha agregado com valor.
+  console.log("\n   3a) RECUSA: cancelar deixaria 0 entries e o agregado tem valor");
+  {
+    const semente = montar({ comOutro: false, fmeZerada: false });
+    const { status, corpo, cli } = await rodarCancel(semente, { importId: ALVO });
+    console.log(`      status=${status}`);
+    console.log(`      error: ${String(corpo.error || "").slice(0, 150)}...`);
+    ok(status === 409, "   status 409 (recusa)", `status=${status}`);
+    ok(corpo.confirmacao_necessaria === true, "   pede confirmacao explicita");
+    ok(/6491/.test(String(corpo.error)), "   o `error` traz as OPERACOES do agregado (6491)");
+    ok(/97\.535,61/.test(String(corpo.error)), "   o `error` traz o VALOR LIQUIDO (97.535,61)");
+    ok(/RR ALAGOAS 1/.test(String(corpo.error)), "   o `error` nomeia a EMPRESA");
+    ok(/02\/2025/.test(String(corpo.error)), "   o `error` nomeia a COMPETENCIA");
+    ok(contarEnt(cli, 2025, 2) === 300, "   NADA foi apagado", `entries=${contarEnt(cli, 2025, 2)}`);
+    ok(
+      cli._rows("monthly_closing_imports").find((r) => r.id === ALVO).status === "PROCESSING",
+      "   o import continua PROCESSING (a recusa nao destravou pela metade)"
+    );
+  }
+
+  // 3b. CONTROLE POSITIVO — cancel LEGITIMO segue funcionando.
+  //     Sem este bloco, uma trava geral (recusar sempre) passaria em 3a.
+  console.log("\n   3b) CONTROLE POSITIVO: cancel que NAO deixa orfao continua passando");
+  {
+    const semente = montar({ comOutro: true, fmeZerada: false });
+    const antesVizinha = contarEnt(createFakeFechamento(real, semente), 2026, 5);
+    const { status, corpo, cli } = await rodarCancel(semente, { importId: ALVO });
+    console.log(`      status=${status}  corpo=${JSON.stringify(corpo).slice(0, 120)}`);
+    ok(status === 200 || corpo.success === true, "   o cancel PASSOU", `status=${status}`);
+    ok(contarEnt(cli, 2025, 2) === 120, "   apagou so as do import cancelado", `restam=${contarEnt(cli, 2025, 2)}`);
+    ok(
+      cli._rows("monthly_closing_imports").find((r) => r.id === ALVO).status === "CANCELLED",
+      "   o import ficou CANCELLED (destravou o zumbi)"
+    );
+    // CONTROLE POSITIVO — a competencia VIZINHA sai byte-identica.
+    const vizinhaDepois = cli._rows("monthly_closing_entries").filter((r) => r.year === 2026 && r.month === 5);
+    ok(vizinhaDepois.length === antesVizinha, "   competencia VIZINHA intacta (contagem)", `${antesVizinha} -> ${vizinhaDepois.length}`);
+    const fmeVizinha = fmeDe(cli, 2026, 5);
+    ok(
+      Number(fmeVizinha.operacoes) === 5970 && Number(fmeVizinha.valor_liquido) === 60765.54,
+      "   agregado da VIZINHA byte-identico (nao houve recomposicao)",
+      `operacoes=${fmeVizinha.operacoes} liquido=${fmeVizinha.valor_liquido}`
+    );
+    const fmeAlvo = fmeDe(cli, 2025, 2);
+    ok(
+      Number(fmeAlvo.operacoes) === 6491 && Number(fmeAlvo.valor_liquido) === 97535.61,
+      "   agregado da PROPRIA competencia tambem intacto (NAO recompomos)",
+      `operacoes=${fmeAlvo.operacoes}`
+    );
+  }
+
+  // 3c. CONTROLE POSITIVO — FME zerada nao e dano, entao nao pode travar.
+  //     E o caso de 2023-12 AL1 (operacoes=0, valor_liquido=0,00).
+  console.log("\n   3c) CONTROLE POSITIVO: FME ZERADA nao trava (o caso 2023-12 AL1)");
+  {
+    const semente = montar({ comOutro: false, fmeZerada: true });
+    const { status, corpo, cli } = await rodarCancel(semente, { importId: ALVO });
+    console.log(`      status=${status}  corpo=${JSON.stringify(corpo).slice(0, 120)}`);
+    ok(status === 200 || corpo.success === true, "   o cancel PASSOU (agregado sem dinheiro)", `status=${status}`);
+    ok(contarEnt(cli, 2025, 2) === 0, "   apagou normalmente", `restam=${contarEnt(cli, 2025, 2)}`);
+  }
+
+  // 3d. A confirmacao explicita destrava — e SO ela.
+  console.log("\n   3d) a confirmacao explicita destrava (nunca e padrao ligado)");
+  {
+    const semente = montar({ comOutro: false, fmeZerada: false });
+    const semConfirmar = await rodarCancel(semente, { importId: ALVO, confirmarAgregadoOrfao: false });
+    ok(semConfirmar.status === 409, "   confirmarAgregadoOrfao=false NAO destrava", `status=${semConfirmar.status}`);
+    const comConfirmar = await rodarCancel(montar({ comOutro: false, fmeZerada: false }), {
+      importId: ALVO,
+      confirmarAgregadoOrfao: true,
+    });
+    ok(
+      comConfirmar.status === 200 || comConfirmar.corpo.success === true,
+      "   confirmarAgregadoOrfao=true destrava",
+      `status=${comConfirmar.status}`
+    );
+    ok(
+      contarEnt(comConfirmar.cli, 2025, 2) === 0,
+      "   e ai sim apaga (a decisao fica com quem confirmou)"
+    );
+  }
 
   console.log("\n" + linha("="));
   console.log(falhas === 0 ? "GATE: PASSOU" : `GATE: ${falhas} FALHA(S)`);
