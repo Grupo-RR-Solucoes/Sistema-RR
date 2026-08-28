@@ -1270,6 +1270,9 @@ export async function buildFinancialAnalytics(
       avista: toNumber(row.valor_avista),
       prt: toNumber(row.valor_diferido),
       seguro: toNumber(row.valor_seguro),
+      // A Promotiva nao paga abertura de conta: a coluna existe pela ADS e o
+      // zero aqui e o valor CERTO, nao ausencia de dado.
+      abertura: 0,
       consorcio: toNumber(row.valor_consorcio),
       outros: outros.reduce((a, o) => a + o.valor, 0),
       ajustes: -toNumber(row.valor_estorno) - toNumber(row.valor_renovacao),
@@ -1296,10 +1299,16 @@ export async function buildFinancialAnalytics(
       avista: roundMoney(a.avista),
       prt: roundMoney(a.prt),
       seguro: roundMoney(a.seguro),
+      // COLUNA PROPRIA desde 28/08. Antes vinha em "outros", e ali violava o
+      // contrato do agregado: a celula ficava 100,00 com Sigma(detalhe) 0,00, e
+      // na tela expandida os R$ 100,00 sumiam (a coluna e trocada pelas cinco do
+      // detalhe) enquanto a coluna Total continuava com eles.
+      abertura: roundMoney(a.abertura),
       consorcio: 0,
-      // Abertura de Conta entra em "outros": e receita da ADS que nao e credito,
-      // nem PRT, nem seguro. R$ 100,00 na competencia 2026-07.
-      outros: roundMoney(a.abertura),
+      // ZERO E O VALOR CERTO: a ADS nao tem nenhum dos cinco produtos do detalhe.
+      // Somar aqui qualquer coisa que nao esteja em outrosDetalhe reabre o mesmo
+      // defeito — a identidade e cobrada pelo financeiro_matriz_detalhe_gate.
+      outros: 0,
       ajustes: 0,
     };
     if (Object.values(celulas).some((v) => v !== 0)) {
@@ -1338,7 +1347,11 @@ export async function buildFinancialAnalytics(
         avista: 0,
         prt: 0,
         seguro: 0,
+        abertura: 0,
         consorcio: 0,
+        // AQUI a celula continua em "outros" e ISSO ESTA CERTO: o detalhe abaixo
+        // e por CATEGORIA do lancamento, entao cada centavo tem entrada nomeada.
+        // E o contrato do agregado sendo cumprido, nao uma excecao a ele.
         outros: received.receivedManual,
         ajustes: 0,
       },
@@ -1381,12 +1394,39 @@ export async function buildFinancialAnalytics(
   // producao? nao-atribuido?). Nada no codigo impede isso hoje.
   const FONTE_RR_ADS =
     "RR: fechamento_mensal_empresa (por CNPJ) · ADS: daily_production_records / bbts_prt_parcelas (por company_id)";
+  // "OUTROS" TEM CONTRATO DE AGREGADO: a celula e DERIVADA do proprio detalhe
+  // (`outros.reduce`, logo abaixo), e a tela troca a coluna pelas linhas do
+  // detalhe quando o leitor a expande (app/financeiro/page.tsx:163-167). Valor
+  // que entre na celula sem entrada NOMEADA no detalhe some da tela expandida e
+  // deixa o total da linha sem explicacao. Foi o que aconteceu com a Abertura de
+  // Conta da ADS entre 28/08 01:33 (backfill) e este commit: celula 100,00,
+  // Sigma(detalhe) 0,00. Por isso ela virou COLUNA, e nao mais uma entrada de
+  // "Outros" — decisao do Diego em 28/08.
   const COLS_ENTRADA: MatrizColuna[] = [
     { chave: "avista", rotulo: "A vista", marca: "*", fonte: FONTE_RR_ADS },
     { chave: "prt", rotulo: "PRT", marca: "*", fonte: FONTE_RR_ADS },
     { chave: "seguro", rotulo: "Seguro", marca: "*", fonte: FONTE_RR_ADS },
+    // TOTALIZADOR DO FECHAMENTO DA BBTS, mesma natureza do AVT e do PRT — nao e
+    // produto. Vazia nas 4 empresas RR, e o vazio e INFORMACAO: a Promotiva nao
+    // paga abertura de conta. Mesmo precedente da linha da ADS em consorcio.
+    {
+      chave: "abertura",
+      rotulo: "Abertura de conta",
+      fonte: "ADS: bbts_fechamento_totais.abertura_conta (por company_id) · RR: nao se aplica",
+    },
     { chave: "consorcio", rotulo: "Consorcio", fonte: "fechamento_mensal_empresa (por CNPJ)" },
-    { chave: "outros", rotulo: "Outros", expansivel: true, fonte: "fechamento_mensal_empresa (por CNPJ)" },
+    {
+      chave: "outros",
+      rotulo: "Outros",
+      expansivel: true,
+      // A fonte ANTIGA dizia so "fechamento_mensal_empresa (por CNPJ)" — e a
+      // linha da ADS nunca teve entrada nessa tabela (0 no historico inteiro), e
+      // a dos avulsos vem de outra. Uma fonte que nao vale para todas as linhas
+      // da coluna e uma fonte errada.
+      fonte:
+        "RR: fechamento_mensal_empresa, colunas valor_bbcap/conta_corrente/dental/lob/credito (por CNPJ) · " +
+        "avulsos: receita_lancamento_manual (por categoria) · ADS: nao se aplica (sempre zero)",
+    },
     { chave: "ajustes", rotulo: "Ajustes", fonte: "fechamento_mensal_empresa: estorno + renovacao (por CNPJ)" },
   ];
 

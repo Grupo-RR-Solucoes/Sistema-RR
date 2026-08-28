@@ -114,6 +114,23 @@ const GATES = [
       "banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/financeiro_matriz_detalhe_gate.cjs",
+    nome: "matriz de entrada: o detalhe de 'Outros' explica a propria celula",
+    modo: "self-contained",
+    motivo:
+      "roda buildFinancialAnalytics REAL contra um cliente de leitura semeado a " +
+      "mao e cobra DUAS identidades em TODA linha: Sigma(outrosDetalhe) == " +
+      "celulas.outros e Sigma(celulas) == total. A primeira e a que faltava: " +
+      "'Outros' e coluna AGREGADA e expansivel, e a tela TROCA a coluna pelas " +
+      "linhas do detalhe — valor sem entrada nomeada some da tela expandida " +
+      "enquanto a coluna Total continua com ele. Foi o que a Abertura de Conta da " +
+      "ADS fez em 28/08 (celula 100,00, detalhe 0,00). Tres controles positivos " +
+      "impedem vacuidade: RR ALAGOAS 2 com Outros 488,75 em duas entradas, a linha " +
+      "de avulsos (que usa Outros CORRETAMENTE, com detalhe por categoria) e a ADS " +
+      "com a coluna nova != 0. Provado por mutacao em 28/08: devolver a Abertura " +
+      "para 'outros' derruba 4 asserçoes. Sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/bbts_sinal_negativo_gate.cjs",
     nome: "sinal negativo sobrevive ao parser da BBTS (linha CANCELADA do seguro)",
     modo: "self-contained",
