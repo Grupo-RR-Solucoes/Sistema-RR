@@ -25,7 +25,13 @@ import { BBTS_COMPANY_ID } from "@/lib/bbtsCompanyId";
 
 export interface ChecagemParcial {
   id: string;
-  severity: "alerta";
+  /**
+   * 'alerta' para os dois checks de descontinuidade (nenhum PROVA falta).
+   * 'erro' SO para o agregado orfao: ali nao ha heuristica — linha de
+   * fechamento_mensal_empresa com valor e ZERO entries e um estado quebrado,
+   * comprovado, nao uma suspeita. Ver checarAgregadoOrfao.
+   */
+  severity: "alerta" | "erro";
   count: number;
   descricao: string;
   detalhe: unknown;
@@ -287,10 +293,125 @@ async function checarRr(admin: SupabaseClient): Promise<ChecagemParcial[]> {
   ];
 }
 
-/** Os dois lados juntos. Nao lanca por tabela ausente da ADS; erro real sobe. */
+/**
+ * AGREGADO ORFAO: linha em fechamento_mensal_empresa COM VALOR e ZERO linhas de
+ * detalhe em monthly_closing_entries.
+ *
+ * ESTE E O UNICO CHECK 'erro' DESTE ARQUIVO, e por um motivo: os outros dois
+ * apontam DESCONTINUIDADE (o zero tanto pode ser aba vazia quanto aba ausente —
+ * o sistema nao distingue). Aqui nao ha ambiguidade nenhuma. O agregado diz
+ * quantas operacoes e quanto dinheiro existiram; se nao ha UMA linha por tras,
+ * o detalhe foi perdido. E fato, nao suspeita.
+ *
+ * MEDIDO EM 28/08/2026, varrendo as 100 linhas de fechamento_mensal_empresa:
+ *   2025-02 RR ALAGOAS 1  operacoes=6.491  valor_liquido=97.535,61  entries=0  <- DANO
+ *   2023-12 RR ALAGOAS 1  operacoes=0      valor_liquido=0,00       entries=0  <- NAO e dano
+ * As duas estao sem entries; SO a primeira e perda. Por isso o criterio nao e
+ * "sem entries" e sim "sem entries COM agregado que tem valor". Um check que nao
+ * fizesse essa distincao nasceria com um falso positivo permanente, e falso
+ * positivo permanente treina o leitor a ignorar o vigia — que foi exatamente o
+ * que aconteceu com este estado, vivo e invisivel desde 23/04/2026.
+ *
+ * O CUSTO: uma SONDA DE EXISTENCIA (`.limit(1)`) por linha de FME COM VALOR, em
+ * lotes paralelos de 10, e nao um SELECT da tabela de entries inteira — a tabela passa de 60 mil linhas e o scan completo
+ * estoura o statement timeout do PostgREST (57014, medido). A contagem usa o
+ * indice (year, month, entry_type, company_cnpj) de 20260516_000001.
+ *
+ * NAO RECOMPOE NADA e nao propoe recompor: o agregado orfao e o unico registro
+ * que restou daquele dinheiro. Ver a decisao registrada no cancel.
+ */
+async function checarAgregadoOrfao(admin: SupabaseClient): Promise<ChecagemParcial[]> {
+  const { data: fme, error } = await admin
+    .from("fechamento_mensal_empresa")
+    .select("empresa_cnpj, ano, mes, operacoes, valor_liquido, valor_avista, valor_seguro");
+  if (error) throw new Error(error.message);
+
+  const { data: comps } = await admin.from("companies").select("id, cnpj, name");
+  const porCnpj = new Map(
+    (comps ?? []).map((c) => [String(c.cnpj), { id: String(c.id), name: String(c.name) }])
+  );
+
+  // CANDIDATAS: so as linhas COM VALOR e de empresa conhecida chegam a contagem.
+  const candidatas = ((fme ?? []) as unknown as Array<Record<string, unknown>>)
+    .map((linha) => ({
+      linha,
+      operacoes: num(linha.operacoes),
+      valorLiquido: num(linha.valor_liquido),
+      empresa: porCnpj.get(String(linha.empresa_cnpj)),
+    }))
+    // AGREGADO SEM VALOR NAO E DANO. E o caso de 2023-12 AL1.
+    .filter((c) => c.operacoes > 0 || Math.abs(c.valorLiquido) > EPS)
+    // CNPJ fora de `companies` (TEMP-/portal) nao tem entries por construcao:
+    // contar ali produziria alarme para uma linha que nunca teve detalhe.
+    .filter((c) => !!c.empresa);
+
+  // EM PARALELO, COM TETO. Sequencial, as ~100 contagens levavam 75s (medido) —
+  // um vigia que faz a tela de diagnostico esperar mais de um minuto e um vigia
+  // que alguem vai desligar. Com teto de CONC as mesmas contagens saem em ~1/10
+  // do tempo, sem abrir 100 conexoes de uma vez.
+  const CONC = 10;
+  const achados: unknown[] = [];
+  for (let i = 0; i < candidatas.length; i += CONC) {
+    const lote = candidatas.slice(i, i + CONC);
+    const contagens = await Promise.all(
+      lote.map(async (c) => {
+        // SONDA DE EXISTENCIA, nao contagem. `count:'exact'` e um COUNT(*) que
+        // varre a competencia inteira (6 mil linhas nas cheias); `.limit(1)` para
+        // na primeira. So preciso saber SE existe detalhe. Medido em 28/08/2026,
+        // detector inteiro: 75s com contagem sequencial, 17-36s com contagem em
+        // lote, 5,4-7,4s com a sonda — contra 2,7s de baseline sem este check.
+        const { data, error: sondaError } = await admin
+          .from("monthly_closing_entries")
+          .select("id")
+          .eq("company_id", c.empresa!.id)
+          .eq("year", c.linha.ano as number)
+          .eq("month", c.linha.mes as number)
+          .limit(1);
+        if (sondaError) throw new Error(sondaError.message);
+        return (data ?? []).length;
+      })
+    );
+    lote.forEach((c, k) => {
+      if (contagens[k] > 0) return;
+      achados.push({
+        empresa: c.empresa!.name,
+        empresa_cnpj: String(c.linha.empresa_cnpj),
+        competencia: compKey(c.linha.ano as number, c.linha.mes as number),
+        operacoes: c.operacoes,
+        valor_liquido: Math.round(c.valorLiquido * 100) / 100,
+        valor_avista: Math.round(num(c.linha.valor_avista) * 100) / 100,
+        valor_seguro: Math.round(num(c.linha.valor_seguro) * 100) / 100,
+        entries: 0,
+      });
+    });
+  }
+
+  return [
+    {
+      id: "agregado_sem_detalhe",
+      severity: "erro",
+      count: achados.length,
+      descricao:
+        "fechamento_mensal_empresa tem linha COM VALOR e ZERO linhas em " +
+        "monthly_closing_entries: o agregado existe e o detalhe que o produziu " +
+        "sumiu. Nao e descontinuidade, e perda comprovada — o agregado declara " +
+        "as operacoes e o valor que existiram. Agregado ZERADO (operacoes 0 e " +
+        "liquido 0,00) NAO entra: nao ha detalhe a perder. O reparo NAO e " +
+        "recompor da tabela de entries (escreveria zero sobre o valor); depende " +
+        "de reimportar o arquivo de origem.",
+      detalhe: achados,
+    },
+  ];
+}
+
+/** Os tres lados juntos. Nao lanca por tabela ausente da ADS; erro real sobe. */
 export async function detectFechamentoParcial(
   admin: SupabaseClient
 ): Promise<ChecagemParcial[]> {
-  const [ads, rr] = await Promise.all([checarAds(admin), checarRr(admin)]);
-  return [...ads, ...rr];
+  const [ads, rr, orfao] = await Promise.all([
+    checarAds(admin),
+    checarRr(admin),
+    checarAgregadoOrfao(admin),
+  ]);
+  return [...ads, ...rr, ...orfao];
 }

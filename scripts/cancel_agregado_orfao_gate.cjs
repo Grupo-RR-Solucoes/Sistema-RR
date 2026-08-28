@@ -34,6 +34,11 @@
  *                   `error`. Tres controles positivos impedem que isto vire uma
  *                   trava geral: cancel legitimo passa, FME zerada nao trava, e
  *                   a competencia vizinha sai byte-identica.
+ *   4. VIGIA      — o check 'agregado_sem_detalhe' de
+ *                   lib/diagnostico/fechamentoParcial.ts acende para 2025-02 AL1
+ *                   e fica quieto para 2023-12 AL1 (FME zerada). Rodado contra
+ *                   dados controlados E contra a PRODUCAO — o bloco de producao
+ *                   e o que impede o vigia de nascer verde por vacuidade.
  * ========================================================================== */
 require("./_ts_register.cjs");
 const fs = require("fs");
@@ -356,6 +361,93 @@ const SRC = fs.readFileSync(path.join(ROOT, "lib/monthlyClosingImport.ts"), "utf
     ok(
       contarEnt(comConfirmar.cli, 2025, 2) === 0,
       "   e ai sim apaga (a decisao fica com quem confirmou)"
+    );
+  }
+
+  // ---- 4. VIGIA — agregado_sem_detalhe ----
+  // O check tem de ACENDER para 2025-02 AL1 e FICAR QUIETO para 2023-12 AL1
+  // (FME legitimamente zerada). Rodado duas vezes: contra dados CONTROLADOS no
+  // espelho (para poder mutar o estado) e contra a PRODUCAO (para provar que
+  // acende de verdade, hoje, e nao so no laboratorio).
+  console.log("\n" + linha("="));
+  console.log("4) VIGIA — detectFechamentoParcial: 'agregado_sem_detalhe'");
+  console.log(linha("="));
+
+  const { detectFechamentoParcial } = require(path.join("..", "lib", "diagnostico", "fechamentoParcial.ts"));
+  const acharCheck = (res) => res.find((c) => c.id === "agregado_sem_detalhe");
+
+  // 4a. CONTROLADO — os dois casos lado a lado, no MESMO run.
+  console.log("\n   4a) CONTROLADO: 2025-02 (com valor) acende; 2023-12 (zerada) nao");
+  {
+    const semente = {
+      // 2026-05 tem detalhe; 2025-02 e 2023-12 nao tem.
+      monthly_closing_entries: Array.from({ length: 40 }, (_, i) => ({
+        id: `viva-${i}`, monthly_closing_import_id: "im-1",
+        company_id: AL1.id, company_cnpj: AL1.cnpj, year: 2026, month: 5,
+        entry_type: "CASH", commission_value: 1, sheet_name: "A Vista",
+      })),
+      fechamento_mensal_empresa: [
+        { id: "f1", empresa_cnpj: AL1.cnpj, ano: 2025, mes: 2, operacoes: 6491, valor_liquido: 97535.61, valor_avista: 56535.69, valor_seguro: 2549.61 },
+        { id: "f2", empresa_cnpj: AL1.cnpj, ano: 2023, mes: 12, operacoes: 0, valor_liquido: 0, valor_avista: 0, valor_seguro: 0 },
+        { id: "f3", empresa_cnpj: AL1.cnpj, ano: 2026, mes: 5, operacoes: 5970, valor_liquido: 60765.54, valor_avista: 25762.88, valor_seguro: 562.37 },
+      ],
+      monthly_closing_imports: [],
+    };
+    const cli = createFakeFechamento(real, semente);
+    const res = await detectFechamentoParcial(cli);
+    // AUSENCIA DO CHECK E FALHA, NAO EXCECAO. Quando a mutacao remove o vigia,
+    // um `check.severity` cru joga e o gate morre sem placar — vermelho por
+    // crash nao diz QUANTAS assercoes o conserto sustenta. Cai limpo.
+    const check = acharCheck(res) || { severity: "(ausente)", count: -1, detalhe: [] };
+    const comps = (check.detalhe || []).map((d) => d.competencia);
+    console.log(`      severity=${check && check.severity}  count=${check && check.count}  competencias=${JSON.stringify(comps)}`);
+    ok(acharCheck(res) !== undefined, "   o check existe no detector");
+    ok(check.severity === "erro", "   severity e 'erro' (nao e descontinuidade, e perda)", `sev=${check.severity}`);
+    ok(check.count === 1, "   ACENDE exatamente 1 vez", `count=${check.count}`);
+    ok(comps.includes("2025-02"), "   ACENDE para 2025-02 (agregado com valor, zero detalhe)");
+    ok(!comps.includes("2023-12"), "   NAO acende para 2023-12 (FME zerada — nao ha detalhe a perder)");
+    ok(!comps.includes("2026-05"), "   NAO acende para competencia COM detalhe");
+    const achado = (check.detalhe || [])[0] || {};
+    ok(Number(achado.operacoes) === 6491, "   o achado traz as OPERACOES", `operacoes=${achado.operacoes}`);
+    ok(Number(achado.valor_liquido) === 97535.61, "   o achado traz o VALOR LIQUIDO", `liquido=${achado.valor_liquido}`);
+    ok(String(achado.empresa) === "RR ALAGOAS 1", "   o achado NOMEIA a empresa", `empresa=${achado.empresa}`);
+  }
+
+  // 4b. MUTACAO DO ESTADO — se a competencia GANHA detalhe, o vigia apaga.
+  //     Sem isto, um check que acendesse SEMPRE passaria em 4a.
+  console.log("\n   4b) MUTACAO DO ESTADO: dar detalhe a 2025-02 APAGA o vigia");
+  {
+    const semente = {
+      monthly_closing_entries: [
+        { id: "x1", monthly_closing_import_id: "im-9", company_id: AL1.id, company_cnpj: AL1.cnpj, year: 2025, month: 2, entry_type: "CASH", commission_value: 1, sheet_name: "A Vista" },
+      ],
+      fechamento_mensal_empresa: [
+        { id: "f1", empresa_cnpj: AL1.cnpj, ano: 2025, mes: 2, operacoes: 6491, valor_liquido: 97535.61, valor_avista: 0, valor_seguro: 0 },
+      ],
+      monthly_closing_imports: [],
+    };
+    const cli = createFakeFechamento(real, semente);
+    const check = acharCheck(await detectFechamentoParcial(cli)) || { count: -1 };
+    console.log(`      count=${check.count}`);
+    ok(check.count === 0, "   com UMA linha de detalhe o vigia NAO acende", `count=${check.count}`);
+  }
+
+  // 4c. PRODUCAO — o estado REAL de hoje. E o que prova que o vigia nao nasceu
+  //     verde por vacuidade: se o count vier 0 aqui, ou o dano sumiu ou o check
+  //     esta vazio, e nos dois casos o gate tem de reprovar.
+  console.log("\n   4c) PRODUCAO: o vigia acende para 2025-02 RR ALAGOAS 1 AGORA");
+  {
+    const check = acharCheck(await detectFechamentoParcial(real)) || { count: -1, detalhe: [] };
+    const comps = (check.detalhe || []).map((d) => `${d.empresa} ${d.competencia}`);
+    console.log(`      count=${check.count}  ${JSON.stringify(comps)}`);
+    ok(check.count >= 1, "   ANTI-VACUIDADE: acende em producao (o dano existe hoje)", `count=${check.count}`);
+    ok(
+      comps.some((c) => c.includes("2025-02") && c.includes("RR ALAGOAS 1")),
+      "   e o achado e 2025-02 RR ALAGOAS 1"
+    );
+    ok(
+      !comps.some((c) => c.includes("2023-12")),
+      "   e 2023-12 AL1 NAO aparece em producao (FME zerada)"
     );
   }
 
