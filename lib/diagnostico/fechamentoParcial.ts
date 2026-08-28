@@ -37,6 +37,8 @@ const JANELA_RR = 6;
 const MINIMO_PRESENCAS = 3;
 /** ruido de centavo: abaixo disto o valor conta como zero. */
 const EPS = 0.005;
+/** tolerancia da ancora de totais: a mesma 0,01 que o extrator usa. */
+const EPS_MOEDA = 0.01;
 
 /** as colunas de produto de fechamento_mensal_empresa, com o rotulo humano. */
 const PRODUTOS_RR: Array<{ coluna: string; rotulo: string }> = [
@@ -121,7 +123,79 @@ async function checarAds(admin: SupabaseClient): Promise<ChecagemParcial[]> {
     }
   }
 
+  // ------------------------------------------------------------------------
+  // ANCORA PERMANENTE. O extrator ja compara Sigma das linhas contra o declarado no
+  // MOMENTO da importacao (bbtsPdfExtract.ts:484 para o AVT, :515 para o PRT,
+  // :570 para o seguro) e ABORTA se nao fechar. Mas aquilo e um evento: passou,
+  // acabou. Depois disso, qualquer coisa que mexa nas linhas — uma reimportacao
+  // parcial, um merge da diaria, um UPDATE manual — pode afastar a soma do que a
+  // BBTS declarou, e nada percebe.
+  //
+  // Com o cabecalho GRAVADO, a mesma conferencia vira permanente: o declarado
+  // fica no banco e pode ser confrontado a qualquer momento. E exatamente o que
+  // faltou quando o PDF de seguro de uma competencia nao foi importado e a
+  // ausencia so apareceu porque alguem somou a mao.
+  //
+  // Sem a tabela (migration pendente) o check nao acusa nada — nao ha declarado
+  // com que comparar. Ele NASCE mudo e passa a falar quando a migration rodar.
+  // ------------------------------------------------------------------------
+  const desvios: unknown[] = [];
+  if (comCabecalho.size > 0) {
+    const { data: cab, error: cabErr } = await admin
+      .from("bbts_fechamento_cabecalho")
+      .select("competencia, pagamento_avt, pagamento_prt, abertura_conta, pagamento_total")
+      .eq("company_id", BBTS_COMPANY_ID);
+    if (cabErr) throw new Error(cabErr.message);
+
+    // Sigma das parcelas PRT por competencia (tabela propria, competencia LITERAL)
+    const { data: prt, error: prtErr } = await admin
+      .from("bbts_prt_parcelas")
+      .select("competencia, valor_parcela")
+      .eq("company_id", BBTS_COMPANY_ID);
+    if (prtErr) throw new Error(prtErr.message);
+    const prtPorComp = new Map<string, number>();
+    for (const r of prt ?? []) {
+      const k = String(r.competencia ?? "").slice(0, 7);
+      prtPorComp.set(k, (prtPorComp.get(k) ?? 0) + num(r.valor_parcela));
+    }
+
+    for (const c of cab ?? []) {
+      const comp = String(c.competencia ?? "").slice(0, 7);
+      const b = porComp.get(comp);
+      // Sigma das linhas de credito da competencia (a coluna que so o fechamento escreve)
+      const somaAvt = b ? b.avista : 0;
+      const somaPrt = prtPorComp.get(comp) ?? 0;
+      const dAvt = Math.round((somaAvt - num(c.pagamento_avt)) * 100) / 100;
+      const dPrt = Math.round((somaPrt - num(c.pagamento_prt)) * 100) / 100;
+      if (Math.abs(dAvt) > EPS_MOEDA) {
+        desvios.push({
+          competencia: comp, ancora: "Pagamento AVT",
+          declarado_pela_bbts: num(c.pagamento_avt), soma_das_linhas: somaAvt, diferenca: dAvt,
+        });
+      }
+      if (Math.abs(dPrt) > EPS_MOEDA) {
+        desvios.push({
+          competencia: comp, ancora: "Pagamento PRT",
+          declarado_pela_bbts: num(c.pagamento_prt), soma_das_linhas: somaPrt, diferenca: dPrt,
+        });
+      }
+    }
+  }
+
   return [
+    {
+      id: "ads_ancora_totais",
+      severity: "alerta",
+      count: desvios.length,
+      descricao:
+        "ADS: a soma das linhas gravadas nao bate mais com o total que a BBTS DECLAROU no " +
+        "cabecalho da NF daquela competencia. O extrator ja confere isso na importacao e " +
+        "aborta; este check e a versao PERMANENTE — pega o que mudou DEPOIS (reimportacao " +
+        "parcial, merge da diaria, UPDATE manual). Enquanto nao houver linha em " +
+        "bbts_fechamento_cabecalho para a competencia, nao ha declarado com que comparar " +
+        "e o check fica calado (ver ads_cabecalho_nf_ausente).",
+      detalhe: desvios,
+    },
     {
       id: "ads_fechamento_sem_seguro",
       severity: "alerta",
