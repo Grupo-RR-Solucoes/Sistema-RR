@@ -1563,25 +1563,6 @@ async function runImportPipeline(ctx: ImportContext) {
     Object.assign(closingTotals, resumoTotals);
   }
 
-  // Apaga as entries LEGADAS (crédito/cash/prt/seguro/débito e legado sem tipo)
-  // desta competência antes de reinserir. NÃO apaga as linhas de PRODUTO
-  // (BBCAP/CONTA_CORRENTE/CONSORCIO): elas podem vir de OUTRO arquivo Todos da
-  // mesma empresa (ex.: CC num arquivo, BBCAP em outro) e são geridas por
-  // syncProductLines pela própria chave — o blanket delete as perderia.
-  const { error: deleteEntriesError } = await supabaseRetry(async () =>
-    supabaseAdmin
-      .from("monthly_closing_entries")
-      .delete()
-      .eq("company_id", company.id)
-      .eq("year", targetYear)
-      .eq("month", targetMonth)
-      .or("entry_type.is.null,entry_type.not.in.(BBCAP,CONTA_CORRENTE,CONSORCIO)")
-  );
-
-  if (deleteEntriesError) {
-    throw new Error(deleteEntriesError.message);
-  }
-
   // PRE.E.A — bulk insert em chunks. Cada chunk vai com retry de rede.
   // PRE.E.C — atualiza error_message com progresso a cada chunk; Diego
   // pode acompanhar via SELECT em monthly_closing_imports.
@@ -1618,6 +1599,60 @@ async function runImportPipeline(ctx: ImportContext) {
         // silencioso
       }
     }
+  }
+
+  // ============================================================
+  // SUBSTITUICAO DO DETALHE LEGADO — INSERE PRIMEIRO, APAGA DEPOIS.
+  //
+  // O RECORTE AMPLO (company+year+month, sem importId) E DELIBERADO e fica como
+  // esta: reimportar a competencia SUBSTITUI o detalhe legado. Medido em
+  // 28/08/2026: 2026-01 AL1 tem 14 imports COMPLETED e 6.433 entries legadas
+  // vindas de UM UNICO import — o delete amplo fez a substituicao 13 vezes so
+  // ali (2026-02 AL1: 13 imports, 6.407 entries, 1 dono; 2025-05: 10/6.751/1;
+  // 2025-07: 12/6.845/1). Estreitar para `.eq(importId)` deixaria 13 geracoes
+  // de duplicata viva. Nao e o recorte que estava errado — era a ORDEM.
+  //
+  // O QUE MUDOU (28/08/2026): o delete rodava ANTES do insert. Entre um e outro
+  // a competencia ficava COM ZERO DETALHE, e `fechamento_mensal_empresa` (que so
+  // e escrita depois, em :1646) seguia com o agregado do import anterior. Um
+  // cancel nessa janela — ou um crash — deixava o agregado ORFAO: medido em
+  // 2025-02 RR ALAGOAS 1, `operacoes = 6.491` e `valor_liquido = 97.535,61` sem
+  // UMA linha de detalhe. Invertida a ordem, a janela passa a ter os DOIS
+  // conjuntos vivos (duplicata transitoria, sem constraint que a impeca — a
+  // tabela so tem PK em `id`), e um cancel ali deixa o conjunto ANTIGO intacto.
+  // Falhar agora e REVERSIVEL; falhar antes era destrutivo.
+  //
+  // `.neq(importId)` e seguro porque o importId nasce novo a cada chamada
+  // (:1306-1318, INSERT com .select("id").single()) — nenhuma reexecucao reusa
+  // o mesmo id, entao as linhas recem-inseridas nunca sao alvo do delete.
+  //
+  // O GUARD `rowsToInsert.length > 0`: sem linhas novas nao ha substituicao, e
+  // apagar seria perda pura. So arquivo TODOS chega aqui (o nao-TODOS retorna em
+  // :1432-1461 e nunca toca as entries legadas), mas um TODOS vazio/corrompido
+  // esvaziaria a competencia em silencio — era o unico caminho restante para o
+  // mesmo estrago.
+  // Gate: scripts/cancel_agregado_orfao_gate.cjs (bloco 2)
+  // ============================================================
+  if (rowsToInsert.length > 0) {
+    const { error: deleteEntriesError } = await supabaseRetry(async () =>
+      supabaseAdmin
+        .from("monthly_closing_entries")
+        .delete()
+        .eq("company_id", company.id)
+        .eq("year", targetYear)
+        .eq("month", targetMonth)
+        .neq("monthly_closing_import_id", importId)
+        .or("entry_type.is.null,entry_type.not.in.(BBCAP,CONTA_CORRENTE,CONSORCIO)")
+    );
+
+    if (deleteEntriesError) {
+      throw new Error(deleteEntriesError.message);
+    }
+  } else {
+    console.warn(
+      `[import ${importId}] 0 linhas legadas no arquivo — o detalhe ANTERIOR da ` +
+        `competencia foi PRESERVADO (apagar sem substituto seria perda pura).`
+    );
   }
 
   const valorLiquido =
