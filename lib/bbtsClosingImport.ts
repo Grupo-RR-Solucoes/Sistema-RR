@@ -170,7 +170,7 @@ export type BbtsClosingResult = {
   debitos: Array<{ contrato: string; valor_seguro: number; tipo: string | null }>; // fora da produção
   prt_parcelas: number; // linhas da seção PRT gravadas em bbts_prt_parcelas
   abertura_conta: number; // "Abertura de Conta" do cabeçalho da NF (0 quando não há)
-  cabecalho_gravado: boolean; // gravou em bbts_fechamento_cabecalho
+  cabecalho_gravado: boolean; // gravou em bbts_fechamento_totais
   seguro_pdf_ausente: boolean; // o PDF de seguro NÃO foi enviado nesta importação
   prt_valor: number; // Σ das parcelas PRT do mês
   gravadas: number;
@@ -690,17 +690,24 @@ export async function importBbtsClosing(
   // NÃO derruba o import: sem a tabela (migration ainda não aplicada) vira aviso.
   if (!dryRun && input.cabecalho) {
     const competencia = `${input.year}-${String(input.month).padStart(2, "0")}-01`;
-    const { error: cabErr } = await supabase.from("bbts_fechamento_cabecalho").upsert(
+    const { error: cabErr } = await supabase.from("bbts_fechamento_totais").upsert(
       {
         company_id: BBTS_COMPANY_ID,
         competencia,
         pagamento_avt: input.cabecalho.pagamentoAvt,
         pagamento_prt: input.cabecalho.pagamentoPrt,
         abertura_conta: input.cabecalho.aberturaConta,
-        outras_deducoes: input.cabecalho.outrasDeducoes,
+        // A 4a coluna do cabecalho tem ROTULO VARIAVEL — foi "Valor Descontado" em
+        // 06/26 e "Glosa" em 07/26. A captura pareia por rotulo (nao por nome fixo
+        // nem por posicao) e entrega o valor ja somado; a coluna do banco se chama
+        // glosa porque foi assim que a migration foi aplicada. O nome que o
+        // documento usou NAO fica guardado: a tabela nao tem coluna rotulos.
+        // Se um dia a BBTS separar "Glosa" de "Valor Descontado" em DUAS colunas,
+        // as duas cairao somadas aqui e a distincao se perde — a identidade da
+        // soma continua fechando, entao isso passaria silencioso.
+        glosa: input.cabecalho.outrasDeducoes,
         pagamento_total: input.cabecalho.pagamentoTotal,
-        rotulos: input.cabecalho.rotulos,
-        source_filename: opts?.fileName ?? null,
+        arquivo_origem: opts?.fileName ?? null,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "company_id,competencia" }
@@ -708,7 +715,7 @@ export async function importBbtsClosing(
     if (cabErr) {
       // PGRST205 = tabela inexistente (migration pendente). Qualquer outro erro
       // também vira aviso: o crédito já está gravado e derrubar aqui não desfaz.
-      (result as any).cabecalho_aviso = `Falha ao gravar o cabecalho da NF: ${cabErr.message}`;
+      (result as any).cabecalho_aviso = `Falha ao gravar os totais da NF: ${cabErr.message}`;
     } else {
       result.cabecalho_gravado = true;
     }

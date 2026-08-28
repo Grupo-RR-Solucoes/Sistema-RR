@@ -83,7 +83,7 @@ async function checarAds(admin: SupabaseClient): Promise<ChecagemParcial[]> {
   const comCabecalho = new Set<string>();
   try {
     const { data: cab, error: cabErr } = await admin
-      .from("bbts_fechamento_cabecalho")
+      .from("bbts_fechamento_totais")
       .select("competencia")
       .eq("company_id", BBTS_COMPANY_ID);
     if (cabErr) throw new Error(cabErr.message);
@@ -142,7 +142,7 @@ async function checarAds(admin: SupabaseClient): Promise<ChecagemParcial[]> {
   const desvios: unknown[] = [];
   if (comCabecalho.size > 0) {
     const { data: cab, error: cabErr } = await admin
-      .from("bbts_fechamento_cabecalho")
+      .from("bbts_fechamento_totais")
       .select("competencia, pagamento_avt, pagamento_prt, abertura_conta, pagamento_total")
       .eq("company_id", BBTS_COMPANY_ID);
     if (cabErr) throw new Error(cabErr.message);
@@ -192,7 +192,7 @@ async function checarAds(admin: SupabaseClient): Promise<ChecagemParcial[]> {
         "cabecalho da NF daquela competencia. O extrator ja confere isso na importacao e " +
         "aborta; este check e a versao PERMANENTE — pega o que mudou DEPOIS (reimportacao " +
         "parcial, merge da diaria, UPDATE manual). Enquanto nao houver linha em " +
-        "bbts_fechamento_cabecalho para a competencia, nao ha declarado com que comparar " +
+        "bbts_fechamento_totais para a competencia, nao ha declarado com que comparar " +
         "e o check fica calado (ver ads_cabecalho_nf_ausente).",
       detalhe: desvios,
     },
@@ -213,7 +213,7 @@ async function checarAds(admin: SupabaseClient): Promise<ChecagemParcial[]> {
       count: semCabecalho.length,
       descricao:
         "ADS: competencia com fechamento de credito gravado e SEM linha em " +
-        "bbts_fechamento_cabecalho — a Abertura de Conta e a Glosa daquela competencia " +
+        "bbts_fechamento_totais — a Abertura de Conta e a Glosa daquela competencia " +
         "nao entraram no caixa. Competencia importada ANTES da captura do cabecalho: " +
         "resolve reimportando o PDF de credito.",
       detalhe: semCabecalho,

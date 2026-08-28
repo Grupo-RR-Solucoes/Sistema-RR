@@ -404,7 +404,7 @@ function manualCreditYM(row: ManualRevenueRow): { year: number; month: number } 
 // de 30/06 e julho e a de 31/07 e agosto. Nao usar o mes de calendario.
 //
 // O de-para tem uma 4a perna desde 27/08/2026:
-//   abertura_conta -> bbts_fechamento_cabecalho.abertura_conta  (por competencia
+//   abertura_conta -> bbts_fechamento_totais.abertura_conta  (por competencia
 //   LITERAL, igual ao PRT — nao ha contrato a que anexar).
 //
 // LIMITE CONHECIDO (medido, nao estimado):
@@ -480,14 +480,14 @@ function buildAdsCashByPeriod(
 //   valor_seguro   -> daily_production_records.bbts_seguro_pago
 //
 // DE-PARA RR -> ADS, 4a perna (27/08/2026):
-//   abertura_conta -> bbts_fechamento_cabecalho.abertura_conta
+//   abertura_conta -> bbts_fechamento_totais.abertura_conta
 //
 // ERRATA — a versao anterior deste bloco dizia "faltam R$ 139,97 da ADS em
 // jul/2026", somando R$ 100,00 de Abertura com R$ 89,42 de linha so-seguro. A
 // medicao de 27/08/2026 mostra que SO OS R$ 100,00 eram de julho:
 //   - Abertura de Conta R$ 100,00 (competencia 2026-07): CONFIRMADO. Era isso que
 //     separava o card do total do PDF (18.737,33 + 7,01 = 18.744,34 contra
-//     18.844,34). Agora entra, via bbts_fechamento_cabecalho.
+//     18.844,34). Agora entra, via bbts_fechamento_totais.
 //   - os R$ 89,42 da unica linha SO-SEGURO do banco (contrato 221262790) NAO
 //     faltavam em julho: aquela linha esta com movement_date=2026-07-31, e a
 //     janela manda 31/07 para AGOSTO. As 12 irmas dela, do mesmo fechamento,
@@ -934,7 +934,7 @@ export async function buildFinancialAnalytics(
       // o tipo de falha que ja zerou comissao de seguro em producao uma vez.
       fetchAllRows<AdsCabecalhoRow>(() =>
         admin
-          .from("bbts_fechamento_cabecalho")
+          .from("bbts_fechamento_totais")
           .select("competencia, abertura_conta")
           .eq("company_id", BBTS_COMPANY_ID)
       ).catch((e: unknown) => {

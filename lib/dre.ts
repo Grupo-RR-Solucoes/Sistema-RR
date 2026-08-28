@@ -363,7 +363,7 @@ export async function buildDre(
     try {
       const cabRows = await fetchAllRows<{ abertura_conta: number | null }>(() =>
         supabase
-          .from("bbts_fechamento_cabecalho")
+          .from("bbts_fechamento_totais")
           .select("abertura_conta")
           .eq("company_id", BBTS_COMPANY_ID)
           .eq("competencia", `${compKey}-01`)
