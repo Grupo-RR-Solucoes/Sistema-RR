@@ -49,6 +49,7 @@ export async function POST(req: Request) {
     // com o tamanho do que ficaria de fora, e so segue com semSeguro=true.
     // ------------------------------------------------------------------------
     if (!seguroData && body.semSeguro !== true) {
+      const competencia = `${input.year}-${String(input.month).padStart(2, "0")}`;
       const propostas = input.credito.map((r) => String(r.contrato).trim());
       const { data: jaGravadas } = await supabase
         .from("daily_production_records")
@@ -62,27 +63,46 @@ export async function POST(req: Request) {
       const somaInsurance = comSeguro.reduce((a, r) => a + (Number(r.insurance_value) || 0), 0);
       const brl = (v: number) =>
         v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+      // A EMPRESA PELO NOME, lida do banco. O importador e da ADS por construcao
+      // (BBTS_COMPANY_ID e constante), mas quem le a recusa nao sabe disso — uma
+      // recusa que nao diz de quem e o dinheiro obriga a adivinhar. Sem a linha,
+      // ou com erro de leitura, cai no rotulo curto: a recusa NAO pode depender
+      // de uma consulta acessoria para acontecer.
+      const { data: empresaRow } = await supabase
+        .from("companies")
+        .select("name")
+        .eq("id", BBTS_COMPANY_ID)
+        .maybeSingle();
+      const empresa = String((empresaRow as { name?: string } | null)?.name || "ADS").trim();
+      // O DANO EM NUMEROS VAI NO `error`, nao so no `detalhe`: a tela renderiza
+      // SO o `error` (app/importacoes/page.tsx:254). Numero que fica em campo que
+      // ninguem exibe e numero que nao foi dito.
+      const dano =
+        comSeguro.length > 0
+          ? `Ha ${comSeguro.length} linha(s) desta competencia com seguro ja gravado: ` +
+            `${brl(somaSeguroPago)} de comissao de seguro paga pela BBTS e ` +
+            `${brl(somaInsurance)} de base segurada. `
+          : `Nenhuma das ${input.credito.length} propostas deste PDF tem seguro gravado hoje. `;
       return NextResponse.json(
         {
           error:
-            `O PDF de SEGURO nao foi enviado. A competencia ${input.month}/${input.year} ficaria ` +
-            `meio processada: o crédito entra e o seguro nao — e o gate NAO detecta isso ` +
-            `sozinho, porque a ancora sai do proprio arquivo (ausencia e zero sao ` +
-            `indistinguiveis para ele).`,
-          competencia: `${input.year}-${String(input.month).padStart(2, "0")}`,
+            `RECUSADO: o PDF de SEGURO nao foi enviado. Competencia ${competencia}, empresa ${empresa}. ` +
+            dano +
+            `As colunas de seguro NAO seriam apagadas (ficam de fora da gravacao), mas a competencia ` +
+            `ficaria meio processada: o credito entra e o seguro nao — e a ancora NAO acusa isso ` +
+            `sozinha, porque ela sai do proprio arquivo (ausencia e zero sao indistinguiveis para ` +
+            `ela). Para importar so o credito assim mesmo, confirme e reenvie.`,
+          competencia,
+          empresa,
+          empresa_id: BBTS_COMPANY_ID,
           propostas_credito: input.credito.length,
           linhas_com_seguro_ja_gravado: comSeguro.length,
           seguro_pago_ja_gravado: somaSeguroPago,
           insurance_value_ja_gravado: somaInsurance,
-          detalhe:
-            comSeguro.length > 0
-              ? `Hoje ha ${comSeguro.length} linhas destas propostas com seguro gravado ` +
-                `(${brl(somaSeguroPago)} de comissao paga e ${brl(somaInsurance)} de base ` +
-                `segurada). Elas NAO serao apagadas — as colunas de seguro ficam ` +
-                `intocadas —, mas o seguro desta competencia continuara faltando.`
-              : "Nenhuma linha destas propostas tem seguro gravado hoje.",
+          detalhe: dano,
           como_prosseguir:
             "Envie tambem o PDF de seguro, ou reenvie com semSeguro=true para importar so o credito.",
+          confirmacao_necessaria: true,
         },
         { status: 409 }
       );
