@@ -110,6 +110,30 @@ export type BbtsClosingInput = {
   credito: BbtsCreditoRow[];
   seguro?: BbtsSeguroRow[];
   prt?: BbtsPrtRow[];
+  /**
+   * Cabeçalho "Valor para Emissão da Nota Fiscal" do PDF de crédito, pareado
+   * rótulo<->valor (ver extractCabecalhoNf). A "Abertura de Conta" vinha daqui e
+   * era JOGADA FORA — R$ 100,00 em jul/2026, que é exatamente o que faltava para
+   * o card bater com o PDF. O tipo é declarado inline, e não importado de
+   * bbtsPdfExtract, porque aquele módulo já importa ESTE (evita o ciclo).
+   */
+  cabecalho?: {
+    rotulos: Array<{ rotulo: string; valor: number }>;
+    pagamentoAvt: number;
+    pagamentoPrt: number;
+    aberturaConta: number;
+    outrasDeducoes: number;
+    pagamentoTotal: number;
+  };
+  /**
+   * true quando o PDF de SEGURO não foi enviado. NÃO é o mesmo que "veio e estava
+   * vazio": as âncoras saem do próprio arquivo, então sem esta bandeira ausência e
+   * zero são indistinguíveis (medido 27/08/2026: importar só o crédito de julho
+   * passava com ancora_ok=true e zerava 12 linhas, R$ 115,10 de bbts_seguro_pago e
+   * R$ 113.345,57 de insurance_value). Com ela, o registro OMITE as colunas de
+   * seguro — e omitir, no merge por dono de coluna, é literalmente "não tocar".
+   */
+  seguro_pdf_ausente?: boolean;
   // Âncoras declaradas pela própria extração (self-describing). Se presente,
   // sobrepõe o const hardcoded — o arquivo v3 traz 19 propostas / 271.210,84.
   _ancoras?: {
@@ -145,6 +169,9 @@ export type BbtsClosingResult = {
   seguro_only_lines: number; // linhas de produção criadas só p/ seguro órfão (sem crédito)
   debitos: Array<{ contrato: string; valor_seguro: number; tipo: string | null }>; // fora da produção
   prt_parcelas: number; // linhas da seção PRT gravadas em bbts_prt_parcelas
+  abertura_conta: number; // "Abertura de Conta" do cabeçalho da NF (0 quando não há)
+  cabecalho_gravado: boolean; // gravou em bbts_fechamento_totais
+  seguro_pdf_ausente: boolean; // o PDF de seguro NÃO foi enviado nesta importação
   prt_valor: number; // Σ das parcelas PRT do mês
   gravadas: number;
   ancora_detalhe: Record<string, { esperado: number; obtido: number; delta: number; ok: boolean }>;
@@ -341,6 +368,9 @@ export async function importBbtsClosing(
     debitos: seguroDebito.map((s) => ({ contrato: String(s.contrato).trim(), valor_seguro: Number(s.valor_seguro) || 0, tipo: s.tipo ?? null })),
     prt_parcelas: 0,
     prt_valor: round2((input.prt ?? []).reduce((a, p) => a + (Number(p.valor_parcela) || 0), 0)),
+    abertura_conta: Number(input.cabecalho?.aberturaConta) || 0,
+    cabecalho_gravado: false,
+    seguro_pdf_ausente: input.seguro_pdf_ausente === true,
     gravadas: 0,
     ancora_detalhe: detalhe,
     amostra: [],
@@ -437,10 +467,22 @@ export async function importBbtsClosing(
       net_value: base,
       // Seguro: base da régua BBTS (Valor Total do Crédito) fica em insurance_value;
       // o consolidador BBTS-2c aplica 0,10/0,35 sobre ela.
-      insurance_value: seguroBase,
-      insurance_net_value: seguroBase,
-      insurance_type: seg?.tipo ?? null,
-      has_insurance: seguroBase > 0,
+      //
+      // SEM O PDF DE SEGURO, ESTAS CHAVES NÃO ENTRAM NO REGISTRO. O merge é por
+      // DONO DE COLUNA e o dono aqui é FULL, que escreve TODA chave presente
+      // (dailyRecordMerge.ts:193-198) — mandar zero significaria "a BBTS não pagou
+      // seguro", que é uma AFIRMAÇÃO, e não é o que sabemos. Omitir é literalmente
+      // "não tocar", o mesmo recurso que o srcc_resolucao já usa de propósito.
+      // Medido em 27/08/2026 no fechamento de julho: mandar zero aqui zerava 12
+      // linhas — R$ 115,10 de bbts_seguro_pago e R$ 113.345,57 de insurance_value.
+      ...(input.seguro_pdf_ausente
+        ? {}
+        : {
+            insurance_value: seguroBase,
+            insurance_net_value: seguroBase,
+            insurance_type: seg?.tipo ?? null,
+            has_insurance: seguroBase > 0,
+          }),
       interest_rate: r.juros_mensal ?? null,
       term_months: r.parcelas ?? null,
       installments: r.parcelas ?? null,
@@ -469,7 +511,10 @@ export async function importBbtsClosing(
       // auditoria da ADS. Migration 20260712_000003.
       bbts_pag_avista: Number(r.pag_avista) || 0,
       bbts_taxa_relatorio: r.taxa_relatorio ?? null,
-      bbts_seguro_pago: seg ? Number(seg.valor_seguro) || 0 : 0,
+      // idem: sem o PDF de seguro a chave é OMITIDA, não zerada. Ver acima.
+      ...(input.seguro_pdf_ausente
+        ? {}
+        : { bbts_seguro_pago: seg ? Number(seg.valor_seguro) || 0 : 0 }),
       raw_payload: {
         ...r,
         __bbts_meta: {
@@ -544,6 +589,15 @@ export async function importBbtsClosing(
       proposal_date: compMovementDate,
       movement_date: compMovementDate,
       contract_date: compMovementDate,
+      // O QUE A BBTS PAGOU — mesma promoção a COLUNA que o bloco de crédito faz.
+      // Sem isto o valor ficava só em raw_payload.__bbts_meta.seguro_valor_relatorio,
+      // e os leitores da receita da ADS leem a COLUNA (dre.ts:348 e
+      // financialAnalytics.ts:425) — somavam zero por esta linha. Medido em
+      // 27/08/2026: 1 linha em todo o banco (contrato 221262790, R$ 89,42).
+      // Não há pagamento à vista numa linha só-seguro: 0 aqui é o valor CERTO,
+      // não "não sabemos".
+      bbts_pag_avista: 0,
+      bbts_seguro_pago: Number(s.valor_seguro) || 0,
       // ATENÇÃO ao ler este `false`: ele diz "NÃO HÁ DADO DE SRCC nesta linha",
       // não "não há restrição". A linha só-seguro não tem crédito, então não tem
       // código de SRCC no relatório — é ausência de dado, não conclusão. Por isso
@@ -626,6 +680,44 @@ export async function importBbtsClosing(
       (result as any).prt_aviso = `Falha ao gravar parcelas PRT: ${prtErr.message}`;
     } else {
       result.prt_parcelas = payload.length;
+    }
+  }
+
+  // BLOCO 1 — CABEÇALHO da NF por competência. "Abertura de Conta" é grandeza de
+  // COMPETÊNCIA, não de contrato: não há proposta a que anexar, então não cabe em
+  // daily_production_records. Tabela própria, mesmo precedente do PRT
+  // (bbts_prt_parcelas), e lida pela competência LITERAL — não pela janela.
+  // NÃO derruba o import: sem a tabela (migration ainda não aplicada) vira aviso.
+  if (!dryRun && input.cabecalho) {
+    const competencia = `${input.year}-${String(input.month).padStart(2, "0")}-01`;
+    const { error: cabErr } = await supabase.from("bbts_fechamento_totais").upsert(
+      {
+        company_id: BBTS_COMPANY_ID,
+        competencia,
+        pagamento_avt: input.cabecalho.pagamentoAvt,
+        pagamento_prt: input.cabecalho.pagamentoPrt,
+        abertura_conta: input.cabecalho.aberturaConta,
+        // A 4a coluna do cabecalho tem ROTULO VARIAVEL — foi "Valor Descontado" em
+        // 06/26 e "Glosa" em 07/26. A captura pareia por rotulo (nao por nome fixo
+        // nem por posicao) e entrega o valor ja somado; a coluna do banco se chama
+        // glosa porque foi assim que a migration foi aplicada. O nome que o
+        // documento usou NAO fica guardado: a tabela nao tem coluna rotulos.
+        // Se um dia a BBTS separar "Glosa" de "Valor Descontado" em DUAS colunas,
+        // as duas cairao somadas aqui e a distincao se perde — a identidade da
+        // soma continua fechando, entao isso passaria silencioso.
+        glosa: input.cabecalho.outrasDeducoes,
+        pagamento_total: input.cabecalho.pagamentoTotal,
+        arquivo_origem: opts?.fileName ?? null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "company_id,competencia" }
+    );
+    if (cabErr) {
+      // PGRST205 = tabela inexistente (migration pendente). Qualquer outro erro
+      // também vira aviso: o crédito já está gravado e derrubar aqui não desfaz.
+      (result as any).cabecalho_aviso = `Falha ao gravar os totais da NF: ${cabErr.message}`;
+    } else {
+      result.cabecalho_gravado = true;
     }
   }
 

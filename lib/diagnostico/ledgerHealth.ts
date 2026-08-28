@@ -4,6 +4,7 @@ import { detectMonthRegime, type MonthRegime } from "@/lib/cmsMonthly";
 import { detectRulesStale } from "@/lib/rulesFingerprint";
 import { detectTrpStaleCrossFechadas } from "@/lib/trp/detectorReguaObsoleta";
 import { auditCmsVsPmr } from "@/lib/cms/auditCmsVsPmr";
+import { detectFechamentoParcial } from "@/lib/diagnostico/fechamentoParcial";
 
 // ============================================================================
 // lib/diagnostico/ledgerHealth.ts — o VIGIA DO COFRE.
@@ -390,6 +391,11 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
     }
   }
 
+  // O QUE NAO CHEGOU — competencia meio processada (ADS: 2 PDFs; RR: Todos +
+  // avulsas). CONSOME o detector, nao o reimplementa (mesmo padrao do trp_stale).
+  // Sao 'alerta' por construcao: apontam descontinuidade, nao provam falta.
+  const parciais = await detectFechamentoParcial(admin);
+
   const checks: LedgerCheck[] = [
     {
       id: "regime_fechado_sem_pmr",
@@ -471,6 +477,7 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
         "Promotores com 2+ linhas na mesma competencia (linha RR + linha ADS). Esperado — telemetria, nunca alerta.",
       detalhe: multi.slice(0, 50).map(([k, n]) => ({ chave: k, linhas: n })),
     },
+    ...parciais,
   ];
 
   const erroCount = checks

@@ -126,6 +126,11 @@ export default function ImportacoesPage() {
   const [adsCreditoFile, setAdsCreditoFile] = useState<File | null>(null);
   const [adsSeguroFile, setAdsSeguroFile] = useState<File | null>(null);
   const [adsSubmitting, setAdsSubmitting] = useState(false);
+  // RECUSA do envio só-crédito (409 da rota). Guarda o dano MEDIDO pelo servidor
+  // para a tela poder escrevê-lo em números — e é ela que habilita o botão de
+  // confirmação. Nasce nula a cada troca de arquivo: a confirmação vale para o
+  // envio que foi recusado, não para o próximo.
+  const [adsRecusa, setAdsRecusa] = useState<any>(null);
   const [promoterRemunerationFile, setPromoterRemunerationFile] = useState<File | null>(null);
   const [promoterRemunerationSubmitting, setPromoterRemunerationSubmitting] = useState(false);
   const [cancellingImportId, setCancellingImportId] = useState<string | null>(null);
@@ -235,7 +240,10 @@ export default function ImportacoesPage() {
     }
   }
 
-  async function handleAdsClosingSubmit() {
+  // `semSeguro` só chega aqui pelo BOTÃO DE CONFIRMAÇÃO, que só existe depois de
+  // uma recusa do servidor. Não há padrão ligado nem chamada implícita: o envio
+  // normal manda sempre false, e a rota recusa de novo se o seguro faltar.
+  async function handleAdsClosingSubmit(semSeguro = false) {
     if (!adsCreditoFile) {
       setError("Envie ao menos o PDF de crédito da ADS.");
       return;
@@ -244,18 +252,27 @@ export default function ImportacoesPage() {
       setAdsSubmitting(true);
       setError("");
       setNotice("");
+      if (!semSeguro) setAdsRecusa(null);
       const creditoFile = await fileToBase64(adsCreditoFile);
       const seguroFile = adsSeguroFile ? await fileToBase64(adsSeguroFile) : null;
       const response = await fetch("/api/import/closing/ads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ creditoFile, seguroFile, fileName: adsCreditoFile.name }),
+        body: JSON.stringify({ creditoFile, seguroFile, fileName: adsCreditoFile.name, semSeguro }),
       });
       const payload = await response.json();
+      // 409 com dano medido: NÃO é erro de sistema, é uma pergunta. Guarda o
+      // payload para a tela mostrar os números e oferecer a confirmação.
+      if (response.status === 409 && payload?.confirmacao_necessaria) {
+        setAdsRecusa(payload);
+        return;
+      }
       if (!response.ok) throw new Error(payload?.error || "Erro ao importar o fechamento ADS.");
+      setAdsRecusa(null);
       setNotice(
         `Fechamento ADS importado (${competenceLabel(payload.month, payload.year)}): ${payload.gravadas} linha(s), ` +
-          `${payload.com_seguro} com seguro. Âncoras ${payload.ancora_ok ? "conferidas ✔" : "NÃO fecharam ✖"}.`
+          `${payload.com_seguro} com seguro${payload.seguro_pdf_ausente ? " · SEM o PDF de seguro (só crédito)" : ""}. ` +
+          `Âncoras ${payload.ancora_ok ? "conferidas ✔" : "NÃO fecharam ✖"}.`
       );
       setAdsCreditoFile(null);
       setAdsSeguroFile(null);
@@ -995,15 +1012,40 @@ export default function ImportacoesPage() {
                       </div>
                       <div className="two-up">
                         <Dropzone disabled={isFuncionario} accept=".pdf"
-                          file={adsCreditoFile} onFile={setAdsCreditoFile}
+                          file={adsCreditoFile} onFile={(f: File | null) => { setAdsRecusa(null); setAdsCreditoFile(f); }}
                           title="PDF de crédito (Crédito ADS-BBTS)" sub="obrigatório · .pdf" />
                         <Dropzone disabled={isFuncionario} accept=".pdf"
-                          file={adsSeguroFile} onFile={setAdsSeguroFile}
-                          title="PDF de seguro (Seguro ADS-BBTS)" sub="opcional · .pdf" />
+                          file={adsSeguroFile} onFile={(f: File | null) => { setAdsRecusa(null); setAdsSeguroFile(f); }}
+                          title="PDF de seguro (Seguro ADS-BBTS)" sub="recomendado · .pdf" />
                       </div>
+                      {adsRecusa ? (
+                        <div className="autobar" style={{ marginBottom: 10, borderColor: "#d97706" }}>
+                          <span className="ic"><IcoInfo /></span>
+                          <div className="t">
+                            <b>Importação recusada — o PDF de seguro não foi enviado.</b>
+                            <div style={{ marginTop: 6 }}>
+                              Competência <b>{adsRecusa.competencia}</b> · empresa <b>{adsRecusa.empresa}</b> ·{" "}
+                              <b>{adsRecusa.linhas_com_seguro_ja_gravado}</b> linha(s) com seguro já gravado ·{" "}
+                              <b>{formatCurrency(adsRecusa.seguro_pago_ja_gravado)}</b> de comissão de seguro paga pela BBTS ·{" "}
+                              <b>{formatCurrency(adsRecusa.insurance_value_ja_gravado)}</b> de base segurada.
+                            </div>
+                            <div style={{ marginTop: 6 }}>{adsRecusa.error}</div>
+                            <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <button type="button" className="cancelbtn" onClick={() => setAdsRecusa(null)} disabled={adsSubmitting}>
+                                Cancelar e enviar o PDF de seguro
+                              </button>
+                              <button type="button" className={`btn-primary${isFuncionario ? " dis" : ""}`}
+                                onClick={() => handleAdsClosingSubmit(true)}
+                                disabled={isFuncionario || adsSubmitting}>
+                                {adsSubmitting ? <><span className="spinner" />Importando…</> : "Confirmo: importar SÓ o crédito"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="uact">
                         <span className="uhint"><IcoInfo />Grava na produção ADS; âncora do PDF valida antes.</span>
-                        <button type="button" onClick={handleAdsClosingSubmit} className={`btn-primary${isFuncionario ? " dis" : ""}`} disabled={isFuncionario || adsSubmitting || !adsCreditoFile}>
+                        <button type="button" onClick={() => handleAdsClosingSubmit(false)} className={`btn-primary${isFuncionario ? " dis" : ""}`} disabled={isFuncionario || adsSubmitting || !adsCreditoFile}>
                           {adsSubmitting ? <><span className="spinner" />Importando…</> : <><span className="ck"><IcoUp /></span>Importar fechamento ADS</>}
                         </button>
                       </div>

@@ -1,0 +1,65 @@
+-- Migration: totais do cabecalho da NF do fechamento ADS/BBTS  (2026-08-27)
+--            frente feat/residuo-financeiro
+--
+-- STATUS: EXECUTADA em 27/08/2026, com AJUSTES em relacao ao que este arquivo
+-- propunha originalmente. O que existe em producao, lido do schema em 27/08:
+--
+--   tabela : bbts_fechamento_totais        (proposta era bbts_fechamento_cabecalho)
+--   colunas: id, company_id, competencia, pagamento_avt, pagamento_prt,
+--            abertura_conta, glosa, pagamento_total, arquivo_origem,
+--            created_at, updated_at                                    (11)
+--   unica  : (company_id, competencia)
+--
+-- Este arquivo foi reescrito para descrever o que ESTA no banco, nao o que foi
+-- proposto — senao o proximo a ler herdaria nome e colunas que nao existem.
+--
+-- DUAS DIFERENCAS QUE MUDAM O CODIGO, e por isso ficam nomeadas:
+--
+--   `glosa` em vez de `outras_deducoes`. A 4a coluna do cabecalho do PDF tem
+--   ROTULO VARIAVEL — medido: "Valor Descontado" em 06/26 e "Glosa" em 07/26. A
+--   captura pareia por ROTULO e entrega o valor ja somado, entao o nome da coluna
+--   do banco nao afeta a leitura. Mas se um dia a BBTS trouxer "Glosa" e "Valor
+--   Descontado" como DUAS colunas, as duas caem somadas aqui e a distincao se
+--   perde — a identidade da soma continua fechando, entao passaria silencioso.
+--
+--   NAO HA coluna `rotulos`. A proposta guardava o cabecalho CRU
+--   ([{rotulo, valor}] na ordem) justamente para registrar QUE LAYOUT produziu
+--   aqueles numeros. Sem ela, uma mudanca de rotulo da BBTS fica invisivel depois
+--   de gravada. Divida nomeada, nao aberta:
+--     alter table bbts_fechamento_totais add column if not exists rotulos jsonb;
+--
+-- PARA QUE A TABELA SERVE. Nao e pelos R$ 100,00 de Abertura de Conta. E porque
+-- ate agora o `pagamento_total` era usado como ancora de importacao e DESCARTADO:
+-- a conferencia acontecia uma vez, no import, e morria ali. Com o declarado
+-- gravado, a conferencia vira PERMANENTE (check ads_ancora_totais em
+-- lib/diagnostico/fechamentoParcial.ts) e pega o que mudar DEPOIS — reimportacao
+-- parcial, merge da diaria, UPDATE manual. E o que faltou quando a ausencia de um
+-- PDF de seguro so apareceu porque alguem somou a mao.
+
+-- ============================================================
+-- O DDL, como aplicado
+-- ============================================================
+-- create table if not exists bbts_fechamento_totais (
+--   id               uuid primary key default gen_random_uuid(),
+--   company_id       uuid not null references companies(id),
+--   competencia      date not null,
+--   pagamento_avt    numeric not null default 0,
+--   pagamento_prt    numeric not null default 0,
+--   abertura_conta   numeric not null default 0,
+--   glosa            numeric not null default 0,
+--   pagamento_total  numeric not null default 0,
+--   arquivo_origem   text,
+--   created_at       timestamptz not null default now(),
+--   updated_at       timestamptz not null default now(),
+--   unique (company_id, competencia)
+-- );
+
+-- ============================================================
+-- Verificacao
+-- ============================================================
+--   select competencia, pagamento_avt, pagamento_prt, abertura_conta, glosa,
+--          pagamento_total,
+--          round(pagamento_avt + pagamento_prt + abertura_conta + glosa, 2) as soma
+--     from bbts_fechamento_totais
+--    where company_id = '375aea6d-3b9c-4490-87f0-e739e312c8ef'
+--    order by competencia;

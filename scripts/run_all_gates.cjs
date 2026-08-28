@@ -99,6 +99,38 @@ const GATES = [
       "existe; sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/ads_import_so_credito_gate.cjs",
+    nome: "import so-credito da ADS nao apaga o seguro ja gravado (e a rota recusa)",
+    modo: "self-contained",
+    motivo:
+      "roda importBbtsClosing + mergeDailyProductionRecords REAIS e a funcao POST " +
+      "REAL da rota contra um banco ESPELHO em memoria (scripts/_fakeDpr.cjs), que " +
+      "reproduz o upsert parcial do PostgREST — o mecanismo exato do defeito. Pega " +
+      "as duas causas: a ancora que sai do proprio arquivo (0 == 0 PASSA) e o dono " +
+      "FULL escrevendo chave de seguro zerada. Tem controle positivo (com o PDF de " +
+      "seguro as 5 colunas VOLTAM a ser escritas), senao 'nao tocar' viraria 'nunca " +
+      "gravar'. Provado por mutacao em 27/08/2026: reverter a omissao das chaves " +
+      "derruba 3 asserçoes; tirar a empresa/os numeros da recusa derruba 2. Sem " +
+      "banco, sem caminho absoluto",
+  },
+  {
+    arquivo: "scripts/financeiro_matriz_detalhe_gate.cjs",
+    nome: "matriz de entrada: o detalhe de 'Outros' explica a propria celula",
+    modo: "self-contained",
+    motivo:
+      "roda buildFinancialAnalytics REAL contra um cliente de leitura semeado a " +
+      "mao e cobra DUAS identidades em TODA linha: Sigma(outrosDetalhe) == " +
+      "celulas.outros e Sigma(celulas) == total. A primeira e a que faltava: " +
+      "'Outros' e coluna AGREGADA e expansivel, e a tela TROCA a coluna pelas " +
+      "linhas do detalhe — valor sem entrada nomeada some da tela expandida " +
+      "enquanto a coluna Total continua com ele. Foi o que a Abertura de Conta da " +
+      "ADS fez em 28/08 (celula 100,00, detalhe 0,00). Tres controles positivos " +
+      "impedem vacuidade: RR ALAGOAS 2 com Outros 488,75 em duas entradas, a linha " +
+      "de avulsos (que usa Outros CORRETAMENTE, com detalhe por categoria) e a ADS " +
+      "com a coluna nova != 0. Provado por mutacao em 28/08: devolver a Abertura " +
+      "para 'outros' derruba 4 asserçoes. Sem banco, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/bbts_sinal_negativo_gate.cjs",
     nome: "sinal negativo sobrevive ao parser da BBTS (linha CANCELADA do seguro)",
     modo: "self-contained",

@@ -356,6 +356,24 @@ export async function buildDre(
     );
     for (const r of prtRows) receitaAds += toNum(r.valor_parcela);
 
+    // ABERTURA DE CONTA — a 4a perna do que a BBTS paga. Grandeza de COMPETENCIA
+    // (nao ha contrato a que anexar), lida pela competencia LITERAL igual ao PRT.
+    // Antes o parser jogava o valor fora: R$ 100,00 em 2026-07 faltavam no card.
+    // Tolera SO a tabela inexistente (migration pendente); outro erro e relancado.
+    try {
+      const cabRows = await fetchAllRows<{ abertura_conta: number | null }>(() =>
+        supabase
+          .from("bbts_fechamento_totais")
+          .select("abertura_conta")
+          .eq("company_id", BBTS_COMPANY_ID)
+          .eq("competencia", `${compKey}-01`)
+      );
+      for (const r of cabRows) receitaAds += toNum(r.abertura_conta);
+    } catch (e) {
+      const msg = String((e as Error)?.message || e);
+      if (!/schema cache|does not exist|PGRST205/i.test(msg)) throw e;
+    }
+
     if (receitaAds > 0) {
       receitaFechamentoByCompany.set(
         BBTS_COMPANY_ID,
