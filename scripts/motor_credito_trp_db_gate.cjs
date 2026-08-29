@@ -33,7 +33,7 @@
  */
 
 const { createClient } = require("@supabase/supabase-js");
-const H = require("./motor_credito_trp_db_gate_lib.cjs");
+const H = require("./_motor_credito_trp_db_lib.cjs");
 
 const PAGE = 1000;
 const ANCORA_RR = 109538.42;   // jun/2026 — orquestrador totals.repasse_credito_rr

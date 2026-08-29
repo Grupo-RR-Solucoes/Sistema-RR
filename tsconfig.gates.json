@@ -39,7 +39,7 @@
   "include": [
     "scripts/gate-avista-vs-fechamento.mts",
     "scripts/gate-import-percentual.mts",
-    "scripts/gate-medida-b-conserto.mts",
+    "scripts/dump-medida-b-conserto.mts",
     "scripts/gate-medida-c-rota.mts",
     "scripts/gate-srcc-ads.mts",
     "scripts/gate_ads_julho_dois_bugs.ts",

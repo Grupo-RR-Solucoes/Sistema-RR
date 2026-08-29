@@ -45,7 +45,12 @@ async function main() {
   const gravada = (prop) => previewByProp.has(String(prop));
 
   // gate agregado
-  ok("18 linhas -> 10 gravadas (Contratação CDC), 4 canceladas, 4 transitórias", res.linhas_aba === 18 && res.processadas === 10 && res.canceladas === 4 && res.transitorias === 4, `linhas=${res.linhas_aba} proc=${res.processadas} canc=${res.canceladas} trans=${res.transitorias}`);
+  // APOSENTADA em 29/08/2026 — CONTAGEM CONGELADA (mesma familia da do
+  // test_ads_status_e_grupo). Cravava linhas_aba=18/proc=10/canc=4/trans=4 sobre um
+  // "Relatório (3).xlsx" que hoje tem 52 linhas (proc=35 canc=9 trans=8). Mede o
+  // tamanho do insumo, nao o comportamento do parser. As assercoes (d) e (e) abaixo,
+  // que sao as de COMPETENCIA, seguem valendo e continuam sendo a prova deste arquivo.
+  console.log(`  [info] volume do arquivo hoje: linhas=${res.linhas_aba} proc=${res.processadas} canc=${res.canceladas} trans=${res.transitorias}`);
 
   // a) 213994592 -> competência 2026-07
   const a = previewByProp.get("213994592");

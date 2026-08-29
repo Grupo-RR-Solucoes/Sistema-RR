@@ -84,22 +84,83 @@
 //                             investigacao propria; nenhum foi diagnosticado aqui
 //                             e nenhum deve ser presumido benigno.
 //
-// (4) OS 19 ORFAOS. NAO devem ser registrados um a um: encher a faixa de vermelho
-//     de origem desconhecida troca um problema por outro. Cada um vale REGISTRO,
-//     APOSENTADORIA ou EXCLUSAO, e essa triagem e frente propria. A lista, para
-//     que ela exista em algum lugar:
-//       bbts_conferencia_gate · bbts_fechamento_gate · bbts_parser_gate
-//       bbts_resolver_gate · diag-residuo-09-gate-silencio
-//       gate-avista-vs-fechamento · gate-medida-b-conserto
-//       gate_ads_seguro_via_render · motor_credito_trp_db_gate (+_lib)
-//       mov2_dre_gate · mov2_proposals_get_gate · mov2_relatorios_gate
-//       mov3_dre_inclui_tudo_gate · test_ads_credito_competencia
-//       test_ads_credito_trp_sempre · test_ads_status_e_grupo
-//       trp_paridade_gate_f3 · trp_parse_route_test
-//     CRITERIO para a triagem: (a) a invariante dele ainda existe no codigo? se
-//     nao, EXCLUSAO; (b) ela existe mas outro gate ja a cobre? APOSENTADORIA, com
-//     o gate que a cobre nomeado no commit; (c) ela existe e ninguem cobre?
-//     REGISTRO, na faixa que os tres criterios de classificacao mandarem.
+// (4) OS ORFAOS — TRIADOS em 29/08/2026. Eram 19; a triagem os separou por CAUSA,
+//     e a lista abaixo e o estado depois dela. O universo foi RE-DERIVADO, nao herdado:
+//     103 arquivos com "gate"/"test" no nome, rastreados, menos MUTA_/.manual. — o 103o
+//     e este runner. Os 19 do registro anterior reproduzem exatamente.
+//
+//     SAIRAM DA CONTA — nao eram portoes (renomeados, sem outra mudanca):
+//       motor_credito_trp_db_gate_lib.cjs -> _motor_credito_trp_db_lib.cjs
+//           biblioteca do gate vizinho; rc=0 em 361ms porque nao assere nada sozinho.
+//           Prefixo `_`, a convencao ja usada por _fakeFechamento/_diffContraRef.
+//       diag-residuo-09-gate-silencio.cjs -> diag-residuo-09-silencio.cjs
+//           diagnostico: imprime linhas e nao tem ok() nem veredito. So casava a
+//           varredura por ter "gate" no meio do nome.
+//
+//     NAO-EXECUTAVEIS por ARGUMENTO (4) — nao sao vermelhos: saem com mensagem de uso,
+//     sem rodar assercao nenhuma. Mesmo caso dos renomeados de 01/08 (`dump_*`).
+//       bbts_parser_gate.cjs      <pdf-da-tabela>
+//       bbts_resolver_gate.cjs    <pdf-da-tabela>
+//       bbts_fechamento_gate.cjs  <pdf-credito> [pdf-tabela]
+//       bbts_conferencia_gate.cjs <pdf-tabela> <pdf-fechamento>
+//     Os dois primeiros SERIAM recuperaveis por fixture SE a tabela de pagamento da
+//     BBTS pudesse ser versionada — o parser dela so extrai regua (MatrizCrua: grupos,
+//     convenios, percentuais, teto, vigencia), zero dado de cliente. Mas o PDF e
+//     documento comercial de um PARCEIRO e o repositorio e PUBLICO, entao isso e
+//     DECISAO DE NEGOCIO PENDENTE com o Diego, nao criterio tecnico, e esta atada a
+//     divida do repo publico (logo abaixo). Os dois ultimos dependem do PDF de
+//     FECHAMENTO, que e linha a linha por contrato: nao ha caminho por fixture.
+//     `Tabela_de_Pagamento_BBTS.pdf` nunca esteve no git e nao esta em disco.
+//
+//     PROMOVIDOS A REGISTRADO (3) — ver as entradas no GATES[] acima:
+//       gate-avista-vs-fechamento.mts   10/10 estaveis, needs-db-lento
+//       mov2_proposals_get_gate.cjs     unica prova de promoterReportData, needs-db-lento
+//       companyscope_grupo_gate.cjs     NOVO, separado de test_ads_status_e_grupo
+//
+//     APOSENTADO (1):
+//       gate-medida-b-conserto.mts -> dump-medida-b-conserto.mts
+//           4 constantes de TRANSICAO de 01/08 (27/20/4/4) contra 30/461/0/0 hoje.
+//
+//     SEPARADOS (2) — a metade congelada morreu, a permanente virou portao proprio:
+//       test_ads_status_e_grupo.cjs     contagem do PR #84 aposentada; resolveCompanyScope
+//                                       saiu para companyscope_grupo_gate.cjs. Segue orfao
+//                                       (xlsx de cliente), agora 8 OK / 0 falhas.
+//       test_ads_credito_competencia.cjs contagem "18 linhas" aposentada; as assercoes de
+//                                       COMPETENCIA seguem. Segue orfao (mesmo xlsx).
+//                                       ATENCAO: e uma das 2 unicas provas de
+//                                       lib/bbtsDailyImport.ts (390 linhas, 8 consumidores),
+//                                       e resta 1 falha nao diagnosticada nele.
+//
+//     DEIXADO ORFAO POR DECISAO (1):
+//       trp_paridade_gate_f3.cjs  passa (rc=0), mas uma das tres competencias sai com
+//           `matches: 0` — vacuidade naquela fatia. So registra com guarda de nao-vacuidade.
+//
+//     TRATADO NO CODIGO, nao no registro (1):
+//       trp_parse_route_test.cjs  era 8 OK / 2 FAIL, hoje 10 OK / 0 FAIL. Achou um DEFEITO
+//           VIVO: `7ad20fc` (17/07) removeu por colateral as 2 linhas que preenchiam
+//           `confianca.provado`, e a tela de revisao de TRP dizia "0 provados" com 195
+//           provados por 43 dias. Restaurado. A outra falha era assercao VENCIDA por
+//           conserto correto (`b47ade6` preencheu o prazo do CONSIG_PRIVADO): aposentada.
+//           Segue orfao: le um PDF de TRP que nao esta versionado.
+//
+//     INDETERMINADOS (5) — medidos, NAO diagnosticados. Nao presumir benignos:
+//       motor_credito_trp_db_gate.cjs  rc=1 em 202,6s — "169 divergencia(s)"
+//       mov3_dre_inclui_tudo_gate.cjs  rc=1 em 255,5s — "1 FALHA(S)"
+//       mov2_dre_gate.cjs              rc=127 apos 118,2s — CRASH DE AMBIENTE, nao
+//                                      vermelho de assercao ("command not found")
+//       mov2_relatorios_gate.cjs       rc=1 em 149,5s — "2 FALHA(S)". Tambem toca
+//                                      promoterReportData
+//       test_ads_credito_trp_sempre.cjs rc=1 em 35,0s — 7 passaram, 1 falhou
+//     Os dois primeiros TERMINAM dentro de 600s: nao sao "portao que nao termina".
+//
+// (4b) DIVIDA NOMEADA, fora do alcance desta frente — O REPOSITORIO E PUBLICO.
+//     Medido em 29/08/2026: a API do GitHub devolve `private: false, visibility: public`
+//     para Grupo-RR-Solucoes/Sistema-RR. E o repositorio de um sistema que processa
+//     producao contrato a contrato, e os handoffs versionados ja citam numero de
+//     contrato, nome de promotor e valor. Consequencia direta para a triagem acima:
+//     "versionar fixture" significa "PUBLICAR". Nenhuma fixture proposta por esta
+//     frente carrega dado de cliente. A decisao sobre a visibilidade e do Diego e e
+//     separada desta frente; fica registrada aqui para nao se perder.
 //
 // (5) QUANTOS PROVAM ALGO CONTINUAMENTE: os self-contained, e so eles. Os demais
 //     provam quando alguem roda.
@@ -813,7 +874,50 @@ const GATES = [
       "createClient; trp_rule_versions + daily de PRODUCAO. INVERTIDO em 01/08: media o delta do conserto, agora assere a invariante + a causa raiz (campo ausente desliga a guarda)",
   },
   {
-    arquivo: "scripts/gate_projecao_gestor.mts",
+    arquivo: "scripts/gate-avista-vs-fechamento.mts",
+    nome: "% a vista: a nossa coluna x o carimbado pelo FECHAMENTO",
+    modo: "needs-db-lento",
+    motivo:
+      "REGISTRADO em 29/08/2026, depois de 6 semanas ORFAO. Ele nunca esteve fora por " +
+      "vermelho — estava fora por INSTABILIDADE (morte no teardown do libuv, exit " +
+      "3221226505, observada 1 vez em 4 execucoes em 01/08). As 10 execucoes que o " +
+      "handoff daquela frente pedia e ninguem fez, feitas agora em serie: 10 de 10 com " +
+      "rc=0 e 'GATE OK', entre 7,8s e 10,2s. Um crash em 10 teria sido reprovacao. " +
+      "createClient; compara company_received_percent com o '% A VISTA' que o " +
+      "fechamento da Promotiva carimba no metadata de cada linha CASH — e a conferencia " +
+      "que teria pego o bug da faixa do CNPJ. Entra em LENTO, nao em needs-db, porque a " +
+      "faixa --db ja mede 358,4s contra teto de 90s: nao se engorda banda estourada",
+  },
+  {
+    arquivo: "scripts/mov2_proposals_get_gate.cjs",
+    nome: "proposals GET lista o fechamento real (nao o cms vazio)",
+    modo: "needs-db-lento",
+    motivo:
+      "REGISTRADO em 29/08/2026, depois de 6 semanas ORFAO. Passa (rc=0) e custa 138,6s — " +
+      "por isso LENTO. A razao de registrar nao e o verde: e que ele e uma das DUAS unicas " +
+      "provas de lib/promoterReportData.ts (174 linhas, consumida por " +
+      "app/api/commissions/proposals/route.ts, app/api/promotores/route.ts, " +
+      "PromotoresClient.tsx, lib/closingProposalRows.ts e lib/report.ts). Varrido em " +
+      "29/08/2026: NENHUM gate registrado tocava esse modulo. Aposenta-lo apagaria a " +
+      "unica cobertura, nao reduziria ruido",
+  },
+  {
+    arquivo: "scripts/companyscope_grupo_gate.cjs",
+    nome: "resolveCompanyScope traduz grupo em company_ids (nunca 'grupo:*' cru)",
+    modo: "needs-db",
+    motivo:
+      "NASCEU em 29/08/2026 da SEPARACAO de scripts/test_ads_status_e_grupo.cjs, que e " +
+      "orfao por construcao (le um xlsx de cliente em Downloads, que nao pode ser " +
+      "versionado — o repositorio e PUBLICO). Aquele arquivo tinha duas metades que nao " +
+      "envelhecem juntas: contagem congelada do PR #84 (morreu la) e esta invariante " +
+      "permanente. lib/companyScope.ts (30 linhas, consumida por " +
+      "app/api/calculate/monthly/route.ts e lib/promoterAnalytics.ts) NAO TINHA NENHUM " +
+      "portao registrado; este e a unica prova continua dele. createClient so para ler " +
+      "companies; 7 assercoes, com guarda de anti-vacuidade que reprova se nao houver " +
+      "grupo no banco, e recusa honesta (exit 2) quando falta credencial",
+  },
+  {
+arquivo: "scripts/gate_projecao_gestor.mts",
     nome: "/projecao do gestor (montagem + mascaramento)",
     modo: "needs-db-lento",
     motivo:

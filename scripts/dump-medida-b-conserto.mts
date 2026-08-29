@@ -1,3 +1,17 @@
+// APOSENTADO em 29/08/2026 — deixou de ser portao, virou `dump-`.
+//
+// MOTIVO: as 4 assercoes eram CONSTANTES DE TRANSICAO, cravadas em 01/08/2026 para
+// medir o delta de um conserto que ja entrou. Medido em 29/08/2026, o portao reprova
+// nas quatro, e nao porque algo quebrou:
+//     etiquetas depois do conserto        obtido  30   esperado  27
+//     linhas destravadas                  obtido 461   esperado  20
+//     linhas corrigidas de escala         obtido   0   esperado   4
+//     escala resolvida pela faixa do grupo obtido  0   esperado   4
+// Numero de transicao envelhece por construcao: ele mede a DISTANCIA ate um estado
+// que ja foi alcancado. Mantido como `dump-` porque a cadeia que ele exercita
+// (carregarContextoTaxaAvista -> percentDe / semRegraDe) continua viva e util para
+// inspecao a mao; o que morreu foi a pretensao de reprovar merge com ela.
+//
 // ============================================================================
 // GATE DA MEDIDA B — o conserto entrega o universo real?
 //

@@ -475,6 +475,17 @@ export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOpt
   let totalPct = 0;
   for (const k of EXPECTED_PRODUCTS) {
     const produtoDraft = montarProdutoDraft(k, produtos[k], conferir);
+    // RESTAURADO em 29/08/2026. As duas linhas abaixo saíram por colateral em
+    // `7ad20fc` (17/07/2026, tx_juros_min derivado) e nunca voltaram: `totalPct`
+    // ficava declarado e NUNCA escrito, e `confianca.provado` viajava {0, {}} até
+    // a tela de revisão do sócio — que passou a dizer "0 provados" com 195
+    // provados. Não corrompe régua nem gravação (o commit não lê `confianca`),
+    // mas subnotificou a confiança de todo upload de TRP por 43 dias. Quem pegou
+    // foi `scripts/trp_parse_route_test.cjs`, órfão do runner — ninguém o roda.
+    if (produtos[k]) {
+      provadoProdutos[k] = produtos[k].rows;
+      totalPct += produtos[k].rows.flat().length;
+    }
     // tx_juros_min de CATEGORIA: DERIVADO das células (não capturado). Reproduz o
     // piso que o curado punha à mão; cobre o gate B do ADIANTAMENTO_13 e o buraco
     // multi-célula do INSS_RENOV. Só nas categorias-floor; as 9 de partição ficam sem.
