@@ -56,7 +56,24 @@ const MONTH = Number(process.env.BBTS_MONTH || 7);
 // de residuo da regua do RR que sairam da base de lideranca no mesmo dia.
 //
 // SEGURO_ESPERADO continua sobrescrevendo, para investigacao pontual.
-const ESPERADO = Number(process.env.SEGURO_ESPERADO || 49.91);
+// ANCORA EXTERNA E DATADA (29/08/2026). Ela NAO e recomputada pelo sistema — se
+// fosse, o portao viraria tautologia e provaria so que o sistema concorda consigo
+// mesmo. O que ela ganha e PROCEDENCIA e IDADE, para que envelhecer seja visivel.
+const ANCORA = {
+  valor: 115.10,
+  cravadaEm: "2026-08-29",
+  procedencia:
+    "Sigma bbts_seguro_pago das 12 linhas da ADS com seguro em 2026-07, conferida contra " +
+    "a ancora EXTERNA do PDF de fechamento da BBTS: 115,10 (coluna) + 89,42 (so no " +
+    "raw_payload) = 204,52 = seguro_calculo. Ver HANDOFF_ADS_FECHAMENTO_CAIXA §3 e §5.",
+  escopo: { competencia: "2026-07", empresa: "ADS", linhas: 12 },
+} as const;
+// HISTORICO: a ancora anterior era 49,91, cravada em 01/08/2026 sobre 11 linhas.
+// Ela nao estava errada — envelheceu. Em 26/08/2026 13:53:38 uma reimportacao do
+// fechamento ADS de julho (documentada na §7 do HANDOFF_ADS_FECHAMENTO_CAIXA)
+// reescreveu 43 linhas da ADS de 2026-07, 12 delas com seguro. O portao ficou
+// vermelho e ninguem viu, porque ele e orfao do runner. Antes dela, 34,55.
+const ESPERADO = Number(process.env.SEGURO_ESPERADO || ANCORA.valor);
 const brl = (n: number) => Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pad = (s: any, n: number) => { s = String(s ?? ""); return s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length); };
 const padL = (s: any, n: number) => { s = String(s ?? ""); return s.length >= n ? s.slice(0, n) : " ".repeat(n - s.length) + s; };
@@ -139,7 +156,42 @@ const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0
   console.log(`        (antes, lixo persistido pela regua do RR: ${brl(totAntes)})`);
 
   if (Math.abs(totEmpresa - ESPERADO) > 0.005) {
-    problemas.push(`comissao-empresa pela via de render ${brl(totEmpresa)} != esperado ${brl(ESPERADO)}`);
+    // AO REPROVAR, O PORTAO DISCRIMINA ancora vencida de divergencia viva. O sinal
+    // e max(updated_at) das linhas somadas CONTRA a data em que a ancora foi cravada:
+    // dado que se moveu DEPOIS da ancora => a ancora e a suspeita; dado parado com
+    // numero diferente => o defeito esta no codigo.
+    const dias = Math.floor((Date.now() - Date.parse(ANCORA.cravadaEm + "T00:00:00Z")) / 86400000);
+    // proposalRows NAO carregam updated_at (vem do render, nao da tabela): o
+    // discriminante busca a data na fonte, pelas propostas que acabaram de ser somadas.
+    const props = linhas.map((r: any) => String(r.proposal_number || "")).filter(Boolean);
+    const { data: upRows } = await sb
+      .from("daily_production_records")
+      .select("updated_at")
+      .in("proposal_number", props);
+    const ups = (upRows ?? []).map((r: any) => String(r.updated_at || "")).filter(Boolean).sort();
+    const maxUp = ups.length ? ups[ups.length - 1] : "(sem updated_at)";
+    const moveuDepois = ups.length > 0 && maxUp > ANCORA.cravadaEm;
+    problemas.push(`comissao-empresa pela via de render ${brl(totEmpresa)} != ancora ${brl(ESPERADO)}`);
+    console.log("");
+    console.log(`  A ANCORA tem ${dias} dia(s) — cravada em ${ANCORA.cravadaEm}`);
+    console.log(`  procedencia: ${ANCORA.procedencia}`);
+    console.log(`  escopo cravado: ${JSON.stringify(ANCORA.escopo)} | linhas somadas hoje: ${linhas.length}`);
+    console.log(`  max(updated_at) das linhas: ${maxUp}`);
+    if (ups.length === 0) {
+      console.log("  => NAO FOI POSSIVEL DATAR o dado (sem updated_at na fonte). Nao concluo nada;");
+      console.log("     reprovo do mesmo jeito, porque nao medir nao e aprovar.");
+    } else if (moveuDepois) {
+      console.log("  => O DADO MUDOU DEPOIS DA ANCORA. Suspeita de ANCORA VENCIDA, nao de defeito.");
+      console.log("     Quem recravar escreve valor, data, procedencia e o que mudou — aqui, no codigo.");
+    } else {
+      console.log("  => O DADO NAO SE MOVEU desde a ancora. Isto e DIVERGENCIA VIVA: o codigo mudou.");
+    }
+  } else {
+    const dias = Math.floor((Date.now() - Date.parse(ANCORA.cravadaEm + "T00:00:00Z")) / 86400000);
+    if (dias > 90) {
+      console.log(`
+  AVISO (nao reprova): a ancora tem ${dias} dias sem reconfirmacao.`);
+    }
   }
   if (Math.abs(totRepasse - totEmpresa) < 0.005) {
     problemas.push("REPASSE == EMPRESA: a faixa nao esta sendo aplicada");

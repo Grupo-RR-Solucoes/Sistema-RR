@@ -1,6 +1,11 @@
 /*
  * Bug 1 — parser ADS grava status="Producao" (não LIQUIDADO) nas Contratação CDC.
  * Bug 2 — resolveCompanyScope traduz "grupo:ads"/"grupo:rr" em company_ids (sem 22P02).
+ *
+ * SEPARADO em 29/08/2026: a metade PERMANENTE (resolveCompanyScope) saiu daqui para
+ * `scripts/companyscope_grupo_gate.cjs`, que e REGISTRADO e RODA. Este arquivo continua
+ * ORFAO por construcao — depende de um xlsx de cliente que nao pode ser versionado
+ * (repositorio publico). O que ficou aqui e o exercicio do parser sobre o arquivo real.
  * Tudo em DRY-RUN / leitura; não grava nada.
  */
 require("./_ts_register.cjs");
@@ -37,9 +42,15 @@ async function main() {
   const res = await importBbtsDaily(sb, { rows, fileName: "Relatório (3).xlsx", aba: "Total", dryRun: true });
   console.log(`  processadas=${res.processadas} canceladas=${res.canceladas} transitorias=${res.transitorias} preview=${res.preview.length}`);
 
-  ok("PR #84 intacto: 10 Contratação, 4 canceladas, 4 transitórias", res.processadas === 10 && res.canceladas === 4 && res.transitorias === 4, `proc=${res.processadas} canc=${res.canceladas} trans=${res.transitorias}`);
+  // APOSENTADA em 29/08/2026 — CONTAGEM CONGELADA. Cravada sobre um "Relatório (3).xlsx"
+  // de 18 linhas; o arquivo hoje tem 52 (proc=35 canc=9 trans=8). Numero de arquivo que
+  // cresce nao e invariante — mede o tamanho do insumo, nao o comportamento do parser.
+  console.log(`  [info] volume do arquivo hoje: proc=${res.processadas} canc=${res.canceladas} trans=${res.transitorias}`);
   const statuses = [...new Set(res.preview.map((p) => p.status))];
-  ok("TODAS as 10 gravadas com status='Producao'", res.preview.length === 10 && statuses.length === 1 && statuses[0] === "Producao", JSON.stringify(statuses));
+  // Reescrita em 29/08/2026: o "10" era o volume congelado. A INVARIANTE e que TODA
+  // linha gravada saia com status 'Producao' — vale para 10, 35 ou 300.
+  ok("TODA linha gravada sai com status='Producao' (invariante, sem volume cravado)",
+    res.preview.length > 0 && statuses.length === 1 && statuses[0] === "Producao", JSON.stringify(statuses));
   ok("isProductionStatus aceita o status gravado (Producao -> PRODUCAO)", res.preview.every((p) => isProductionStatus(p.status)), "alguma linha não passa");
   ok("isProductionStatus REJEITA LIQUIDADO (não afrouxado)", isProductionStatus("LIQUIDADO") === false);
   console.log(`  amostra: ${JSON.stringify(res.amostra.map((a) => ({ p: a.proposal_number, status: a.status, sit: a.situacao_documento })))}`);

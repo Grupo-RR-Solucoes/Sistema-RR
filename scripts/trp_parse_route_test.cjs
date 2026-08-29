@@ -65,7 +65,16 @@ async function main() {
       `${draft.meta.competencia} ${draft.meta.vigencia_inicio}..${draft.meta.vigencia_fim} ${draft.meta.regime}`);
     ok("meta carrega sha256 + parser_version", draft.meta.sha256 === "deadbeef" && !!draft.meta.parser_version, "parser=" + draft.meta.parser_version);
     ok("itens 'conferir' presentes (estrutura)", draft.confianca.conferir.length > 0, draft.confianca.conferir.length + " itens");
-    ok("CONSIG_PRIVADO marcado conferir (prazo à mão)", draft.confianca.conferir.some((c) => c.produto === "CONSIG_PRIVADO" && /prazo/.test(c.campo)));
+    // APOSENTADA em 29/08/2026 — asserção VENCIDA por conserto CORRETO.
+    // Ela exigia que CONSIG_PRIVADO continuasse marcado "conferir" por prazo à mão.
+    // `b47ade6` (03/07/2026, em main, "A1 — preenche prazo do CONSIG_PRIVADO por
+    // herança semântica-guardada") resolveu isso. Medido em 29/08: a célula traz
+    // prazo_min 18 / prazo_max 35, e os itens `conferir` restantes do produto são
+    // "estrutura de célula" e "tiquete_min" — nenhum sobre prazo. Cobrar o defeito
+    // de volta é congelar o estado anterior ao conserto.
+    ok("CONSIG_PRIVADO tem prazo preenchido (b47ade6) e NÃO pede prazo em conferir",
+      Object.values(draft.regraDraft.CONSIG_PRIVADO || {}).some((v) => Array.isArray(v) && v.some((c) => typeof c.prazo_min === "number"))
+      && !draft.confianca.conferir.some((c) => c.produto === "CONSIG_PRIVADO" && /prazo/.test(c.campo)));
   }
 
   console.log("== (2) PDF inválido/aleatório ==");
