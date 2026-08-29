@@ -194,7 +194,34 @@ async function paginado(sb, tabela, cols, aplicar) {
     {
       rel: "lib/closingProposalRows.ts",
       proibido: [{ re: /movement_date[^\n]*startsWith\(/, nome: "prefixo de mes em movement_date" }],
-      exigido: [{ re: /pertenceACompetencia\(/, nome: "consome pertenceACompetencia" }],
+      // ASSERCAO DE PROPRIEDADE, NAO DE LETRA (trocada em 29/08/2026).
+      //
+      // Ate aqui o `exigido` era o NOME da funcao: /pertenceACompetencia\(/. Em
+      // 28/08 o arquivo passou a decidir dono por `buildDonoDoDiarioMap`, que chama
+      // `pertenceACompetencia` POR DENTRO (herancaMaster.ts:99): a invariante ficou
+      // intacta e o gate reprovou assim mesmo, por 5 commits, sem ninguem ver — a
+      // faixa needs-db nao e rodada. Assercao que quebra com refatoracao CORRETA e
+      // assercao fragil: ela cobra o CAMINHO, nao a propriedade.
+      //
+      // A PROPRIEDADE: a competencia deste arquivo nao e decidida AQUI, vem da
+      // fonte unica. O exigido passou a ser (1) importar de herancaMaster e (2)
+      // consumir ALGUM helper de la — direto (pertenceACompetencia) ou pela via
+      // indireta (buildDonoDoDiarioMap / resolvePromotorEfetivo), que e a mesma
+      // regua um nivel acima.
+      //
+      // Quem pega o defeito ORIGINAL e o `proibido`, e ele nao mudou: reintroduzir
+      // movement_date.startsWith(...) reprova mesmo com os dois exigidos passando.
+      // Provado por mutacao em 29/08/2026.
+      exigido: [
+        {
+          re: /from "\.\/herancaMaster\.ts"/,
+          nome: "importa a fonte unica da competencia (herancaMaster)",
+        },
+        {
+          re: /(pertenceACompetencia|buildDonoDoDiarioMap|resolvePromotorEfetivo)\(/,
+          nome: "decide competencia por helper de herancaMaster (direto ou indireto)",
+        },
+      ],
     },
     {
       rel: "app/api/commissions/proposals/route.ts",

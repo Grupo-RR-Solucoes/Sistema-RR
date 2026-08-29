@@ -39,6 +39,72 @@
 //                      repo (ou virar fixture).
 // ============================================================================
 
+// ---------------------------------------------------------------------------
+// O ESTADO DO PROPRIO SISTEMA DE PORTOES — varredura de 29/08/2026
+// ---------------------------------------------------------------------------
+// Registrado aqui, e nao num handoff, porque e sobre ESTE arquivo. Nada disto e
+// hipotese: cada numero saiu de uma execucao.
+//
+// O UNIVERSO: 102 arquivos de portao versionados — 83 registrados aqui e 19
+// ORFAOS (existem em scripts/, rastreados no git, e NINGUEM roda).
+//
+// (1) QUEM RODA DE VERDADE. O CI (.github/workflows/gates.yml) executa
+//     `npm run gates` = os self-contained. Os demais so rodam quando alguem
+//     lembra. E o proprio CI e MODO AVISO: sem required status check e sem
+//     branch protection, ele NAO bloqueia merge. Mesmo a faixa que roda sempre e
+//     aviso, nao guarda.
+//
+// (2) A FAIXA --db NAO E RODADA, e o teto ja diz isso. Medida em 29/08/2026:
+//     358,4s de teto 90s — 4x estourado; o registro anterior dizia 216,9s.
+//     Varri TODAS as mensagens de commit do repo: dezenas afirmam "npm run gates
+//     29/29", "17/17", "20/20"; NENHUMA jamais afirmou a faixa --db verde. Nao e
+//     "faz tempo que nao roda": nao ha registro de ela ter rodado verde alguma
+//     vez. Comando de 6 minutos nao e rodado — a licao do bloco TRES FAIXAS, uma
+//     linha acima, aplicada a si mesma.
+//
+// (3) OS 17 VERMELHOS de 29/08/2026 (rodada limpa: 83 executados, 66 passaram).
+//     Nenhum e self-contained. Caracterizados:
+//       FALSO VERMELHO        gate_schema_colunas.mts — sozinho da exit 0 ("as
+//                             2844 colunas existem"); pelo runner, exit
+//                             3221226505 (crash). Defeito do RUNNER, nao do gate.
+//       RECUSA DELIBERADA     check_audit_v9_tables.cjs (exit 4) — ele mesmo diz
+//                             "verde sem medicao e pior que vermelho".
+//       ANTI-VACUIDADE OK     produto_pmr_empresa_dona_gate.cjs — reprova na
+//                             PROPRIA guarda ("22 buckets -> 22 linhas"): recusa
+//                             passar sem caso real. E o comportamento desejado.
+//       DEFEITO VIVO          gate-srcc-ads.mts — "19 viram neutro" e "nenhuma
+//                             linha ADS tem srcc_resolucao gravada". O gate esta
+//                             certo; o defeito e que nao foi consertado.
+//       CONSTANTE CONGELADA   test_debitos_junho_congelado.cjs — congelou junho em
+//                             12/07/2026 (22 debitos, 25 parcelas, AUTO 872,71);
+//                             hoje sao 24, 27 e 899,21. Ver a secao 6c do
+//                             HANDOFF_RESIDUO_FINANCEIRO: foi ele que guardou o
+//                             rastro da rodada de 27/08, e ninguem o rodou.
+//       NAO CARACTERIZADOS    os outros 11 (needs-db-lento). Cada um exige
+//                             investigacao propria; nenhum foi diagnosticado aqui
+//                             e nenhum deve ser presumido benigno.
+//
+// (4) OS 19 ORFAOS. NAO devem ser registrados um a um: encher a faixa de vermelho
+//     de origem desconhecida troca um problema por outro. Cada um vale REGISTRO,
+//     APOSENTADORIA ou EXCLUSAO, e essa triagem e frente propria. A lista, para
+//     que ela exista em algum lugar:
+//       bbts_conferencia_gate · bbts_fechamento_gate · bbts_parser_gate
+//       bbts_resolver_gate · diag-residuo-09-gate-silencio
+//       gate-avista-vs-fechamento · gate-medida-b-conserto
+//       gate_ads_seguro_via_render · motor_credito_trp_db_gate (+_lib)
+//       mov2_dre_gate · mov2_proposals_get_gate · mov2_relatorios_gate
+//       mov3_dre_inclui_tudo_gate · test_ads_credito_competencia
+//       test_ads_credito_trp_sempre · test_ads_status_e_grupo
+//       trp_paridade_gate_f3 · trp_parse_route_test
+//     CRITERIO para a triagem: (a) a invariante dele ainda existe no codigo? se
+//     nao, EXCLUSAO; (b) ela existe mas outro gate ja a cobre? APOSENTADORIA, com
+//     o gate que a cobre nomeado no commit; (c) ela existe e ninguem cobre?
+//     REGISTRO, na faixa que os tres criterios de classificacao mandarem.
+//
+// (5) QUANTOS PROVAM ALGO CONTINUAMENTE: os self-contained, e so eles. Os demais
+//     provam quando alguem roda.
+// ---------------------------------------------------------------------------
+
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -57,7 +123,14 @@ const GATES = [
       "filtro (closingPromoterBase.ts:160, .eq entry_type CASH). O gate varre lib/ " +
       "e app/ atras de qualquer consumidor novo que leia entry_type INSURANCE da " +
       "aba Seguro, e confere no banco que a aba nao esta vazia (senao passaria por " +
-      "vacuidade). Provado por mutacao em 27/08/2026",
+      "vacuidade). Provado por mutacao em 27/08/2026. " +
+      "CONSERTADO em 29/08/2026: a assercao de nao-vacuidade estava atras de DOIS " +
+      "escapes (sem credencial, e banco recusando a consulta) que a puliam e " +
+      "deixavam o gate VERDE — a promessa desta linha de motivo ficava sem lastro. " +
+      "Medido: dos 30 needs-db rodados com credencial FALSA, 27 reprovaram e 2 " +
+      "passaram; este era um deles. Agora needs-db que nao alcanca o banco REPROVA. " +
+      "Quem quiser so as estaticas usa GATE_ESTATICO=1, e o gate DIZ que esta em " +
+      "modo reduzido",
   },
   {
     arquivo: "scripts/ads_cancelamento_dono_gate.cjs",
@@ -590,9 +663,17 @@ const GATES = [
   {
     arquivo: "scripts/detector_regua_camada1_gate.cjs",
     nome: "detector de regua - camada 1",
-    modo: "needs-db",
+    modo: "self-contained",
     motivo:
-      "createClient (smoke live); consolidadores gravam versao TRP",
+      "RECLASSIFICADO em 29/08/2026, de needs-db para self-contained. Ele NUNCA " +
+      "precisou de banco: as assercoes sempre foram estaticas (fonte de " +
+      "lib/bbtsMonthly + classify() puro) e a unica parte que tocava o banco era " +
+      "um smoke que so IMPRIMIA, sem nenhum ok() atras. Medido: rodando os 30 " +
+      "needs-db com credencial FALSA, este passou (exit 0) porque nao precisava " +
+      "de uma. Nao era vacuidade, era classificacao errada — e cara: pagava o " +
+      "preco da faixa que ninguem roda. O smoke foi REMOVIDO (a pergunta dele ja " +
+      "e respondida por gate_schema_colunas.mts, para as 2.844 colunas do codigo), " +
+      "junto do readEnv() proprio, que violava o criterio (b). Agora roda no CI",
   },
   {
     arquivo: "scripts/janela_ritmo_paridade_gate.cjs",

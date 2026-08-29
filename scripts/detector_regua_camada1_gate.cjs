@@ -39,18 +39,6 @@ eq("bbts NULL x vigente NULL != OK",      classify("bbts",  null, null), "DESCON
 console.log("\n=== (2) no-op estrutural: colunas novas sao SO aditivas ===");
 const fs = require("fs");
 const path = require("path");
-function readEnv() {
-  const env = {};
-  for (const f of [".env", ".env.local"]) {
-    const p = path.join(__dirname, "..", f);
-    if (!fs.existsSync(p)) continue;
-    for (const l of fs.readFileSync(p, "utf8").split(/\r?\n/)) {
-      const m = l.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-      if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, "");
-    }
-  }
-  return env;
-}
 
 (async () => {
   // Prova offline: as colunas de VALOR do upsert nao foram tocadas — so 2 campos
@@ -63,30 +51,24 @@ function readEnv() {
   eq("bbtsMonthly grava as 2 colunas novas", temNovas, true);
   eq("bbtsMonthly manteve os campos de valor", valorIntacto, true);
 
-  // Smoke LIVE do detector (so roda se a migration ja estiver aplicada). Sem as
-  // colunas, o select falha e o gate AVISA (nao quebra) — Diego roda o SQL antes.
-  const env = readEnv();
-  const url = env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_SERVICE_KEY;
-  if (url && key) {
-    try {
-      const { createClient } = require("@supabase/supabase-js");
-      const sb = createClient(url, key, { auth: { persistSession: false } });
-      const { error } = await sb
-        .from("promoter_monthly_results")
-        .select("trp_version_id, trp_fallback")
-        .limit(1);
-      if (error) {
-        console.log("\n  (smoke live) colunas ainda NAO existem no banco — rode a migration " +
-          "20260714_000001 no Studio. Detalhe: " + error.message);
-      } else {
-        console.log("\n  (smoke live) colunas trp_version_id/trp_fallback JA existem no banco. " +
-          "Detector pronto para /api/detector/trp.");
-      }
-    } catch (e) {
-      console.log("\n  (smoke live) pulado: " + (e && e.message));
-    }
-  }
+  // O SMOKE LIVE FOI REMOVIDO em 29/08/2026, e o gate virou self-contained.
+  //
+  // O QUE ELE ERA: um SELECT em promoter_monthly_results(trp_version_id,
+  // trp_fallback) que so IMPRIMIA se as colunas ja existiam. Nao havia ok()
+  // nenhum atras dele — NENHUMA assercao dependia do banco. Consequencia medida
+  // em 29/08/2026, rodando os 30 needs-db com credencial FALSA: este gate PASSOU
+  // sem banco (exit 0), porque nunca precisou de um. Nao era vacuidade — era
+  // CLASSIFICACAO ERRADA, e ela custava caro: pagava o preco da faixa needs-db,
+  // que ninguem roda (358s de teto 90s), sem nada em troca.
+  //
+  // E A PERGUNTA DELE JA TEM DONO. "a coluna que o codigo pede existe no banco?"
+  // e o que scripts/gate_schema_colunas.mts responde — para as 2.844 colunas
+  // pedidas em todo o codigo, 189 delas em promoter_monthly_results, e ele passa
+  // hoje (exit 0). Duas respostas para a mesma pergunta e uma a mais.
+  //
+  // Com o smoke saiu tambem o readEnv() proprio, que violava o criterio (b) de
+  // self-contained. As assercoes deste arquivo sempre foram ESTATICAS — sobre o
+  // fonte de lib/bbtsMonthly e o classify() puro — e agora rodam no CI.
 
   console.log("\n" + (falhas === 0 ? "GATE OK (0 falhas)" : `GATE FALHOU (${falhas} falha(s))`));
   // process.exitCode, NAO process.exit(). Medido em 01/08/2026, 3/3 execucoes:

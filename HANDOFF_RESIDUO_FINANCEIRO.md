@@ -570,7 +570,7 @@ REVOGADO/RETRATADO com a data, e o estado vigente em cima.
 
 ---
 
-## 6c. A RODADA DE 27/08 ÀS 20:32 — irrecuperável, e foi ela que motivou o vigia
+## 6c. A RODADA DE 27/08 ÀS 20:32 — parcialmente reconstituível, e foi ela que motivou o vigia
 
 Registrado em 29/08/2026. **Não é possível afirmar que houve troca de dono, nem que
 não houve.** O rastro foi destruído pela própria rodada.
@@ -621,12 +621,61 @@ Nada persistia o dono anterior — medido em 28/08/2026:
 **Julho fica sem conferência possível.** A primeira documentação do valor (*"16 linhas
 RR, R$ 370,85"*) é do commit `f67305c`, às **21:49** — posterior à rodada.
 
+### CORREÇÃO de 29/08/2026 — a rodada é PARCIALMENTE reconstituível, e o rastro
+### estava num portão que ninguém roda
+
+O texto acima dizia "irrecuperável". **É meia verdade, e a metade que faltava é a
+tese do BLOCO 5 inteira, medida.**
+
+`scripts/test_debitos_junho_congelado.cjs` congelou o estado de junho em
+**12/07/2026**:
+
+```
+131  ok(depois.debits.length === 22, `junho segue com 22 debitos (15 AUTO + 7 MANUAL)`)
+132  ok(depois.discounts.length === 25, `junho segue com 25 parcelas`)
+134  ok(Math.abs(somaAuto - 872.71) < 0.005, `soma dos AUTO de junho segue 872,71`)
+```
+
+Rodado em 29/08/2026, ele **reprova**, e as três mensagens dizem o que mudou:
+
+```
+  FALHOU  junho segue com 22 debitos (15 AUTO + 7 MANUAL) — tem 24
+  FALHOU  junho segue com 25 parcelas — tem 27
+  FALHOU  soma dos AUTO de junho segue 872,71 — tem 899.21
+```
+
+**Junho foi de R$ 872,71 para R$ 899,21 — +R$ 26,50 e +2 débitos** (15 AUTO → 17),
+em algum ponto entre 12/07 e 27/08.
+
+**E não é troca de dono: é ADIÇÃO.** A forma bate com o degrau `+cms` do PR #195,
+cujo próprio corpo de commit registra *"A fila caiu de 7 para 4"* — três operações
+que estavam órfãs na fila ganharam dono, e duas delas eram de junho. Débito que não
+existia passou a existir; ninguém perdeu nada para ninguém.
+
+Isso **não contradiz** as duas conferências acima: o total de 899,21 já estava
+documentado às 18:25 de 27/08, antes da rodada das 20:32, e a rodada das 20:32
+recriou os mesmos valores. O que muda é o alcance da afirmação: para **junho** se
+sabe agora *o que* mudou e *por quê*, não apenas que o total batia. **Julho segue
+sem conferência.**
+
+### O que isto ensina, e é o motivo do BLOCO 5
+
+O rastro **existia**. Estava num portão que registrou a divergência no minuto em que
+ela aconteceu — e ficou vermelho, sozinho, por semanas, porque é `needs-db-lento` e
+essa faixa só roda em `npm run gates:full`, que **nunca teve execução verde
+registrada em commit nenhum** (medido: 358,4s de teto 90s).
+
+Não foi falta de instrumento. Foi instrumento que ninguém lê. É a mesma família do
+§6b — nota não medida — aplicada a portão: **portão não executado é anotação não
+remedida com outro nome.**
+
 ### O que foi feito a respeito
 
-Não dá para reconstruir o passado; dá para não repetir. O commit
+Não dá para reconstruir o passado inteiro; dá para não repetir. O commit
 `registrarTrocaDeDono` faz a memória nascer **antes** do delete, em `audit_logs`, e o
 check `debito_auto_trocou_dono` a lê. A pergunta *"o que essa rodada mudou?"* passa a
-ter onde ser respondida.
+ter onde ser respondida — e, desta vez, num lugar que a tela de diagnóstico mostra,
+não num portão que espera alguém lembrar.
 
 ### DÍVIDA NOMEADA, não consertada — o script contorna as duas guardas
 
