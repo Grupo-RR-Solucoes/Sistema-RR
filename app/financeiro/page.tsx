@@ -509,10 +509,31 @@ export default function FinanceiroPage() {
             <>
               {/* Linha 1 — fluxo de comissoes/despesas (M-1). Cor por natureza:
                   entrada azul, saida vermelho, saldo verde/vermelho, zero neutro. */}
+              {/* SUBTITULO DO "Recebido" — trocado em 28/08/2026. Dizia "crédito
+                  recebido (bruto)" e mentia em quatro pontos, medidos em ago/26
+                  (receivedNet 318.696,26):
+                    NAO e "crédito": o à-vista e 227.393,93 de 318.696,26 (71%); o
+                      resto e PRT 51.806,30, seguro 5.131,69, os 6 produtos
+                      15.828,66 e a ADS 18.959,44;
+                    NAO e "bruto": valor_liquido ja vem liquido de estorno (419,21)
+                      e renovacao (4,55);
+                    NAO e volume de credito: e comissao da EMPRESA — ~3,8% sobre o
+                      financiado (medido na secao 16 do HANDOFF_ADS_FECHAMENTO_CAIXA);
+                    e nao e uma competencia so.
+                  A JANELA MISTA NAO E DEFEITO — E O REGIME DE CAIXA. receivedNet =
+                  receivedClosing(M-1) + receivedManual(M) (financialAnalytics.ts:1003).
+                  O fechamento de M-1 cai no caixa de M; a receita manual tem
+                  data_credito em M e entra em M. As duas parcelas sao "o que entrou
+                  no mes M" — e CAIXA e a unica palavra que descreve as duas, por
+                  isso ela esta no subtitulo. Nao "conserte" o receivedManual
+                  achando que a janela esta bagunçada. Medido em jul/26: 1.509,44 de
+                  receita manual dentro dos 274.217,84.
+                  O ROTULO "Recebido" fica — e regime de caixa e casa com
+                  "Comissoes recebidas" ao lado (decisao de Diego, 28/08/2026). */}
               <KpiBand
                 valueSize={24}
                 items={[
-                  { label: "Recebido", value: kpiVal(fin.summary.receivedNet, "in"), sub: "crédito recebido (bruto)" },
+                  { label: "Recebido", value: kpiVal(fin.summary.receivedNet, "in"), sub: "entrada de caixa do fechamento M-1 + receita manual do mês" },
                   { label: "Comissões recebidas", value: kpiVal(fin.summary.receivedEmpresa, "in"), sub: "à vista + seguro do fechamento M-1 (o que gera repasse)" },
                   { label: "Comissões pagas", value: kpiVal(fin.summary.comissoesPagas, "out"), sub: "repasse aos promotores (M-1)" },
                   { label: "Saldo de comissões à vista", value: kpiVal(fin.summary.receivedEmpresa - fin.summary.comissoesPagas, "saldo"), sub: "recebidas − pagas (M-1)" },

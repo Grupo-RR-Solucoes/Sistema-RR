@@ -151,7 +151,178 @@ export type InsuranceDebitPlan = {
  *
  * QUANDO O PRIMEIRO CASO APARECER: a decisao tem de ser CONSCIENTE, nao de
  * passagem. Por isso o item PARA aqui em vez de ser lancado em quem ja saiu.
+ *
+ * ============================================================================
+ * O PRIMEIRO CASO APARECEU — e a decisao FOI reafirmada (28/08/2026)
+ * ============================================================================
+ *
+ * A metade final da regra de 28/08/2026 ("todo contrato foi digitado na chave de
+ * um promotor, entao o cancelamento lanca o debito para AQUELE promotor; SE ELE
+ * JA SAIU, O NEGATIVO FICA COM A EMPRESA") esta CONSCIENTEMENTE NAO
+ * IMPLEMENTADA. A primeira metade esta: a cascata acha o dono, e o criterio de
+ * corte e o estado do promotor na data em que o DEBITO CHEGA (`dataDoDebito` =
+ * hoje, no chamador). A segunda metade — o negativo ficar com a EMPRESA — nao
+ * existe, e o item vai para a fila.
+ *
+ * O GATILHO QUE ESTA NOTA PEDIA JA DISPAROU. Nao e mais hipotese:
+ *   09/07/2026  op 208875852, competencia 2026-06, R$ 2,03
+ *   04/08/2026  op 211780610, competencia 2026-07, R$ 2,03
+ * Os DOIS do MESMO promotor — ANA CLARA, saida em 13/06/2026 — e os dois
+ * resolvidos ate o fim da cascata (chave J MASTER, dono achado em
+ * `cms_promoter_entries`, degrau `+cms`), parados so pelo criterio do inativo.
+ * Total parado por promotor inativo: R$ 4,06.
+ *
+ * O QUE E ZERO NAO E O CASO, E A ESTRUTURA: `promoter_discounts.apply_to_company`
+ * esta em 0 de 77 linhas — nunca foi usada uma vez. Medido em 28/08/2026.
+ *
+ * A DECISAO SE MANTEM POR VOLUME, NAO POR AUSENCIA DE CASO (Diego, 28/08/2026).
+ * O custo da opcao (b) — 67 promotores virarem 68 em /promotores, /equipe,
+ * /projecao e no PMR — continua ordens de grandeza acima de R$ 4,06 de um unico
+ * promotor. Trocar a razao ("nao ha caso") pela razao certa ("o caso e pequeno
+ * demais") importa: a primeira envelhece sozinha e ja envelheceu.
+ *
+ * GATILHO NOVO PARA REVISITAR — o antigo veio e nao bastou:
+ *   (1) a soma dos itens parados por promotor inativo passar de R$ 500 numa
+ *       competencia; OU
+ *   (2) aparecer item de MAIS DE UM promotor inativo.
+ * ESTES DOIS NUMEROS SAO ARBITRARIOS. Sao um LIMIAR DE ATENCAO escolhido para
+ * dar um ponto de parada objetivo a quem ler isto depois — NAO sao regra de
+ * negocio de Diego, e nao precisam ser defendidos como se fossem. Quem chegar
+ * neles reabre a conversa; nao executa nada automaticamente.
+ *
+ * ERRATA DA INSTRUCAO QUE ORIGINOU ESTA NOTA. O pedido de registro dizia, em
+ * 28/08/2026, "volume medido (zero)" e "gatilho para revisitar: o primeiro item
+ * que cair na fila por promotor inativo" — ou seja, assumia que o gatilho ainda
+ * NAO tinha ocorrido. A medicao do mesmo dia derrubou isso: ele ocorreu em
+ * 09/07, sete semanas antes. E a QUARTA anotacao desta frente derrubada por
+ * medicao, e a unica escrita no proprio dia em vez de herdada — o que mostra que
+ * o padrao da secao 6b do HANDOFF_RESIDUO_FINANCEIRO nao e so sobre nota velha:
+ * e sobre nota nao MEDIDA, de qualquer idade.
  */
+/**
+ * MEMORIA DA TROCA DE DONO — nasce ANTES do delete, porque nada sobrevive a ele.
+ *
+ * O QUE ISTO FECHA. A gravacao dos debitos AUTO e delete-and-replace. Depois que
+ * ela roda, NAO EXISTE no banco nada que diga de quem o debito era antes:
+ *   `promoter_debits`        so tem `promoter_id` (o dono ATUAL); nao tem `updated_at`
+ *                            nem coluna de dono anterior;
+ *   `promoter_debit_sources` cai por ON DELETE CASCADE (migration 20260709_000001:53)
+ *                            — medido em 28/08/2026: ZERO linhas orfas;
+ *   `promoter_discounts`     nasce no MESMO run, e as 36 linhas tem `debit_id`, entao
+ *                            caem no mesmo cascade;
+ *   `audit_logs`             tinha ZERO linhas de debito.
+ * Consequencia vivida: a rodada de 27/08/2026 20:32 (created_by="rotina-automatica")
+ * recriou os 36 debitos de jun+jul e NAO E POSSIVEL afirmar se trocou algum dono —
+ * o rastro foi destruido pela propria rodada. Ver a secao 6b do
+ * HANDOFF_RESIDUO_FINANCEIRO.
+ *
+ * POR QUE `audit_logs` E NAO TABELA NOVA. Precisa de um lugar SEM FK para o debito
+ * (qualquer coluna no proprio debito morre com ele — foi o beco do
+ * promoter_debit_sources). `audit_logs` ja existe, ja e o registro canonico do
+ * sistema (481 linhas em 28/08/2026, de promotores/app_users/cadastros/financial) e
+ * ja e usada pelo proprio import. Zero DDL, zero migration.
+ *
+ * NAO PODA NADA. A tabela e compartilhada com outras entidades; a linha entra e
+ * fica. Quem tem janela e a LEITURA (o check olha 12 meses).
+ *
+ * SO GRAVA QUANDO MUDA. E a propriedade que faz o vigia valer: hoje, em jun e jul,
+ * ZERO promotores mudam e este helper escreve ZERO linhas. Um helper que gravasse a
+ * cada rodada encheria o diagnostico em todo import, o vigia viraria ruido e alguem
+ * o desligaria — que e o modo de falha que esta frente inteira combate.
+ * Gate: scripts/agregado_orfao_gate.cjs, bloco 4 (o controle positivo do no-op e a
+ * assercao mais importante do conjunto).
+ *
+ * NAO BLOQUEIA. Registrar e o unico caminho util: os dois imports embrulham o
+ * resolvedor em try/catch (monthlyClosingImport.ts:1906-1908 e
+ * bbtsClosingImport.ts:737-739), entao uma recusa aqui seria ENGOLIDA e o import
+ * reportaria sucesso. Falha ao gravar a memoria tambem nao derruba a gravacao dos
+ * debitos: o pior caso e ficar sem o registro, nunca sem o debito.
+ *
+ * COBRE OS TRES CHAMADORES de uma vez, porque mora no funil: o import RR
+ * (via persistAutoInsuranceDebits), o import ADS (bbtsClosingImport, sem
+ * intermediario) e o script manual scripts/canc-run-fila.cjs — este ultimo chama o
+ * resolvedor DIRETO e por isso contorna as duas guardas do import (a trava de junho
+ * DEBITO_AUTO_PRIMEIRA_COMPETENCIA e a do APPLIED). Foi o script que reescreveu
+ * junho em 27/08. Ele continua contornando as guardas — isso e DIVIDA NOMEADA, nao
+ * consertada aqui —, mas passa a deixar rastro.
+ */
+export async function registrarTrocaDeDono(
+  supabase: SupabaseLike,
+  params: {
+    year: number;
+    month: number;
+    origem: "RR" | "ADS";
+    createdBy: string | null;
+    /** debitos que EXISTEM hoje e serao apagados. */
+    antes: Array<{ promoter_id: string | null; total_amount: number | null }>;
+    /** debitos que serao gravados no lugar. */
+    depois: Array<{ promoterId: string | null; total: number }>;
+  }
+): Promise<{ mudancas: number }> {
+  const soma = (
+    linhas: Array<{ pid: string | null; valor: number }>
+  ): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (const l of linhas) {
+      const k = String(l.pid ?? "");
+      if (!k) continue;
+      m.set(k, Number((Number(m.get(k) ?? 0) + Number(l.valor || 0)).toFixed(2)));
+    }
+    return m;
+  };
+  const mA = soma(params.antes.map((d) => ({ pid: d.promoter_id, valor: Number(d.total_amount || 0) })));
+  const mD = soma(params.depois.map((d) => ({ pid: d.promoterId, valor: Number(d.total || 0) })));
+
+  const mudancas: Array<{
+    promoter_id_antes: string | null;
+    promoter_id_depois: string | null;
+    valor_antes: number;
+    valor_depois: number;
+  }> = [];
+  for (const pid of new Set<string>([...mA.keys(), ...mD.keys()])) {
+    const a = Number(mA.get(pid) ?? 0);
+    const d = Number(mD.get(pid) ?? 0);
+    // TOLERANCIA DE CENTAVO: o mesmo 0,005 do resto da frente. Diferenca de
+    // arredondamento nao e troca de dono.
+    if (Math.abs(a - d) < 0.005) continue;
+    mudancas.push({
+      promoter_id_antes: a > 0 ? pid : null,
+      promoter_id_depois: d > 0 ? pid : null,
+      valor_antes: a,
+      valor_depois: d,
+    });
+  }
+
+  // A PORTA DO NO-OP. Nada mudou => NENHUMA linha. Ver o bloco "SO GRAVA QUANDO MUDA".
+  if (mudancas.length === 0) return { mudancas: 0 };
+
+  const competencia = `${params.year}-${String(params.month).padStart(2, "0")}`;
+  try {
+    await supabase.from("audit_logs").insert({
+      entity_name: "promoter_debits",
+      entity_id: null,
+      action: AUDIT_TROCA_DONO,
+      description:
+        `${competencia} ${CANCELAMENTO_SEGURO} (${params.origem}): ` +
+        `${mudancas.length} debito(s) mudaram de dono no reprocessamento.`,
+      payload: {
+        year: params.year,
+        month: params.month,
+        debit_type: CANCELAMENTO_SEGURO,
+        origem: params.origem,
+        mudancas,
+      },
+      created_by: params.createdBy ?? "resolver",
+    });
+  } catch {
+    // Best-effort: perder o REGISTRO nao pode custar o DEBITO.
+  }
+  return { mudancas: mudancas.length };
+}
+
+/** action unica em audit_logs — o check filtra por ela; a tabela e compartilhada. */
+export const AUDIT_TROCA_DONO = "AUTO_DEBIT_OWNER_CHANGED";
+
 export function promotorInativoNaData(
   promotor: { active?: boolean | null; dismissed_at?: string | null } | undefined,
   dataDoDebito: string
@@ -415,12 +586,21 @@ export async function resolveInsuranceDebits(
   // 6. GRAVAÇÃO idempotente (delete-and-replace dos AUTO/seguro da competência).
   const { data: oldDebits } = await supabase
     .from("promoter_debits")
-    .select("id")
+    .select("id, promoter_id, total_amount") // + dono e valor: a MEMORIA da troca
     .eq("kind", "AUTO")
     .eq("debit_type", CANCELAMENTO_SEGURO)
     .eq("start_year", year)
     .eq("start_month", month)
     .neq("company_id", BBTS_COMPANY_ID); // não apaga os débitos ADS (frente DAILY_CANCEL)
+  // ANTES do delete — depois dele nao ha de quem era. Ver registrarTrocaDeDono.
+  await registrarTrocaDeDono(supabase, {
+    year,
+    month,
+    origem: "RR",
+    createdBy: params.createdBy ?? null,
+    antes: (oldDebits || []) as any,
+    depois: debits.map((d) => ({ promoterId: d.promoterId, total: d.total })),
+  });
   const oldIds = (oldDebits || []).map((d: any) => d.id);
   if (oldIds.length) {
     // parcelas e sources caem por ON DELETE CASCADE ao apagar o débito.
@@ -729,12 +909,21 @@ export async function resolveAdsCancelDebits(
   // GRAVAÇÃO idempotente escopada à ADS (source DAILY_CANCEL / company ADS).
   const { data: oldDebits } = await supabase
     .from("promoter_debits")
-    .select("id")
+    .select("id, promoter_id, total_amount") // + dono e valor: a MEMORIA da troca
     .eq("kind", "AUTO")
     .eq("debit_type", CANCELAMENTO_SEGURO)
     .eq("start_year", year)
     .eq("start_month", month)
     .eq("company_id", BBTS_COMPANY_ID);
+  // ANTES do delete — mesmo helper do RR, o funil dos tres chamadores.
+  await registrarTrocaDeDono(supabase, {
+    year,
+    month,
+    origem: "ADS",
+    createdBy: params.createdBy ?? null,
+    antes: (oldDebits || []) as any,
+    depois: debits.map((d) => ({ promoterId: d.promoterId, total: d.total })),
+  });
   const oldIds = (oldDebits || []).map((d: any) => d.id);
   if (oldIds.length) {
     const { error } = await supabase.from("promoter_debits").delete().in("id", oldIds);

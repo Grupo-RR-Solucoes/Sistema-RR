@@ -23,8 +23,9 @@
  *                     "nao ha o que testar".
  *   3. BANCO        — as 6 propostas medidas de 2026-06-30 entram no heir map de
  *                     jul/2026 produzido pelo PROPRIO helper de producao.
- *   4. SEM DUPLICATA— nenhum dos dois consumidores tem filtro de competencia
- *                     proprio; os dois consomem o helper.
+ *   4. SEM DUPLICATA— nenhum consumidor tem filtro de competencia proprio; TODOS
+ *                     consomem o helper. A lista e VARRIDA de lib/, nao escrita
+ *                     a mao — foi assim que closingProposalRows ficou de fora.
  * ========================================================================== */
 require("./_ts_register.cjs");
 const fs = require("fs");
@@ -148,9 +149,31 @@ const CASOS_30_06 = [
 
   // ---- 4. SEM DUPLICATA ----
   console.log("\n" + linha("="));
-  console.log("4) SEM DUPLICATA — os dois consumidores usam o helper, nao copia propria");
+  console.log("4) SEM DUPLICATA — a lista de consumidores e VARRIDA; nenhum tem copia propria");
   console.log(linha("="));
-  for (const rel of ["lib/closingMonthly.ts", "lib/bbtsOrchestrator.ts"]) {
+  // A LISTA E COMPUTADA, NAO ESCRITA A MAO — mesma varredura de
+  // reatribuicao_precedencia_gate. Escrita a mao, ela envelhece em silencio:
+  // lib/closingProposalRows.ts decide dono de linha de fechamento desde sempre e
+  // ficou de fora dos DOIS gates, entao a copia propria da janela sobreviveu ali
+  // ate 18/08/2026 e a precedencia antiga ate 28/08/2026, sem nenhum vermelho.
+  const CONSUMIDORES = fs
+    .readdirSync(path.join(ROOT, "lib"))
+    .filter((f) => f.endsWith(".ts"))
+    .map((f) => `lib/${f}`)
+    .filter((rel) => {
+      if (rel === "lib/herancaMaster.ts") return false; // o helper da precedencia
+      const src = fs.readFileSync(path.join(ROOT, rel), "utf8");
+      // closingPromoterBase PRODUZ o promoterId da chave J; nao decide dono.
+      if (/export async function loadClosingPromoterBase/.test(src)) return false;
+      return /loadClosingPromoterBase\(/.test(src) && /promoterId/.test(src);
+    });
+  console.log(`   consumidores encontrados por varredura: ${CONSUMIDORES.join(", ")}`);
+  ok(CONSUMIDORES.length >= 3, "ANTI-VACUIDADE: a varredura achou consumidores", `n=${CONSUMIDORES.length}`);
+  ok(
+    CONSUMIDORES.includes("lib/closingProposalRows.ts"),
+    "a varredura cobre o sitio de EXIBICAO (o que ficou de fora dos dois gates)"
+  );
+  for (const rel of CONSUMIDORES) {
     const src = fs.readFileSync(path.join(ROOT, rel), "utf8");
     const temPrefixo = /movement_date[^\n]*startsWith\(/.test(src);
     const consome = /buildDonoDoDiarioMap\(/.test(src) && /from "\.\/herancaMaster\.ts"/.test(src);

@@ -21,7 +21,7 @@ import {
 } from "./closingPromoterBase.ts";
 import { BBTS_COMPANY_ID } from "./bbtsMonthly.ts";
 import { getProductionPeriodFromValue, getProductionPeriodKey } from "./productionPeriod.ts";
-import { pertenceACompetencia } from "./herancaMaster.ts";
+import { buildDonoDoDiarioMap, resolvePromotorEfetivo } from "./herancaMaster.ts";
 import type { CmsProposalRow } from "./promoterReportData.ts";
 
 const BBTS_KEY = "JJ552710";
@@ -102,47 +102,50 @@ export async function buildClosingProposalRows(
   const rrContratos = base.contratos.filter((c) => normKey(c.chaveJ) !== BBTS_KEY);
   const rrRestritas = base.restritas.filter((c) => normKey(c.chaveJ) !== BBTS_KEY);
 
-  // Herança master p/ ESTE promotor: contratos do diário RR atribuídos a ele na
-  // COMPETÊNCIA (proposal_number) — casa o órfão do fechamento (sem promotor
-  // individual).
+  // DE QUEM É ESTA LINHA: o DIÁRIO vence a CHAVE J. Ponto único de decisão —
+  // `resolvePromotorEfetivo` de lib/herancaMaster.ts, o MESMO helper que
+  // closingMonthly (PMR + empresa dona) e bbtsOrchestrator (bloco A) chamam.
+  // Nenhuma régua nova mora neste arquivo: aqui só se pergunta "o promotor
+  // efetivo desta linha é o promotor da tela?".
   //
-  // A COMPETÊNCIA É A JANELA, NÃO O PREFIXO DO MÊS. Até 18/08/2026 este filtro
-  // era `movement_date.startsWith("2026-07")` e descartava o DIA-CABEÇA da
-  // janela — o último dia útil do mês anterior, que já é competência do mês
-  // seguinte. Mesma classe do defeito que o 5b7f229 fechou em closingMonthly e
-  // bbtsOrchestrator; esta era a terceira cópia, e ficou de fora porque mora no
-  // caminho de EXIBIÇÃO, não no de pagamento.
+  // Até 28/08/2026 este era o QUARTO sítio — e o único que ficou com a
+  // precedência ANTIGA depois do 4cb31c3 (23/08), que inverteu a régua nos
+  // outros três. O código era:
+  //     if (c.promoterId === promoterId) return true;                  // chave J vencia
+  //     if (!c.promoterId && c.contrato) return heirKeys.has(...);     // diário só p/ a órfã
+  // Ficou de fora porque mora no caminho de EXIBIÇÃO, não no de pagamento — a
+  // mesma razão pela qual a JANELA (5b7f229, 17/08) também só chegou aqui
+  // depois, em 18/08. O estrago era a tela CONTRADIZER o contracheque: medido em
+  // 28/08/2026, jul/2026, com buildClosingProposalRows real —
+  //   CARLA MIRELLE  exibia 15 linhas / R$ 113.574,10, e foi PAGA sobre 73.468,54
+  //                  (4 contratos da chave JH138321 que não são dela)
+  //   MONICA PEREIRA exibia 0 dos 3 contratos por que foi paga (R$ 39.645,56)
+  //   TACIANA        exibia o 219262430 (9.000,00) que foi pago ao MATHEUS
+  //   JÉSSICA        não exibia o 221184463 (460,00) que lhe foi pago
+  // O TOTAL do card nunca esteve errado (o rateio distribui o valor do PMR, que
+  // já vinha certo) — errado era DE QUEM era cada linha.
   //
-  // O estrago era exibir MENOS do que o sistema paga. Medido em 18/08/2026, sem
-  // reimplementar nada (a base sai de loadClosingPromoterBase, a mesma da tela):
-  //   jul/2026  6 órfãos ganham dono, R$ 45.582,69 — JUSSARA 21.000,00,
-  //             CLEVITON 7.804,44, CAMILA 7.207,04, REBECA 7.100,00,
-  //             GLEICE 2.471,21 (as MESMAS 6 linhas de 30/06 do 5b7f229)
-  //   abr/2026  3 órfãos, R$ 6.069,56
-  //   jun e ago 0 (nenhum órfão do fechamento casa com o dia-cabeça)
-  //   NENHUM órfão PERDE dono em competência alguma.
+  // O FALLBACK À CHAVE J NÃO É OPCIONAL: sem linha no diário, `promoterIdDaChave`
+  // continua valendo. O diário só existe a partir de 2026-03-31 e as competências
+  // 2026-01/02/03/05 têm 2.787 linhas de fechamento sem nenhuma linha no diário —
+  // sem o fallback a produção desses meses sumiria da tela.
   //
-  // `pertenceACompetencia` é o helper de lib/herancaMaster.ts — a forma casou
-  // exatamente (movementDate, year, month), então não há régua nova aqui.
-  const heirKeys = new Set<string>();
-  {
-    const daily = await fetchAllPaged<any>(() =>
-      supabase
-        .from("daily_production_records")
-        .select("proposal_number, company_id, movement_date")
-        .eq("assigned_promoter_id", promoterId)
-        .neq("company_id", BBTS_COMPANY_ID)
-    );
-    for (const d of daily) {
-      if (!pertenceACompetencia(d.movement_date, year, month)) continue;
-      heirKeys.add(`${d.company_id}|${String(d.proposal_number || "").trim()}`);
-    }
-  }
-  const belongsToPromoter = (c: ClosingContrato): boolean => {
-    if (c.promoterId === promoterId) return true;
-    if (!c.promoterId && c.contrato) return heirKeys.has(`${c.companyId}|${c.contrato.trim()}`);
-    return false;
-  };
+  // O mapa é montado sobre TODAS as linhas RR (contratos + restritas), não só as
+  // órfãs de chave master: recortar só as órfãs era exatamente o que desfazia a
+  // reatribuição promotor->promotor. As linhas BBTS já saíram por `chaveJ`, e a
+  // chave do mapa inclui a empresa — linha de outra empresa não rouba o contrato.
+  // Gate: scripts/reatribuicao_precedencia_gate.cjs (bloco 5, este arquivo).
+  const donoDoDiario = await buildDonoDoDiarioMap(
+    supabase,
+    [...rrContratos, ...rrRestritas],
+    year,
+    month
+  );
+  const belongsToPromoter = (c: ClosingContrato): boolean =>
+    resolvePromotorEfetivo(
+      { promoterIdDaChave: c.promoterId, contrato: c.contrato, companyId: c.companyId },
+      donoDoDiario
+    ) === promoterId;
 
   const myContratos = rrContratos.filter(belongsToPromoter); // pagáveis (SRCC ≠ Sim)
   const myRestritas = rrRestritas.filter(belongsToPromoter); // SRCC = Sim (vermelho)

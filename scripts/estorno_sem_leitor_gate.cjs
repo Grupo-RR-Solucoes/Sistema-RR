@@ -170,11 +170,40 @@ function leEstorno(txt) {
     /* sem banco: declarado abaixo */
   }
 
+  // SEM BANCO, REPROVA — nao "pula" (mudado em 29/08/2026).
+  //
+  // O QUE ESTAVA ERRADO. Este gate e registrado como needs-db, e o `motivo` no
+  // runner PROMETE que ele "confere no banco que a aba nao esta vazia (senao
+  // passaria por vacuidade)". Mas a assercao (3), que e justamente a que impede
+  // o verde falso, ficava atras de DOIS escapes — sem credencial, e banco
+  // recusando a consulta — e nos dois casos o gate saia VERDE tendo verificado
+  // so as tres estaticas. Medido em 29/08/2026, rodando os 30 needs-db com URL e
+  // chave FALSAS: 27 reprovaram (correto) e 2 passaram; este era um deles.
+  //
+  // A REGRA: needs-db que NAO ALCANCA o banco nao mediu o que promete. Reprovar e
+  // a unica saida honesta — pular deixa a promessa do registro sem lastro, e
+  // promessa sem lastro e pior que gate vermelho, porque parece cobertura.
+  //
+  // Quem quiser so as estaticas roda com GATE_ESTATICO=1, e ai o gate DIZ que
+  // esta em modo reduzido — a diferenca entre escolher e nao perceber.
+  const soEstaticas = process.env.GATE_ESTATICO === "1";
   if (!sb) {
-    console.log(
-      "  PULADO (3) — sem credencial de banco. A assercao de NAO-VACUIDADE nao " +
-        "rodou; as (1),(1b),(2) sao estaticas e valem."
-    );
+    if (soEstaticas) {
+      console.log(
+        "  MODO REDUZIDO (GATE_ESTATICO=1) — sem banco. As (1),(1b),(2) valem; a " +
+          "(3), de NAO-VACUIDADE, NAO rodou. Isto NAO e cobertura de needs-db."
+      );
+    } else {
+      ok("(3) o gate ALCANCOU o banco (needs-db sem banco nao mede nada)", () => {
+        assert.ok(
+          false,
+          "sem NEXT_PUBLIC_SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY. Este gate e " +
+            "needs-db e promete conferir no banco que a aba Seguro nao esta vazia; " +
+            "sem credencial ele nao confere nada. Rode com credencial, ou com " +
+            "GATE_ESTATICO=1 para declarar que quer so as estaticas."
+        );
+      });
+    }
   } else {
     const { data, error } = await sb
       .from("monthly_closing_entries")
@@ -185,7 +214,10 @@ function leEstorno(txt) {
       .eq("sheet_name", "Seguro")
       .lt("commission_value", 0);
     if (error) {
-      console.log(`  PULADO (3) — o banco recusou a consulta: ${error.message}`);
+      // MESMA REGRA do bloco acima: consulta recusada e ausencia de medicao.
+      ok("(3) a consulta ao banco foi ACEITA (recusa = nao mediu)", () => {
+        assert.ok(false, `o banco recusou a consulta: ${error.message}`);
+      });
     } else {
       const soma = (data || []).reduce((a, r) => a + Number(r.commission_value || 0), 0);
       ok("(3) a aba Seguro TEM estornos — o gate nao passa por vacuidade", () => {

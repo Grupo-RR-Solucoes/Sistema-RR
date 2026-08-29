@@ -307,13 +307,23 @@ essa é a decisão que estaria sendo reaberta.
 4. **ABERTO — os +49,45** contra o extrato. §4, decisão de negócio sobre os
    cancelamentos de julho. Não é defeito.
 
-5. **ABERTO — R$ 372,31 em 2025-02 AL1.** §6. É o único dinheiro de seguro do RR
-   fora do sistema.
+5. **RETRATADO — os R$ 372,31 em 2025-02 AL1 NÃO se reproduzem.** Ver a errata
+   de 28/08/2026 em §6. O número tem a mesma procedência dos quatro que já
+   morreram: não é reprodutível a partir dos arquivos em disco. O que **é**
+   verificável nessa competência é outra coisa — o agregado órfão do item 6.
 
-6. **ABERTO — dívida nomeada:** a rota de cancelamento
-   (`app/api/import/closing/cancel/route.ts:49-56`) apaga
-   `monthly_closing_entries` sem recompor `fechamento_mensal_empresa`. É a origem
-   do item anterior e das 6.491 linhas de detalhe perdidas.
+6. **FECHADO em 28/08/2026 — a perda de detalhe de 2025-02 AL1.** A dívida
+   nomeada aqui dizia que a rota de cancelamento
+   (`app/api/import/closing/cancel/route.ts:49-56`) apagava
+   `monthly_closing_entries` sem recompor `fechamento_mensal_empresa`. **Meia
+   verdade**: a rota de fato não recompõe, mas o delete destrutivo estava no
+   **IMPORT** — `monthlyClosingImport.ts` apagava por `company+year+month`, sem
+   filtro de `importId`, **antes** de inserir. O cancel só removia o substituto.
+   Consertado em três commits: o import passou a INSERIR primeiro e APAGAR
+   depois (janela reversível); o cancel RECUSA com 409 quando deixaria agregado
+   órfão; e o vigia `agregado_sem_detalhe` acende para o estado que sobrou.
+   **A competência NÃO foi reparada** — sem fonte verificada, recompor
+   escreveria 0,00 sobre 97.535,61 e completaria a perda.
 
 7. **ARESTA NOMEADA, não aberta — o resíduo de centavo e a coluna expansível.**
    `fecharLinha` (`financialAnalytics.ts:632-653`) devolve resíduo de arredondamento
@@ -340,17 +350,67 @@ linhas do banco **separadas por `sheet_name` de origem**):
  8 sem arquivo em disco (2026-04 e 2026-05 das 4 empresas)
 ```
 
-**Divergência real: 1**, e não é zero:
+**Divergência real: nenhuma confirmada.** O que esta seção afirmava:
 
 ```
 2025-02 RR ALAGOAS 1   A Vista arq 2.549,61  bd 0,00
                        Seguro  arq   372,31  bd 0,00
 ```
 
-Competência esvaziada por um cancelamento de import (`operacoes = 6491` prova que as
-linhas existiram). O total está certo (`valor_seguro 2.549,61` dentro de
-`valor_liquido 97.535,61`), mas os **R$ 372,31 da aba "Seguro" nunca entraram** no
-`valor_seguro`. É o único dinheiro de seguro do RR fora do sistema.
+### ERRATA — 28/08/2026: os R$ 372,31 NÃO se reproduzem
+
+Tentei reproduzir o número a partir do arquivo cancelado, o
+`C23677_48357275000103_Todos_2_2025.xlsx`. Ele existe em **duas** cópias em
+disco (`RRCRED/Relatório de Produção/ALAGOAS` e
+`RRCRED/producao/Relatório de Produção/ALAGOAS`) — a mesma duplicação que já
+produziu o artefato dos R$ 10.102,33. As duas são idênticas:
+
+```
+    tamanho: 1740724 bytes   mtime: 2025-03-07T14:19:30.000Z   (as duas)
+    celulas numericas na aba Resumo: L30C2=847822962           (so o MCI)
+    aba Seguro: 317 linhas   Sigma COMISSAO = -355.09
+```
+
+Ou seja: **a aba Resumo do arquivo não tem valor nenhum** (só o MCI), e a soma da
+coluna COMISSÃO da aba "Seguro" é **−355,09**, não +372,31. Não reproduzi nem os
+372,31 nem os 2.549,61 a partir do arquivo. O `valor_seguro = 2.549,61` que está
+no banco não veio desta cópia.
+
+**O número fica REBAIXADO de "única divergência real da varredura das 100" para
+"não reproduzido"**, com a mesma procedência dos quatro da tabela abaixo. Não é
+prova de que o dinheiro está certo — é o registro de que a afirmação não se
+sustenta com o que há em disco, e de que qualquer reparo baseado nela seria
+reparo sem fonte.
+
+**O que sobrou verificável nessa competência** não é o 372,31, é o AGREGADO
+ÓRFÃO: `fechamento_mensal_empresa` de 2025-02 AL1 tem `operacoes = 6.491` e
+`valor_liquido = 97.535,61` com **zero** linhas em `monthly_closing_entries`.
+Varridas as 100 linhas de FME, é a única quebrada (2023-12 AL1 também está sem
+entries, mas com o agregado zerado — não é perda). Isso agora tem vigia
+permanente: `agregado_sem_detalhe`, em `lib/diagnostico/fechamentoParcial.ts`.
+
+### ABERTO — 2026-05 AL1 diverge entre o agregado e o detalhe
+
+Achado novo de 28/08/2026, **não investigado, não tocado nesta frente**. Ao
+medir se `fechamento_mensal_empresa` é reconstituível a partir das entries em
+competências consideradas sadias:
+
+```
+   RR ALAGOAS 1  2026-04   operacoes(FME)=6025 x chaves(entries)=6025 => IGUAIS
+                           valor_avista 34.123,96 == Sigma CASH 34.123,96
+   RR PERNAMBUCO 2026-02   operacoes(FME)=2891 x chaves(entries)=2891 => IGUAIS
+                           valor_avista 57.232,43 == Sigma CASH 57.232,43
+   RR ALAGOAS 1  2026-05   operacoes(FME)=5970 x chaves(entries)=5963 => DIFERENTES (delta -7)
+                           valor_diferido 34.622,63  x  Sigma PRT 36.373,45  (delta -1.750,82)
+```
+
+Duas das três batem exatamente; **2026-05 AL1 não**. São 7 operações e
+R$ 1.750,82 de diferença entre o que o agregado declara e o que o detalhe soma,
+numa competência que ninguém considera quebrada. Parte do delta de `valor_diferido`
+tem explicação plausível na régua (`isPayablePrtRow` filtra COD EST = 1, negativos
+vão para estorno), mas **as 7 operações não foram explicadas**, e a hipótese não
+foi verificada. Foi este achado que derrubou os dois desenhos de "recompor o
+agregado": recompor sempre reescreveria esta competência.
 
 ### Os quatro números que circularam como buraco
 
@@ -437,6 +497,207 @@ em todo o banco — os 6 APPLIED são ADIANTAMENTO (5) e LIQUIDACAO_ANTECIPADA (
 
 ---
 
+## 6b. O PADRÃO — nota de projeto que não é remedida volta como pista errada
+
+Registrado em 28/08/2026, depois da **terceira** ocorrência na mesma frente. Três
+anotações abriram um bloco de trabalho como se o defeito estivesse vivo, e nas três
+o defeito **já tinha sido consertado** ou **estava em outro lugar**. Nenhuma era
+mentira quando foi escrita; todas apodreceram porque ninguém as remediu quando o
+conserto entrou.
+
+| # | a anotação dizia | o que a medição de 28/08 mostrou |
+|---|---|---|
+| 1 | "o fechamento atribui por chave J e ignora `assigned_promoter_id`" | **já consertado** em `4cb31c3` (23/08), que É ancestral de `main`, e o PMR de julho já tinha sido reconsolidado. Sobrava um QUARTO sítio, na EXIBIÇÃO (`closingProposalRows`), que a anotação não mencionava |
+| 2 | "a rota de cancelamento apaga `monthly_closing_entries` sem recompor" | **meia verdade**: a rota de fato não recompõe, mas o delete destrutivo estava no **IMPORT** (`monthlyClosingImport.ts`, por `company+year+month` sem filtro de `importId`, ANTES do insert). Consertar a rota sozinha não teria fechado nada |
+| 3 | "'Comissões pagas' mostra M e deveria mostrar M-1" | **já consertado** pela CORRECAO B (`financialAnalytics.ts:990-995`). Medido nas três últimas competências: o card bate ao centavo com o líquido de M-1 e não bate com M em nenhuma |
+
+E há uma quarta, no outro handoff: a §16 do `HANDOFF_ADS_FECHAMENTO_CAIXA` dizia "a
+ADS NÃO entra no card Recebido", falso desde 28/08 — a ADS entra com R$ 18.959,44
+em ago/26.
+
+### A quinta, escrita NO PRÓPRIO DIA — o padrão não é sobre idade
+
+Em 28/08/2026, ao mandar registrar a regra do débito de empresa, a instrução dizia
+*"o volume medido (zero)"* e *"o gatilho para revisitar — o primeiro item que cair
+na fila por promotor inativo"*, assumindo que o gatilho ainda **não** tinha ocorrido.
+A medição do mesmo dia derrubou a premissa:
+
+```
+   FILA op=208875852  2026-06  R$ 2,03  motivo: promotor inativo desde 2026-06-13
+   FILA op=211780610  2026-07  R$ 2,03  motivo: promotor inativo desde 2026-06-13
+   (os dois de ANA CLARA — total R$ 4,06; o primeiro entrou na fila em 09/07/2026)
+```
+
+O gatilho tinha disparado **sete semanas antes**. O que é zero é outra coisa: a
+ESTRUTURA (`apply_to_company` em 0 de 77 linhas), nunca o caso.
+
+Esta é a única das cinco que **não foi herdada** — nasceu e morreu no mesmo dia.
+E é a que corrige o enunciado do padrão: **não se trata de nota VELHA, e sim de
+nota NÃO MEDIDA.** Uma anotação escrita há cinco minutos sobre um estado que
+ninguém consultou é tão frágil quanto uma de abril. A regra abaixo vale para as
+duas idades.
+
+O registro foi escrito com o texto CERTO em `lib/debitInsuranceResolver.ts`
+(bloco "O PRIMEIRO CASO APARECEU"), incluindo a errata da própria instrução.
+
+### A medição do item 3, para não precisar refazer
+
+```
+   MES NA TELA    comissoesPagas    liquido de M  liquido de M-1   veredito
+   2026-08            139.405,05       -1.024,09      139.405,05   LE M-1 (certo)
+   2026-07            117.769,41      139.405,05      117.769,41   LE M-1 (certo)
+   2026-06            105.773,30      117.769,41      105.773,30   LE M-1 (certo)
+```
+
+Árbitro: o líquido do PMR (`final_commission_value` − `promoter_discounts`) por
+competência, somado por script independente, não pelo código da tela. Os cards
+vizinhos foram medidos junto: `receivedEmpresa` também lê M-1 (bate ao centavo com
+`Σ(valor_avista+valor_seguro)` do fechamento M-1 em jun/26; em jul e ago fica acima
+porque a ADS entrou no card e a ADS **não tem linha** em `fechamento_mensal_empresa`).
+**As duas metades do painel estão na mesma competência.**
+
+### O custo, e o que fazer a respeito
+
+Cada uma dessas três custou uma FASE A inteira de medição para ser derrubada — e o
+custo é justo, porque a alternativa (acreditar na nota) teria produzido um conserto
+em cima de código já correto. O que é evitável é a nota continuar lá depois.
+
+**A regra:** quando um conserto entra, a anotação que o pediu é **remedida ou
+riscada no mesmo commit** — com data e com o número que a derrubou. Nota sem data de
+medição não é pista, é boato. As revogações deste arquivo e da §16/§19 do
+`HANDOFF_ADS_FECHAMENTO_CAIXA` são o formato: texto original preservado, marcado
+REVOGADO/RETRATADO com a data, e o estado vigente em cima.
+
+---
+
+## 6c. A RODADA DE 27/08 ÀS 20:32 — parcialmente reconstituível, e foi ela que motivou o vigia
+
+Registrado em 29/08/2026. **Não é possível afirmar que houve troca de dono, nem que
+não houve.** O rastro foi destruído pela própria rodada.
+
+### O que se mede
+
+```
+promoter_debits (CANCELAMENTO_SEGURO), created_by e created_at:
+   2026-06 | rotina-automatica | AUTO   17 linhas   2026-08-27T20:32:22 .. 20:32:29
+   2026-07 | rotina-automatica | AUTO   19 linhas   2026-08-27T20:32:37 .. 20:32:48
+```
+
+Os 36 débitos foram **recriados** naquele minuto — não nas datas dos imports (09/07 e
+04/08). A assinatura `"rotina-automatica"` só existe em `scripts/canc-run-fila.cjs:20,27`
+e `canc-run-jul-ads.cjs:24`; o import assina `"import-fechamento"`
+(`monthlyClosingImport.ts:1903`).
+
+**Não há registro documental da escrita.** Zero ocorrências de `canc-run-fila` em
+qualquer `.md` ou mensagem de commit. O `HANDOFF_CANCELAMENTO_DONO.md`, escrito às
+15:57 do mesmo dia, diz o contrário: *"O R$ 1,40 é gravado no próximo import do
+fechamento da ADS — **não escrevi no banco**"*. O contexto explica a rodada (o PR #195,
+que deu ao RR a cascata `cms` e o critério do inativo, foi mergeado às 18:56), mas o
+contexto não é registro.
+
+### Por que é irrecuperável
+
+Nada persistia o dono anterior — medido em 28/08/2026:
+
+| onde | por quê não serve |
+|---|---|
+| `promoter_debits` | só `promoter_id` (o dono ATUAL); sem `updated_at`, sem coluna de anterior |
+| `promoter_debit_sources` | `on delete cascade` (migration `20260709_000001:53`) — **0 linhas órfãs** |
+| `promoter_discounts` | nasce no mesmo run; as 36 têm `debit_id`, caem no mesmo cascade |
+| `audit_logs` | **0 linhas** de débito |
+
+### As duas conferências indiretas que dão para fazer
+
+1. **Junho bate contra um total documentado duas horas ANTES da rodada.** A linha
+   *"a rotina lancou em jun/26 = -899,21"* entrou no `HANDOFF_CANCELAMENTO_DONO.md:390`
+   pelo commit `4809d7e`, às **18:25**. Hoje junho soma **899,21** em 17 linhas. O
+   **total** não se moveu. (Não prova que nenhum promotor individual trocou — o
+   handoff registra o total, não a distribuição.)
+2. **O candidato óbvio está descartado.** A inversão de precedência do BLOCO 1
+   (`4cb31c3`, 23/08) mudou a atribuição de 5 contratos de julho. Medido: **nenhum dos
+   5 tem linha de seguro** em 2026-07 (0 de 201 linhas `INSURANCE`), logo não gera
+   estorno, logo não gera débito. A inversão não alcança débito.
+
+**Julho fica sem conferência possível.** A primeira documentação do valor (*"16 linhas
+RR, R$ 370,85"*) é do commit `f67305c`, às **21:49** — posterior à rodada.
+
+### CORREÇÃO de 29/08/2026 — a rodada é PARCIALMENTE reconstituível, e o rastro
+### estava num portão que ninguém roda
+
+O texto acima dizia "irrecuperável". **É meia verdade, e a metade que faltava é a
+tese do BLOCO 5 inteira, medida.**
+
+`scripts/test_debitos_junho_congelado.cjs` congelou o estado de junho em
+**12/07/2026**:
+
+```
+131  ok(depois.debits.length === 22, `junho segue com 22 debitos (15 AUTO + 7 MANUAL)`)
+132  ok(depois.discounts.length === 25, `junho segue com 25 parcelas`)
+134  ok(Math.abs(somaAuto - 872.71) < 0.005, `soma dos AUTO de junho segue 872,71`)
+```
+
+Rodado em 29/08/2026, ele **reprova**, e as três mensagens dizem o que mudou:
+
+```
+  FALHOU  junho segue com 22 debitos (15 AUTO + 7 MANUAL) — tem 24
+  FALHOU  junho segue com 25 parcelas — tem 27
+  FALHOU  soma dos AUTO de junho segue 872,71 — tem 899.21
+```
+
+**Junho foi de R$ 872,71 para R$ 899,21 — +R$ 26,50 e +2 débitos** (15 AUTO → 17),
+em algum ponto entre 12/07 e 27/08.
+
+**E não é troca de dono: é ADIÇÃO.** A forma bate com o degrau `+cms` do PR #195,
+cujo próprio corpo de commit registra *"A fila caiu de 7 para 4"* — três operações
+que estavam órfãs na fila ganharam dono, e duas delas eram de junho. Débito que não
+existia passou a existir; ninguém perdeu nada para ninguém.
+
+Isso **não contradiz** as duas conferências acima: o total de 899,21 já estava
+documentado às 18:25 de 27/08, antes da rodada das 20:32, e a rodada das 20:32
+recriou os mesmos valores. O que muda é o alcance da afirmação: para **junho** se
+sabe agora *o que* mudou e *por quê*, não apenas que o total batia. **Julho segue
+sem conferência.**
+
+### O que isto ensina, e é o motivo do BLOCO 5
+
+O rastro **existia**. Estava num portão que registrou a divergência no minuto em que
+ela aconteceu — e ficou vermelho, sozinho, por semanas, porque é `needs-db-lento` e
+essa faixa só roda em `npm run gates:full`, que **nunca teve execução verde
+registrada em commit nenhum** (medido: 358,4s de teto 90s).
+
+Não foi falta de instrumento. Foi instrumento que ninguém lê. É a mesma família do
+§6b — nota não medida — aplicada a portão: **portão não executado é anotação não
+remedida com outro nome.**
+
+### O que foi feito a respeito
+
+Não dá para reconstruir o passado inteiro; dá para não repetir. O commit
+`registrarTrocaDeDono` faz a memória nascer **antes** do delete, em `audit_logs`, e o
+check `debito_auto_trocou_dono` a lê. A pergunta *"o que essa rodada mudou?"* passa a
+ter onde ser respondida — e, desta vez, num lugar que a tela de diagnóstico mostra,
+não num portão que espera alguém lembrar.
+
+### DÍVIDA NOMEADA, não consertada — o script contorna as duas guardas
+
+`scripts/canc-run-fila.cjs:20` chama `resolveInsuranceDebits` **direto**, sem passar
+por `persistAutoInsuranceDebits`. Com isso ele não vê:
+
+- a trava de junho — `DEBITO_AUTO_PRIMEIRA_COMPETENCIA = "2026-07"`
+  (`monthlyClosingImport.ts:1845`), que impede o import de tocar competências
+  anteriores a julho;
+- a guarda do `APPLIED` (`monthlyClosingImport.ts:1881-1896`).
+
+**Foi por isso que junho — congelado para o import — foi reescrito em 27/08.** O
+cabeçalho do script é honesto sobre o que faz (`/* GRAVA. Reprocessa jun e jul... */`),
+mas honestidade no comentário não é guarda no código.
+
+Não consertado nesta frente **de propósito**: fechar isso é decidir se o script deve
+respeitar as travas do import ou se ele é a válvula de escape legítima para reprocessar
+competência congelada — e essa é decisão de negócio, não de código. A partir de agora,
+pelo menos, ele **deixa rastro**: a memória mora no resolvedor, abaixo dele.
+
+---
+
 ## 7. A LIÇÃO
 
 Quatro números crescentes tratados como buraco medido — R$ 10.102,33 → R$ 24.591,60
@@ -476,7 +737,7 @@ Registrado para você poder discordar com o número à vista:
 | "ago/26 foi de 318.596,26 para 318.696,26" | está em **318.685,68**; 318.596,26 era o valor **antes** do UPDATE do 89,42. Após o backfill: **318.785,68** |
 | "a diferença caiu de 139,97 para 39,97" | hoje **−50,55**; após o backfill **+49,45** — inverte o sinal |
 | "varredura de 41 competências" | foram **100**: 74 batem, 18 divergem (17 por centavos), 8 sem arquivo |
-| "bateu ao centavo / buraco zero" | **1 divergência real: R$ 372,31** em 2025-02 AL1 |
+| "bateu ao centavo / buraco zero" | ~~1 divergência real: R$ 372,31 em 2025-02 AL1~~ **RETRATADO em 28/08/2026**: o número não se reproduz do arquivo em disco (Resumo sem valores; Σ COMISSÃO da aba Seguro = −355,09). Ver a errata em §6 |
 | "os três números contavam linhas já gravadas" | três **nunca foram reproduzidos**; a causa é desconhecida. Só o meu (10.102,33) foi diagnosticado |
 | "o DRE lê `insurance_commission_amount`" | `dre.ts` tem **zero** ocorrências desse identificador; lê `bbts_seguro_pago`, bruto |
 | "43 competências sem linha de seguro em jan-mai/2026" | são **3**, e são 2023-09, 2023-12 e 2025-02 |

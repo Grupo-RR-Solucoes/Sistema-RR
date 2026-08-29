@@ -613,11 +613,31 @@ um centavo. O que falta é a ADS ter LINHA/CAMINHO no caixa, não passar num fil
 
 ---
 
-## 16. DECISÃO 26/08 — a ADS NÃO entra no card "Recebido" por enquanto
+## 16. DECISÃO 26/08 (REVOGADA em 28/08/2026) — a ADS NÃO entrava no "Recebido"
 
-**Decisão do Diego.** O código que a incluía foi escrito, medido e REVERTIDO. Está
-preservado em `docs-ads-caixa.patch` (aplicável com `git apply`), e o efeito medido
-em ago/26 era:
+> **REVOGADA em 28/08/2026.** A ADS **entra** no card "Recebido" hoje. Medido em
+> 28/08/2026 rodando `buildFinancialAnalytics` (a mesma função que
+> `/api/financeiro:100` chama), tela de ago/26:
+>
+> ```
+>    receivedNet ...................     318.696,26
+>       receivedLiquido (RR liq + ADS)     302.867,60
+>          RR valor_liquido(M-1) .....     283.908,16
+>          ADS (avista+prt+seg+abert) .      18.959,44
+>       receivedProdutos (6 colunas) ..      15.828,66
+>       receivedManual (competencia M)         0,00
+> ```
+>
+> São **R$ 18.959,44 de ADS** dentro do card — os R$ 18.859,44 previstos na tabela
+> abaixo mais R$ 100,00 de Abertura de Conta, que entrou depois (o `ads.abertura`
+> de `cashReceivedFor`, `financialAnalytics.ts:520`). O texto original desta seção
+> fica preservado como registro do que foi decidido em 26/08; **o estado do sistema
+> é o do bloco acima**, não o de baixo. Mesmo padrão da §19 (manhã REVOGADA /
+> tarde VIGENTE).
+
+**Decisão do Diego, 26/08 (revogada).** O código que a incluía foi escrito, medido e
+REVERTIDO. Está preservado em `docs-ads-caixa.patch` (aplicável com `git apply`), e o
+efeito medido em ago/26 era:
 
 | campo | sem ADS | com ADS | delta |
 |---|---|---|---|
@@ -649,16 +669,35 @@ acima. O que existe é uma decisão, que pode ser revista.
 
 ### O que É verdade e continua aberto
 
-1. **O rótulo "crédito recebido (bruto)" está errado HOJE, para o RR.** O card soma
-   à-vista (227.393,93) + diferido/PRT (51.806,30) + seguro (5.131,69) + os 6
-   produtos. Não é "crédito", não é só "à-vista", e não é caixa — é comissão
-   reconhecida na competência M-1. Corrigir o rótulo é frente própria.
+1. ~~**O rótulo "crédito recebido (bruto)" está errado HOJE, para o RR.**~~
+   **FECHADO em 28/08/2026.** O subtítulo passou a ser
+   **"entrada de caixa do fechamento M-1 + receita manual do mês"**
+   (`app/financeiro/page.tsx:536`). O rótulo do card — **"Recebido"** — fica como
+   está: é regime de caixa e casa com "Comissões recebidas" ao lado.
+
+   O diagnóstico daqui estava certo em três pontos e **errado no quarto**. Certos:
+   não é "crédito" (o à-vista é 227.393,93 de 318.696,26, 71%; o resto é PRT
+   51.806,30, seguro 5.131,69, os 6 produtos 15.828,66 e a ADS 18.959,44), não é
+   só à-vista, e não é "bruto" (o `valor_liquido` já vem líquido de estorno 419,21
+   e renovação 4,55). **Errado: "não é caixa".** É caixa, sim — e é justamente por
+   isso que o subtítulo novo usa a palavra. `receivedNet = receivedClosing(M-1) +
+   receivedManual(M)` (`financialAnalytics.ts:1003`): o fechamento de M-1 cai no
+   caixa de M, a receita manual tem `data_credito` em M e entra em M. As duas
+   parcelas são "o que entrou no mês M", e **caixa** é a única palavra que
+   descreve as duas. A janela mista não é defeito — não "conserte" o
+   `receivedManual` achando que está. Medido em jul/26: R$ 1.509,44 de receita
+   manual dentro dos R$ 274.217,84.
+
+   Não-regressão do commit: `buildFinancialAnalytics` nas três competências antes
+   e depois da troca de texto, `receivedNet` / `receivedEmpresa` / `comissoesPagas`
+   / `receivedManual` idênticos ao centavo.
 2. **A cobertura segue incompleta**: o grupo tem 5 empresas e o card mostra 4. O DRE
    mostra as 5 (`lib/dre.ts:314-365`). Duas telas do mesmo sistema, respostas
    diferentes para a mesma competência — isso permanece.
-3. Se a ADS entrar um dia, os R$ 139,97 das seções 5a e 3 continuam faltando
-   (Abertura de Conta R$ 100,00 sem coluna no banco; seguro só-seguro R$ 89,42 só
-   no `raw_payload`).
+3. ~~Se a ADS entrar um dia~~ **A ADS entrou (28/08/2026)**, e dos R$ 139,97 das
+   seções 5a e 3 a **Abertura de Conta (R$ 100,00) já está dentro** do card, pelo
+   `ads.abertura` de `cashReceivedFor`. Continua faltando o **seguro só-seguro de
+   R$ 89,42**, que segue apenas no `raw_payload`. ABERTO.
 
 ### PROVA de que não há dupla contagem no `receivedEmpresa`
 

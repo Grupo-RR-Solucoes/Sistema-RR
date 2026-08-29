@@ -12,6 +12,10 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => ({}));
     const importId = body?.importId ? String(body.importId) : "";
+    // Confirmacao EXPLICITA, reenviada. Nasce ausente e some a cada requisicao —
+    // nunca e padrao ligado. Mesmo desenho da recusa do so-credito da ADS
+    // (app/api/import/closing/ads/route.ts:86-107).
+    const confirmaOrfao = body?.confirmarAgregadoOrfao === true;
 
     if (!importId) {
       return NextResponse.json(
@@ -44,6 +48,98 @@ export async function POST(req: Request) {
         },
         { status: 409 }
       );
+    }
+
+    // ============================================================
+    // GUARDA DO AGREGADO ORFAO. Antes de apagar, CONTA o que sobraria na
+    // competencia. Se zerar e existir linha em fechamento_mensal_empresa, o
+    // cancel RECUSA: apagar aqui deixaria um agregado sem uma unica linha de
+    // detalhe por tras — exatamente o estado de 2025-02 RR ALAGOAS 1, medido em
+    // 28/08/2026 com operacoes=6.491 e valor_liquido=97.535,61 e ZERO entries.
+    // Das 100 linhas de fechamento_mensal_empresa e a UNICA quebrada.
+    //
+    // NAO RECOMPOE o agregado, de proposito (decisao de Diego, 28/08/2026):
+    //   - recompor SEMPRE reescreveria competencia sadia que ja diverge — medido
+    //     em 2026-05 AL1: operacoes 5.970 no FME contra 5.963 chaves nas entries,
+    //     e valor_diferido 34.622,63 contra Sigma PRT 36.373,45;
+    //   - recompor SO quando zera escreveria 0,00 sobre 97.535,61, completando a
+    //     perda em vez de reparar. O agregado orfao e hoje o UNICO registro
+    //     daquele dinheiro.
+    // Recusar e a unica acao que nao destroi informacao.
+    //
+    // A contagem e do que RESTA (`.neq` do import a cancelar), nao do que sai:
+    // depois do conserto do import (INSERE primeiro, APAGA depois) a competencia
+    // pode ter os dois conjuntos vivos, e o que decide e o que fica.
+    // Gate: scripts/cancel_agregado_orfao_gate.cjs (bloco 3)
+    // ============================================================
+    const { count: restantes, error: countError } = await supabaseAdmin
+      .from("monthly_closing_entries")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", existing.company_id)
+      .eq("year", existing.year)
+      .eq("month", existing.month)
+      .neq("monthly_closing_import_id", importId);
+
+    if (countError) {
+      throw new Error(countError.message);
+    }
+
+    if ((restantes ?? 0) === 0 && !confirmaOrfao) {
+      const { data: empresaRow } = await supabaseAdmin
+        .from("companies")
+        .select("name, cnpj")
+        .eq("id", existing.company_id)
+        .maybeSingle();
+      const empresa = String((empresaRow as { name?: string } | null)?.name || "").trim();
+      const cnpj = String((empresaRow as { cnpj?: string } | null)?.cnpj || "").trim();
+
+      // O agregado so importa se EXISTIR e nao for zerado. 2023-12 AL1 tem linha
+      // com operacoes=0 e valor_liquido=0,00: nao ha detalhe a perder, e travar
+      // ali seria trava sem dano. Ver o mesmo criterio no vigia.
+      const { data: fme } = cnpj
+        ? await supabaseAdmin
+            .from("fechamento_mensal_empresa")
+            .select("operacoes, valor_liquido, valor_avista, valor_seguro")
+            .eq("empresa_cnpj", cnpj)
+            .eq("ano", existing.year)
+            .eq("mes", existing.month)
+            .maybeSingle()
+        : { data: null };
+
+      const operacoes = Number((fme as { operacoes?: number } | null)?.operacoes || 0);
+      const valorLiquido = Number((fme as { valor_liquido?: number } | null)?.valor_liquido || 0);
+
+      if (fme && (operacoes > 0 || Math.abs(valorLiquido) > 0.005)) {
+        const brl = (v: number) =>
+          v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+        const competencia = `${String(existing.month).padStart(2, "0")}/${existing.year}`;
+        // O DANO EM NUMEROS VAI NO `error`: a tela renderiza SO esse campo
+        // (app/importacoes/page.tsx). Numero em campo que ninguem exibe e numero
+        // que nao foi dito.
+        return NextResponse.json(
+          {
+            error:
+              `RECUSADO: cancelar este import deixaria a competencia ${competencia} da ${empresa} ` +
+              `SEM NENHUMA linha de detalhe, e o agregado ficaria orfao. ` +
+              `fechamento_mensal_empresa registra ${operacoes} operacoes e ` +
+              `${brl(valorLiquido)} de valor liquido que perderiam o lastro — nao ha outro ` +
+              `import com entries vivas nesta competencia. O agregado NAO e recomposto ` +
+              `(recompor escreveria zero por cima do valor). Reimporte o arquivo antes de ` +
+              `cancelar, ou confirme e reenvie para cancelar assim mesmo.`,
+            competencia,
+            empresa,
+            empresa_cnpj: cnpj,
+            entries_que_restariam: 0,
+            agregado_operacoes: operacoes,
+            agregado_valor_liquido: valorLiquido,
+            como_prosseguir:
+              "Reimporte o fechamento desta competencia e cancele depois, ou reenvie com " +
+              "confirmarAgregadoOrfao=true para cancelar mesmo deixando o agregado sem detalhe.",
+            confirmacao_necessaria: true,
+          },
+          { status: 409 }
+        );
+      }
     }
 
     // Limpa entries parciais (caso INSERT em massa tenha completado parcial).

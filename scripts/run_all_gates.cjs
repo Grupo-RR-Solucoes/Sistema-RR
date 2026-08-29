@@ -39,6 +39,72 @@
 //                      repo (ou virar fixture).
 // ============================================================================
 
+// ---------------------------------------------------------------------------
+// O ESTADO DO PROPRIO SISTEMA DE PORTOES — varredura de 29/08/2026
+// ---------------------------------------------------------------------------
+// Registrado aqui, e nao num handoff, porque e sobre ESTE arquivo. Nada disto e
+// hipotese: cada numero saiu de uma execucao.
+//
+// O UNIVERSO: 102 arquivos de portao versionados — 83 registrados aqui e 19
+// ORFAOS (existem em scripts/, rastreados no git, e NINGUEM roda).
+//
+// (1) QUEM RODA DE VERDADE. O CI (.github/workflows/gates.yml) executa
+//     `npm run gates` = os self-contained. Os demais so rodam quando alguem
+//     lembra. E o proprio CI e MODO AVISO: sem required status check e sem
+//     branch protection, ele NAO bloqueia merge. Mesmo a faixa que roda sempre e
+//     aviso, nao guarda.
+//
+// (2) A FAIXA --db NAO E RODADA, e o teto ja diz isso. Medida em 29/08/2026:
+//     358,4s de teto 90s — 4x estourado; o registro anterior dizia 216,9s.
+//     Varri TODAS as mensagens de commit do repo: dezenas afirmam "npm run gates
+//     29/29", "17/17", "20/20"; NENHUMA jamais afirmou a faixa --db verde. Nao e
+//     "faz tempo que nao roda": nao ha registro de ela ter rodado verde alguma
+//     vez. Comando de 6 minutos nao e rodado — a licao do bloco TRES FAIXAS, uma
+//     linha acima, aplicada a si mesma.
+//
+// (3) OS 17 VERMELHOS de 29/08/2026 (rodada limpa: 83 executados, 66 passaram).
+//     Nenhum e self-contained. Caracterizados:
+//       FALSO VERMELHO        gate_schema_colunas.mts — sozinho da exit 0 ("as
+//                             2844 colunas existem"); pelo runner, exit
+//                             3221226505 (crash). Defeito do RUNNER, nao do gate.
+//       RECUSA DELIBERADA     check_audit_v9_tables.cjs (exit 4) — ele mesmo diz
+//                             "verde sem medicao e pior que vermelho".
+//       ANTI-VACUIDADE OK     produto_pmr_empresa_dona_gate.cjs — reprova na
+//                             PROPRIA guarda ("22 buckets -> 22 linhas"): recusa
+//                             passar sem caso real. E o comportamento desejado.
+//       DEFEITO VIVO          gate-srcc-ads.mts — "19 viram neutro" e "nenhuma
+//                             linha ADS tem srcc_resolucao gravada". O gate esta
+//                             certo; o defeito e que nao foi consertado.
+//       CONSTANTE CONGELADA   test_debitos_junho_congelado.cjs — congelou junho em
+//                             12/07/2026 (22 debitos, 25 parcelas, AUTO 872,71);
+//                             hoje sao 24, 27 e 899,21. Ver a secao 6c do
+//                             HANDOFF_RESIDUO_FINANCEIRO: foi ele que guardou o
+//                             rastro da rodada de 27/08, e ninguem o rodou.
+//       NAO CARACTERIZADOS    os outros 11 (needs-db-lento). Cada um exige
+//                             investigacao propria; nenhum foi diagnosticado aqui
+//                             e nenhum deve ser presumido benigno.
+//
+// (4) OS 19 ORFAOS. NAO devem ser registrados um a um: encher a faixa de vermelho
+//     de origem desconhecida troca um problema por outro. Cada um vale REGISTRO,
+//     APOSENTADORIA ou EXCLUSAO, e essa triagem e frente propria. A lista, para
+//     que ela exista em algum lugar:
+//       bbts_conferencia_gate · bbts_fechamento_gate · bbts_parser_gate
+//       bbts_resolver_gate · diag-residuo-09-gate-silencio
+//       gate-avista-vs-fechamento · gate-medida-b-conserto
+//       gate_ads_seguro_via_render · motor_credito_trp_db_gate (+_lib)
+//       mov2_dre_gate · mov2_proposals_get_gate · mov2_relatorios_gate
+//       mov3_dre_inclui_tudo_gate · test_ads_credito_competencia
+//       test_ads_credito_trp_sempre · test_ads_status_e_grupo
+//       trp_paridade_gate_f3 · trp_parse_route_test
+//     CRITERIO para a triagem: (a) a invariante dele ainda existe no codigo? se
+//     nao, EXCLUSAO; (b) ela existe mas outro gate ja a cobre? APOSENTADORIA, com
+//     o gate que a cobre nomeado no commit; (c) ela existe e ninguem cobre?
+//     REGISTRO, na faixa que os tres criterios de classificacao mandarem.
+//
+// (5) QUANTOS PROVAM ALGO CONTINUAMENTE: os self-contained, e so eles. Os demais
+//     provam quando alguem roda.
+// ---------------------------------------------------------------------------
+
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -57,7 +123,14 @@ const GATES = [
       "filtro (closingPromoterBase.ts:160, .eq entry_type CASH). O gate varre lib/ " +
       "e app/ atras de qualquer consumidor novo que leia entry_type INSURANCE da " +
       "aba Seguro, e confere no banco que a aba nao esta vazia (senao passaria por " +
-      "vacuidade). Provado por mutacao em 27/08/2026",
+      "vacuidade). Provado por mutacao em 27/08/2026. " +
+      "CONSERTADO em 29/08/2026: a assercao de nao-vacuidade estava atras de DOIS " +
+      "escapes (sem credencial, e banco recusando a consulta) que a puliam e " +
+      "deixavam o gate VERDE — a promessa desta linha de motivo ficava sem lastro. " +
+      "Medido: dos 30 needs-db rodados com credencial FALSA, 27 reprovaram e 2 " +
+      "passaram; este era um deles. Agora needs-db que nao alcanca o banco REPROVA. " +
+      "Quem quiser so as estaticas usa GATE_ESTATICO=1, e o gate DIZ que esta em " +
+      "modo reduzido",
   },
   {
     arquivo: "scripts/ads_cancelamento_dono_gate.cjs",
@@ -590,9 +663,17 @@ const GATES = [
   {
     arquivo: "scripts/detector_regua_camada1_gate.cjs",
     nome: "detector de regua - camada 1",
-    modo: "needs-db",
+    modo: "self-contained",
     motivo:
-      "createClient (smoke live); consolidadores gravam versao TRP",
+      "RECLASSIFICADO em 29/08/2026, de needs-db para self-contained. Ele NUNCA " +
+      "precisou de banco: as assercoes sempre foram estaticas (fonte de " +
+      "lib/bbtsMonthly + classify() puro) e a unica parte que tocava o banco era " +
+      "um smoke que so IMPRIMIA, sem nenhum ok() atras. Medido: rodando os 30 " +
+      "needs-db com credencial FALSA, este passou (exit 0) porque nao precisava " +
+      "de uma. Nao era vacuidade, era classificacao errada — e cara: pagava o " +
+      "preco da faixa que ninguem roda. O smoke foi REMOVIDO (a pergunta dele ja " +
+      "e respondida por gate_schema_colunas.mts, para as 2.844 colunas do codigo), " +
+      "junto do readEnv() proprio, que violava o criterio (b). Agora roda no CI",
   },
   {
     arquivo: "scripts/janela_ritmo_paridade_gate.cjs",
@@ -758,6 +839,49 @@ const GATES = [
     modo: "needs-db-lento",
     motivo:
       "33,1s; createClient; exercita 5 resolvedores de competencia (promoterAnalytics, closingAnalytics, financialAnalytics, projecaoMetas, getClosingPeriods) em 3 competencias cada. LENTO por isso, nao por ineficiencia: cortar competencia ou resolvedor e cortar cobertura. Fora da --db para nao estourar o teto de 90s, mesmo motivo do gate_projecao_gestor",
+  },
+  {
+    arquivo: "scripts/agregado_orfao_gate.cjs",
+    nome: "agregado orfao: o import nao esvazia, o cancel recusa, o vigia acende",
+    modo: "self-contained",
+    motivo:
+      "38 assercoes, 3 blocos. (1) ANCORAS no fonte de monthlyClosingImport.ts: o " +
+      "delete do detalhe legado vem DEPOIS do insert, tem .neq(importId) e guard de " +
+      "rowsToInsert, e o recorte AMPLO continua la — as ancoras sao CONTADAS, porque " +
+      "`insert(slice)` aparece duas vezes no arquivo e ancorar na de syncProductLines " +
+      "fazia a assercao de ORDEM passar COM o codigo defeituoso. (2) a funcao POST " +
+      "REAL do cancel contra o espelho scripts/_fakeFechamento.cjs, com TRES controles " +
+      "positivos para nao virar trava geral: cancel legitimo passa, FME zerada nao " +
+      "trava (o caso 2023-12 AL1) e a competencia vizinha sai byte-identica. (3) o " +
+      "vigia 'agregado_sem_detalhe' acende para agregado COM VALOR e fica quieto para " +
+      "o ZERADO. Empresa e dados sao FIXTURE (stubReal), nao o banco. Provado por " +
+      "mutacao em 28/08/2026, medido NESTE arquivo (nao no gate combinado de antes " +
+      "da separacao): reverter a ordem do import derruba 3; tirar a guarda do cancel " +
+      "derruba 9; remover o vigia derruba 8; remover a distincao da FME zerada derruba " +
+      "2. Sem banco, sem .env, sem caminho absoluto",
+  },
+  {
+    arquivo: "scripts/cancel_agregado_orfao_gate.cjs",
+    nome: "agregado orfao: o import REAL nunca zera a competencia, e o dano existe hoje",
+    modo: "needs-local",
+    motivo:
+      "A METADE NAO CI-AVEL do gate acima, e o registro existe para que essa metade " +
+      "seja NOMEADA em vez de esquecida. needs-local E needs-db ao mesmo tempo: le o " +
+      "xlsx C23677_..._Todos_2_2025.xlsx em C:/Users/diego/Downloads (1,7 MB de dado " +
+      "de cliente, que nao esta e nao pode estar versionado) E chama createClient para " +
+      "medir producao. CONSEQUENCIA, dita com todas as letras: o CI NUNCA executa " +
+      "estas 8 assercoes — elas so acontecem quando alguem roda `npm run gates:full` a " +
+      "mao. E o bloco 2, o vigia acendendo em PRODUCAO (2025-02 RR ALAGOAS 1, " +
+      "operacoes=6.491, valor_liquido=97.535,61, zero entries), e justamente o que " +
+      "impede o check de nascer verde por vacuidade: no gate self-contained o dano e " +
+      "fixture, aqui e o banco. O bloco 1 roda importMonthlyClosingWorkbook REAL contra " +
+      "o espelho com um observador de contagem apos cada escrita (invariante: nunca " +
+      "toca ZERO tendo comecado com detalhe; a ordem antiga mostra `delete 400 -> 0`). " +
+      "Mutacoes medidas NESTE arquivo em 28/08/2026: reverter a ordem do import derruba " +
+      "1 assercao (a do trace); remover o vigia derruba 2; remover a distincao da FME " +
+      "zerada derruba 1. " +
+      "So vira CI-avel se o xlsx virar fixture no repo — o que exigiria versionar dado " +
+      "de cliente, entao fica como divida NOMEADA, nao como plano",
   },
 ];
 
