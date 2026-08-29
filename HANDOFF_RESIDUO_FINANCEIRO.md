@@ -570,6 +570,85 @@ REVOGADO/RETRATADO com a data, e o estado vigente em cima.
 
 ---
 
+## 6c. A RODADA DE 27/08 ÀS 20:32 — irrecuperável, e foi ela que motivou o vigia
+
+Registrado em 29/08/2026. **Não é possível afirmar que houve troca de dono, nem que
+não houve.** O rastro foi destruído pela própria rodada.
+
+### O que se mede
+
+```
+promoter_debits (CANCELAMENTO_SEGURO), created_by e created_at:
+   2026-06 | rotina-automatica | AUTO   17 linhas   2026-08-27T20:32:22 .. 20:32:29
+   2026-07 | rotina-automatica | AUTO   19 linhas   2026-08-27T20:32:37 .. 20:32:48
+```
+
+Os 36 débitos foram **recriados** naquele minuto — não nas datas dos imports (09/07 e
+04/08). A assinatura `"rotina-automatica"` só existe em `scripts/canc-run-fila.cjs:20,27`
+e `canc-run-jul-ads.cjs:24`; o import assina `"import-fechamento"`
+(`monthlyClosingImport.ts:1903`).
+
+**Não há registro documental da escrita.** Zero ocorrências de `canc-run-fila` em
+qualquer `.md` ou mensagem de commit. O `HANDOFF_CANCELAMENTO_DONO.md`, escrito às
+15:57 do mesmo dia, diz o contrário: *"O R$ 1,40 é gravado no próximo import do
+fechamento da ADS — **não escrevi no banco**"*. O contexto explica a rodada (o PR #195,
+que deu ao RR a cascata `cms` e o critério do inativo, foi mergeado às 18:56), mas o
+contexto não é registro.
+
+### Por que é irrecuperável
+
+Nada persistia o dono anterior — medido em 28/08/2026:
+
+| onde | por quê não serve |
+|---|---|
+| `promoter_debits` | só `promoter_id` (o dono ATUAL); sem `updated_at`, sem coluna de anterior |
+| `promoter_debit_sources` | `on delete cascade` (migration `20260709_000001:53`) — **0 linhas órfãs** |
+| `promoter_discounts` | nasce no mesmo run; as 36 têm `debit_id`, caem no mesmo cascade |
+| `audit_logs` | **0 linhas** de débito |
+
+### As duas conferências indiretas que dão para fazer
+
+1. **Junho bate contra um total documentado duas horas ANTES da rodada.** A linha
+   *"a rotina lancou em jun/26 = -899,21"* entrou no `HANDOFF_CANCELAMENTO_DONO.md:390`
+   pelo commit `4809d7e`, às **18:25**. Hoje junho soma **899,21** em 17 linhas. O
+   **total** não se moveu. (Não prova que nenhum promotor individual trocou — o
+   handoff registra o total, não a distribuição.)
+2. **O candidato óbvio está descartado.** A inversão de precedência do BLOCO 1
+   (`4cb31c3`, 23/08) mudou a atribuição de 5 contratos de julho. Medido: **nenhum dos
+   5 tem linha de seguro** em 2026-07 (0 de 201 linhas `INSURANCE`), logo não gera
+   estorno, logo não gera débito. A inversão não alcança débito.
+
+**Julho fica sem conferência possível.** A primeira documentação do valor (*"16 linhas
+RR, R$ 370,85"*) é do commit `f67305c`, às **21:49** — posterior à rodada.
+
+### O que foi feito a respeito
+
+Não dá para reconstruir o passado; dá para não repetir. O commit
+`registrarTrocaDeDono` faz a memória nascer **antes** do delete, em `audit_logs`, e o
+check `debito_auto_trocou_dono` a lê. A pergunta *"o que essa rodada mudou?"* passa a
+ter onde ser respondida.
+
+### DÍVIDA NOMEADA, não consertada — o script contorna as duas guardas
+
+`scripts/canc-run-fila.cjs:20` chama `resolveInsuranceDebits` **direto**, sem passar
+por `persistAutoInsuranceDebits`. Com isso ele não vê:
+
+- a trava de junho — `DEBITO_AUTO_PRIMEIRA_COMPETENCIA = "2026-07"`
+  (`monthlyClosingImport.ts:1845`), que impede o import de tocar competências
+  anteriores a julho;
+- a guarda do `APPLIED` (`monthlyClosingImport.ts:1881-1896`).
+
+**Foi por isso que junho — congelado para o import — foi reescrito em 27/08.** O
+cabeçalho do script é honesto sobre o que faz (`/* GRAVA. Reprocessa jun e jul... */`),
+mas honestidade no comentário não é guarda no código.
+
+Não consertado nesta frente **de propósito**: fechar isso é decidir se o script deve
+respeitar as travas do import ou se ele é a válvula de escape legítima para reprocessar
+competência congelada — e essa é decisão de negócio, não de código. A partir de agora,
+pelo menos, ele **deixa rastro**: a memória mora no resolvedor, abaixo dele.
+
+---
+
 ## 7. A LIÇÃO
 
 Quatro números crescentes tratados como buraco medido — R$ 10.102,33 → R$ 24.591,60

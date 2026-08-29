@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { BBTS_COMPANY_ID } from "@/lib/bbtsCompanyId";
+import { AUDIT_TROCA_DONO } from "@/lib/debitInsuranceResolver";
 
 // ============================================================================
 // lib/diagnostico/fechamentoParcial.ts — O QUE NAO CHEGOU.
@@ -30,8 +31,11 @@ export interface ChecagemParcial {
    * 'erro' SO para o agregado orfao: ali nao ha heuristica — linha de
    * fechamento_mensal_empresa com valor e ZERO entries e um estado quebrado,
    * comprovado, nao uma suspeita. Ver checarAgregadoOrfao.
+   * 'info' para a troca de dono de debito: e FATO registrado (sem a ambiguidade
+   * que define 'alerta') e NAO e perda (o dinheiro nao sumiu, mudou de pessoa, e
+   * a troca pode ate estar CERTA). Ver checarTrocaDeDono.
    */
-  severity: "alerta" | "erro";
+  severity: "alerta" | "erro" | "info";
   count: number;
   descricao: string;
   detalhe: unknown;
@@ -404,14 +408,109 @@ async function checarAgregadoOrfao(admin: SupabaseClient): Promise<ChecagemParci
   ];
 }
 
-/** Os tres lados juntos. Nao lanca por tabela ausente da ADS; erro real sobe. */
+/** janela de LEITURA da troca de dono, em meses. audit_logs NAO e podada. */
+const JANELA_TROCA_MESES = 12;
+
+/**
+ * TROCA DE DONO de debito automatico no reprocessamento.
+ *
+ * SEVERITY 'info', e a escolha e o ponto do check. Pelo criterio deste arquivo:
+ *   'erro'   = PERDA COMPROVADA. E o agregado_sem_detalhe: dado que sumiu, sem
+ *              ambiguidade. Troca de dono nao perde nada — o dinheiro muda de
+ *              pessoa.
+ *   'alerta' = DESCONTINUIDADE que so uma pessoa resolve olhando a origem,
+ *              porque o sistema NAO distingue aba vazia de aba ausente. Troca de
+ *              dono nao tem essa ambiguidade: e fato, com antes e depois no
+ *              payload.
+ *   'info'   = aconteceu, esta registrado, e PODE ESTAR CERTO. Se a fonte mudou
+ *              legitimamente (uma reatribuicao real), o novo dono e o dono certo
+ *              e este item aponta para um ACERTO.
+ * Chamar de erro ou alerta treinaria o leitor a ignorar a tela — o risco que o
+ * cabecalho deste arquivo adverte. E 'info' NAO e invisivel: ledgerHealth:482-489
+ * conta so 'erro' e 'alerta' no `status` (o item nao pinta o painel), mas o check
+ * volta na lista e e exibido. Ha precedente deliberado: 'promotor_multi_linha'
+ * (ledgerHealth:472-479, "Esperado — telemetria, nunca alerta").
+ *
+ * A FONTE e audit_logs, escrita por registrarTrocaDeDono ANTES do delete — nada
+ * mais sobrevive ao delete-and-replace (ver o helper). A tabela e COMPARTILHADA
+ * (481 linhas em 28/08/2026, de promotores/app_users/cadastros/financial): o filtro
+ * por `action` e o que impede as 293 linhas de promotores/MANUAL_CHANGE de virarem
+ * falso positivo.
+ *
+ * NAO PODA. audit_logs e o registro canonico do sistema e nao pertence a este
+ * modulo; a janela e de LEITURA. Linha mais velha que JANELA_TROCA_MESES continua
+ * la para pericia e sai do vigia.
+ *
+ * ESPERA-SE ZERO. Medido em 28/08/2026: reprocessar jun/2026 e jul/2026 hoje muda
+ * ZERO promotores, entao o helper escreve ZERO linhas e este check fica em 0. Item
+ * aqui significa que uma FONTE mudou entre duas rodadas — e ai a pergunta "isso
+ * estava certo?" tem, pela primeira vez, onde ser respondida.
+ */
+async function checarTrocaDeDono(admin: SupabaseClient): Promise<ChecagemParcial[]> {
+  const corte = new Date();
+  corte.setUTCMonth(corte.getUTCMonth() - JANELA_TROCA_MESES);
+
+  const { data, error } = await admin
+    .from("audit_logs")
+    .select("id, description, payload, created_by, created_at")
+    .eq("action", AUDIT_TROCA_DONO)
+    .gte("created_at", corte.toISOString())
+    .order("created_at", { ascending: false });
+  // Tabela ausente / sem permissao nao pode derrubar o detector inteiro: os outros
+  // tres checks sao independentes deste.
+  if (error) {
+    return [
+      {
+        id: "debito_auto_trocou_dono",
+        severity: "info",
+        count: 0,
+        descricao:
+          "Troca de dono de debito automatico: NAO FOI POSSIVEL LER audit_logs " +
+          `(${error.message}). O check nao mediu nada — isto NAO e "zero trocas".`,
+        detalhe: [],
+      },
+    ];
+  }
+
+  const achados = (data ?? []).map((r) => {
+    const pl = (r.payload ?? {}) as Record<string, unknown>;
+    const mud = Array.isArray(pl.mudancas) ? (pl.mudancas as unknown[]) : [];
+    return {
+      competencia: compKey(num(pl.year), num(pl.mes ?? pl.month)),
+      origem: String(pl.origem ?? "?"),
+      debitos_que_mudaram: mud.length,
+      quem_rodou: String(r.created_by ?? "?"),
+      quando: String(r.created_at ?? "").slice(0, 19),
+      mudancas: mud,
+    };
+  });
+
+  return [
+    {
+      id: "debito_auto_trocou_dono",
+      severity: "info",
+      count: achados.length,
+      descricao:
+        "Reprocessamento de debito automatico (CANCELAMENTO_SEGURO) trocou o dono " +
+        "de pelo menos um debito. NAO e perda — o valor nao sumiu, mudou de pessoa — " +
+        "e PODE ESTAR CERTO, se a fonte (chave J / cms / diario) mudou legitimamente. " +
+        "Fica registrado porque, sem isto, a troca e invisivel: a gravacao e " +
+        "delete-and-replace e nada mais guarda o dono anterior. `quem_rodou` separa o " +
+        "import do script manual. Esperado: ZERO.",
+      detalhe: achados,
+    },
+  ];
+}
+
+/** Os quatro lados juntos. Nao lanca por tabela ausente da ADS; erro real sobe. */
 export async function detectFechamentoParcial(
   admin: SupabaseClient
 ): Promise<ChecagemParcial[]> {
-  const [ads, rr, orfao] = await Promise.all([
+  const [ads, rr, orfao, troca] = await Promise.all([
     checarAds(admin),
     checarRr(admin),
     checarAgregadoOrfao(admin),
+    checarTrocaDeDono(admin),
   ]);
-  return [...ads, ...rr, ...orfao];
+  return [...ads, ...rr, ...orfao, ...troca];
 }

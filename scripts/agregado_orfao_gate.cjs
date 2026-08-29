@@ -31,6 +31,11 @@
  *                controles positivos que impedem isto de virar trava geral.
  *   3. VIGIA   — 'agregado_sem_detalhe' acende para o agregado COM VALOR e fica
  *                quieto para o ZERADO, em dados controlados.
+ *   4. TROCA DE DONO — a memoria da troca (registrarTrocaDeDono) nasce ANTES do
+ *                delete-and-replace, e o check 'debito_auto_trocou_dono' a le. O
+ *                controle positivo do NO-OP e a assercao mais importante do
+ *                arquivo: rodada que nao muda nada NAO pode escrever linha, senao
+ *                o vigia vira ruido e alguem o desliga.
  * ========================================================================== */
 require("./_ts_register.cjs");
 const fs = require("fs");
@@ -325,6 +330,168 @@ const REAL = stubReal({
     const check = acharCheck(await detectFechamentoParcial(createFakeFechamento(REAL, semente))) || { count: -1 };
     console.log(`      count=${check.count}`);
     ok(check.count === 0, "   com UMA linha de detalhe o vigia NAO acende", `count=${check.count}`);
+  }
+
+  // ---- 4. TROCA DE DONO — a memoria nasce ANTES do delete ----
+  // A gravacao dos debitos AUTO e delete-and-replace e NADA sobrevive a ela: o
+  // proprio debito so tem o dono ATUAL, promoter_debit_sources cai por CASCADE, as
+  // parcelas nascem no mesmo run e audit_logs tinha zero linhas de debito. Por isso
+  // a memoria tem de ser escrita ANTES do delete — e e isso que este bloco cobra.
+  console.log("\n" + linha("="));
+  console.log("4) TROCA DE DONO — registrarTrocaDeDono + o check 'debito_auto_trocou_dono'");
+  console.log(linha("="));
+
+  const RES = require(path.join("..", "lib", "debitInsuranceResolver.ts"));
+  const SRC_RES = fs.readFileSync(path.join(ROOT, "lib/debitInsuranceResolver.ts"), "utf8");
+
+  // 4a. ESTATICO — a memoria nasce ANTES do delete, nos DOIS sitios.
+  //     E a assercao que pega a mutacao "voltar o select para .select('id')" e a
+  //     mutacao "chamar o helper depois do delete".
+  console.log("\n   4a) ESTATICO: a captura vem ANTES do delete, nos dois resolvedores");
+  {
+    const nSelect = (SRC_RES.match(/\.select\("id, promoter_id, total_amount"\)/g) || []).length;
+    const nChamada = (SRC_RES.match(/await registrarTrocaDeDono\(/g) || []).length;
+    const nDelete = (SRC_RES.match(/from\("promoter_debits"\)\.delete\(\)/g) || []).length;
+    ok(nSelect === 2, "os DOIS sitios capturam dono+valor antes de apagar", `n=${nSelect}`);
+    ok(nChamada === 2, "os DOIS sitios chamam registrarTrocaDeDono", `n=${nChamada}`);
+    ok(nDelete === 2, "ANTI-DESLIZE: ha exatamente 2 deletes de promoter_debits", `n=${nDelete}`);
+    // ORDEM: cada chamada tem de vir antes do delete que a acompanha.
+    let ordemOk = true;
+    let cursor = 0;
+    for (let i = 0; i < 2; i++) {
+      const iCall = SRC_RES.indexOf("await registrarTrocaDeDono(", cursor);
+      const iDel = SRC_RES.indexOf('from("promoter_debits").delete()', cursor);
+      if (!(iCall > 0 && iDel > 0 && iCall < iDel)) ordemOk = false;
+      cursor = iDel + 1;
+    }
+    ok(ordemOk, "em AMBOS, a chamada vem ANTES do delete (memoria antes da destruicao)");
+  }
+
+  // 4b. CONTROLE POSITIVO — A ASSERCAO MAIS IMPORTANTE DO CONJUNTO.
+  //     Rodada que NAO muda nada NAO pode escrever linha. Um helper que gravasse
+  //     sempre passaria em 4c e encheria o diagnostico a CADA import: o vigia
+  //     viraria ruido e alguem o desligaria — o modo de falha que esta frente
+  //     inteira combate. Provado com o caso REAL: jun e jul, hoje, zero promotores
+  //     mudam (medido em 28/08/2026, dry-run dos dois resolvedores).
+  console.log("\n   4b) CONTROLE POSITIVO (o mais importante): no-op NAO escreve linha");
+  {
+    const P1 = "11111111-1111-1111-1111-111111111111";
+    const P2 = "22222222-2222-2222-2222-222222222222";
+    // O caso REAL de jun/2026: 17 debitos, R$ 899,21, identicos antes e depois.
+    const antesJun = [
+      { promoter_id: P1, total_amount: 320.04 },
+      { promoter_id: P2, total_amount: 218.23 },
+    ];
+    const depoisJun = [
+      { promoterId: P1, total: 320.04 },
+      { promoterId: P2, total: 218.23 },
+    ];
+    const cli = createFakeFechamento(REAL, { monthly_closing_entries: [], fechamento_mensal_empresa: [], monthly_closing_imports: [], audit_logs: [] });
+    const r = await RES.registrarTrocaDeDono(cli, {
+      year: 2026, month: 6, origem: "RR", createdBy: "gate", antes: antesJun, depois: depoisJun,
+    });
+    const linhas = cli._rows("audit_logs");
+    console.log(`      mudancas detectadas=${r.mudancas}   linhas em audit_logs=${linhas.length}`);
+    ok(r.mudancas === 0, "   no-op: ZERO mudancas detectadas", `n=${r.mudancas}`);
+    ok(linhas.length === 0, "   no-op: NENHUMA linha escrita em audit_logs", `n=${linhas.length}`);
+
+    // E a ordem das linhas nao pode inventar mudanca (o helper agrega por promotor).
+    const cli2 = createFakeFechamento(REAL, { monthly_closing_entries: [], fechamento_mensal_empresa: [], monthly_closing_imports: [], audit_logs: [] });
+    const r2 = await RES.registrarTrocaDeDono(cli2, {
+      year: 2026, month: 6, origem: "RR", createdBy: "gate",
+      antes: [...antesJun].reverse(), depois: depoisJun,
+    });
+    ok(r2.mudancas === 0 && cli2._rows("audit_logs").length === 0, "   ordem diferente NAO inventa mudanca");
+
+    // Centavo nao e troca de dono.
+    const cli3 = createFakeFechamento(REAL, { monthly_closing_entries: [], fechamento_mensal_empresa: [], monthly_closing_imports: [], audit_logs: [] });
+    const r3 = await RES.registrarTrocaDeDono(cli3, {
+      year: 2026, month: 6, origem: "RR", createdBy: "gate",
+      antes: [{ promoter_id: P1, total_amount: 320.04 }],
+      depois: [{ promoterId: P1, total: 320.042 }],
+    });
+    ok(r3.mudancas === 0 && cli3._rows("audit_logs").length === 0, "   diferenca de centavo NAO conta como troca");
+  }
+
+  // 4c. MUTACAO / DETECCAO — quando o dono MUDA, a linha nasce, e com o dano dentro.
+  console.log("\n   4c) DETECCAO: dono muda -> UMA linha, com quem->quem e quanto");
+  {
+    const P1 = "11111111-1111-1111-1111-111111111111";
+    const P2 = "22222222-2222-2222-2222-222222222222";
+    const cli = createFakeFechamento(REAL, { monthly_closing_entries: [], fechamento_mensal_empresa: [], monthly_closing_imports: [], audit_logs: [] });
+    const r = await RES.registrarTrocaDeDono(cli, {
+      year: 2026, month: 7, origem: "RR", createdBy: "rotina-automatica",
+      antes: [{ promoter_id: P1, total_amount: 185.33 }],
+      depois: [{ promoterId: P2, total: 185.33 }],
+    });
+    const linhas = cli._rows("audit_logs");
+    const l = linhas[0] || {};
+    const pl = (l && l.payload) || {};
+    console.log(`      mudancas=${r.mudancas}  linhas=${linhas.length}  action=${l.action}`);
+    console.log(`      description: ${l.description}`);
+    ok(r.mudancas === 2, "   detecta as DUAS pontas (sai de um, entra no outro)", `n=${r.mudancas}`);
+    ok(linhas.length === 1, "   escreve UMA linha por rodada, nao uma por debito", `n=${linhas.length}`);
+    ok(l.action === RES.AUDIT_TROCA_DONO, "   action e a constante unica", `action=${l.action}`);
+    ok(l.entity_name === "promoter_debits", "   entity_name = promoter_debits");
+    ok(String(l.created_by) === "rotina-automatica", "   guarda QUEM RODOU (separa import de script manual)", `created_by=${l.created_by}`);
+    ok(Number(pl.year) === 2026 && Number(pl.month) === 7, "   payload traz a competencia");
+    ok(String(pl.origem) === "RR", "   payload traz a origem (RR/ADS)");
+    const mud = Array.isArray(pl.mudancas) ? pl.mudancas : [];
+    const saiu = mud.find((m) => m.promoter_id_antes === P1);
+    const entrou = mud.find((m) => m.promoter_id_depois === P2);
+    ok(!!saiu && Number(saiu.valor_antes) === 185.33, "   payload diz de QUEM saiu, e quanto", `${saiu && saiu.valor_antes}`);
+    ok(!!entrou && Number(entrou.valor_depois) === 185.33, "   payload diz para QUEM foi, e quanto", `${entrou && entrou.valor_depois}`);
+  }
+
+  // 4d. O CHECK — le audit_logs, filtra por action, e NAO confunde com o resto.
+  //     audit_logs e COMPARTILHADA (481 linhas em 28/08/2026, quase todas de
+  //     promotores/MANUAL_CHANGE): sem o filtro por action o check seria falso
+  //     positivo permanente.
+  console.log("\n   4d) O CHECK: severity 'info', le a action certa, ignora as outras");
+  {
+    const base = {
+      monthly_closing_entries: [
+        { id: "e1", monthly_closing_import_id: "i1", company_id: EMP.id, company_cnpj: EMP.cnpj, year: 2026, month: 5, entry_type: "CASH", commission_value: 1, sheet_name: "A Vista" },
+      ],
+      fechamento_mensal_empresa: [
+        { id: "f1", empresa_cnpj: EMP.cnpj, ano: 2026, mes: 5, operacoes: 10, valor_liquido: 100, valor_avista: 100, valor_seguro: 0 },
+      ],
+      monthly_closing_imports: [],
+    };
+    const agora = new Date().toISOString();
+    // (i) so RUIDO de outras entidades -> count 0
+    const cliRuido = createFakeFechamento(REAL, {
+      ...base,
+      audit_logs: [
+        { id: "a1", entity_name: "promotores", action: "MANUAL_CHANGE", description: "x", payload: {}, created_by: "diego", created_at: agora },
+        { id: "a2", entity_name: "app_users", action: "user_created", description: "y", payload: {}, created_by: "diego", created_at: agora },
+      ],
+    });
+    const cRuido = (await detectFechamentoParcial(cliRuido)).find((c) => c.id === "debito_auto_trocou_dono") || { count: -1, severity: "(ausente)" };
+    console.log(`      so ruido: count=${cRuido.count}  severity=${cRuido.severity}`);
+    ok(cRuido.severity === "info", "   severity e 'info' (nao e perda nem descontinuidade)", `sev=${cRuido.severity}`);
+    ok(cRuido.count === 0, "   NAO acende com linhas de OUTRAS actions (tabela compartilhada)", `count=${cRuido.count}`);
+
+    // (ii) com a linha certa -> count 1, com o detalhe legivel
+    const cliTroca = createFakeFechamento(REAL, {
+      ...base,
+      audit_logs: [
+        { id: "a1", entity_name: "promotores", action: "MANUAL_CHANGE", description: "x", payload: {}, created_by: "diego", created_at: agora },
+        {
+          id: "a3", entity_name: "promoter_debits", action: RES.AUDIT_TROCA_DONO,
+          description: "2026-07 CANCELAMENTO_SEGURO (RR): 1 debito(s) mudaram de dono no reprocessamento.",
+          payload: { year: 2026, month: 7, origem: "RR", debit_type: "CANCELAMENTO_SEGURO", mudancas: [{ promoter_id_antes: "p1", promoter_id_depois: "p2", valor_antes: 185.33, valor_depois: 185.33 }] },
+          created_by: "rotina-automatica", created_at: agora,
+        },
+      ],
+    });
+    const cTroca = (await detectFechamentoParcial(cliTroca)).find((c) => c.id === "debito_auto_trocou_dono") || { count: -1, detalhe: [] };
+    const d0 = (cTroca.detalhe || [])[0] || {};
+    console.log(`      com a linha: count=${cTroca.count}  detalhe=${JSON.stringify(d0).slice(0, 120)}`);
+    ok(cTroca.count === 1, "   ACENDE com a action certa", `count=${cTroca.count}`);
+    ok(String(d0.competencia) === "2026-07", "   o detalhe traz a competencia", `${d0.competencia}`);
+    ok(String(d0.quem_rodou) === "rotina-automatica", "   o detalhe traz QUEM RODOU", `${d0.quem_rodou}`);
+    ok(Number(d0.debitos_que_mudaram) === 1, "   o detalhe conta os debitos que mudaram");
   }
 
   console.log("\n" + linha("="));

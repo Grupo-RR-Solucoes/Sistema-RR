@@ -32,6 +32,10 @@ const ESPELHADAS = new Set([
   "monthly_closing_entries",
   "fechamento_mensal_empresa",
   "monthly_closing_imports",
+  // audit_logs entrou em 29/08/2026: e onde nasce a MEMORIA da troca de dono de
+  // debito (registrarTrocaDeDono). Sem espelha-la, a escrita cairia no ramo
+  // "nao espelhada" e seria descartada — e o gate nao teria o que medir.
+  "audit_logs",
 ]);
 const WRITE_OPS = new Set(["insert", "upsert", "update", "delete"]);
 // Operacoes de forma/terminadoras que o espelho sabe interpretar.
