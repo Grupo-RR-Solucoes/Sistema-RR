@@ -497,7 +497,11 @@ em todo o banco — os 6 APPLIED são ADIANTAMENTO (5) e LIQUIDACAO_ANTECIPADA (
 
 ---
 
-## 6b. O PADRÃO — nota de projeto que não é remedida volta como pista errada
+## 6b. O PADRÃO — nota de projeto que não é MEDIDA volta como pista errada
+
+> **Contagem em 29/08/2026: SEIS anotações derrubadas por medição — quatro herdadas,
+> duas escritas DEPOIS desta regra (a 5ª minha, a 6ª do Diego).** Ver também
+> `HANDOFF_TRIAGEM_ORFAOS.md`.
 
 Registrado em 28/08/2026, depois da **terceira** ocorrência na mesma frente. Três
 anotações abriram um bloco de trabalho como se o defeito estivesse vivo, e nas três
@@ -539,6 +543,27 @@ duas idades.
 
 O registro foi escrito com o texto CERTO em `lib/debitInsuranceResolver.ts`
 (bloco "O PRIMEIRO CASO APARECEU"), incluindo a errata da própria instrução.
+
+### A SEXTA — 29/08/2026, e é do próprio Diego, três turnos depois da regra
+
+Ao mandar medir a escrita em massa de `2026-08-26T13:53:38`, a instrução dizia que era
+*"a SEGUNDA escrita em massa sem rastro documental"*, por analogia com a de 27/08 às
+20:32. **Há rastro, e é do próprio repositório:**
+
+```
+HANDOFF_ADS_FECHAMENTO_CAIXA.md:274
+## 7. REIMPORTAÇÃO DE 26/08 13:53 UTC — efeito medido
+O Diego reimportou o fechamento ADS de julho com os 2 PDFs.
+```
+
+Medido junto: `audit_logs` na janela 13:40–14:10 tem **zero** linhas (as 6 do dia são
+`MANUAL_CHANGE` do financeiro, entre 18:01 e 20:01), e o escopo das 43 linhas é 100%
+ADS / 100% competência 2026-07 — coerente com a reimportação. **O rastro é documental,
+não de banco**; a diferença para 27/08 20:32 é que lá não havia nenhum dos dois.
+
+Esta é a **segunda não-herdada** e, com a quinta, fecha o ponto: a 5ª nasceu no dia em
+que a regra foi escrita, a 6ª três turnos depois **por quem a escreveu**. Nota não
+medida é frágil independentemente de idade **e de autor**.
 
 ### A medição do item 3, para não precisar refazer
 
