@@ -343,3 +343,119 @@ duplicado. O que já existe fica de pé e o import não remove: `promoter_debits
 AUTO 1,40 para 211689509 (start 2026-07) e `promoter_debit_assignments` 2026-6
 PENDING para os outros dois, 20,70 + 20,83 = **41,53**. O desbalanço — débito
 lançado sem o crédito de origem — se fecha por decisão, não pelo import.
+
+---
+
+# REGRAS DE REMUNERACAO — DUAS CORRECOES DO DIEGO (30/08/2026)
+
+Registradas para **parar de reabrir**. As duas foram conferidas no codigo, com
+arquivo:linha.
+
+## 1. O teto de 5,80% esta CERTO — e regra INTERNA da RR
+
+**FECHADO. Nao e constante errada e NAO deve ser "corrigido" para 6.**
+
+Mesmo recebendo 6% da Promotiva, a RR limita a **visao do promotor** a 5,80%, e a
+remuneracao dele se baseia nessa visao. Os 0,20% sao margem da empresa, por
+desenho.
+
+O codigo ja diz isso, e diz melhor do que a nota que reabria o assunto —
+`lib/tetoAvistaRR.ts:1-14`:
+
+> CONCEITO (nao confundir com o teto da EMPRESA):
+> - Teto RR 5,80% (ESTE arquivo): limite OPERACIONAL da RR sobre o percentual de
+>   a-vista que remunera o PROMOTOR. A Promotiva paga ate 6%; a RR limita a visao
+>   do promotor a 5,80% e o spread fica com a empresa. O excedente vira DIFERIDO
+>   (100% empresa).
+> - Teto da EMPRESA 6,00% (`lib/promotivaCashPolicy.ts`): quanto a PROMOTIVA paga
+>   a RR. Outra entidade, outro proposito.
+> Os dois valem 5,8/6,0 hoje **por coincidencia de numero, NAO por serem a mesma
+> regra. NAO unificar.**
+
+Aplicacao: `lib/bbtsMonthly.ts:262` (ADS) e `lib/closingMonthly.ts:418` (RR), as
+duas lendo a fonte unica versionada `tetoAvistaRR()`.
+
+## 2. No SEGURO da ADS a base e o que a EMPRESA RECEBEU, nao o PMT da TRP
+
+**Confirmado: o sistema JA faz isso.**
+
+A BBTS paga menos que a Promotiva no seguro, entao a remuneracao do promotor se
+limita ao recebido: penetracao acima de 30% recebe **50% de 0,10% (base BBTS)**,
+nao 50% de 0,15% (base TRP).
+
+- `lib/bbts/seguroBbts.ts:10-14` — "FONTE UNICA DA ADS = a regua versionada
+  (`bbts_rule_versions`). NAO confundir com o SLIP do RR
+  (`lib/insuranceCalculator` + tabela `insurance_slip_rules`), que tem NUMEROS
+  DIFERENTES (0,15/0,25/0,40/0,55) e gestora diferente. Sao reguas
+  INDEPENDENTES — nunca unificar as duas fontes."
+- `lib/bbtsMonthly.ts:23-28` — "SEGURO: regua BBTS lida da FONTE VERSIONADA
+  (`bbts_rule_versions.regra_json.seguro`) via `resolveBbtsRegraDb` [...] Base =
+  `insurance_value`. [...] Fonte INDEPENDENTE da do RR."
+- `lib/bbtsMonthly.ts:278` — `comEmpSeguro = seguroBase * taxa.rate` (taxa BBTS).
+- `lib/bbtsMonthly.ts:366` — `comPromotorSeguro = a.comEmpSeguro * seguroShare *
+  fatorSeguro`: a comissao-empresa **pela regua BBTS**, multiplicada pela faixa
+  de penetracao. Bate com o medido no `gate_ads_seguro_via_render`
+  (43,87 x 25% = 10,97 | 31,66 x 50% = 15,83 | 13,00 x 35% = 4,55).
+
+## (a) No CREDITO da ADS o promotor recebe pela TRP — confirmado, com numeros
+
+Caminho: `lib/bbtsMonthly.ts:255` calcula `creditPercent` pela **TRP** (via
+`calcularOperacao` + `trpProvider`); `:262` aplica o teto
+(`Math.min(creditPercent, tetoAvistaRR)`); `:263` faz
+`comEmpAvista = gross * avistaPercent`. O que a BBTS pagou (`bbts_pag_avista`)
+**nao entra nessa conta em nenhum momento**.
+
+Medido em 2026-07 (42 contratos casados):
+
+| | valor |
+|---|---|
+| base do promotor pela TRP (pos-teto) | 17.915,67 |
+| o que a BBTS PAGOU a vista | 18.737,33 |
+| **sobra que fica na empresa** | **821,66** |
+
+Caso concreto — contrato **220992572**: financiado 60.000,00, TRP **3,340%** ->
+base do promotor **2.004,00**; a BBTS pagou **2.088,00**; sobra **84,00**.
+
+## (b) No seguro do RR a base e a TRP — e as duas bases divergem POR DESENHO
+
+`lib/insuranceCalculator.ts:1-27` e explicito: fonte unica
+`insurance_slip_rules`, com `SLIP mar/2026+: gross x pct_faixa(Parcelas)
+[TRP §188]` e `base_field` = `premio` (`insurance_value`) ou `gross`
+(`gross_value`).
+
+Entao: **RR usa a regua da TRP porque a empresa recebe a TRP; ADS usa a regua
+BBTS porque a empresa recebe da BBTS.** Bases diferentes, de proposito. E isso
+**esta escrito no codigo**, em dois lugares independentes
+(`seguroBbts.ts:10-14` e `bbtsMonthly.ts:27-28`), os dois com a instrucao
+"nunca unificar".
+
+## (c) A leitura que unifica NAO esta expressa — sao dois caminhos separados
+
+**E a diferenca entre uma regra e uma coincidencia, e aqui e coincidencia.**
+
+Varredura: `bbts_pag_avista` aparece em `lib/` **apenas** como coluna gravada
+pelo importador (`bbtsClosingImport.ts:545,635`) e lida para RECEITA
+(`dre.ts:390`, `financialAnalytics.ts:453,463`). **Ela nunca toca o caminho da
+remuneracao do promotor.** Zero ocorrencias de invariante do tipo "base do
+promotor <= recebido pela empresa"; nenhum `Math.min(..., pag_avista)`; nenhum
+portao vigiando.
+
+O seguro da ADS satisfaz a regra **por construcao** (a base E a regua BBTS). O
+credito da ADS satisfaz **por acidente aritmetico**: a TRP costuma dar menos que
+a BBTS paga.
+
+**E o acidente JA FALHOU.** Medido em 2026-06, mesmo metodo (18 contratos):
+
+| | valor |
+|---|---|
+| base do promotor pela TRP (pos-teto) | 8.835,13 |
+| o que a BBTS PAGOU a vista | 7.707,03 |
+| **sobra** | **-1.128,10** |
+
+Em junho a base do promotor **superou** o que a empresa recebeu, em R$ 1.128,10 —
+e nada no codigo acusou. Bate com a conferencia da ADS de junho, que acusou 16
+subpagamentos somando -1.509,44 (com a ressalva de que junho foi auditado com a
+regua de 2026-07, porque a de junho nunca foi subida).
+
+**Nao consertado — so nomeado.** A decisao sobre transformar a leitura numa regra
+de codigo (e sobre o que fazer quando a BBTS paga a menos) e do Diego.
