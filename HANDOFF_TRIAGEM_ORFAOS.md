@@ -131,9 +131,38 @@ porque era órfão.
    travou a recuperação de `bbts_parser`/`bbts_resolver`, cujo PDF é régua (zero dado
    de cliente) mas é documento comercial de um parceiro. Decisão do Diego, separada
    desta frente. Nenhuma fixture proposta aqui carrega dado de cliente.
-4. **1 falha restante em `test_ads_credito_competencia.cjs`** — a de contratos
-   nomeados, não a contagem. Não diagnosticada. O arquivo segue órfão por construção
-   (lê xlsx de cliente), e é uma das 2 únicas provas de `lib/bbtsDailyImport.ts`.
+4. ~~**1 falha restante em `test_ads_credito_competencia.cjs`** — a de contratos
+   nomeados, não a contagem. Não diagnosticada.~~ **MORTA — e já estava morta quando
+   esta lista foi escrita.** Ela foi diagnosticada e consertada no commit `4a668ee`,
+   o commit do BLOCO 1 desta mesma frente, e a §"A TRIAGEM FINAL" logo abaixo já
+   contava isso. A lista de PENDENTE é que não foi remedida junto.
+
+   Medido em 30/08/2026, 4 execuções seguidas: **6 OK / 0 falhas, rc=0 nas 4**.
+
+   ```
+   $ node scripts/test_ads_credito_competencia.cjs
+     ✅ (a) 213994592 gravada com competência 2026-07 (efetivação 06/07)
+     ✅ (b) 213304584 (Cancelamento) NÃO gravada
+     ✅ (c) NENHUMA "Proposta CDC" gravada (8 no arquivo)
+     ✅ (c+) TODA "Contratação CDC" gravada (35 no arquivo) — controle positivo
+     ✅ (d) Contratação CDC de julho (213977398) gravada em 2026-07
+     ✅ (e) NENHUMA gravada cai em 2026-06 (junho intocado)
+   === 6 passaram, 0 falharam ===
+   ```
+
+   **Balde: ÂNCORA VENCIDA, não defeito.** A asserção (c) congelava três números de
+   contrato (219509685 / 219421812 / 219351243) como se "Proposta CDC" fosse status
+   permanente; 2 dos 3 viraram "Contratação CDC" no mundo real, e gravá-los é o
+   comportamento CERTO. Reancorada no STATUS, com os dois lados computados e guarda
+   de não-vacuidade nos dois. Nada a aplicar — já estava aplicado.
+
+   **O que continua verdadeiro e é o que importa aqui:** o arquivo segue **órfão**
+   (`grep 'arquivo: "scripts/test_ads_credito_competencia.cjs"' scripts/run_all_gates.cjs`
+   → 0 ocorrências), porque lê `C:/Users/diego/Downloads/Relatório (3).xlsx`, xlsx de
+   cliente que não pode ser versionado. Ele é uma das 2 únicas provas de
+   `lib/bbtsDailyImport.ts` (390 linhas, 8 consumidores) e **nenhuma faixa o executa** —
+   nem `gates`, nem `gates:db`, nem `gates:full`. Isso é dívida de COBERTURA, não
+   falha, e depende da decisão (b) do bloco 4 (repositório público).
 
 ---
 
