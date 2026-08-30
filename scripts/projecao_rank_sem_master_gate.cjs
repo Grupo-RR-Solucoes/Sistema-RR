@@ -62,7 +62,22 @@ const soma = (rows, campo) => rows.reduce((a, r) => a + cents(r[campo]), 0);
     const grp = consolidarGrupoEquipe(res); // nao pode lancar, mesmo com rank vazio
 
     console.log(`  ${c.name.padEnd(24)} rank ${ativos.length} -> ${res.promotores.length} (masters ativos: ${masters.length}) | meta ${brl(metaAntes / 100)} -> ${brl(metaDepois / 100)} | prod delta ${brl((prodAntes - prodDepois) / 100)}`);
-    ok(res.promotores.length === esperado, `${c.name}: rank cai exatamente ${masters.length} (master(s) ativo(s)) -> ${res.promotores.length}==${esperado}`);
+    // A CONTAGEM "rank cai EXATAMENTE o nº de masters" foi APOSENTADA em
+    // 29/08/2026: ela comparava DOIS UNIVERSOS DIFERENTES.
+    //   ativos                 = filteredSummaryRows, escopado pela empresa da
+    //                            PRODUCAO (onde a pessoa produziu);
+    //   res.promotores         = o rank, escopado pela empresa DA PESSOA.
+    // Quem produz para uma empresa e pertence a outra entra num lado e sai do
+    // outro, e a igualdade so valia enquanto ninguem fizesse isso. Medido em
+    // 29/08/2026 na RR ALAGOAS 1: 19 -> 11 com 1 master, e os 7 nao-masters da
+    // diferenca (MAYANNE 235.187,54; MATHEUS 227.135,00; CAMILA 207.058,15;
+    // TACIANA; MARIA LETICIA; CYNTHIA; KEYLLA) aparecem no rank de OUTRA empresa.
+    //
+    // O QUE A CONTAGEM QUERIA DIZER — "tirar o master nao pode fazer mais ninguem
+    // sumir" — vira assercao GLOBAL e permanente no bloco B (nenhum promotor COM
+    // PRODUCAO fica fora de todos os ranks). Aqui ficam as invariantes que nao
+    // dependem de escopo: master fora, producao intacta, meta caindo o parkeado.
+    console.log(`     (rank por empresa DA PESSOA x base por empresa da PRODUCAO: ${ativos.length} -> ${res.promotores.length}, ${masters.length} master(s); a conferencia de sumico e GLOBAL, no bloco B)`);
     ok(semMaster, `${c.name}: NENHUM is_master no rank`);
     ok(prodAntes - prodDepois === 0, `${c.name}: producao delta EXATAMENTE 0,00 (veio ${brl((prodAntes - prodDepois) / 100)})`);
     ok(metaAntes - metaDepois === metaMasters, `${c.name}: meta cai exatamente a soma parkeada nos masters (${brl(metaMasters / 100)})`);
@@ -94,7 +109,30 @@ const soma = (rows, campo) => rows.reduce((a, r) => a + cents(r[campo]), 0);
   console.log(`  em risco      : ${riscoG.length + mastersComMeta.length} -> ${riscoG.length}  (masters ativos COM meta: ${mastersComMeta.length})`);
   for (const m of mastersComMeta) console.log(`    master com meta: ${m.promoter_name} meta=${brl(cents(m.target_value) / 100)} producao=${brl(cents(m.production_value) / 100)}`);
 
-  ok(resG.promotores.length === ativosG.length - mastersG.length, `rank global cai exatamente ${mastersG.length}`);
+  // ---- ANTI-SUMICO: a versao PERMANENTE da contagem aposentada ----
+  //
+  // A pergunta que importa nao e "quantos caem", e sim "alguem com DINHEIRO some?".
+  // A contagem antiga (`resG.promotores.length === ativosG.length - mastersG.length`)
+  // tentava responder isso por subtracao e envelhecia a cada cadastro novo. Esta
+  // aqui responde direto, com os DOIS lados computados neste mesmo run, varrendo os
+  // ranks de TODAS as empresas: quem produziu tem de aparecer em algum deles.
+  // Nao depende de quantos masters existem, nem de quem produziu para qual empresa.
+  //
+  // Medido em 29/08/2026: 53 nao-masters ativos com linha na base, 48 em algum
+  // rank, e os 5 ausentes tem producao R$ 0,00 (KEYLLA, SAMUEL, SUZANA, JOYCE,
+  // KELIANE — quatro cadastrados em agosto). Nenhum centavo fora do rank.
+  const noRankGlobal = new Set();
+  for (const c of cos) {
+    const rc = await buildProjecaoMetas(sb, { year: YEAR, month: MONTH, companyId: c.id });
+    for (const p of rc.promotores) noRankGlobal.add(p.promoter_id);
+  }
+  const comProducao = ativosG.filter(r => !isMG(r.promoter_id) && cents(r.production_value) > 0);
+  const sumidos = comProducao.filter(r => !noRankGlobal.has(r.promoter_id));
+  for (const s of sumidos) console.log(`    !! FORA DE TODO RANK com producao: ${s.promoter_name} ${brl(cents(s.production_value) / 100)}`);
+  // ANTI-VACUIDADE: zero produtores tornaria o "nenhum sumiu" verdadeiro por vazio.
+  ok(comProducao.length > 0, `ha nao-master COM producao para conferir (${comProducao.length}) — sem isso o teste abaixo passa por vacuidade`);
+  ok(sumidos.length === 0, `nenhum nao-master COM producao fica fora de TODOS os ranks (${comProducao.length} conferidos, ${noRankGlobal.size} no rank)`);
+  ok(resG.promotores.every(p => !isMG(p.promoter_id)), `rank global: NENHUM is_master`);
   ok(prodAntesG - prodDepoisG === 0, `producao total do grupo: delta EXATAMENTE 0,00 (veio ${brl((prodAntesG - prodDepoisG) / 100)})`);
   ok(metaAntesG - metaDepoisG === metaMastersG, `meta do grupo cai exatamente o parkeado nos masters (${brl(metaMastersG / 100)})`);
   ok(riscoG.every(p => !isMG(p.promoter_id)), `nenhum master no 'em risco' pos-fix`);

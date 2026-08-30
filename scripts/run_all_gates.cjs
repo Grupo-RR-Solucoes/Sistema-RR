@@ -56,6 +56,9 @@
 //
 // (2) A FAIXA --db NAO E RODADA, e o teto ja diz isso. Medida em 29/08/2026:
 //     358,4s de teto 90s — 4x estourado; o registro anterior dizia 216,9s.
+//     REMEDIDA no mesmo dia, mais tarde: 193,3s. Ver (3c) para a decomposicao —
+//     o numero oscila com a latencia do banco, mas o teto e estourado nas tres
+//     medicoes, e o custo esta CONCENTRADO em tres portoes, nao espalhado.
 //     Varri TODAS as mensagens de commit do repo: dezenas afirmam "npm run gates
 //     29/29", "17/17", "20/20"; NENHUMA jamais afirmou a faixa --db verde. Nao e
 //     "faz tempo que nao roda": nao ha registro de ela ter rodado verde alguma
@@ -80,9 +83,87 @@
 //                             hoje sao 24, 27 e 899,21. Ver a secao 6c do
 //                             HANDOFF_RESIDUO_FINANCEIRO: foi ele que guardou o
 //                             rastro da rodada de 27/08, e ninguem o rodou.
-//       NAO CARACTERIZADOS    os outros 11 (needs-db-lento). Cada um exige
-//                             investigacao propria; nenhum foi diagnosticado aqui
-//                             e nenhum deve ser presumido benigno.
+//       OS OUTROS 11 (needs-db-lento) — CARACTERIZADOS em 29/08/2026. Os 11 estao
+//                             VERDES e NENHUM era defeito de producao. Diagnostico
+//                             completo no bloco (3b), logo abaixo.
+//
+// (3b) OS 11 VERMELHOS needs-db-lento — TRIAGEM DE 29/08/2026
+//     Os 11 estao VERDES. NENHUM era defeito de producao: nenhum centavo errado,
+//     nenhuma producao escondida. Duas causas respondem por 10 deles.
+//
+//     CAUSA A — JULHO FECHOU (6 portoes, 24 assercoes, UMA causa so).
+//       guardas_regime_gate (5), projecao_dias_ritmo_gate (9),
+//       janela_ritmo_paridade_gate (4), mov1_ledger_gate (3),
+//       mov2_grupoA_gate (2), mov3_equipe_gate (1).
+//       Todos cravavam 2026-07 como "o mes ABERTO" porque julho estava aberto
+//       quando foram escritos. O que eles provam — "em mes ABERTO nao barra, nao
+//       reconsolida, o divisor do ritmo desconta o dia corrente" — e PERMANENTE;
+//       o que venceu foi a ESCOLHA de julho como representante do regime. Alguns
+//       chegavam a reprovar o comportamento CERTO (o mov2_grupoA cobrava que o
+//       lancamento caisse em julho quando a resposta correta ja era agosto).
+//       Conserto unico, em scripts/_competenciaAberta.cjs: a competencia aberta
+//       passa a ser resolvida NO RUN por detectMonthRegime, e o helper LANCA se
+//       nao houver mes aberto — nunca devolve um fechado disfarcado. As datas e
+//       os contadores de dias uteis do projecao_dias_ritmo e do
+//       janela_ritmo_paridade saem agora de productionBusinessWindow por POSICAO
+//       (penultimo dia util / ultimo / depois da janela), sem numero cravado.
+//
+//     CAUSA B — DOIS UNIVERSOS COMPARADOS COMO SE FOSSEM UM (2 portoes).
+//       gate_ritmo_diario (1) cobrava `somaRegionais === ativosNaoMaster`: a
+//       lista da ROTA (escopada pela competencia) contra um COUNT da tabela
+//       promoters (sem competencia). projecao_rank_sem_master (6) cobrava "o rank
+//       cai exatamente o nº de masters": base escopada pela empresa da PRODUCAO
+//       contra rank escopado pela empresa DA PESSOA.
+//       Medido: 48 na lista contra 53 na tabela, e os MESMOS 5 nomes nos dois
+//       portoes — KEYLLA, JOYCE, KELIANE, SAMUEL e SUZANA, todos com producao
+//       R$ 0,00, quatro deles cadastrados em agosto. Ou seja: CONTRATAR alguem
+//       reprovava os dois portoes no dia seguinte. Varrido o grupo inteiro: dos
+//       53 nao-masters ativos com linha na base, 48 aparecem em algum rank e os 5
+//       ausentes tem producao ZERO — nenhum centavo fora do rank.
+//       A contagem fragil saiu; entrou a invariante que ela tentava expressar,
+//       computada nos dois lados: "nenhum nao-master COM PRODUCAO fica fora de
+//       TODOS os ranks", com guarda de nao-vacuidade.
+//
+//     OS OUTROS 3, um a um:
+//       test_debitos_junho_congelado  O TRIPWIRE FUNCIONOU. 22/25/872,71 ->
+//           24/27/899,21. O evento esta apurado no HANDOFF_RESIDUO_FINANCEIRO 6c:
+//           ADICAO de +2 AUTO e +R$ 26,50 por operacoes orfas da fila ganhando
+//           dono (degrau +cms do PR #195), NAO troca de dono, ninguem perdeu nada.
+//           RECRAVADO com data e procedencia, nunca removido: e a unica coisa no
+//           repo que percebe junho — competencia congelada — sendo reescrito, e a
+//           causa segue viva (canc-run-fila.cjs contorna a trava do import).
+//       fix_truncamento_gate          A ancora buscava a promotora num mapa
+//           filtrado por `active`. KETLEY foi DESATIVADA; a linha dela sumiu do
+//           mapa e o `find` deu undefined. O numero nunca esteve errado: o PMR de
+//           jun ainda traz fechamento 4.862,44 + bbts 18.050,00 = 22.912,44,
+//           exatamente a ancora. A soma de um mes FECHADO nao deixa de valer
+//           porque a pessoa saiu da empresa — a busca deixou de filtrar por active.
+//       pmr_aberto_sem_daily_gate     NAO estava vermelho: estava MORTO. Saia em
+//           "admin.from(...).select(...).eq(...).not is not a function" antes da
+//           primeira assercao — zero medicao, inclusive do bloco de PRODUCAO. O
+//           commit b30c6a2 deu ao chamador um `.not(...)` que o stub em memoria
+//           nao tinha (e, atras dele, um `.gte`). Stub alinhado, e agora ele
+//           RECLAMA O NOME do metodo que lhe falta em vez de morrer anonimo. Com
+//           o portao vivo, os 3 blocos passam — o fossil nao voltou.
+//
+// (3c) DE ONDE VEM O TEMPO — medido em 29/08/2026, cronometro do proprio runner
+//     FAIXA --db: 193,3s de teto 90s (2,1x). O registro anterior dizia 358,4s; a
+//     medicao de hoje deu 193,3s com os mesmos gates, entao aquele numero carrega
+//     variacao de latencia do banco, nao so custo de codigo. Estourado nos dois casos.
+//     E CONCENTRADO — TRES portoes fazem 65% da faixa:
+//        91,3s  produtos_detalhamento_escopo_gate   <- sozinho passa do teto inteiro
+//        21,4s  reatribuicao_precedencia_gate
+//        13,2s  gate_ads_julho_dois_bugs
+//        ------
+//       125,9s  de 193,3s. Os outros 27 dividem ~67s.
+//     Ou seja: a faixa nao esta "gorda", ela tem UM portao de 91s dentro. Tirar so
+//     o produtos_detalhamento_escopo poe a faixa em ~102s — perto do teto, ainda
+//     acima. Nao consertado nesta frente de proposito (e problema separado).
+//
+//     FAIXA needs-db-lento: 510,6s nos 20 portoes. Tambem concentrada:
+//        78,3s mov2_proposals_get | 71,4s mov1_ledger | 61,5s gate_remuneracao_lideranca
+//        55,9s mov2_dashboard     | 39,7s mov2_grupoA
+//        = 306,8s (60%) em cinco.
 //
 // (4) OS ORFAOS — TRIADOS em 29/08/2026. Eram 19; a triagem os separou por CAUSA,
 //     e a lista abaixo e o estado depois dela. O universo foi RE-DERIVADO, nao herdado:

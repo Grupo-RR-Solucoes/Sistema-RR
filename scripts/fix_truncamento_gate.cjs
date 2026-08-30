@@ -41,10 +41,31 @@ function faixaAtingida(p, b1, b2) { if (b2 > 0 && p >= b2) return "META2"; if (b
       console.log(`    ${d.nome.slice(0, 40).padEnd(40)} main=${brl(d.a).padStart(12)} fix=${brl(d.b).padStart(12)} ${master ? "(CHAVE MASTER - correcao)" : ""}`);
     }
     if (esperado) {
+      // A BUSCA NAO FILTRA POR `active` — CORRIGIDO em 29/08/2026.
+      //
+      // Estas quatro ancoras dizem "a producao da pessoa em jun/2026 e a SOMA da
+      // linha RR com a linha ADS". Isso e um fato sobre uma competencia FECHADA:
+      // nao deixa de valer porque a pessoa saiu da empresa depois.
+      //
+      // O `com`/`sem` acima filtram por `r.active` (e devem: a comparacao main-vs-fix
+      // e sobre a tela). A busca da ancora usava o MESMO mapa filtrado, entao no dia
+      // em que KETLEY RODRIGUES OLIVEIRA foi desativada (active=false hoje) a linha
+      // dela sumiu do mapa, o `find` devolveu undefined e o portao reprovou.
+      // Medido em 29/08/2026: o PMR de jun ainda traz as DUAS linhas dela,
+      // fechamento=4.862,44 + bbts=18.050,00 = 22.912,44 — exatamente a ancora. O
+      // numero nunca esteve errado; o filtro e que nao era da conta desta assercao.
+      // As outras tres passavam so por continuarem ativas.
+      const baseAncora = new Map(
+        (await loadPromoterAnalyticsBase(sb, { year: y, month: m, closed: true, closedSource: src }))
+          .filteredSummaryRows.map(r => [r.promoter_id, r])
+      );
       const norm = (s) => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
       for (const [chave, val] of Object.entries(esperado)) {
-        const row = [...com.values()].find(r => norm(r.promoter_name).includes(chave));
-        check(`${chave} soma RR+ADS = ${brl(val)}`, row && Math.abs(+row.production_value - val) < 0.01);
+        const row = [...baseAncora.values()].find(r => norm(r.promoter_name).includes(chave));
+        check(
+          `${chave} soma RR+ADS = ${brl(val)}${row && row.active === false ? " (promotor DESATIVADO — a soma do mes fechado segue valendo)" : ""}`,
+          row && Math.abs(+row.production_value - val) < 0.01,
+        );
       }
     } else {
       // abril: TODO delta tem que ser CHAVE MASTER (nenhum promotor real muda)

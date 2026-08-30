@@ -128,10 +128,57 @@ function ok(cond, msg) {
   const depois = await snapshot(2026, 6);
   console.log(`\n  hash DEPOIS: ${depois.hash}`);
   ok(antes.hash === depois.hash, "junho INTOCADO (hash identico: debitos + parcelas + fila)");
-  ok(depois.debits.length === 22, `junho segue com 22 debitos (15 AUTO + 7 MANUAL) — tem ${depois.debits.length}`);
-  ok(depois.discounts.length === 25, `junho segue com 25 parcelas — tem ${depois.discounts.length}`);
+
+  // ---- TRIPWIRE DE JUNHO — REANCORADO em 29/08/2026 ----
+  //
+  // Estes tres numeros NAO sao decoracao e NAO viram auto-computados: sao a unica
+  // coisa no repo que percebe junho — competencia CONGELADA para o import — sendo
+  // reescrito ENTRE execucoes. O hash acima so compara dentro do mesmo run; e este
+  // trio que atravessa o tempo. Ele ja provou o proprio valor: foi ele, e so ele,
+  // que registrou a rodada de 27/08/2026 as 20:32.
+  //
+  // ANCORA ANTERIOR: 22 debitos / 25 parcelas / AUTO 872,71, cravada em 12/07/2026.
+  // ELA DISPAROU, E ESTAVA CERTA. O evento foi apurado no HANDOFF_RESIDUO_FINANCEIRO
+  // secao 6c, e o veredito e que NAO houve perda:
+  //   - junho foi de 872,71 para 899,21 (+R$ 26,50) e de 15 para 17 AUTO;
+  //   - a forma bate com o degrau `+cms` do PR #195, cujo commit registra "a fila
+  //     caiu de 7 para 4": tres operacoes ORFAS na fila ganharam dono, duas delas
+  //     de junho. E ADICAO, nao troca de dono — ninguem perdeu para ninguem;
+  //   - o total de 899,21 ja estava documentado as 18:25 de 27/08, ANTES da rodada
+  //     das 20:32, e a rodada recriou os mesmos valores.
+  // A CAUSA continua VIVA e e DIVIDA NOMEADA (mesma secao): scripts/canc-run-fila.cjs
+  // chama resolveInsuranceDebits direto, sem passar por persistAutoInsuranceDebits,
+  // e por isso nao ve a trava DEBITO_AUTO_PRIMEIRA_COMPETENCIA nem a guarda do
+  // APPLIED. Enquanto esse desvio existir, junho pode ser reescrito de novo — e e
+  // exatamente por isso que o tripwire e RECRAVADO, nunca removido.
+  const ANCORA_JUNHO = {
+    debitos: 24,
+    parcelas: 27,
+    somaAuto: 899.21,
+    cravadaEm: "2026-08-29",
+    procedencia:
+      "estado de 2026-06 medido em 29/08/2026, depois da rodada de 27/08/2026 20:32 " +
+      "apurada no HANDOFF_RESIDUO_FINANCEIRO 6c: +2 debitos AUTO (15->17) e +R$ 26,50, " +
+      "por ADICAO de operacoes que estavam orfas na fila (degrau +cms do PR #195), " +
+      "nao por troca de dono. Ancora anterior: 22 / 25 / 872,71, cravada em 12/07/2026.",
+  };
   const somaAuto = depois.debits.filter((d) => d.kind === "AUTO").reduce((s, d) => s + Number(d.total_amount), 0);
-  ok(Math.abs(somaAuto - 872.71) < 0.005, `soma dos AUTO de junho segue 872,71 — tem ${somaAuto.toFixed(2)}`);
+  const okD = depois.debits.length === ANCORA_JUNHO.debitos;
+  const okP = depois.discounts.length === ANCORA_JUNHO.parcelas;
+  const okS = Math.abs(somaAuto - ANCORA_JUNHO.somaAuto) < 0.005;
+  ok(okD, `junho segue com ${ANCORA_JUNHO.debitos} debitos (17 AUTO + 7 MANUAL) — tem ${depois.debits.length}`);
+  ok(okP, `junho segue com ${ANCORA_JUNHO.parcelas} parcelas — tem ${depois.discounts.length}`);
+  ok(okS, `soma dos AUTO de junho segue ${ANCORA_JUNHO.somaAuto.toFixed(2)} — tem ${somaAuto.toFixed(2)}`);
+  if (!okD || !okP || !okS) {
+    console.log(`\n  >> O TRIPWIRE DE JUNHO DISPAROU. Junho e competencia CONGELADA: se estes`);
+    console.log(`     numeros mudaram, ALGUEM ESCREVEU em junho depois de ${ANCORA_JUNHO.cravadaEm}.`);
+    console.log(`     ancora: ${ANCORA_JUNHO.debitos} debitos / ${ANCORA_JUNHO.parcelas} parcelas / AUTO ${ANCORA_JUNHO.somaAuto.toFixed(2)}`);
+    console.log(`     hoje  : ${depois.debits.length} debitos / ${depois.discounts.length} parcelas / AUTO ${somaAuto.toFixed(2)}`);
+    console.log(`     procedencia da ancora: ${ANCORA_JUNHO.procedencia}`);
+    console.log(`     SUSPEITO CONHECIDO: scripts/canc-run-fila.cjs contorna a trava do import`);
+    console.log(`     (HANDOFF_RESIDUO_FINANCEIRO 6c). Apure ANTES de recravar — e so recrave`);
+    console.log(`     com data, procedencia e o que mudou, aqui no codigo.`);
+  }
 
   console.log(`\n=== ${falhas === 0 ? "PASSOU" : "FALHOU"} — ${falhas} falha(s) ===\n`);
   process.exit(falhas === 0 ? 0 : 1);

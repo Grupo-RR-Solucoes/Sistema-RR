@@ -16,6 +16,7 @@
  * ========================================================================== */
 process.env.TRP_SOURCE = process.env.TRP_SOURCE || "db";
 require("./_ts_register.cjs");
+const { resolverCompetenciaAberta } = require("./_competenciaAberta.cjs");
 const { createClient } = require("@supabase/supabase-js");
 const { assembleTeamProduction } = require("../lib/equipe/teamProduction.ts");
 const { detectMonthRegime } = require("../lib/cmsMonthly.ts");
@@ -104,14 +105,21 @@ async function pageAll(tabela, cols) {
     console.log("  " + pad(`2026-${String(m).padStart(2, "0")}`, 9) + pad(regime, 13) + pad(brl(a), 20) + pad(brl(d), 20) + veredito);
   }
 
-  // ---- 2. julho: hash identico ----
+  // ---- 2. MES ABERTO: hash identico ----
+  // A competencia vem do RUN, nao de literal. Era `2026, 7` cravado: julho estava
+  // aberto quando este portao foi escrito e FECHOU, entao o bloco passou a montar
+  // as duas pontas com regimes DIFERENTES ("open" x "fechamento") e a reprovar por
+  // envelhecimento — com o mes fechado o hash DEVE mesmo divergir, e isso e o
+  // conserto do mov3, nao regressao. Ver scripts/_competenciaAberta.cjs: seis
+  // portoes estavam vermelhos por esta mesma causa.
+  const ab = await resolverCompetenciaAberta(sb);
   console.log("\n" + "=".repeat(96));
-  console.log("2) JULHO (open) — NO-OP: hash das linhas identico");
+  console.log(`2) MES ABERTO (${ab.comp}, resolvido no run) — NO-OP: hash das linhas identico`);
   console.log("=".repeat(96));
-  const jul = await detectMonthRegime(sb, 2026, 7);
-  const hAntes = hash(monta(2026, 7, "open"));
-  const hDepois = hash(monta(2026, 7, jul));
-  console.log(`  regime=${jul}   hash ANTES=${hAntes}   hash DEPOIS=${hDepois}   ${hAntes === hDepois ? "OK" : "!! DIVERGE"}`);
+  const regAb = await detectMonthRegime(sb, ab.year, ab.month);
+  const hAntes = hash(monta(ab.year, ab.month, "open"));
+  const hDepois = hash(monta(ab.year, ab.month, regAb));
+  console.log(`  regime=${regAb}   hash ANTES=${hAntes}   hash DEPOIS=${hDepois}   ${hAntes === hDepois ? "OK" : "!! DIVERGE"}`);
   if (hAntes !== hDepois) falhas++;
 
   // ---- 3. abril e junho: bate com as outras telas? ----

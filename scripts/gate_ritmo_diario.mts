@@ -555,10 +555,29 @@ console.log("\n[9] as duas regionais cobrem todos os promotores ativos nao-maste
     "toda a lista cai numa regional ou em 'sem regional' (sem sumico)",
     `${somaRegionais} + ${semRegional} == ${promotores.length}`,
   );
-  assert(
-    somaRegionais === ativosNaoMaster,
-    "a soma das duas regionais == total de ativos nao-master",
-    `${somaRegionais} == ${ativosNaoMaster}`,
+  // ASSERCAO APOSENTADA em 29/08/2026 — comparava DOIS UNIVERSOS DIFERENTES.
+  //
+  //   somaRegionais    sai de `res.promotores`, a lista da ROTA, escopada pela
+  //                    COMPETENCIA medida (so quem tem linha nela);
+  //   ativosNaoMaster  sai de um COUNT da tabela `promoters`, sem competencia
+  //                    nenhuma — todo mundo que esta ativo AGORA.
+  //
+  // Elas so coincidiam enquanto todo promotor ativo tivesse producao no mes.
+  // Medido em 29/08/2026: 48 na lista contra 53 na tabela, e os 5 da diferenca tem
+  // producao R$ 0,00 — KEYLLA (cadastrada 25/08), JOYCE (21/08), KELIANE (21/08),
+  // SAMUEL e SUZANA. Ou seja: CONTRATAR alguem passava a reprovar este portao no
+  // dia seguinte, sem nada ter quebrado.
+  //
+  // NAO FICA DESCOBERTO: as duas assercoes VIZINHAS sao as permanentes, e as duas
+  // passam — a lista PARTICIONA (regional + sem regional == total, nada some no
+  // meio) e `semRegional === 0` (ninguem cai fora de regional). Nenhuma delas
+  // depende de quantas pessoas o RH cadastrou, e sao o que o titulo deste bloco
+  // promete. O MESMO par de universos derrubava o projecao_rank_sem_master_gate,
+  // pelas MESMAS 5 pessoas; la a substituta e "quem tem producao aparece em algum
+  // rank", que e a versao permanente do que esta contagem tentava dizer.
+  console.log(
+    `        (informativo) lista da competencia=${somaRegionais}  |  ativos nao-master na tabela=${ativosNaoMaster}` +
+      `  -> diferenca ${ativosNaoMaster - somaRegionais}, esperada: ativo sem producao no mes`,
   );
   assert(semRegional === 0, "nenhum promotor ficou fora de regional", `sem regional=${semRegional}`);
 }

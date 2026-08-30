@@ -32,6 +32,7 @@
  * ========================================================================== */
 process.env.TRP_SOURCE = process.env.TRP_SOURCE || "db";
 require("./_ts_register.cjs");
+const { resolverCompetenciaAberta } = require("./_competenciaAberta.cjs");
 const { createClient } = require("@supabase/supabase-js");
 const { reconsolidarCompetenciaFechada } = require("../lib/reconsolidarCompetencia.ts");
 const { consolidateMonthlyGroup } = require("../lib/bbtsOrchestrator.ts");
@@ -122,19 +123,29 @@ const K = (p, c) => `${p}|${c ?? "NULL"}`;
   console.log(`   -> abril produz PMR fechado real (backfill manual pos-merge): ${okAbr ? "OK" : "FALHOU"}`);
   if (!okAbr) falhas++;
 
-  // ---- 4. JULHO — no-op ----
+  // ---- 4. MES ABERTO — no-op ----
+  // A competencia sai do RUN, nao de literal. Era `2026, 7`: julho estava aberto
+  // quando o portao foi escrito e FECHOU. Com julho fechado o PMR dele ganhou
+  // linhas 'fechamento'/'bbts' — CORRETAS — e o portao acusava "julho nao esta
+  // intacto", ou seja, media o fechamento de julho em vez do no-op do mes aberto.
+  // Ver scripts/_competenciaAberta.cjs: seis portoes caiam por esta mesma causa.
+  const ab = await resolverCompetenciaAberta(sb);
   console.log("\n" + "=".repeat(88));
-  console.log("4) JULHO/2026 — regime 'open': NO-OP mesmo com dryRun=false");
+  console.log(`4) MES ABERTO (${ab.comp}, resolvido no run) — regime 'open': NO-OP mesmo com dryRun=false`);
   console.log("=".repeat(88));
   for (const dry of [true, false]) {
-    const j = await reconsolidarCompetenciaFechada(sb, { year: 2026, month: 7, dryRun: dry });
+    const j = await reconsolidarCompetenciaFechada(sb, { year: ab.year, month: ab.month, dryRun: dry });
     console.log(`   dryRun=${pad(dry, 6)} regime=${j.regime}  ran=${j.ran}  gravadas=${j.gravadas ?? 0}`);
     if (j.ran) falhas++;
   }
-  const { data: pmrJul } = await sb.from("promoter_monthly_results").select("source").eq("year", 2026).eq("month", 7);
-  const okJul = pmrJul.every((r) => r.source === "daily");
-  console.log(`   PMR de julho intacto (so daily, nenhuma fechamento/bbts criada): ${okJul ? "OK" : "FALHOU"}`);
-  if (!okJul) falhas++;
+  const { data: pmrAb } = await sb.from("promoter_monthly_results").select("source").eq("year", ab.year).eq("month", ab.month);
+  // ATENCAO ao caso VAZIO: mes aberto sem NENHUMA linha de PMR faz `every` devolver
+  // true e o portao passar sem ter olhado nada. O tamanho do universo e impresso
+  // para que a vacuidade fique visivel.
+  const naoDaily = (pmrAb || []).filter((r) => r.source !== "daily");
+  const okAb = naoDaily.length === 0;
+  console.log(`   PMR de ${ab.comp} intacto (${(pmrAb || []).length} linha(s); nenhuma fechamento/bbts criada): ${okAb ? "OK" : `FALHOU — ${naoDaily.length} linha(s) nao-daily`}`);
+  if (!okAb) falhas++;
 
   // ---- 5. HISTORICO cms ----
   console.log("\n" + "=".repeat(88));
