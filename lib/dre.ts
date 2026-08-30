@@ -326,26 +326,98 @@ export async function buildDre(
   // resultado da ADS em junho e POSITIVO (+2.616,89): incluir MELHORA o DRE.
   {
     const compKey = periodKey(selected.year, selected.month);
-    const adsDaily = await fetchAllRows<{
+    // A PERNA DO PAGAMENTO SEGUE A COMPETENCIA DO PDF, nao a janela do contrato.
+    //
+    // O PDF da BBTS e EXTRATO DE DEPOSITO: o valor pertence a competencia em que
+    // ele PAGOU. O PRT e a Abertura logo abaixo sempre leram assim
+    // (`.eq("competencia", ...)`); o AVT e o seguro liam pela JANELA das datas do
+    // contrato, e nada garantia que as duas coincidissem.
+    //
+    // Coincidiam por CONSTRUCAO do importador, que carimba movement_date no dia
+    // 15 — e o dia 15 cai dentro da janela da propria competencia. Medido em
+    // 30/08/2026: 60 das 61 linhas com valor de fechamento. A 61a e a prova de
+    // que a construcao nao bastava: a linha 5240028e nasceu do DIARIO (data real
+    // 31/07) e recebeu bbts_seguro_pago=89,42 por backfill; pela janela caiu em
+    // 2026-08, e os 89,42 sao do PDF de JULHO. Julho exibia 115,10 e nao 204,52.
+    //
+    // Agora quem manda e `bbts_competencia_fechamento`, gravada junto com o valor
+    // e cobrada pelo CHECK dpr_valor_fechamento_exige_competencia.
+    //
+    // TOLERA a coluna ainda inexistente (migration nao aplicada): sem isso o
+    // deploy do codigo ANTES do SQL derrubaria o DRE inteiro com 42703. Nesse
+    // caso volta a janela e ACENDE alerta — degradado e visivel, nunca silencioso.
+    const SELECT_COM_CARIMBO =
+      "bbts_pag_avista, bbts_seguro_pago, movement_date, contract_date, proposal_date, bbts_competencia_fechamento";
+    const SELECT_SEM_CARIMBO =
+      "bbts_pag_avista, bbts_seguro_pago, movement_date, contract_date, proposal_date";
+    type AdsDailyRow = {
       bbts_pag_avista: number | null;
       bbts_seguro_pago: number | null;
       movement_date: string | null;
       contract_date: string | null;
       proposal_date: string | null;
-    }>(() =>
-      supabase
-        .from("daily_production_records")
-        .select("bbts_pag_avista, bbts_seguro_pago, movement_date, contract_date, proposal_date")
-        .eq("company_id", BBTS_COMPANY_ID)
-    );
+      bbts_competencia_fechamento?: string | null;
+    };
+    let adsDaily: AdsDailyRow[];
+    let temCarimbo = true;
+    try {
+      adsDaily = await fetchAllRows<AdsDailyRow>(() =>
+        supabase
+          .from("daily_production_records")
+          .select(SELECT_COM_CARIMBO)
+          .eq("company_id", BBTS_COMPANY_ID)
+      );
+    } catch (e) {
+      const msg = String((e as Error)?.message || e);
+      if (!/bbts_competencia_fechamento|42703|column .* does not exist/i.test(msg)) throw e;
+      temCarimbo = false;
+      adsDaily = await fetchAllRows<AdsDailyRow>(() =>
+        supabase
+          .from("daily_production_records")
+          .select(SELECT_SEM_CARIMBO)
+          .eq("company_id", BBTS_COMPANY_ID)
+      );
+      alerts.push(
+        "A coluna daily_production_records.bbts_competencia_fechamento ainda nao existe " +
+          "(migration 20260830_000001 pendente). A receita da ADS esta sendo lida pela JANELA " +
+          "das datas do contrato — o valor de um fechamento pode aparecer na competencia errada."
+      );
+    }
     let receitaAds = 0;
+    let semCarimboValor = 0;
+    let semCarimboLinhas = 0;
     for (const r of adsDaily) {
+      const valor = toNum(r.bbts_pag_avista) + toNum(r.bbts_seguro_pago);
+      if (temCarimbo) {
+        const carimbo = r.bbts_competencia_fechamento;
+        if (!carimbo) {
+          // Linha COM valor e SEM carimbo nao entra em competencia nenhuma: nao ha
+          // como saber de qual fechamento veio, e chutar pela janela e o defeito
+          // que esta correcao existe para matar. Sai em alerta, nao em silencio.
+          if (valor !== 0) {
+            semCarimboValor += valor;
+            semCarimboLinhas += 1;
+          }
+          continue;
+        }
+        if (String(carimbo).slice(0, 7) !== compKey) continue;
+        receitaAds += valor;
+        continue;
+      }
       const p =
         getProductionPeriodFromValue(r.movement_date) ||
         getProductionPeriodFromValue(r.contract_date) ||
         getProductionPeriodFromValue(r.proposal_date);
       if (!p || getProductionPeriodKey(p.year, p.month) !== compKey) continue;
-      receitaAds += toNum(r.bbts_pag_avista) + toNum(r.bbts_seguro_pago);
+      receitaAds += valor;
+    }
+    if (semCarimboLinhas > 0) {
+      alerts.push(
+        `Há ${semCarimboLinhas} linha(s) da ADS com valor de fechamento ` +
+          `(${semCarimboValor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}) e SEM ` +
+          "competência de fechamento — não foi possível dizer de qual PDF vieram, então NÃO entram " +
+          "na receita de nenhuma competência. Corrija o carimbo na origem (importação do fechamento)."
+      );
     }
     const prtRows = await fetchAllRows<{ valor_parcela: number | null }>(() =>
       supabase

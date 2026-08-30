@@ -128,7 +128,13 @@ const TABELAS = {
   ],
   // ADS: as tres fontes que a linha dela usa
   daily_production_records: [
-    { bbts_pag_avista: 18737.33, bbts_seguro_pago: 204.52, movement_date: "2026-07-15", contract_date: null, proposal_date: null },
+    // O CARIMBO passou a ser o que decide a competencia da perna do pagamento
+    // (migration 20260830_000001). Sem ele a linha nao entra em competencia
+    // nenhuma e o total da ADS cai para 107,01 — foi assim que este portao pegou
+    // a mudanca. A fixture declara o carimbo porque o banco passou a exigi-lo:
+    // o CHECK dpr_valor_fechamento_exige_competencia nao deixa existir linha com
+    // valor de fechamento e sem competencia.
+    { bbts_pag_avista: 18737.33, bbts_seguro_pago: 204.52, movement_date: "2026-07-15", contract_date: null, proposal_date: null, bbts_competencia_fechamento: "2026-07-01" },
   ],
   bbts_prt_parcelas: [{ competencia: "2026-07-01", valor_parcela: 7.01 }],
   bbts_fechamento_totais: [{ competencia: "2026-07-01", abertura_conta: 100 }],

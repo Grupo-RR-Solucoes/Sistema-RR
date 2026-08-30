@@ -751,6 +751,23 @@ const GATES = [
       "faz o .find() de closingProposalRows achar a certa",
   },
   {
+    arquivo: "scripts/bbts_carimbo_fechamento_gate.cjs",
+    nome: "BBTS: o dinheiro do PDF entra na competencia em que o PDF pagou",
+    modo: "self",
+    motivo:
+      "SELF-CONTAINED: buildAdsCashByPeriod e funcao PURA (entra array, sai Map), entao a " +
+      "regra se prova sem createClient e roda no CI. Prova as DUAS metades: a perna do " +
+      "pagamento soma pela competencia do FECHAMENTO (nao pela janela das datas do contrato) " +
+      "e linha com valor SEM carimbo nao entra em competencia nenhuma e e REPORTADA. A " +
+      "fixture reproduz a linha 5240028e (op 221262790, R$ 89,42), que nasceu do DIARIO com " +
+      "movement_date 31/07 e recebeu valor de FECHAMENTO por backfill em 28/08: pela janela " +
+      "caia em agosto, e o PDF que a pagou e o de JULHO. Provado por MUTACAO em 30/08/2026, " +
+      "nos dois sentidos: devolver o leitor a janela derruba 6 assercoes; tirar o carimbo de " +
+      "UM dos dois blocos do importador derruba 1 (a contagem e 2 de 2, nao 'pelo menos um'). " +
+      "Controles positivos em 2 blocos para nao virar trava geral: PRT e Abertura seguem pela " +
+      "competencia literal, e as 4 linhas sadias ficam inteiras sob a mutacao",
+  },
+  {
     arquivo: "scripts/produtos_detalhamento_escopo_gate.cjs",
     nome: "detalhamento por produto: promotor A nao ve linha de B",
     modo: "needs-db",

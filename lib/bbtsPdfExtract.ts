@@ -612,6 +612,15 @@ export async function extractBbtsClosingFromPdfs(
       credito_valor_financiado: somaVfin,
       credito_pag_avista: somaPag,
       seguro_calculo: somaSeguroCalculo,
+      // O TOTAL DO CABECALHO — a ancora do DEPOSITO, que ate 30/08/2026 era lida,
+      // conferida (:568-572) e jogada fora aqui. `seguro_calculo` e so a soma das
+      // linhas POSITIVAS; `seguro_total` e o que a BBTS efetivamente depositou,
+      // ja liquido do estorno. Em julho/2026: 204,52 e 155,07.
+      // Sem o PDF de seguro o extrator devolve totalAnchor=0; nesse caso a ancora
+      // e OMITIDA em vez de virar zero — "nao mandaram o PDF" e "mandaram e nao
+      // tinha seguro" nao podem colapsar no mesmo numero (mesma razao do
+      // seguro_pdf_ausente logo acima).
+      ...(seguroData === null ? {} : { seguro_total: round2(seg.totalAnchor) }),
       prt_valor: cred.pagPrtAnchor,
     },
   };
