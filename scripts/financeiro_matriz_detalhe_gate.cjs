@@ -63,6 +63,35 @@ function ok(cond, msg, extra) {
   }
 }
 
+/**
+ * AS DUAS IDENTIDADES, num so lugar — porque o MUTANTE da secao (E) precisa ser
+ * medido pela MESMA regua que o caso real. Verificador duplicado e verificador
+ * que diverge: o mutante passaria a ser julgado por uma copia que ninguem
+ * mantem, e a prova por mutacao viraria teatro.
+ */
+function conferirIdentidades(linhas, imprimir) {
+  let quebrasI = 0;
+  let quebrasII = 0;
+  for (const l of linhas) {
+    const somaDet = r2((l.outrosDetalhe || []).reduce((a, d) => a + (Number(d.valor) || 0), 0));
+    const outros = r2(l.celulas.outros);
+    const somaCel = r2(Object.values(l.celulas).reduce((a, v) => a + (Number(v) || 0), 0));
+    const tot = r2(l.total);
+    const i = somaDet === outros;
+    const ii = somaCel === tot;
+    if (!i) quebrasI += 1;
+    if (!ii) quebrasII += 1;
+    if (imprimir) {
+      console.log(
+        `    ${String(l.rotulo).padEnd(46).slice(0, 46)} outros=${f(outros).padStart(10)} ` +
+          `Sigma(det)=${f(somaDet).padStart(10)} ${i ? "(I) ok " : "(I) QUEBRA"}  ` +
+          `Sigma(cel)=${f(somaCel).padStart(12)} total=${f(tot).padStart(12)} ${ii ? "(II) ok" : "(II) QUEBRA"}`
+      );
+    }
+  }
+  return { quebrasI, quebrasII };
+}
+
 // ---- cliente de LEITURA semeado a mao -------------------------------------
 // Ignora filtros de proposito: cada tabela devolve exatamente as linhas
 // semeadas, e o recorte de competencia fica por conta do codigo sob teste.
@@ -187,23 +216,7 @@ function stubModule(spec, exports) {
   );
 
   console.log(`\n(B) AS ${m.linhas.length} LINHAS, celula a celula`);
-  let quebrasI = 0;
-  let quebrasII = 0;
-  for (const l of m.linhas) {
-    const somaDet = r2((l.outrosDetalhe || []).reduce((a, d) => a + (Number(d.valor) || 0), 0));
-    const outros = r2(l.celulas.outros);
-    const somaCel = r2(Object.values(l.celulas).reduce((a, v) => a + (Number(v) || 0), 0));
-    const tot = r2(l.total);
-    const i = somaDet === outros;
-    const ii = somaCel === tot;
-    if (!i) quebrasI += 1;
-    if (!ii) quebrasII += 1;
-    console.log(
-      `    ${String(l.rotulo).padEnd(46).slice(0, 46)} outros=${f(outros).padStart(10)} ` +
-        `Sigma(det)=${f(somaDet).padStart(10)} ${i ? "(I) ok " : "(I) QUEBRA"}  ` +
-        `Sigma(cel)=${f(somaCel).padStart(12)} total=${f(tot).padStart(12)} ${ii ? "(II) ok" : "(II) QUEBRA"}`
-    );
-  }
+  const { quebrasI, quebrasII } = conferirIdentidades(m.linhas, true);
   ok(quebrasI === 0, "(I) Sigma(outrosDetalhe) == celulas.outros em TODA linha", `linhas quebradas: ${quebrasI}`);
   ok(quebrasII === 0, "(II) Sigma(celulas) == total em TODA linha", `linhas quebradas: ${quebrasII}`);
 
@@ -243,6 +256,58 @@ function stubModule(spec, exports) {
     "totaisColuna.abertura soma a coluna nova (100,00)",
     f(m.totaisColuna.abertura)
   );
+
+  // =========================================================================
+  console.log("\n(E) PROVA POR MUTACAO — o gate TEM de ficar vermelho se a Abertura voltar");
+  // -------------------------------------------------------------------------
+  // O estado ANTERIOR a 28/08/2026, reconstruido sobre a matriz REAL que acabou
+  // de passar: a Abertura de Conta somada em `outros` SEM entrada no detalhe.
+  // Se as identidades nao acusarem isto, elas nao estao medindo nada — o gate
+  // teria ficado verde durante todo o periodo em que o defeito esteve vivo.
+  // A mutacao e aplicada a uma COPIA; a matriz real nao e tocada.
+  {
+    const mutante = JSON.parse(JSON.stringify(m.linhas));
+    const alvo = mutante.find((l) => String(l.chave) === ADS);
+    ok(!!alvo && r2(alvo.celulas.abertura) !== 0, "ha Abertura != 0 para mutar (senao a mutacao seria vazia)", alvo && f(alvo.celulas.abertura));
+    if (alvo) {
+      const valor = r2(alvo.celulas.abertura);
+      alvo.celulas.outros = r2(alvo.celulas.outros + valor); // volta para "Outros"
+      alvo.celulas.abertura = 0;                             // a coluna some
+      // e o detalhe NAO ganha entrada — que era exatamente o defeito.
+      const mut = conferirIdentidades(mutante, false);
+      ok(
+        mut.quebrasI === 1,
+        "MUTANTE: Abertura de volta em `outros` sem detalhe QUEBRA a identidade (I)",
+        `quebras (I)=${mut.quebrasI} — esperado exatamente 1 (a linha da ADS)`
+      );
+      ok(
+        mut.quebrasII === 0,
+        "MUTANTE: a (II) continua fechando — foi por isso que o defeito passou despercebido",
+        `quebras (II)=${mut.quebrasII}`
+      );
+      const somaMut = r2(Object.values(alvo.celulas).reduce((a, v) => a + (Number(v) || 0), 0));
+      ok(somaMut === r2(alvo.total), "MUTANTE: o total da linha fica IGUAL — o dano e invisivel fora da (I)", `${f(somaMut)} vs ${f(alvo.total)}`);
+    }
+  }
+  // CONTROLE do mutante: mover a Abertura para `outros` E registrar a entrada no
+  // detalhe NAO quebra nada. Prova que a (I) reage a "valor sem entrada
+  // nomeada", e nao a "mexeram na coluna abertura".
+  {
+    const mutante = JSON.parse(JSON.stringify(m.linhas));
+    const alvo = mutante.find((l) => String(l.chave) === ADS);
+    if (alvo) {
+      const valor = r2(alvo.celulas.abertura);
+      alvo.celulas.outros = r2(alvo.celulas.outros + valor);
+      alvo.celulas.abertura = 0;
+      alvo.outrosDetalhe = (alvo.outrosDetalhe || []).concat([{ chave: "abertura", rotulo: "Abertura de conta", valor }]);
+      const mut = conferirIdentidades(mutante, false);
+      ok(
+        mut.quebrasI === 0 && mut.quebrasII === 0,
+        "CONTROLE do mutante: com entrada NOMEADA no detalhe, as duas identidades fecham",
+        `(I)=${mut.quebrasI} (II)=${mut.quebrasII}`
+      );
+    }
+  }
 
   console.log(`\n=== ${total - falhas}/${total} asserçoes ===`);
   process.exit(falhas === 0 ? 0 : 1);

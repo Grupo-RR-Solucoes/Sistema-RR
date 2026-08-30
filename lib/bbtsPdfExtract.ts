@@ -60,7 +60,7 @@ function moneysIn(line: string): number[] {
   return (line.match(/-?R\$\s*-?[\d.,]*/g) || []).map(money);
 }
 
-class BbtsPdfError extends Error {}
+export class BbtsPdfError extends Error {}
 
 // ---- CRÉDITO ----------------------------------------------------------------
 // Ex.: "212539496 R$ 5.000,00 R$ 143,50 08/06/2026 2,8700% 2 JJ552710 Novo Não
@@ -386,7 +386,38 @@ export async function extractCabecalhoNf(data: Uint8Array): Promise<CabecalhoNf>
 // Seção "Propostas do PAGAMENTO PRT" (a 2a perna do pagamento: o excedente do teto
 // de 6% que a BBTS paga a prazo, uma parcela por mês).
 // Ex.: "208966373 01/07/2026 2 R$ 0,44 #N/D"  |  "210594528 01/07/2026 1 R$ 1,17"
-const PRT_RE = /^(\d{6,})\s+(\d{2}\/\d{2}\/\d{4})\s+(\d+)\s+(-?R\$\s*[\d.,]+)\s*(.*)$/;
+//      "208966373 01/06/2026 #N/D R$ 0,44 #N/D"  <- 05/26: a BBTS nao informa a parcela
+//
+// A "N. da parcela PRT" pode vir "#N/D". Medido no fechamento de 05/2026: as 7
+// linhas PRT existem, somam 5,84 e fecham a ancora ao centavo, mas TODAS trazem
+// "#N/D" na parcela — com `(\d+)` nenhuma casava, a Sigma dava 0 e o extrator
+// abortava o PDF INTEIRO por "extracao inconsistente". A ancora estava certa; a
+// linha e que era estreita demais.
+//
+// Exportada so para o gate (scripts/bbts_layouts_pdf_gate.cjs).
+export const PRT_RE =
+  /^(\d{6,})\s+(\d{2}\/\d{2}\/\d{4})\s+(\d+|#N\/D)\s+(-?R\$\s*[\d.,]+)\s*(.*)$/i;
+
+/**
+ * "N. da parcela" do PRT como INTEIRO, que e o que o banco aceita.
+ *
+ * `bbts_prt_parcelas.n_parcela` e `integer NOT NULL` E faz parte da chave unica
+ * (company_id, proposal_number, competencia, n_parcela). Entao "#N/D" NAO pode
+ * virar null por dois motivos independentes: o insert seria rejeitado (23502) e
+ * o bloco do PRT so registra AVISO, ou seja a perda seria silenciosa; e, se a
+ * coluna fosse anulavel, NULL nao colide com NULL em indice unico e reimportar a
+ * competencia duplicaria as parcelas em vez de sobrescreve-las.
+ *
+ * 0 e o codigo de "o DOCUMENTO nao informou a parcela" — nao e parcela zero. As
+ * parcelas reais comecam em 1, entao 0 nao colide com nenhuma delas, e a chave
+ * unica continua fazendo o upsert ser idempotente. O que 0 NAO resolve esta
+ * guardado logo abaixo, em parsePrtSection: dois "#N/D" do MESMO contrato na
+ * MESMA competencia colapsariam na mesma chave — isso LANCA, nao se resolve
+ * sozinho.
+ */
+export function nParcelaPrt(bruto: string): number {
+  return /^\d+$/.test(bruto) ? Number(bruto) : 0;
+}
 
 export type CreditoExtract = {
   rows: BbtsCreditoRow[];
@@ -487,7 +518,21 @@ export async function extractBbtsCreditoPdf(data: Uint8Array): Promise<CreditoEx
     );
   }
 
-  // ---- PRT: seção "Propostas do PAGAMENTO PRT" ----
+  const prt = parsePrtSection(lines, pagPrtAnchor);
+
+  return { rows, prt, cabecalho, pagAvistaAnchor, pagPrtAnchor, year, month };
+}
+
+/**
+ * Seção "Propostas do PAGAMENTO PRT" -> linhas, JÁ conferida contra a âncora.
+ *
+ * PURA (linhas -> linhas), separada de extractBbtsCreditoPdf de propósito: é o
+ * que permite ao portão exercitar os DOIS lados — o layout que passa e o que tem
+ * de ABORTAR — sem um PDF em disco. A conferência mora aqui dentro, não no
+ * chamador: função que devolve linhas sem conferir convida o próximo chamador a
+ * esquecer a âncora.
+ */
+export function parsePrtSection(lines: string[], pagPrtAnchor: number): BbtsPrtRow[] {
   const prt: BbtsPrtRow[] = [];
   let emPrt = false;
   for (const ln of lines) {
@@ -504,10 +549,32 @@ export async function extractBbtsCreditoPdf(data: Uint8Array): Promise<CreditoEx
     prt.push({
       contrato: m[1],
       data: m[2],
-      n_parcela: Number(m[3]),
+      n_parcela: nParcelaPrt(m[3]),
       valor_parcela: money(m[4]),
       qt_parcela: Number.isFinite(qt) ? qt : null,
     });
+  }
+
+  // CHAVE QUE COLAPSA. n_parcela=0 é o código de "o documento não informou"
+  // (ver nParcelaPrt). Um "#N/D" por contrato é inofensivo — a chave única do
+  // banco inclui o contrato. DOIS do mesmo contrato na mesma competência caem na
+  // MESMA chave: o upsert guardaria um e descartaria o outro, a Σ conferiria
+  // aqui (a extração viu os dois) e o banco ficaria com menos dinheiro do que o
+  // documento diz, sem erro nenhum. Medido em 05/2026: 7 linhas "#N/D", 7
+  // contratos distintos — não acontece hoje, e é justamente por isso que
+  // precisa de guarda: quando acontecer, ninguém estará olhando.
+  const vistos = new Set<string>();
+  for (const r of prt) {
+    const chave = `${r.contrato}::${r.n_parcela}`;
+    if (vistos.has(chave)) {
+      throw new BbtsPdfError(
+        `PRT: o contrato ${r.contrato} aparece duas vezes com a mesma parcela ` +
+          `(${r.n_parcela === 0 ? "'#N/D'" : r.n_parcela}) na mesma competência — a chave única ` +
+          `(company_id, proposal_number, competencia, n_parcela) colapsaria e uma das ` +
+          `parcelas seria descartada em silêncio na gravação.`
+      );
+    }
+    vistos.add(chave);
   }
 
   // self-âncora do PRT: Σ das parcelas deve bater "Pagamento PRT" do cabeçalho.
@@ -517,17 +584,57 @@ export async function extractBbtsCreditoPdf(data: Uint8Array): Promise<CreditoEx
       `PRT: Σ das parcelas extraída ${somaPrt} ≠ âncora 'Pagamento PRT' ${pagPrtAnchor} do PDF — extração inconsistente.`
     );
   }
-
-  return { rows, prt, cabecalho, pagAvistaAnchor, pagPrtAnchor, year, month };
+  return prt;
 }
 
 // ---- SEGURO -----------------------------------------------------------------
-// Ex.: "212146378 24.000,00 108 ESTOQUE D0 82442550 4.594,71 POSITIVO 03Jun2026
-//       JJ552710 0,10% R$ 24,00"  (cancelado: "… CANCELADO … -R$ 20,70")
-// Exportada so para o gate de sinal. O `-?` do grupo 11 e o que faz a linha
-// CANCELADA CASAR: sem ele a linha nao casaria e seria descartada em silencio.
+//
+// TRES LAYOUTS, TODOS REAIS, todos da mesma BBTS e do mesmo relatorio. Medidos
+// em 30/08/2026 nos PDFs em disco (a forma abaixo e a do documento; os numeros
+// aqui sao ILUSTRATIVOS — o repo e publico e nao carrega linha de cliente):
+//
+//   A (07/26)  <contrato> 24.000,00 108 ESTOQUE D0 <apolice> 4.594,71 POSITIVO 03Jun2026 JJ<x> 0,10% R$ 24,00
+//   B (05/26)  <contrato> R$ 25.843,62 96 ESTOQUE D0 <apolice> R$ 4.130,55 POSITIVO 05/05/2026 JJ<x> 0,10% R$ 25,84
+//   C (04/26)  <contrato> R$ 20.831,00 96 ESTOQUE D0 <apolice> R$ 3.454,63 POSITIVO 0,10% R$ 20,83 JJ<x>
+//
+// Tres eixos variam de forma INDEPENDENTE, e por isso cada um vira um opcional
+// proprio em vez de uma regex por layout:
+//   1. "R$ " prefixando o Valor Total do Credito e o Premio Liquido (A nao tem;
+//      B e C tem).
+//   2. a coluna "Data de Movimentacao" (A e B tem, em formatos DIFERENTES entre
+//      si: 03Jun2026 e 05/05/2026; C NAO TEM a coluna).
+//   3. a posicao da CHAVE J: no MEIO, antes do percentual (A e B), ou no FIM,
+//      depois do valor pago (C).
+//
+// O QUE ISTO **NAO** AFROUXA. A conferencia continua sendo a ancora: a Σ das
+// linhas tem de bater o "TOTAL" do proprio documento, e nao batendo o extrator
+// LANCA e o importBbtsClosing nao grava nada. Aceitar mais formas de LINHA nao
+// aceita mais VALOR — uma linha mal lida deixa de somar e a ancora acusa. O
+// caminho perigoso seria o inverso: manter a linha estreita e ver a Σ dar 0, que
+// foi exatamente o que aconteceu com 04/26 e 05/26 antes deste conserto.
+//
+// A data e `(\d[^\s%]*)` — comeca com DIGITO — de proposito: e o que a distingue
+// da chave J (`JJ...`) quando a coluna some no layout C. Com o `(\S+)` antigo,
+// generalizar era impossivel sem a data engolir a chave.
+//
+// Exportada so para os gates (sinal negativo e layouts). O `-?` do grupo 11 e o
+// que faz a linha CANCELADA CASAR: sem ele a linha nao casaria e seria
+// descartada em silencio.
 export const SEGURO_RE =
-  /^(\d{6,})\s+([\d.,]+)\s+(\d+)\s+(ESTOQUE D0|ESTOQUE|SLIP NOVO|SLIP)\s+(\d+)\s+([\d.,]+)\s+(POSITIVO|CANCELADO)\s+(\S+)\s+(JJ\d+)\s+([\d.,]+)%\s+(-?R\$\s*[\d.,]+)\s*$/i;
+  /^(\d{6,})\s+(?:R\$\s*)?([\d.,]+)\s+(\d+)\s+(ESTOQUE D0|ESTOQUE|SLIP NOVO|SLIP)\s+(\d+)\s+(?:R\$\s*)?([\d.,]+)\s+(POSITIVO|CANCELADO)\s+(?:(\d[^\s%]*)\s+)?(?:(JJ\d+)\s+)?([\d.,]+)%\s+(-?R\$\s*[\d.,]+)(?:\s+(JJ\d+))?\s*$/i;
+
+// CABECALHO "Valor para Emissao da Nota Fiscal" do PDF de SEGURO — onde mora a
+// ancora TOTAL. O rotulo tambem muda entre competencias, e a linha de valores e
+// sempre a de baixo, com o TOTAL na ULTIMA coluna:
+//   05/26, 07/26  "CNPJ RAZAO SOCIAL PAGAMENTO DESCONTO TOTAL"  -> 3 valores
+//   04/26         "CNPJ RAZAO SOCIAL Valor pagamento Total"     -> 1 valor
+// O padrao de 04/26 exige o contexto "RAZAO SOCIAL" porque "Valor pagamento
+// Total" solto e generico demais: sem ele, a ancora poderia casar uma linha
+// qualquer do corpo do relatorio e o TOTAL sairia de outro lugar.
+const RX_SEGURO_TOTAL_CAB: readonly RegExp[] = [
+  /PAGAMENTO\s+DESCONTO\s+TOTAL/i,
+  /RAZ[ÃA]O\s+SOCIAL\s+Valor\s+pagamento\s+Total/i,
+];
 
 export type SeguroExtract = { rows: BbtsSeguroRow[]; totalAnchor: number };
 
@@ -536,15 +643,25 @@ export async function extractBbtsSeguroPdf(data: Uint8Array): Promise<SeguroExtr
   if (lines.length === 0) {
     throw new BbtsPdfError("PDF de seguro sem texto (imagem/escaneado?) — extração abortada.");
   }
+  return parseSeguroLines(lines);
+}
 
-  // âncora: cabeçalho "… PAGAMENTO DESCONTO TOTAL" → valores na próxima linha; ÚLTIMO R$ = TOTAL.
+/**
+ * Linhas de texto do PDF de seguro -> linhas estruturadas, JÁ conferidas contra
+ * a âncora TOTAL do próprio documento.
+ *
+ * PURA, pelo mesmo motivo de parsePrtSection: é o que deixa o portão exercitar
+ * os três layouts E o caso que tem de abortar, sem PDF em disco. A conferência
+ * mora aqui dentro — quem chama não pode esquecê-la.
+ */
+export function parseSeguroLines(lines: string[]): SeguroExtract {
+  // âncora: cabeçalho da NF → valores na próxima linha; ÚLTIMO R$ = TOTAL.
   let totalAnchor = NaN;
   for (let i = 0; i < lines.length; i++) {
-    if (/PAGAMENTO\s+DESCONTO\s+TOTAL/i.test(lines[i])) {
-      const vals = moneysIn(lines[i + 1] || "");
-      if (vals.length) totalAnchor = vals[vals.length - 1];
-      break;
-    }
+    if (!RX_SEGURO_TOTAL_CAB.some((rx) => rx.test(lines[i]))) continue;
+    const vals = moneysIn(lines[i + 1] || "");
+    if (vals.length) totalAnchor = vals[vals.length - 1];
+    break;
   }
   if (!Number.isFinite(totalAnchor)) {
     throw new BbtsPdfError("Âncora 'TOTAL' (Valor para Emissão da Nota Fiscal) não encontrada no PDF de seguro.");

@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { mergeDailyProductionRecords } from "./dailyRecordMerge.ts";
 import {
+  propostasAlvoDoFechamento,
+  propostasComCarimboPosterior,
+  type PropostaCarimboPosterior,
+} from "@/lib/bbts/carimboPosterior";
+import {
   FONTE_FECHAMENTO_ADS,
   traduzirValorFechamento,
   type ValorResolucao as ValorResolucaoSrcc,
@@ -180,6 +185,13 @@ export type BbtsClosingResult = {
   seguro_pdf_ausente: boolean; // o PDF de seguro NÃO foi enviado nesta importação
   prt_valor: number; // Σ das parcelas PRT do mês
   gravadas: number;
+  /**
+   * Propostas EXCLUIDAS da gravacao por ja estarem carimbadas em competencia
+   * POSTERIOR a esta. Sempre preenchido — a rota recusa com 409 quando nao
+   * vazio e sem confirmacao, mas a exclusao acontece SEMPRE, confirmada ou
+   * nao: a confirmacao autoriza importar o RESTO, nunca sobrescrever.
+   */
+  puladas_carimbo_posterior: PropostaCarimboPosterior[];
   ancora_detalhe: Record<string, { esperado: number; obtido: number; delta: number; ok: boolean }>;
   amostra: Array<Record<string, unknown>>;
 };
@@ -378,6 +390,7 @@ export async function importBbtsClosing(
     cabecalho_gravado: false,
     seguro_pdf_ausente: input.seguro_pdf_ausente === true,
     gravadas: 0,
+    puladas_carimbo_posterior: [],
     ancora_detalhe: detalhe,
     amostra: [],
   };
@@ -646,6 +659,36 @@ export async function importBbtsClosing(
         },
       },
     });
+  }
+
+  // 3c. GUARDA DE CARIMBO POSTERIOR — a proposta que um fechamento MAIS NOVO já
+  //     carimbou não é sobrescrita por este, que é mais velho.
+  //
+  //     A EXCLUSÃO ACONTECE AQUI, DENTRO DO ESCRITOR, e não só na rota. A rota
+  //     recusa com 409 para que o operador VEJA o dano antes de decidir; esta
+  //     guarda garante que, uma vez que ele decida seguir, a decisão dele seja
+  //     "importe o resto" e nunca "sobrescreva". Não há caminho — nem confirmação,
+  //     nem chamada direta desta função por um script — que grave estas linhas.
+  //     Redundância deliberada: a guarda mora junto de quem escreve.
+  //
+  //     DEPOIS da âncora ser CALCULADA (bloco 1) e ANTES do gate dela (bloco 4):
+  //     a âncora sai do PDF (input.credito / input.seguro), não de `records`, e
+  //     tem de continuar assim. Ela responde "eu li o documento inteiro?"; tirar
+  //     as excluídas da conta faria a âncora fechar sobre um documento que não é
+  //     o que está em disco, e a conferência viraria autoendosso.
+  const alvo = propostasAlvoDoFechamento({ credito, seguro });
+  const bloqueadas = await propostasComCarimboPosterior(supabase, {
+    companyId: BBTS_COMPANY_ID,
+    year,
+    month,
+    propostas: alvo,
+  });
+  result.puladas_carimbo_posterior = bloqueadas;
+  if (bloqueadas.length > 0) {
+    const fora = new Set(bloqueadas.map((b) => b.proposal_number));
+    for (let i = records.length - 1; i >= 0; i--) {
+      if (fora.has(String(records[i].proposal_number))) records.splice(i, 1);
+    }
   }
 
   // 4. GATE de âncora — nunca grava se não fechar.
