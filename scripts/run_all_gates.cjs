@@ -160,6 +160,31 @@
 //     o produtos_detalhamento_escopo poe a faixa em ~102s — perto do teto, ainda
 //     acima. Nao consertado nesta frente de proposito (e problema separado).
 //
+// (3d) O PORTAO DE 91,3s, MEDIDO E CONSERTADO em 30/08/2026 — nao era consulta
+//     lenta, era N+1. Perfil do produtos_detalhamento_escopo (fetch interceptado,
+//     o run inteiro): 628 requisicoes, 140,5s de rede em 143,3s de wall. A media
+//     por requisicao e 0,22s — NENHUMA e lenta, sao muitas:
+//        product_line_assignments  313 req  68,3s
+//        monthly_closing_entries   156 req  37,0s
+//        carteira_consorcio        158 req  35,0s
+//     Causa: os blocos 4, 5 e 6 chamavam buildProdutoProposalRows com argumentos
+//     IDENTICOS 148 vezes. O bloco 4 sozinho era quadratico — para cada um de 5
+//     promotores refazia as linhas dos outros 23 a partir do banco, ou seja
+//     buscava cada promotor 5 vezes.
+//     Conserto: memo do builder (leitura pura, mes fechado, mesmo run) e o
+//     cruzamento feito EM MEMORIA. 148 chamadas viraram 24 buscas reais.
+//     A COBERTURA SUBIU, nao caiu: com o cruzamento em memoria deu para trocar
+//     `pids.slice(0, 5)` pela matriz 24x24 COMPLETA — 552 pares conferidos,
+//     contra 115 antes.
+//     Medido no mesmo dia, mesma maquina:
+//        o portao sozinho:  150,5s -> 28,4s
+//        a faixa --db:      290,7s -> 185,4s / 193,2s / 193,2s (3 execucoes)
+//     ATENCAO ao comparar com (3c): a faixa ANTES do conserto deu 290,7s HOJE,
+//     contra os 193,3s registrados em 29/08 com os mesmos gates. A latencia do
+//     banco domina a comparacao entre DIAS; so vale o par medido no MESMO dia.
+//     O TETO CONTINUA ESTOURADO: mesmo zerando este portao a faixa ficaria em
+//     ~165s de 90s. Baixa-lo nao resolve a faixa — e um portao a menos.
+//
 //     FAIXA needs-db-lento: 510,6s nos 20 portoes. Tambem concentrada:
 //        78,3s mov2_proposals_get | 71,4s mov1_ledger | 61,5s gate_remuneracao_lideranca
 //        55,9s mov2_dashboard     | 39,7s mov2_grupoA
@@ -734,7 +759,10 @@ const GATES = [
       "e linhas orfas) porque hoje ha ZERO atribuicao e o gate passaria por vacuidade. " +
       "NAO atribui em producao para se testar: PostgREST nao tem transacao, e 'atribui " +
       "e desfaz' sao dois writes — queda no meio deixaria atribuicao real, que muda " +
-      "repasse. O bloco 4 fica DECLARADO PENDENTE e ACORDA sozinho quando houver ASSIGNED",
+      "repasse. O bloco 4 fica DECLARADO PENDENTE e ACORDA sozinho quando houver ASSIGNED. " +
+      "CUSTO, medido em 30/08/2026: era 150,5s (628 requisicoes, 140,5s de rede, media de " +
+      "0,22s cada — N+1, nao consulta lenta). Com memo do builder e o cruzamento em memoria " +
+      "foi a 28,4s COM MAIS cobertura (matriz 24x24 completa, 552 pares, contra 115). Ver (3d)",
   },
   {
     arquivo: "scripts/consorcio_gestor_por_proposta_gate.cjs",
