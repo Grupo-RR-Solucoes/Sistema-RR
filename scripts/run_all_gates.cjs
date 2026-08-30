@@ -160,6 +160,31 @@
 //     o produtos_detalhamento_escopo poe a faixa em ~102s — perto do teto, ainda
 //     acima. Nao consertado nesta frente de proposito (e problema separado).
 //
+// (3d) O PORTAO DE 91,3s, MEDIDO E CONSERTADO em 30/08/2026 — nao era consulta
+//     lenta, era N+1. Perfil do produtos_detalhamento_escopo (fetch interceptado,
+//     o run inteiro): 628 requisicoes, 140,5s de rede em 143,3s de wall. A media
+//     por requisicao e 0,22s — NENHUMA e lenta, sao muitas:
+//        product_line_assignments  313 req  68,3s
+//        monthly_closing_entries   156 req  37,0s
+//        carteira_consorcio        158 req  35,0s
+//     Causa: os blocos 4, 5 e 6 chamavam buildProdutoProposalRows com argumentos
+//     IDENTICOS 148 vezes. O bloco 4 sozinho era quadratico — para cada um de 5
+//     promotores refazia as linhas dos outros 23 a partir do banco, ou seja
+//     buscava cada promotor 5 vezes.
+//     Conserto: memo do builder (leitura pura, mes fechado, mesmo run) e o
+//     cruzamento feito EM MEMORIA. 148 chamadas viraram 24 buscas reais.
+//     A COBERTURA SUBIU, nao caiu: com o cruzamento em memoria deu para trocar
+//     `pids.slice(0, 5)` pela matriz 24x24 COMPLETA — 552 pares conferidos,
+//     contra 115 antes.
+//     Medido no mesmo dia, mesma maquina:
+//        o portao sozinho:  150,5s -> 28,4s
+//        a faixa --db:      290,7s -> 185,4s / 193,2s / 193,2s (3 execucoes)
+//     ATENCAO ao comparar com (3c): a faixa ANTES do conserto deu 290,7s HOJE,
+//     contra os 193,3s registrados em 29/08 com os mesmos gates. A latencia do
+//     banco domina a comparacao entre DIAS; so vale o par medido no MESMO dia.
+//     O TETO CONTINUA ESTOURADO: mesmo zerando este portao a faixa ficaria em
+//     ~165s de 90s. Baixa-lo nao resolve a faixa — e um portao a menos.
+//
 //     FAIXA needs-db-lento: 510,6s nos 20 portoes. Tambem concentrada:
 //        78,3s mov2_proposals_get | 71,4s mov1_ledger | 61,5s gate_remuneracao_lideranca
 //        55,9s mov2_dashboard     | 39,7s mov2_grupoA
@@ -726,6 +751,23 @@ const GATES = [
       "faz o .find() de closingProposalRows achar a certa",
   },
   {
+    arquivo: "scripts/bbts_carimbo_fechamento_gate.cjs",
+    nome: "BBTS: o dinheiro do PDF entra na competencia em que o PDF pagou",
+    modo: "self",
+    motivo:
+      "SELF-CONTAINED: buildAdsCashByPeriod e funcao PURA (entra array, sai Map), entao a " +
+      "regra se prova sem createClient e roda no CI. Prova as DUAS metades: a perna do " +
+      "pagamento soma pela competencia do FECHAMENTO (nao pela janela das datas do contrato) " +
+      "e linha com valor SEM carimbo nao entra em competencia nenhuma e e REPORTADA. A " +
+      "fixture reproduz a linha 5240028e (op 221262790, R$ 89,42), que nasceu do DIARIO com " +
+      "movement_date 31/07 e recebeu valor de FECHAMENTO por backfill em 28/08: pela janela " +
+      "caia em agosto, e o PDF que a pagou e o de JULHO. Provado por MUTACAO em 30/08/2026, " +
+      "nos dois sentidos: devolver o leitor a janela derruba 6 assercoes; tirar o carimbo de " +
+      "UM dos dois blocos do importador derruba 1 (a contagem e 2 de 2, nao 'pelo menos um'). " +
+      "Controles positivos em 2 blocos para nao virar trava geral: PRT e Abertura seguem pela " +
+      "competencia literal, e as 4 linhas sadias ficam inteiras sob a mutacao",
+  },
+  {
     arquivo: "scripts/produtos_detalhamento_escopo_gate.cjs",
     nome: "detalhamento por produto: promotor A nao ve linha de B",
     modo: "needs-db",
@@ -734,7 +776,10 @@ const GATES = [
       "e linhas orfas) porque hoje ha ZERO atribuicao e o gate passaria por vacuidade. " +
       "NAO atribui em producao para se testar: PostgREST nao tem transacao, e 'atribui " +
       "e desfaz' sao dois writes — queda no meio deixaria atribuicao real, que muda " +
-      "repasse. O bloco 4 fica DECLARADO PENDENTE e ACORDA sozinho quando houver ASSIGNED",
+      "repasse. O bloco 4 fica DECLARADO PENDENTE e ACORDA sozinho quando houver ASSIGNED. " +
+      "CUSTO, medido em 30/08/2026: era 150,5s (628 requisicoes, 140,5s de rede, media de " +
+      "0,22s cada — N+1, nao consulta lenta). Com memo do builder e o cruzamento em memoria " +
+      "foi a 28,4s COM MAIS cobertura (matriz 24x24 completa, 552 pares, contra 115). Ver (3d)",
   },
   {
     arquivo: "scripts/consorcio_gestor_por_proposta_gate.cjs",
@@ -1033,7 +1078,11 @@ const GATES = [
       "createClient; compara company_received_percent com o '% A VISTA' que o " +
       "fechamento da Promotiva carimba no metadata de cada linha CASH — e a conferencia " +
       "que teria pego o bug da faixa do CNPJ. Entra em LENTO, nao em needs-db, porque a " +
-      "faixa --db ja mede 358,4s contra teto de 90s: nao se engorda banda estourada",
+      "faixa --db ja estoura o teto de 90s: nao se engorda banda estourada. (O numero " +
+      "deste motivo dizia 358,4s, de 29/08; remedido em 30/08/2026 — 290,7s antes do " +
+      "conserto do produtos_detalhamento_escopo e 185,4s/193,2s/193,2s depois dele. O " +
+      "teto segue estourado nas cinco medicoes, que e o que sustenta a decisao; so o " +
+      "numero envelheceu.)",
   },
   {
     arquivo: "scripts/mov2_proposals_get_gate.cjs",

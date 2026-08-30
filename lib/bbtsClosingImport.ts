@@ -141,6 +141,12 @@ export type BbtsClosingInput = {
     credito_valor_financiado?: number;
     credito_pag_avista?: number;
     seguro_calculo?: number;
+    /**
+     * Ancora TOTAL do PDF de seguro = o que a BBTS DEPOSITOU (calculo menos
+     * estorno). Diferente de `seguro_calculo`, que e so a soma das linhas
+     * positivas. Em julho/2026: seguro_calculo 204,52, seguro_total 155,07.
+     */
+    seguro_total?: number;
     prt_valor?: number;
   };
 };
@@ -383,6 +389,20 @@ export async function importBbtsClosing(
   // p/ contract_date/proposal_date (preserva o histórico). extractYearMonth usa
   // movement_date primeiro, então todas as 18 caem na competência do fechamento.
   const compMovementDate = `${year}-${String(month).padStart(2, "0")}-15`;
+  // COMPETENCIA DO FECHAMENTO, declarada em campo PROPRIO (dia 01).
+  //
+  // Ate 30/08/2026 a unica declaracao era o compMovementDate acima: dia 15 cai
+  // dentro da janela da propria competencia, entao a data servia de carimbo. Isso
+  // vale para toda linha que PASSA POR AQUI — e nao vale para linha que recebe
+  // valor de fechamento por fora. Medido: a linha 5240028e nasceu do DIARIO (com
+  // a data real, 31/07) e recebeu bbts_seguro_pago=89,42 por backfill em 28/08;
+  // pela janela ela caiu em 2026-08, e os 89,42 sao do PDF de JULHO — julho
+  // exibia 115,10 no lugar de 204,52.
+  //
+  // Agora a competencia do PAGAMENTO nao depende mais da data do CONTRATO. As
+  // datas seguem sendo as do contrato (39 arquivos as leem, 23 resolvem
+  // competencia por elas) e o dinheiro do PDF passa a dizer de onde veio.
+  const compFechamento = `${year}-${String(month).padStart(2, "0")}-01`;
   // Carimbo ÚNICO da carga: todas as linhas resolvidas nesta importação dizem
   // "desde quando o sistema sabe disto" com o mesmo instante.
   const resolucaoEm = new Date().toISOString();
@@ -510,6 +530,9 @@ export async function importBbtsClosing(
       // opaco p/ SQL e sujeito a ser apagado num merge). É o lado "pago" da
       // auditoria da ADS. Migration 20260712_000003.
       bbts_pag_avista: Number(r.pag_avista) || 0,
+      // O CARIMBO ANDA COM O VALOR. Nunca gravar um sem o outro: e o par que o
+      // CHECK dpr_valor_fechamento_exige_competencia cobra no banco.
+      bbts_competencia_fechamento: compFechamento,
       bbts_taxa_relatorio: r.taxa_relatorio ?? null,
       // idem: sem o PDF de seguro a chave é OMITIDA, não zerada. Ver acima.
       ...(input.seguro_pdf_ausente
@@ -598,6 +621,8 @@ export async function importBbtsClosing(
       // não "não sabemos".
       bbts_pag_avista: 0,
       bbts_seguro_pago: Number(s.valor_seguro) || 0,
+      // idem bloco de credito: o carimbo anda com o valor.
+      bbts_competencia_fechamento: compFechamento,
       // ATENÇÃO ao ler este `false`: ele diz "NÃO HÁ DADO DE SRCC nesta linha",
       // não "não há restrição". A linha só-seguro não tem crédito, então não tem
       // código de SRCC no relatório — é ausência de dado, não conclusão. Por isso
@@ -707,6 +732,17 @@ export async function importBbtsClosing(
         // soma continua fechando, entao isso passaria silencioso.
         glosa: input.cabecalho.outrasDeducoes,
         pagamento_total: input.cabecalho.pagamentoTotal,
+        // ANCORA DO DEPOSITO DE SEGURO. O extrator ja lia o "TOTAL" do cabecalho
+        // do PDF de seguro (bbtsPdfExtract.ts:541-551) e ate o usava como
+        // auto-ancora (:568-572), mas extractBbtsClosingFromPdfs o DESCARTAVA —
+        // o mesmo caso da Abertura de Conta antes de 28/08. Com ele,
+        // `bruto - estorno = deposito` deixa de ser derivacao e vira conferencia
+        // contra o documento.
+        // AUSENCIA != ZERO: sem o PDF de seguro a chave e OMITIDA (fica NULL),
+        // nao zerada — mesma doutrina do seguro_pdf_ausente.
+        ...(input._ancoras && typeof input._ancoras.seguro_total === "number"
+          ? { seguro_total: input._ancoras.seguro_total }
+          : {}),
         arquivo_origem: opts?.fileName ?? null,
         updated_at: new Date().toISOString(),
       },

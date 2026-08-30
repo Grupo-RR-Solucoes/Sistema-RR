@@ -53,6 +53,8 @@ type AdsDailyRow = {
   movement_date?: string | null;
   contract_date?: string | null;
   proposal_date?: string | null;
+  /** Competencia do PDF que trouxe o valor. Ver buildAdsCashByPeriod. */
+  bbts_competencia_fechamento?: string | null;
 };
 
 type AdsPrtRow = {
@@ -400,8 +402,10 @@ function manualCreditYM(row: ManualRevenueRow): { year: number; month: number } 
 //   valor_diferido -> bbts_prt_parcelas.valor_parcela  (PRT)
 //   valor_seguro   -> daily_production_records.bbts_seguro_pago
 //
-// COMPETENCIA por JANELA (getProductionPeriodFromValue), igual ao dre.ts: a linha
-// de 30/06 e julho e a de 31/07 e agosto. Nao usar o mes de calendario.
+// COMPETENCIA pelo CARIMBO DO FECHAMENTO (bbts_competencia_fechamento), igual ao
+// dre.ts — que faz esta MESMA consulta. Ate 30/08/2026 as duas liam pela JANELA
+// das datas do contrato; o PDF, porem, e extrato de DEPOSITO, e o valor pertence
+// a competencia em que ele PAGOU. Ver o bloco longo em buildAdsCashByPeriod.
 //
 // O de-para tem uma 4a perna desde 27/08/2026:
 //   abertura_conta -> bbts_fechamento_totais.abertura_conta  (por competencia
@@ -415,10 +419,15 @@ function manualCreditYM(row: ManualRevenueRow): { year: number; month: number } 
 //     aqui: viram debito ao promotor.
 type AdsCash = { avista: number; prt: number; seguro: number; abertura: number };
 
-function buildAdsCashByPeriod(
+// EXPORTADA para o portao bbts_carimbo_fechamento_gate. E funcao PURA (entra
+// array, sai Map; nenhum acesso a banco), entao da para prova-la sem createClient
+// — que e o que a mantem na faixa self-contained, a unica que o CI roda.
+export function buildAdsCashByPeriod(
   adsDaily: AdsDailyRow[],
   adsPrt: AdsPrtRow[],
-  adsCabecalho: AdsCabecalhoRow[] = []
+  adsCabecalho: AdsCabecalhoRow[] = [],
+  /** Saida: linhas com valor de fechamento e SEM carimbo. Vira alerta no chamador. */
+  semCarimbo: { linhas: number; valor: number } = { linhas: 0, valor: 0 }
 ): Map<string, AdsCash> {
   const out = new Map<string, AdsCash>();
   const bucket = (k: string) => {
@@ -426,13 +435,31 @@ function buildAdsCashByPeriod(
     if (!b) { b = { avista: 0, prt: 0, seguro: 0, abertura: 0 }; out.set(k, b); }
     return b;
   };
+  // A PERNA DO PAGAMENTO SEGUE A COMPETENCIA DO PDF.
+  //
+  // O PRT e a Abertura, logo abaixo, sempre leram pela competencia LITERAL do
+  // fechamento. O AVT e o seguro liam pela JANELA das datas do CONTRATO, e as
+  // duas coisas so coincidiam por construcao do importador (movement_date
+  // carimbado no dia 15, que cai dentro da janela da propria competencia).
+  // Medido em 30/08/2026: valia para 60 das 61 linhas com valor de fechamento.
+  // A 61a mostrou o buraco — a linha 5240028e nasceu do DIARIO, com a data real
+  // 31/07, e recebeu bbts_seguro_pago=89,42 por backfill; pela janela caiu em
+  // agosto, e os 89,42 sao do PDF de JULHO.
+  //
+  // Linha COM valor e SEM carimbo NAO entra em competencia nenhuma: sem saber de
+  // qual PDF veio, atribui-la pela janela e justamente o defeito. Ela e contada
+  // em `semCarimbo` e o chamador a transforma em alerta.
   for (const r of adsDaily) {
-    const p =
-      getProductionPeriodFromValue(r.movement_date) ||
-      getProductionPeriodFromValue(r.contract_date) ||
-      getProductionPeriodFromValue(r.proposal_date);
-    if (!p) continue;
-    const b = bucket(getProductionPeriodKey(p.year, p.month));
+    const valor = toNumber(r.bbts_pag_avista) + toNumber(r.bbts_seguro_pago);
+    const carimbo = String(r.bbts_competencia_fechamento || "").slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(carimbo)) {
+      if (valor !== 0) {
+        semCarimbo.linhas += 1;
+        semCarimbo.valor += valor;
+      }
+      continue;
+    }
+    const b = bucket(carimbo);
     b.avista += toNumber(r.bbts_pag_avista);
     b.seguro += toNumber(r.bbts_seguro_pago);
   }
@@ -919,12 +946,27 @@ export async function buildFinancialAnalytics(
   if (hasSupabaseEnv()) {
     const admin = getSupabaseAdmin();
     [adsDaily, adsPrt, adsCabecalho] = await Promise.all([
+      // O CARIMBO DO FECHAMENTO entra no select. TOLERA a coluna ainda inexistente
+      // (migration 20260830_000001 pendente): sem isso, publicar o codigo ANTES do
+      // SQL derrubaria o /financeiro inteiro com 42703. No fallback as linhas voltam
+      // sem carimbo, e buildAdsCashByPeriod as reporta em `semCarimbo` -> alerta.
       fetchAllRows<AdsDailyRow>(() =>
         admin
           .from("daily_production_records")
-          .select("bbts_pag_avista, bbts_seguro_pago, movement_date, contract_date, proposal_date")
+          .select(
+            "bbts_pag_avista, bbts_seguro_pago, movement_date, contract_date, proposal_date, bbts_competencia_fechamento"
+          )
           .eq("company_id", BBTS_COMPANY_ID)
-      ),
+      ).catch((e: unknown) => {
+        const msg = String((e as Error)?.message || e);
+        if (!/bbts_competencia_fechamento|42703|column .* does not exist/i.test(msg)) throw e;
+        return fetchAllRows<AdsDailyRow>(() =>
+          admin
+            .from("daily_production_records")
+            .select("bbts_pag_avista, bbts_seguro_pago, movement_date, contract_date, proposal_date")
+            .eq("company_id", BBTS_COMPANY_ID)
+        );
+      }),
       fetchAllRows<AdsPrtRow>(() =>
         admin.from("bbts_prt_parcelas").select("competencia, valor_parcela").eq("company_id", BBTS_COMPANY_ID)
       ),
@@ -947,7 +989,8 @@ export async function buildFinancialAnalytics(
 
   // ADS: um balde por competencia, construido UMA vez e reusado pelo KPI e pela
   // serie do grafico — os dois tem de ver o mesmo numero.
-  const adsCashByPeriod = buildAdsCashByPeriod(adsDaily, adsPrt, adsCabecalho);
+  const adsSemCarimbo = { linhas: 0, valor: 0 };
+  const adsCashByPeriod = buildAdsCashByPeriod(adsDaily, adsPrt, adsCabecalho, adsSemCarimbo);
 
   // REGIME DE CAIXA: "Recebido" = fechamento(M-1) + ADS(M-1) + manuais(data_credito em M).
   const received = cashReceivedFor(
@@ -1241,6 +1284,21 @@ export async function buildFinancialAnalytics(
   if (summary.totalExpenses === 0) {
     alerts.push(
       "Nenhuma despesa foi registrada nesta competencia. O resultado liquido ainda pode estar subavaliado."
+    );
+  }
+
+  // LINHA COM DINHEIRO DA BBTS E SEM COMPETENCIA DE FECHAMENTO. Nao entra em
+  // competencia nenhuma (atribui-la pela janela do contrato e o defeito que a
+  // migration 20260830_000001 corrigiu), entao tem de APARECER. O mesmo alerta
+  // cobre os dois estados: migration pendente (todas as linhas caem aqui) e
+  // linha gravada por fora do importador (o caso 5240028e, de 28/08/2026).
+  if (adsSemCarimbo.linhas > 0) {
+    alerts.push(
+      `Ha ${adsSemCarimbo.linhas} linha(s) da ADS com valor de fechamento ` +
+        `(${roundMoney(adsSemCarimbo.valor).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}) ` +
+        "e SEM competencia de fechamento — nao da para dizer de qual PDF vieram, entao NAO entram no " +
+        "Recebido de nenhuma competencia. Se a migration 20260830_000001 ainda nao rodou, e isso; " +
+        "senao, o carimbo faltou na importacao."
     );
   }
 

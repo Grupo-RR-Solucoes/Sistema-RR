@@ -57,6 +57,34 @@ const ok = (cond, rotulo, extra) => {
   console.log(`   ${cond ? "OK    " : "FALHOU"} | ${rotulo}${extra ? "  " + extra : ""}`);
   if (!cond) falhas++;
 };
+// ---------------------------------------------------------------------------
+// MEMO DO BUILDER — o custo desta faixa era N+1, nao consulta lenta.
+//
+// Medido em 30/08/2026 (628 requisicoes, 140,5s de rede em 143,3s de wall; media
+// de 0,22s POR requisicao — nenhuma consulta e lenta, sao muitas):
+//   product_line_assignments  313 req  68,3s
+//   monthly_closing_entries   156 req  37,0s
+//   carteira_consorcio        158 req  35,0s
+// Os blocos 4, 5 e 6 chamavam buildProdutoProposalRows com os MESMOS argumentos
+// (promoterId, 2026, 7, incluirComissaoEmpresa: true) 148 vezes, e o bloco 4
+// sozinho refazia as linhas de cada promotor 5 vezes — uma por iteracao externa.
+//
+// O builder e leitura pura sobre um mes FECHADO dentro de um run: mesma entrada,
+// mesma saida. Memoizar nao afrouxa nenhuma assercao — as comparacoes continuam
+// sendo feitas todas, sobre os mesmos objetos.
+// ---------------------------------------------------------------------------
+const _memoBuilder = new Map();
+let _memoHits = 0;
+let _memoMiss = 0;
+const buildMemo = async (sb, args) => {
+  const k = `${args.promoterId}|${args.year}|${args.month}|${args.incluirComissaoEmpresa ? 1 : 0}`;
+  if (_memoBuilder.has(k)) { _memoHits++; return _memoBuilder.get(k); }
+  _memoMiss++;
+  const res = await buildProdutoProposalRows(sb, args);
+  _memoBuilder.set(k, res);
+  return res;
+};
+
 const brl = (n) =>
   Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -303,29 +331,45 @@ function shimFabricado() {
   } else {
     const pids = [...new Set(assigned.map((r) => r.promoter_id))];
     console.log(`   promotores com linha atribuida: ${pids.length}`);
-    let cruzou = 0;
-    for (const pid of pids.slice(0, 5)) {
-      const res = await buildProdutoProposalRows(sb, {
+
+    // O cruzamento e uma matriz N x N sobre as MESMAS N buscas. Antes buscava
+    // dentro dos dois lacos (5 x (N-1) chamadas, refazendo cada promotor 5
+    // vezes) e por isso so cobria `pids.slice(0, 5)`. Agora busca N vezes, uma
+    // por promotor, e cruza em memoria — o que deixa cobrir a matriz INTEIRA.
+    const linhasPorPromotor = new Map();
+    for (const pid of pids) {
+      const res = await buildMemo(sb, {
         promoterId: pid,
         year: 2026,
         month: 7,
         incluirComissaoEmpresa: true,
       });
-      const outros = res.rows.filter((r) => false); // o builder ja filtra na origem
-      void outros;
+      linhasPorPromotor.set(pid, res);
+    }
+    for (const pid of pids.slice(0, 5)) {
+      const res = linhasPorPromotor.get(pid);
       console.log(`     ${pid}: ${res.rows.length} linha(s), total ${brl(res.totais.total)}`);
-      for (const outro of pids.filter((x) => x !== pid)) {
-        const doOutro = await buildProdutoProposalRows(sb, {
-          promoterId: outro,
-          year: 2026,
-          month: 7,
-          incluirComissaoEmpresa: true,
-        });
-        const ops = new Set(doOutro.rows.map((r) => `${r.entry_type}|${r.operacao}`));
-        cruzou += res.rows.filter((r) => ops.has(`${r.entry_type}|${r.operacao}`)).length;
+    }
+    const chaves = new Map(
+      [...linhasPorPromotor].map(([pid, res]) => [pid, new Set(res.rows.map((r) => `${r.entry_type}|${r.operacao}`))])
+    );
+    let cruzou = 0;
+    let pares = 0;
+    for (const pid of pids) {
+      const meu = chaves.get(pid);
+      for (const outro of pids) {
+        if (outro === pid) continue;
+        pares++;
+        const dele = chaves.get(outro);
+        for (const k of meu) if (dele.has(k)) cruzou++;
       }
     }
-    ok(cruzou === 0, "PRODUCAO: nenhuma linha aparece para dois promotores", `cruzamentos=${cruzou}`);
+    ok(pids.length > 1, "ANTI-VACUIDADE: ha MAIS DE UM promotor a cruzar", `${pids.length}`);
+    ok(
+      cruzou === 0,
+      "PRODUCAO: nenhuma linha aparece para dois promotores",
+      `cruzamentos=${cruzou} em ${pares} pares (matriz ${pids.length}x${pids.length} COMPLETA)`
+    );
   }
 
   // ---- 5. UMA FONTE PARA O DONO ----
@@ -377,7 +421,7 @@ function shimFabricado() {
   let divergencias = 0;
   let totalBuilder = 0;
   for (const pid of promotoresDonos) {
-    const res = await buildProdutoProposalRows(sb, {
+    const res = await buildMemo(sb, {
       promoterId: pid,
       year: YEAR_C,
       month: MONTH_C,
@@ -478,7 +522,7 @@ function shimFabricado() {
   let divergentes = 0;
   let somaIndividual = 0;
   for (const r of grupo.por_promotor) {
-    const ind = await buildProdutoProposalRows(sb, {
+    const ind = await buildMemo(sb, {
       promoterId: r.promoter_id,
       year: 2026,
       month: 7,
@@ -538,6 +582,10 @@ function shimFabricado() {
   );
 
   console.log("\n" + linha("="));
+  console.log(
+    `memo do builder: ${_memoMiss} busca(s) real(is), ${_memoHits} reaproveitada(s) ` +
+      `de ${_memoMiss + _memoHits} chamada(s)`
+  );
   console.log(falhas === 0 ? "GATE: PASSOU" : `GATE: ${falhas} FALHA(S)`);
   console.log(linha("="));
   process.exit(falhas === 0 ? 0 : 1);
