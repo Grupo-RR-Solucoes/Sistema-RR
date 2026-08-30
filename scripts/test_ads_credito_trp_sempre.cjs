@@ -37,7 +37,17 @@ async function main() {
   if (gJun) {
     console.log(`   orquestrador: credito RR ${brl(gJun.totals.repasse_credito_rr)} | credito ADS ${brl(gJun.totals.repasse_credito_ads)}`);
     ok("junho credito ADS == 5.153,53 (no-op)", near(gJun.totals.repasse_credito_ads, 5153.53, 0.5), `${brl(gJun.totals.repasse_credito_ads)}`);
-    ok("junho credito RR intocado (~109.538)", near(gJun.totals.repasse_credito_rr, 109538.42, 1), `${brl(gJun.totals.repasse_credito_rr)}`);
+    // REANCORADA em 29/08/2026: 109.538,42 -> 109.181,28.
+    // Esta linha e uma guarda de COLATERAL: o assunto deste portao e o credito da
+    // ADS, e o RR entra so para provar que mexer na ADS nao mexeu no RR. A ancora
+    // vinha de 12/07/2026 (commit 3363ba5) e envelheceu 48 dias; o delta de
+    // R$ 357,14 esta atribuido centavo a centavo no cabecalho de
+    // motor_credito_trp_db_gate.cjs, que carrega a MESMA ancora (+48,81 de
+    // movimento do banco, -23,17 da competencia por janela, -960,93 do teto 5,80%
+    // em d7d556e, +578,15 do carve-out INSS em d6febc5). As duas fontes de TRP dao
+    // este mesmo valor, entao nunca foi divergencia de fonte.
+    // AS DUAS ANCORAS TEM DE ANDAR JUNTAS: se uma for recravada, a outra tambem.
+    ok("junho credito RR intocado (~109.181, ancora de 29/08/2026)", near(gJun.totals.repasse_credito_rr, 109181.28, 1), `${brl(gJun.totals.repasse_credito_rr)}`);
   }
   // aviso: nao ha mais o gate jul+
   const jun = await consolidateMonthlyFromBbts(sb, { year: 2026, month: 6, dryRun: true });

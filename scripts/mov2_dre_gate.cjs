@@ -84,9 +84,36 @@ function hashDre(d) {
     for (const a of d.alerts || []) console.log("     [alerta] " + a);
   }
 
-  // ---- 4. O ACHADO: a ADS ----
+  // ---- 4. O "ACHADO" DA ADS — ASSERCAO APOSENTADA EM 29/08/2026 ----
+  //
+  // ERA: "a ADS nao pode aparecer no DRE", porque em 2026-07 ela tinha CNPJ real,
+  // active=false e NENHUMA receita em fechamento_mensal_empresa — incluir o custo
+  // dela sem receita FABRICARIA um prejuizo.
+  //
+  // A PREMISSA MORREU, e nao por conserto colateral: por decisao explicita. O
+  // commit 24625ef ("mov3: DRE inclui ADS e inativos — nao excluir nada que saiu
+  // ou entrou") REVERTEU esta regra de proposito, e lib/dre.ts diz porque, com
+  // todas as letras: "agora que a receita da ADS entra (AVT+PRT+seguro), a
+  // exclusao perdeu o motivo — e ela VIOLAVA a regra: o DRE nao descarta custo que
+  // saiu". O caso do dado incompleto passou a ser tratado por ALERTA DURO
+  // (dre.ts:608), nao por exclusao silenciosa.
+  //
+  // O FATO MEDIDO EM 29/08/2026 que fecha a questao: em 2026-06 a ADS entra no DRE
+  // com receita R$ 9.321,02, comissao R$ 5.194,69 e resultado POSITIVO de
+  // R$ 4.126,33. O prejuizo fabricado que esta assercao existia para impedir nao
+  // tem como acontecer — incluir a ADS MELHORA o resultado. Em 2026-04 ela nao
+  // aparece, mas por nao ter movimento nenhum (receita, comissao e despesa todas
+  // zero, filtradas em dre.ts:654), nao por regra de exclusao: essa regra nao
+  // existe mais no codigo.
+  //
+  // NAO FICA DESCOBERTO (a varredura antes de aposentar): o lado PERMANENTE desta
+  // assercao — a ADS carregar a comissao dela e o alerta disparar quando falta
+  // receita — e hoje asserido por mov3_dre_inclui_tudo_gate.cjs, que cobra o
+  // OPOSTO ("o CNPJ da ADS carrega a comissao ADS INTEIRA" e "resultado da ADS
+  // POSITIVO"). Os dois portoes se contradiziam; o vencedor e o que espelha o
+  // codigo de hoje. Aqui sobra o DIAGNOSTICO, que continua util e nao reprova.
   console.log("\n" + "=".repeat(94));
-  console.log("4) ACHADO — comissao que cairia na ADS (CNPJ real, active=false, SEM receita)");
+  console.log("4) ADS no DRE — DIAGNOSTICO (assercao aposentada em 29/08/2026, ver comentario)");
   console.log("=".repeat(94));
   const { data: comps } = await sb.from("companies").select("id, name, cnpj, active");
   const ads = comps.find((c) => c.active === false);
@@ -98,9 +125,11 @@ function hashDre(d) {
       if ((r.company_id || "") === ads.id) naAds += num(r.payable_commission_value);
     }
     const d = await buildDre(sb, 2026, m);
-    const temAdsNoDre = (d.companies || []).some((c) => c.cnpj === ads.cnpj);
-    console.log(`  2026-${String(m).padStart(2, "0")}  comissao que cairia na ADS: ${brl(naAds)}   ADS aparece no DRE? ${temAdsNoDre ? "SIM (!!)" : "nao (fora, com alerta)"}`);
-    if (temAdsNoDre) falhas++;
+    const linhaAds = (d.companies || []).find((c) => c.cnpj === ads.cnpj);
+    console.log(`  2026-${String(m).padStart(2, "0")}  comissao que cairia na ADS: ${brl(naAds)}   ADS no DRE? ` +
+      (linhaAds
+        ? `SIM — receita ${brl(linhaAds.receita)}, comissao ${brl(linhaAds.comissoes)}, resultado ${brl(linhaAds.resultadoLiquido)}`
+        : "nao (sem movimento nesta competencia)"));
   }
 
   // ---- 5. Conferencia contra as outras 3 telas ----

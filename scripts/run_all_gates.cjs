@@ -128,8 +128,23 @@
 //       test_ads_credito_competencia.cjs contagem "18 linhas" aposentada; as assercoes de
 //                                       COMPETENCIA seguem. Segue orfao (mesmo xlsx).
 //                                       ATENCAO: e uma das 2 unicas provas de
-//                                       lib/bbtsDailyImport.ts (390 linhas, 8 consumidores),
-//                                       e resta 1 falha nao diagnosticada nele.
+//                                       lib/bbtsDailyImport.ts (390 linhas, 8 consumidores).
+//                                       A "1 falha nao diagnosticada" FOI DIAGNOSTICADA em
+//                                       29/08/2026 e o portao esta 6 OK / 0 falhas. Era a
+//                                       mesma familia da contagem ja aposentada: a assercao
+//                                       (c) congelava TRES NUMEROS DE CONTRATO
+//                                       (219509685/219421812/219351243) como se fossem
+//                                       status permanente. Medido no xlsx de hoje, 2 dos 3
+//                                       viraram "Contratação CDC" no mundo real — grava-los
+//                                       e o comportamento CERTO. Reancorada no STATUS, com
+//                                       os dois lados computados: nenhuma "Proposta CDC"
+//                                       gravada (8 no arquivo) e TODA "Contratação CDC"
+//                                       gravada (35), ambas com guarda de nao-vacuidade.
+//                                       Provado por mutacao em lib/bbtsDailyImport.ts:243
+//                                       nos DOIS sentidos — aceitar Proposta CDC derruba
+//                                       (c) com 8 numeros, e nenhum deles estava na lista
+//                                       congelada antiga, que teria deixado passar; recusar
+//                                       Contratação derruba o controle positivo (c+).
 //
 //     DEIXADO ORFAO POR DECISAO (1):
 //       trp_paridade_gate_f3.cjs  passa (rc=0), mas uma das tres competencias sai com
@@ -143,15 +158,66 @@
 //           conserto correto (`b47ade6` preencheu o prazo do CONSIG_PRIVADO): aposentada.
 //           Segue orfao: le um PDF de TRP que nao esta versionado.
 //
-//     INDETERMINADOS (5) — medidos, NAO diagnosticados. Nao presumir benignos:
-//       motor_credito_trp_db_gate.cjs  rc=1 em 202,6s — "169 divergencia(s)"
-//       mov3_dre_inclui_tudo_gate.cjs  rc=1 em 255,5s — "1 FALHA(S)"
-//       mov2_dre_gate.cjs              rc=127 apos 118,2s — CRASH DE AMBIENTE, nao
-//                                      vermelho de assercao ("command not found")
-//       mov2_relatorios_gate.cjs       rc=1 em 149,5s — "2 FALHA(S)". Tambem toca
-//                                      promoterReportData
-//       test_ads_credito_trp_sempre.cjs rc=1 em 35,0s — 7 passaram, 1 falhou
-//     Os dois primeiros TERMINAM dentro de 600s: nao sao "portao que nao termina".
+//     INDETERMINADOS (5) — DIAGNOSTICADOS em 29/08/2026. Os 5 estao VERDES, e
+//     NENHUM era defeito de producao: nao havia dinheiro errado atras de nenhum
+//     deles. Cada falha foi isolada e classificada; o resultado, com o numero que
+//     derrubou cada nota:
+//
+//       motor_credito_trp_db_gate.cjs   169 divergencias -> 0. Decompostas uma a
+//           uma (a impressao truncava em 8 por secao e escondia a composicao):
+//           132 eram `calculated_at`, o RELOGIO — o portao roda o mesmo codigo
+//           duas vezes com segundos de intervalo e comparava os dois carimbos;
+//           30 eram `trp_version_id`/`trp_fallback`, campos de PROCEDENCIA que
+//           EXISTEM para diferir entre json e db; 6 eram a janela do `trend`, que
+//           andou para 2026-08 enquanto a tolerancia estava presa a `month === 7`;
+//           1 era a ancora de credito do RR. ZERO eram diferenca de calculo entre
+//           as fontes. Os 3 primeiros viraram exclusao COM MOTIVO ESCRITO mais um
+//           CONTROLE POSITIVO de procedencia (a exclusao nao pode virar cegueira),
+//           e a tolerancia do trend passou a sair do DRIFT medido no proprio run.
+//       mov3_dre_inclui_tudo_gate.cjs   ANCORA VENCIDA. 145.019,91 -> 143.942,13,
+//           reancorada com data e procedencia. Todas as assercoes de ESTRUTURA ja
+//           passavam, inclusive a identidade Sigma final - Sigma descontos ==
+//           comissao do DRE, exata ao centavo.
+//       mov2_dre_gate.cjs               O rc=127 NAO ERA CRASH DE AMBIENTE — era
+//           FLAKE, e a nota anterior foi enganada por ele. Rodado a mao, o portao
+//           termina em ~223s com rc=1 e UMA falha de assercao real. (O 127 se
+//           reproduziu uma vez nesta frente, noutro portao, morrendo em 6s sem
+//           imprimir erro; e intermitente e nao tem relacao com o veredito.)
+//           A falha era ANCORA VENCIDA por PREMISSA MORTA: o portao exigia que a
+//           ADS ficasse FORA do DRE, e o commit 24625ef ("DRE inclui ADS e
+//           inativos") reverteu essa regra DE PROPOSITO. Em 2026-06 a ADS entra
+//           com receita 9.321,02 e resultado POSITIVO de 4.126,33 — o prejuizo
+//           fabricado que a assercao impedia nao tem como acontecer. Aposentada;
+//           o lado permanente ja e asserido por mov3_dre_inclui_tudo_gate.
+//       mov2_relatorios_gate.cjs        2 CONSTANTES CONGELADAS (118.227,41 de jun
+//           e 96.143,14 de abr), descritas como "o PMR fechado" — mas o PMR e
+//           TABELA VIVA e foi reescrito ate 27/08 pelas reguas de agosto. Os dois
+//           lados passaram a ser computados no MESMO run (soma do PMR, com guarda
+//           de nao-vacuidade). Junto, uma assercao de TRANSICAO aposentada: abril
+//           exigia que AINDA HOUVESSE vazamento para a chave master, e reprovava
+//           PORQUE o vazamento foi consertado (hoje delta R$ 0,00). Ficou o
+//           invariante permanente: se houver vazamento, todo ele e de master.
+//       test_ads_credito_trp_sempre.cjs Mesma ancora do motor_credito_trp_db_gate
+//           (109.538,42), cravada em 12/07/2026. As duas foram reancoradas juntas.
+//
+//     A ANCORA DE CREDITO DO RR, atribuida centavo a centavo (era o unico numero
+//     desta frente que podia ser dinheiro, entao foi bisseccionada em worktree,
+//     commit a commit, contra o banco de hoje):
+//         109.587,23   codigo de 3363ba5 (12/07) rodado hoje
+//          -   23,17   competencia do volume virou JANELA
+//          -  960,93   d7d556e 25/08  teto 5,80% (repasse sai da base NO TETO)
+//          +  578,15   d6febc5 25/08  carve-out INSS da Aldalene (criterio = TAXA)
+//         ----------
+//         109.181,28   HEAD, identico nas DUAS fontes de TRP
+//     Nenhum residuo inexplicado. E note o primeiro numero: com o CODIGO CONGELADO
+//     a base moveu +48,81 em 48 dias (reatribuicoes, imports tardios). Constante
+//     absoluta sobre tabela viva VENCE SOZINHA, sem ninguem tocar em codigo — e a
+//     razao de as duas do mov2_relatorios terem virado comparacao no mesmo run.
+//
+//     SEGUEM ORFAOS, DE PROPOSITO: os 5 continuam fora do GATES[] abaixo. Juntos
+//     passam de 600s e a faixa --db ja esta 4x estourada (ver item 2); registra-los
+//     agora seria agravar um problema conhecido para resolver outro. E DIVIDA
+//     NOMEADA: verdes hoje, sem ninguem os rodando amanha.
 //
 // (4b) DIVIDA NOMEADA, fora do alcance desta frente — O REPOSITORIO E PUBLICO.
 //     Medido em 29/08/2026: a API do GitHub devolve `private: false, visibility: public`
