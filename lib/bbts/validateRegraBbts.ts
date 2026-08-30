@@ -110,14 +110,40 @@ export function validarRegraBbts(regra: unknown, competenciaCanonical?: string):
       faltando.push(key);
     }
   }
-  if (faltando.length > 0) {
+  // AUSENCIA DECLARADA (30/08/2026) — grupo que a BBTS tirou da tabela nao
+  // recusa mais a regua inteira; ele tem de estar DECLARADO em grupos_ausentes.
+  // A trava mudou de lugar, nao sumiu: agora ela cobra que a declaracao bata
+  // EXATAMENTE com a realidade. Os dois erros travam —
+  //   declarar de MENOS: um grupo sumiu e ninguem registrou -> buraco silencioso,
+  //     que e exatamente o que a recusa antiga existia para impedir;
+  //   declarar de MAIS: a lista acusa ausencia de um grupo que ESTA na regua ->
+  //     lookupPctBbts recusaria contratos bons.
+  const declarados = Array.isArray(regra.grupos_ausentes) ? regra.grupos_ausentes.map(String) : [];
+  const setDeclarados = new Set(declarados);
+  const setFaltando = new Set(faltando);
+  const naoDeclarados = faltando.filter((g) => !setDeclarados.has(g));
+  const declaradosPresentes = declarados.filter((g) => !setFaltando.has(g));
+  if (naoDeclarados.length > 0) {
     throw new BbtsValidationError(
-      "regua incompleta: grupos ausentes ou sem celula",
-      `faltando: ${faltando.join(", ")} (esperados ${EXPECTED_GROUPS.length})`,
+      "regua incompleta: grupo ausente NAO declarado",
+      `faltando e nao declarado em grupos_ausentes: ${naoDeclarados.join(", ")} ` +
+        `(esperados ${EXPECTED_GROUPS.length}). Ausencia de grupo e aceita, mas tem de ser DECLARADA.`,
+    );
+  }
+  if (declaradosPresentes.length > 0) {
+    throw new BbtsValidationError(
+      "grupos_ausentes declara grupo que EXISTE na regua",
+      `declarado ausente mas presente: ${declaradosPresentes.join(", ")}. ` +
+        `A declaracao faria lookupPctBbts recusar contratos que a tabela cobre.`,
     );
   }
 
   for (const key of EXPECTED_GROUPS) {
+    // Grupo DECLARADO ausente nao tem celula para validar. Antes da ausencia
+    // declarada este laco era inalcancavel com grupo faltando (o throw acima
+    // barrava), entao ele fazia o cast direto e estourava TypeError na primeira
+    // regua de agosto — pego pelo diagnostico contra o PDF real.
+    if (setFaltando.has(key)) continue;
     const g = grupos[key] as { celulas: unknown[] };
     const unica = GRUPOS_FAIXA_UNICA.includes(key);
     const labels: readonly string[] = unica ? [FAIXA_UNICA] : FAIXA_LABELS;

@@ -266,7 +266,21 @@ export function lookupPctBbts(
   }
   const grupo = regra.grupos?.[roteado.grupo];
   if (!grupo) {
-    return { ok: null, motivo: `grupo ${roteado.grupo} ausente na regua da competencia` };
+    // RECUSA POR CONTRATO, com o motivo NOMEADO. Desde 30/08/2026 a regua pode
+    // ser gravada sem um grupo que a BBTS removeu do documento (ver
+    // RegraBbts.grupos_ausentes) — e ai a operacao que cai nesse grupo NAO e
+    // calculada com fallback nem zerada: ela para aqui, e quem le sabe POR QUE.
+    // A distincao importa: "a BBTS tirou o grupo da tabela" e um fato do
+    // documento; "grupo ausente na regua" pode ser defeito de leitura. Antes
+    // desta separacao os dois davam a MESMA mensagem.
+    const declarado = Array.isArray(regra.grupos_ausentes) && regra.grupos_ausentes.includes(roteado.grupo);
+    return {
+      ok: null,
+      motivo: declarado
+        ? `grupo ${roteado.grupo} REMOVIDO da tabela BBTS desta competencia ` +
+          `(ausencia declarada na regua) — contrato nao conferivel, nunca calculado por fallback`
+        : `grupo ${roteado.grupo} ausente na regua da competencia`,
+    };
   }
 
   const idx = acharCelula(grupo.celulas, op.taxa_juros, op.prazo);

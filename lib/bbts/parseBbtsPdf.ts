@@ -28,6 +28,7 @@
 // ============================================================================
 
 import { extractLinesFromPdf } from "@/lib/trp/parseTrpPdf";
+import { casaRotuloFragmentado } from "@/lib/bbts/normalizarTextoPdf";
 import {
   BbtsParseError,
   FAIXA_LABELS,
@@ -430,7 +431,12 @@ export function parseMatrizBbts(lines: string[]): MatrizCrua {
 
     let matched: string | null = null;
     for (const [rx, key] of GROUP_ANCHORS) {
-      if (rx.test(ln) && ancoraDeMatriz(lines, idx)) {
+      // casaRotuloFragmentado, nao rx.test: o gerador de PDF da BBTS as vezes
+      // quebra a palavra com espaco ("Ren ovavel", "B eneficio"). Com rx.test
+      // puro o grupo inteiro sumia da regua SEM ERRO — a regua saia menor e a
+      // recusa vinha depois, no validador, culpando o DOCUMENTO por um defeito
+      // de LEITURA. Trata o SITIO (todas as ancoras), nao o caso do BB Energia.
+      if (casaRotuloFragmentado(ln, rx) && ancoraDeMatriz(lines, idx)) {
         matched = key;
         break;
       }

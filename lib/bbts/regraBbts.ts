@@ -129,6 +129,31 @@ export interface RegraBbts {
    *  enumera os convênios das EXCEÇÕES (Bonificado/Reduzidos). Ver notas da 1A. */
   convenios: Record<string, { grupo: string; nome: string }>;
   grupos: Record<string, GrupoBbts>;
+  /**
+   * AUSENCIA DECLARADA — os grupos ESPERADOS que este documento NAO traz.
+   *
+   * Decisao do Diego em 30/08/2026, depois de medido que a BBTS REMOVEU
+   * GRUPAMENTO_MG_SP_REDUZIDOS, PUBLICO_DEMAIS_BONIFICADO e
+   * PUBLICO_DEMAIS_REDUZIDOS na tabela de vigencia 31/07/2026 (as palavras
+   * "reduzidos" e "bonificad" tem ZERO ocorrencia no PDF, nem em rodape).
+   * Antes disso a regua era RECUSADA inteira, e agosto ficava de fora por
+   * grupos que a ADS nao usa (medido: 0 contratos em jun e jul).
+   *
+   * O CONTRATO: se um grupo esperado nao veio, ele entra AQUI. A validacao
+   * cobra que a lista bata EXATAMENTE com a realidade — declarar de menos
+   * (ausencia silenciosa) e declarar de mais (grupo que existe) sao os dois
+   * erros, e os dois travam. Ausencia vira DADO, nao vira buraco.
+   *
+   * LEGIVEL POR SQL, que era o requisito: regra_json e jsonb, entao
+   *   select competencia, regra_json->'grupos_ausentes'
+   *     from bbts_rule_versions where regra_json ? 'grupos_ausentes';
+   * Ficou aqui em vez de coluna nova para nao exigir migration — o custo e que
+   * nao ha indice; com 1 linha por competencia isso nao pesa.
+   *
+   * QUEM CONSOME: lookupPctBbts recusa POR CONTRATO ao cair num grupo daqui, com
+   * motivo nomeado (nao e "nao achei", e "a BBTS tirou").
+   */
+  grupos_ausentes?: string[];
   seguro?: SeguroBbts;
 }
 
