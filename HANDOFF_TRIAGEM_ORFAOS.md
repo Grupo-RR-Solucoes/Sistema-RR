@@ -123,8 +123,17 @@ porque era órfão.
    test_ads_credito_trp_sempre  rc=1    35,0s   1 falha
    ```
    Os dois primeiros **terminam** dentro de 600s — não são "portão que não termina".
-2. **BLOCO B — os 11 vermelhos `needs-db-lento`: NÃO TOCADO.** A faixa segue em
-   **358,4s contra teto de 90s**, sem execução verde registrada em commit nenhum.
+2. **BLOCO B — os 11 vermelhos `needs-db-lento`: NÃO TOCADO.** Sem execução verde
+   registrada em commit nenhum.
+
+   > **O número desta linha envelheceu.** Ela dizia "a faixa segue em 358,4s contra
+   > teto de 90s". Remedido em 30/08/2026, medindo a `--db` com o cronômetro do
+   > próprio runner: **290,7s** antes do conserto do `produtos_detalhamento_escopo`
+   > (medido com `git stash`, para o par sair do mesmo dia) e **185,4s / 193,2s /
+   > 193,2s** em três execuções depois dele. O teto continua estourado nas cinco
+   > medições — o que envelheceu foi o número, não a conclusão. E a comparação entre
+   > DIAS não vale: 358,4s (29/08 cedo), 193,3s (29/08 tarde) e 290,7s (30/08) são o
+   > *mesmo conjunto de portões*; a latência do banco domina.
 3. **DÍVIDA NOMEADA — o repositório é PÚBLICO.** Medido: a API do GitHub devolve
    `private: false, visibility: public`. É o repo de um sistema que processa produção
    contrato a contrato. **"Versionar fixture" significa "publicar"** — foi o que
@@ -163,6 +172,70 @@ porque era órfão.
    `lib/bbtsDailyImport.ts` (390 linhas, 8 consumidores) e **nenhuma faixa o executa** —
    nem `gates`, nem `gates:db`, nem `gates:full`. Isso é dívida de COBERTURA, não
    falha, e depende da decisão (b) do bloco 4 (repositório público).
+
+---
+
+## DECISÕES PENDENTES COM O DIEGO — nomeadas para não se perderem
+
+Nenhuma das duas é técnica: as duas são de **exposição**, e a segunda decide a
+primeira. Registradas aqui em 30/08/2026 porque estavam vivas só em prosa espalhada
+por três handoffs, e prosa espalhada é como uma decisão vira esquecimento.
+
+### (a) Versionar a tabela de pagamento da BBTS
+
+**O que se decide:** se a régua de pagamento da BBTS entra no repositório como
+fixture.
+
+**O que ela é:** régua de preço — **zero dado de cliente**, nenhum contrato, nenhum
+CPF, nenhum nome. Mas é **documento comercial de um parceiro**, e o repositório é
+público (ver (b)), então "versionar" aqui significa literalmente **publicar**.
+
+**O que depende disso, e é o custo real de não decidir:** `bbts_parser_gate` e
+`bbts_resolver_gate` estão órfãos por causa dela — sem a fixture eles não têm o que
+medir. É a decisão que define o destino dos dois: recuperados, ou aposentados por
+impossibilidade. Reconferido em 30/08/2026:
+
+```
+$ ls scripts/bbts_parser_gate.cjs scripts/bbts_resolver_gate.cjs   -> os DOIS existem
+$ grep -c 'scripts/bbts_parser_gate.cjs"'   scripts/run_all_gates.cjs   -> 0
+$ grep -c 'scripts/bbts_resolver_gate.cjs"' scripts/run_all_gates.cjs   -> 0
+```
+
+Ou seja: o código dos dois portões está no repo e **nenhuma faixa os executa**.
+
+- **Se SIM** — os dois portões voltam a rodar em CI, e a régua da BBTS fica pública.
+- **Se NÃO** — os dois viram dívida nomeada permanente, e `lib/bbts/` fica sem
+  cobertura executável em CI. Não é "consertar depois": é uma cobertura que não pode
+  existir enquanto o repo for público.
+
+**Não há caminho técnico que contorne isso.** Ofuscar a régua descaracteriza o que o
+portão mede; mantê-la fora do git é exatamente o estado de hoje.
+
+### (b) O repositório ser público
+
+**O que se decide:** se o repositório continua público.
+
+**Medido por mim em 30/08/2026, sem credencial nenhuma** — que é a prova mais forte
+possível, porque a requisição anônima ter funcionado *é* o problema:
+
+```
+$ curl -s -o /dev/null -w "%{http_code}" https://api.github.com/repos/Grupo-RR-Solucoes/Sistema-RR
+200
+$ curl -s https://api.github.com/repos/Grupo-RR-Solucoes/Sistema-RR | grep -E '"private"|"visibility"'
+  "private": false,
+  "visibility": "public",
+```
+
+É o repositório de um sistema que processa produção contrato a contrato.
+
+**Por que decide a (a):** enquanto for público, toda fixture é uma publicação. Se
+passar a privado, a (a) deixa de ser uma decisão de exposição e vira rotina — e o
+mesmo vale para as **6 fixtures (1,93 MB)** já nomeadas como dívida na frente do
+runner e para o xlsx de `test_ads_credito_competencia` (esse **carrega dado de
+cliente** e não entra nem em repo privado sem uma decisão à parte).
+
+**A ordem importa:** decidir (b) primeiro torna (a) barata. Decidir (a) primeiro
+obriga a decidir (b) no meio do caminho.
 
 ---
 

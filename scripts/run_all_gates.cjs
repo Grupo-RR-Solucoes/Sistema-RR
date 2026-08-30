@@ -1061,7 +1061,11 @@ const GATES = [
       "createClient; compara company_received_percent com o '% A VISTA' que o " +
       "fechamento da Promotiva carimba no metadata de cada linha CASH — e a conferencia " +
       "que teria pego o bug da faixa do CNPJ. Entra em LENTO, nao em needs-db, porque a " +
-      "faixa --db ja mede 358,4s contra teto de 90s: nao se engorda banda estourada",
+      "faixa --db ja estoura o teto de 90s: nao se engorda banda estourada. (O numero " +
+      "deste motivo dizia 358,4s, de 29/08; remedido em 30/08/2026 — 290,7s antes do " +
+      "conserto do produtos_detalhamento_escopo e 185,4s/193,2s/193,2s depois dele. O " +
+      "teto segue estourado nas cinco medicoes, que e o que sustenta a decisao; so o " +
+      "numero envelheceu.)",
   },
   {
     arquivo: "scripts/mov2_proposals_get_gate.cjs",
