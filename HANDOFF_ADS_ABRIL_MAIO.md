@@ -1,7 +1,9 @@
 # ADS abril e maio/2026 — o fechamento que nunca entrou
 
 Estado em 30/08/2026. Branch `feat/ads-abril-maio-fechamento`.
-**NADA FOI IMPORTADO. Nenhuma escrita no banco.**
+
+> **MAIO FOI IMPORTADO EM PRODUCAO.** ABRIL nao — e a unica coisa que resta
+> desta frente. Ver as duas ultimas secoes.
 
 ---
 
@@ -131,7 +133,7 @@ cruze a virada do mês.**
 
 ---
 
-## PROPOSTA — como excluir a linha sem inventar exceção (PARA APROVAÇÃO)
+## FEITO — a recusa 409, e o predicado que a sustenta
 
 **Predicado, geral, sem nome de contrato:**
 
@@ -176,22 +178,140 @@ alvo, o filtro, e o resultado devolvido em `result.pulados_por_carimbo_posterior
 com contrato, carimbo encontrado e valor. **Pular em silêncio seria o mesmo
 defeito de outro ângulo**; a rota deve exibir isso como exibe o aviso do seguro.
 
-Duas perguntas em aberto para você:
-1. **pular e avisar**, ou **recusar com 409** e exigir confirmação, como já se faz
-   quando falta o PDF de seguro?
-2. o predicado exclui a **proposta inteira**, ou só as colunas que moveriam a
-   linha (`movement_date`, `bbts_competencia_fechamento`, `gross_value`)? A
-   primeira é mais simples e mais fácil de explicar; a segunda gravaria o seguro
-   de maio na linha de junho, o que **é a dívida estrutural disfarçada de conserto**
-   — e por isso não a recomendo.
+### As duas decisões, tomadas pelo Diego
 
-**Nada disso está implementado.** O predicado só existe no diagnóstico que o mede.
+**RECUSA 409 com confirmação explícita**, não "pula e avisa" — aviso dentro de
+resposta de sucesso é o mesmo defeito do campo `detalhe` que a tela não
+renderizava: o operador lê "importado" e segue. E **proposta inteira**, não só as
+colunas que movem — gravar o seguro de maio na linha de junho seria a dívida
+estrutural fingindo estar resolvida, com o agravante de ficar invisível.
+
+`lib/bbts/carimboPosterior.ts` + bloco 3c do `bbtsClosingImport` + o 409 na rota.
+A confirmação (`confirmarPularCarimboPosterior`, `=== true`, campo próprio do
+corpo) **não libera a gravação**: a exclusão mora dentro do importador, então não
+há opção, flag nem script que grave a bloqueada. A guarda fica **depois** da
+âncora ser calculada e **antes** do gate dela — a âncora sai do PDF e tem de
+continuar saindo, senão fecharia sobre um documento que não é o que está em
+disco. Se a coluna do carimbo não existir, a guarda **lança**: ausência de
+medição não é aprovação.
+
+Portão `scripts/bbts_carimbo_posterior_gate.cjs`, self-contained, Supabase falso
++ `importBbtsClosing` real capturando os upserts. **Armadilha que ele já pagou:**
+`importBbtsClosing` é dry-run por padrão (`opts?.dryRun !== false`), e a 1ª versão
+do gate passava por vacuidade — nada era gravado. Há anti-vacuidade exigindo que
+algo tenha sido gravado.
 
 ---
 
-## ORDEM DE IMPORT — decidida
+## MAIO — IMPORTADO EM 30/08/2026
 
-**MAIO primeiro, sozinho.** Depois o Diego decide abril vendo o efeito de maio.
+Pela **rota** (`POST /api/import/closing/ads`), nao por script, com sessao de
+socio. `importedBy: diretoria@rrcred.srv.br`. Duas chamadas, como projetado.
+
+**1a, sem confirmacao -> HTTP 409** (1632 bytes, 2,08s). A recusa nomeou o
+contrato 212021557, o carimbo `2026-06-01` que ele ja tem, e os R$ 255,26 de a
+vista e R$ 4.254,32 de producao que sairiam de junho. A chamada foi feita com
+`dryRun:false`: o banco foi refotografado logo depois e veio **identico a foto de
+antes, linha a linha** — a recusa nao escreveu nada.
+
+**2a, com `confirmarPularCarimboPosterior=true` -> HTTP 200**, `gravadas: 10`.
+A 212021557 aparece em `puladas_carimbo_posterior` **tambem na resposta de
+sucesso**: a confirmacao liberou o resto, nao a sobrescrita.
+
+As 4 ancoras fecharam com **delta 0**, nao com tolerancia: propostas 10,
+vfin 20.725,63, avista 634,31, seguro 40,56. `pmr_fechado: ran=false, regime
+'cms'` — maio nao recalcula PMR, como previsto.
+
+### O que entrou
+
+| onde | valor |
+|---|---|
+| `bbts_fechamento_totais` 2026-05-01 | avt 634,31 · prt 5,84 · abertura 25,00 · total 665,15 · seguro_total 40,56 |
+| `bbts_prt_parcelas` 2026-05 | 7 parcelas = 5,84, **todas com `n_parcela=0`** |
+| daily da ADS, carimbo 2026-05-01 | 10 linhas · a vista 634,31 · seguro 34,18 |
+
+### Junho intacto, conferido nas duas fotos
+
+18 linhas carimbadas 2026-06-01, a vista **7.707,03**, seguro **97,54**, bruto
+**266.210,84** — sem uma casa decimal de diferenca. A 212021557 continua carimbo
+2026-06-01, a vista 255,26, bruto 4.254,32, `promoter_source
+MANUAL_REASSIGNMENT`.
+
+**Nao mudou:** PMR 2026-05 segue 60 linhas `source='cms'`; os 3 estornos seguem
+identicos (`debit_sources`=1, `assignments`=2 ambos PENDING com 20,70 e 20,83,
+`promoter_debits` CANCELAMENTO_SEGURO da ADS=3). Nenhum debito novo, nenhum
+duplicado — os 4 PDFs tinham zero linhas CANCELADO, entao o bloco que chama
+`resolveAdsCancelDebits` nem executou.
+
+### As telas
+
+Matriz do /financeiro fecha com o card nos dois meses (delta 0,00). DRE 2026-05:
+ADS `receita 699,33` = 634,31 + 5,84 + 34,18 + 25,00. DRE 2026-06: ADS
+`receitaFechamento 7.811,58` = 7.707,03 + 97,54 + 7,01, exatamente os
+componentes de junho que nao se moveram.
+
+**Uma distincao que precisa ficar escrita:** a linha da ADS passou a APARECER na
+matriz da competencia 2026-06, com 699,33. Isso **nao e junho se mexendo** — o
+card Recebido e regime de caixa e usa M-1, entao o dinheiro de MAIO aparece na
+competencia de JUNHO. E o efeito pretendido de importar maio. Nao foi capturada
+imagem-antes dessa tela, entao a afirmacao vem da decomposicao dos componentes,
+nao de um delta medido.
+
+### A assimetria dos R$ 6,38, agora viva em producao
+
+Aprovada pelo Diego antes do import, e medida depois:
+
+| | documento | diario | diferenca |
+|---|---|---|---|
+| a vista | 634,31 | 634,31 | 0 |
+| seguro | 40,56 | **34,18** | **6,38** |
+
+Os 6,38 sao a comissao de seguro da 212021557, a proposta excluida.
+`bbts_fechamento_totais` guarda os **40,56** (o que a BBTS depositou);
+`daily_production_records` soma **34,18**. **As duas tabelas divergem em 6,38 de
+proposito** — e a divida estrutural aparecendo como numero, em vez de sumir
+dentro de uma linha carregando duas competencias. Quem conferir maio vai
+encontrar isso; esta e a explicacao.
+
+### ARMADILHA DE MEDICAO — `buildDre` e POSICIONAL
+
+`buildDre(supabase, year, month)`, nao `buildDre(supabase, { year, month })`.
+Passar objeto faz `year && month` dar falso e a funcao cai no `periods[0]` — o
+mes fechado **mais recente**. Na 1a medicao pos-import, maio e junho vieram
+IDENTICOS, os dois com os 19.048,86 de JULHO, e parecia defeito grave. Nao era.
+Registrado em `scripts/diag-ads-dre-mai-jun.cjs`.
+
+---
+
+## ABRIL — A UNICA COISA QUE RESTA
+
+**Nao importado. Decisao do Diego, pendente.**
+
+Abril esta pronto do lado do codigo: o extrator passa (37 propostas, AVT
+9.780,86 / PRT 0 / Abertura 225,00 / Total 10.005,86, seguro 14 contratos /
+213,47, identidade do cabecalho fechando), e o predicado de carimbo posterior
+**aciona 0 de 37** — nao ha nada a bloquear, entao a 1a chamada ja daria 200.
+
+**O que segura e o regime.** `detectMonthRegime` da **2026-04 = `fechamento`**
+(PMR com 41 linhas `source='fechamento'`, nenhuma da ADS). A
+`reconsolidarCompetenciaFechada` que a rota chama logo apos gravar **RODA** —
+dry-run confirmou `ran: true`, **41 promotores**. Maio nao tinha esse risco
+porque e regime `cms` (`ran: false`).
+
+Ou seja: importar abril **toca competencia FECHADA e recalcula o PMR de 41
+promotores**. E a diferenca de natureza entre as duas competencias, e foi por
+isso que a ordem decidida foi maio primeiro, sozinho.
+
+Antes de importar abril, vale medir o dry-run da reconsolidacao promotor a
+promotor e comparar com o PMR atual — o import de maio nao gerou esse dado
+porque em `cms` a reconsolidacao e no-op.
+
+---
+
+## ORDEM DE IMPORT — cumprida
+
+**MAIO primeiro, sozinho** — feito em 30/08. Abril fica para o Diego decidir
+vendo o efeito de maio.
 
 Razão medida: `detectMonthRegime` dá **2026-05 = `cms`** (PMR com 60 linhas
 `source='cms'`) e a `reconsolidarCompetenciaFechada` que a rota chama logo após
