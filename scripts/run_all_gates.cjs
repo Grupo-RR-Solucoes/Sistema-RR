@@ -437,6 +437,25 @@ const GATES = [
       "para 'outros' derruba 4 asserçoes. Sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/bbts_layouts_pdf_gate.cjs",
+    nome: "os TRES layouts do PDF de seguro da BBTS + '#N/D' no PRT",
+    modo: "self-contained",
+    motivo:
+      "NASCEU em 30/08/2026, do dia em que o extrator recusou 3 dos 4 PDFs de " +
+      "abril e maio/2026 da ADS — duas competencias que nunca entraram no " +
+      "sistema. A BBTS emite o relatorio de seguro em TRES arranjos de coluna " +
+      "que variam em 3 eixos independentes (prefixo 'R$ ', coluna de data, " +
+      "posicao da chave J), e escreve o cabecalho do TOTAL de dois jeitos; a " +
+      "'N. da parcela' do PRT pode vir '#N/D'. Nada disso tinha vigia. Importa " +
+      "SEGURO_RE/PRT_RE/parseSeguroLines/parsePrtSection REAIS e exercita os " +
+      "dois lados: 4 mutantes (um afrouxamento desfeito por vez) que TEM de " +
+      "derrubar fixture, e 6 documentos mal formados que TEM de abortar — " +
+      "inclusive a fronteira da tolerancia (1 centavo passa, 2 abortam), que a " +
+      "1a versao da fixture errou. FIXTURES SINTETICAS: o repo e PUBLICO e " +
+      "nenhuma linha de PDF de cliente entra aqui; preserva-se a FORMA, nao o " +
+      "dado. Sem banco, sem rede, sem caminho absoluto, sem PDF em disco",
+  },
+  {
     arquivo: "scripts/bbts_sinal_negativo_gate.cjs",
     nome: "sinal negativo sobrevive ao parser da BBTS (linha CANCELADA do seguro)",
     modo: "self-contained",
