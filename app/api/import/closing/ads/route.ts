@@ -6,6 +6,12 @@ import { extractBbtsClosingFromPdfs } from "@/lib/bbtsPdfExtract";
 import { importBbtsClosing, BBTS_COMPANY_ID } from "@/lib/bbtsClosingImport";
 import { clearMemoryCache } from "@/lib/memoryCache";
 import { reconsolidarCompetenciaFechada } from "@/lib/reconsolidarCompetencia";
+import {
+  propostasAlvoDoFechamento,
+  propostasComCarimboPosterior,
+  competenciaCarimbo,
+  textoRecusaCarimboPosterior,
+} from "@/lib/bbts/carimboPosterior";
 
 // ============================================================================
 // /api/import/closing/ads — FECHAMENTO da ADS/BBTS por 2 PDFs (crédito + seguro).
@@ -108,6 +114,76 @@ export async function POST(req: Request) {
       );
     }
 
+    // ------------------------------------------------------------------------
+    // RECUSA 409 — este fechamento e ANTERIOR ao que ja carimbou parte destas
+    // propostas.
+    //
+    // POR QUE RECUSA E NAO "PULA E AVISA". Aviso dentro de resposta de SUCESSO e
+    // o mesmo defeito do campo `detalhe` que a tela nao renderizava: o operador
+    // le "importado", segue, e o dinheiro que ficou de fora nunca aparece. Aqui a
+    // importacao PARA, com o dano em numeros, e so anda com confirmacao
+    // explicita REENVIADA.
+    //
+    // O QUE A CONFIRMACAO AUTORIZA — e o que ela NAO autoriza. Ela autoriza
+    // importar o RESTANTE. Ela NAO grava as propostas bloqueadas: elas continuam
+    // excluidas dentro do proprio importBbtsClosing (bloco 3c), que e onde a
+    // guarda mora de verdade. Nao existe valor de campo, nem variavel de
+    // ambiente, que faca este import sobrescrever fechamento posterior.
+    //
+    // `=== true` LITERAL, e campo PROPRIO: nunca ligado por padrao, nunca por
+    // env. Mesma disciplina do semSeguro logo acima.
+    // ------------------------------------------------------------------------
+    const CAMPO_CONFIRMACAO = "confirmarPularCarimboPosterior";
+    const competenciaEntrando = competenciaCarimbo(input.year, input.month);
+    const alvo = propostasAlvoDoFechamento(input);
+    let bloqueadas;
+    try {
+      bloqueadas = await propostasComCarimboPosterior(supabase, {
+        companyId: BBTS_COMPANY_ID,
+        year: input.year,
+        month: input.month,
+        propostas: alvo,
+      });
+    } catch (e: any) {
+      // A guarda nao pode ser AVALIADA (coluna do carimbo ausente). Ausencia de
+      // medicao nao e aprovacao: 409, nao 200.
+      return NextResponse.json({ error: String(e?.message || e) }, { status: 409 });
+    }
+
+    if (bloqueadas.length > 0 && body[CAMPO_CONFIRMACAO] !== true) {
+      const { data: empresaRow } = await supabase
+        .from("companies")
+        .select("name")
+        .eq("id", BBTS_COMPANY_ID)
+        .maybeSingle();
+      const empresa = String((empresaRow as { name?: string } | null)?.name || "ADS").trim();
+      return NextResponse.json(
+        {
+          // O DANO EM NUMEROS VAI NO `error`: e o unico campo que a tela exibe
+          // (app/importacoes/page.tsx:254).
+          error: textoRecusaCarimboPosterior({
+            competencia: competenciaEntrando,
+            empresa,
+            bloqueadas,
+            totalAlvo: alvo.length,
+            campoConfirmacao: CAMPO_CONFIRMACAO,
+          }),
+          competencia: competenciaEntrando,
+          empresa,
+          empresa_id: BBTS_COMPANY_ID,
+          propostas_alvo: alvo.length,
+          bloqueadas_por_carimbo_posterior: bloqueadas.length,
+          bloqueadas: bloqueadas,
+          como_prosseguir:
+            `Reenvie com ${CAMPO_CONFIRMACAO}=true para importar o RESTANTE. As propostas ` +
+            `acima seguem EXCLUIDAS da gravacao mesmo com a confirmacao — ela autoriza ` +
+            `importar o resto, nao sobrescrever fechamento posterior.`,
+          confirmacao_necessaria: true,
+        },
+        { status: 409 }
+      );
+    }
+
     let res;
     try {
       res = await importBbtsClosing(supabase, input, {
@@ -156,6 +232,9 @@ export async function POST(req: Request) {
       com_seguro: res.com_seguro,
       seguro_only_lines: res.seguro_only_lines,
       gravadas: res.gravadas,
+      // Sempre presente: mesmo com a confirmacao, quem opera precisa ver o que
+      // NAO entrou — e o unico registro de que o dinheiro ficou de fora.
+      puladas_carimbo_posterior: res.puladas_carimbo_posterior,
       importedBy: user.session.appUser.email,
     });
   } catch (error) {

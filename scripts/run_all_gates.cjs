@@ -437,6 +437,29 @@ const GATES = [
       "para 'outros' derruba 4 asserçoes. Sem banco, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/bbts_carimbo_posterior_gate.cjs",
+    nome: "fechamento antigo nao sobrescreve carimbo POSTERIOR",
+    modo: "self-contained",
+    motivo:
+      "NASCEU em 30/08/2026. A BBTS pode pagar as DUAS PERNAS da mesma proposta " +
+      "em competencias diferentes (credito em junho, seguro em maio), e a tabela " +
+      "guarda UMA linha por (empresa, proposta) e UM carimbo. Sem guarda, " +
+      "importar a competencia antiga MESCLA por (company_id, proposal_number) e " +
+      "o dono FULL sobrescreve movement_date/gross_value/bbts_pag_avista: 255,26 " +
+      "de avista e 4.254,32 de producao sairiam de junho e a ancora daquele " +
+      "fechamento deixaria de fechar. Supabase falso em memoria + " +
+      "importBbtsClosing REAL com dryRun:false, capturando os upserts — e a " +
+      "unica forma de responder 'esta linha chegou ao banco?'. Prova nos dois " +
+      "sentidos: a guarda EXCLUI e o dano sem ela e real (as 3 colunas SAO do " +
+      "dono FULL, medido por ownedColumnsFor); 3 mutantes que NAO podem acionar " +
+      "(carimbo igual, anterior e NULL); 5 formas de opcao que NAO liberam a " +
+      "gravacao; e controle positivo com competencia limpa. ARMADILHA que este " +
+      "gate ja pagou: importBbtsClosing e DRY-RUN POR PADRAO, entao a 1a versao " +
+      "passava por VACUIDADE — ha assercao de anti-vacuidade exigindo que algo " +
+      "TENHA sido gravado. Fixtures sinteticas (repo publico). Sem banco, sem " +
+      "rede, sem caminho absoluto",
+  },
+  {
     arquivo: "scripts/bbts_layouts_pdf_gate.cjs",
     nome: "os TRES layouts do PDF de seguro da BBTS + '#N/D' no PRT",
     modo: "self-contained",
