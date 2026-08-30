@@ -59,8 +59,42 @@ async function main() {
   // b) 213304584 (Cancelamento) -> NÃO gravada
   ok("(b) 213304584 (Cancelamento) NÃO gravada", !gravada("213304584"));
 
-  // c) Proposta CDC -> NÃO gravada
-  ok("(c) Proposta CDC (219509685/219421812/219351243) NÃO gravadas", !gravada("219509685") && !gravada("219421812") && !gravada("219351243"));
+  // c) Proposta CDC -> NAO gravada
+  //
+  // REANCORADA em 29/08/2026: de TRES NUMEROS DE CONTRATO para o STATUS que eles
+  // deviam representar. A assercao antiga era
+  //     !gravada("219509685") && !gravada("219421812") && !gravada("219351243")
+  // e reprovava. Nao havia defeito no parser: o ARQUIVO andou. Medido hoje no
+  // proprio "Relatório (3).xlsx", coluna ds_transacao:
+  //     219509685  ->  "Cancelamento de Proposta CDC"  (segue fora, correto)
+  //     219351243  ->  "Contratação CDC"               (VIROU CONTRATO)
+  //     219421812  ->  "Contratação CDC"               (VIROU CONTRATO)
+  // Duas das tres propostas foram efetivamente contratadas no mundo real desde que
+  // o portao foi escrito. Gravar as duas e o comportamento CERTO — a assercao e que
+  // tinha congelado numero de contrato como se fosse status permanente. Mesma
+  // doenca da contagem "18 linhas" ja aposentada neste arquivo: media o INSUMO, nao
+  // o parser.
+  //
+  // A REGRA ("so Contratação CDC entra") e PERMANENTE, entao nao se aposenta — se
+  // reancora no proprio arquivo, no mesmo run. Agora os dois lados sao computados:
+  // nenhuma linha de "Proposta CDC" pode ser gravada, e toda "Contratação CDC" tem
+  // de ser. Isso vale qualquer que seja o conteudo do arquivo amanha, e ainda pega
+  // o caso que a lista fixa nunca pegaria: uma Proposta CDC NOVA sendo gravada.
+  const statusDe = (r) => String(r?.ds_transacao ?? "").trim().replace(/\s+/g, " ");
+  const ehProposta = (r) => /^Proposta CDC$/i.test(statusDe(r));
+  const ehContratacao = (r) => /^Contratação CDC$/i.test(statusDe(r));
+  const propostas = rows.filter(ehProposta);
+  const contratacoes = rows.filter(ehContratacao);
+  const propGravadas = propostas.filter((r) => gravada(String(r.nu_proposta).trim()));
+  const contratNaoGravadas = contratacoes.filter((r) => !gravada(String(r.nu_proposta).trim()));
+  // ANTI-VACUIDADE nos DOIS lados: arquivo sem "Proposta CDC" faria a metade
+  // negativa passar por 0 == 0, e sem "Contratação CDC" a positiva nao provaria nada.
+  ok(`(c) NENHUMA "Proposta CDC" gravada (${propostas.length} no arquivo)`,
+    propostas.length > 0 && propGravadas.length === 0,
+    propostas.length === 0 ? "VACUIDADE: nenhuma Proposta CDC no arquivo" : `gravadas: ${propGravadas.map((r) => r.nu_proposta).join(", ")}`);
+  ok(`(c+) TODA "Contratação CDC" gravada (${contratacoes.length} no arquivo) — controle positivo`,
+    contratacoes.length > 0 && contratNaoGravadas.length === 0,
+    contratacoes.length === 0 ? "VACUIDADE: nenhuma Contratação CDC no arquivo" : `faltando: ${contratNaoGravadas.map((r) => r.nu_proposta).join(", ")}`);
 
   // d) uma Contratação CDC de julho -> gravada em 2026-07 (213977398, efetivação 06/07)
   const d = previewByProp.get("213977398");

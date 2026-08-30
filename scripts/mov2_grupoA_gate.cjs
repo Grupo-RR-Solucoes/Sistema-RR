@@ -19,6 +19,7 @@
  * consumidores sao no-op por construcao — todos consomem so esse booleano.
  * ========================================================================== */
 require("./_ts_register.cjs");
+const { resolverCompetenciaAberta } = require("./_competenciaAberta.cjs");
 const { createClient } = require("@supabase/supabase-js");
 const { detectMonthRegime } = require("../lib/cmsMonthly.ts");
 const { resolveCompetenciaAberta } = require("../lib/debitsData.ts");
@@ -65,11 +66,24 @@ const brl = (n) => Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigit
     const destino = `${r.year}-${String(r.month).padStart(2, "0")}`;
     console.log(`  partindo de 2026-${String(m).padStart(2, "0")} -> lanca em ${destino}  (pulou ${r.pulou} mes(es) fechado(s))`);
   }
-  console.log("  esperado: abril e junho PULAM (fechados) e caem em julho; julho e o proprio (aberto).");
+  // O DESTINO SAI DO RUN, nao de literal. Antes o portao cobrava `month === 7` nos
+  // tres casos, porque julho era o mes aberto quando ele foi escrito. Julho FECHOU
+  // e o resolvedor passou a cair em 2026-08 — que e a resposta CERTA. O portao
+  // reprovava o comportamento correto. Ver scripts/_competenciaAberta.cjs: seis
+  // portoes estavam vermelhos por esta mesma causa.
+  const ab = await resolverCompetenciaAberta(sb);
+  console.log(`  esperado: partindo de mes FECHADO, pula ate a competencia ABERTA (${ab.comp});`);
+  console.log("            partindo da propria aberta, fica nela e pulou=0.");
   const abr = await resolveCompetenciaAberta(sb, 2026, 4);
   const jun = await resolveCompetenciaAberta(sb, 2026, 6);
-  const jul = await resolveCompetenciaAberta(sb, 2026, 7);
-  const okDeb = abr.month === 7 && jun.month === 7 && jul.month === 7 && jul.pulou === 0;
+  const naAberta = await resolveCompetenciaAberta(sb, ab.year, ab.month);
+  const caiNaAberta = (r) => r.year === ab.year && r.month === ab.month;
+  // Os dois pontos de partida TEM de estar fechados: senao "pula ate a aberta" nao
+  // prova nada — seria o caso trivial de ja se estar nela.
+  const partidasFechadas =
+    (await detectMonthRegime(sb, 2026, 4)) !== "open" && (await detectMonthRegime(sb, 2026, 6)) !== "open";
+  if (!partidasFechadas) console.log("  !! 2026-04/2026-06 nao estao fechados: o teste do 'pula' seria vacuo.");
+  const okDeb = partidasFechadas && caiNaAberta(abr) && caiNaAberta(jun) && caiNaAberta(naAberta) && naAberta.pulou === 0;
   console.log(`  -> ${okDeb ? "OK" : "FALHOU"}`);
   if (!okDeb) falhas++;
 
@@ -77,16 +91,18 @@ const brl = (n) => Number(n || 0).toLocaleString("pt-BR", { minimumFractionDigit
   console.log("\n" + "=".repeat(84));
   console.log("3) projecaoMetas — flag `fechado` e a producao do grupo");
   console.log("=".repeat(84));
-  for (const m of [4, 6, 7]) {
-    const p = await buildProjecaoMetas(sb, { year: 2026, month: m });
+  // O MES EM CURSO tambem sai do run (era `7`, cravado). A invariante e de FORMA,
+  // nao de calendario: mes fechado => fechado=true; mes ABERTO => fechado=false.
+  for (const [y, m] of [[2026, 4], [2026, 6], [ab.year, ab.month]]) {
+    const p = await buildProjecaoMetas(sb, { year: y, month: m });
     const prod = (p.promotores || []).reduce((s, r) => s + Number(r.producao_acumulada || 0), 0);
-    console.log(`  2026-${String(m).padStart(2, "0")}  fechado=${pad(p.fechado, 6)} promotores=${pad((p.promotores || []).length, 4)} producao_acumulada=${brl(prod)}`);
+    console.log(`  ${y}-${String(m).padStart(2, "0")}  fechado=${pad(p.fechado, 6)} promotores=${pad((p.promotores || []).length, 4)} producao_acumulada=${brl(prod)}`);
   }
   const p4 = await buildProjecaoMetas(sb, { year: 2026, month: 4 });
   const p6 = await buildProjecaoMetas(sb, { year: 2026, month: 6 });
-  const p7 = await buildProjecaoMetas(sb, { year: 2026, month: 7 });
-  const okProj = p4.fechado === true && p6.fechado === true && p7.fechado === false;
-  console.log(`  esperado: abril e junho fechado=true (mes completo); julho fechado=false (em curso)`);
+  const pAb = await buildProjecaoMetas(sb, { year: ab.year, month: ab.month });
+  const okProj = p4.fechado === true && p6.fechado === true && pAb.fechado === false;
+  console.log(`  esperado: abril e junho fechado=true (mes completo); ${ab.comp} fechado=false (em curso)`);
   console.log(`  -> ${okProj ? "OK" : "FALHOU"}`);
   if (!okProj) falhas++;
 

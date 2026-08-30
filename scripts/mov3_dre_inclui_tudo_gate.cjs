@@ -86,12 +86,53 @@ function porCnpj(d) {
   console.log(`       comissao do DRE               : ${brl(jun.group?.comissoes)}   ${okDesc ? "OK" : "!! DIVERGE"}`);
   if (!okDesc) falhas++;
 
-  // Ancora do resultado (o numero que o Diego previu).
-  const ANCORA_RESULTADO = 145019.91;
-  const okRes = Math.abs(num(jun.group?.resultadoLiquido) - ANCORA_RESULTADO) < 0.02;
-  console.log(`\n     RESULTADO do grupo: ${brl(jun.group?.resultadoLiquido)}  (ancora ${brl(ANCORA_RESULTADO)})  ${okRes ? "OK" : "!! DIVERGE"}`);
+  // ---- ANCORA DO RESULTADO DO GRUPO ----
+  // REANCORADA em 29/08/2026: 145.019,91 -> 143.942,13. A anterior era o numero
+  // que o Diego previu, cravado quando a frente entrou; ela nao estava errada,
+  // ENVELHECEU. O que a moveu nao foi o DRE e sim a ENTRADA dele: as 52 linhas do
+  // PMR de 2026-06 foram reescritas ate 27/08/2026 20:54 UTC (a mais antiga e de
+  // 30/06), depois da ancora, pelas reguas que entraram em agosto — teto 5,80%
+  // (d7d556e) e carve-out INSS (d6febc5), as mesmas que movem a ancora de credito
+  // do motor_credito_trp_db_gate.
+  //
+  // POR QUE A ANCORA CONTINUA, em vez de virar identidade auto-computada: a
+  // identidade ja existe logo acima (Sigma final - Sigma descontos == comissoes do
+  // DRE, conferida ao centavo neste mesmo run) e ela prova COERENCIA, nao
+  // GRANDEZA. Uma identidade fecha igual mesmo que o DRE inteiro despenque. A
+  // ancora e o unico ponto que cobra a ORDEM DE GRANDEZA contra um numero externo.
+  const ANCORA_RESULTADO = {
+    valor: 143942.13,
+    cravadaEm: "2026-08-29",
+    procedencia:
+      "buildDre(2026-06).group.resultadoLiquido = receita 261.711,54 - comissoes " +
+      "117.769,41 - despesas 0,00. A comissao e Sigma final_commission_value " +
+      "(120.837,46, das 52 linhas de PMR de jun com source fechamento|bbts) menos " +
+      "Sigma promoter_discounts nao-empresa (3.068,05) — a mesma identidade conferida " +
+      "ao centavo logo acima, neste mesmo run.",
+    escopo: { competencia: "2026-06", linhasPmr: 52, empresas: 5 },
+  };
+  const okRes = Math.abs(num(jun.group?.resultadoLiquido) - ANCORA_RESULTADO.valor) < 0.02;
+  console.log(`\n     RESULTADO do grupo: ${brl(jun.group?.resultadoLiquido)}  (ancora ${brl(ANCORA_RESULTADO.valor)})  ${okRes ? "OK" : "!! DIVERGE"}`);
   console.log(`     antes da frente: R$ 140.695,13  ->  delta ${brl(num(jun.group?.resultadoLiquido) - 140695.13)}`);
-  if (!okRes) falhas++;
+  if (!okRes) {
+    // Discrimina ancora vencida de divergencia viva pelo mesmo sinal usado no
+    // gate_ads_seguro_via_render: dado que se moveu DEPOIS da ancora acusa a ancora.
+    const { data: ups } = await sb.from("promoter_monthly_results")
+      .select("updated_at").eq("year", 2026).eq("month", 6).in("source", ["fechamento", "bbts"]);
+    const maxUp = (ups || []).map((r) => r.updated_at).filter(Boolean).sort().pop() || "";
+    const dias = Math.floor((Date.now() - Date.parse(ANCORA_RESULTADO.cravadaEm + "T00:00:00Z")) / 86400000);
+    console.log(`     A ANCORA tem ${dias} dia(s) — cravada em ${ANCORA_RESULTADO.cravadaEm}`);
+    console.log(`     procedencia: ${ANCORA_RESULTADO.procedencia}`);
+    console.log(`     escopo cravado: ${JSON.stringify(ANCORA_RESULTADO.escopo)}`);
+    console.log(`     max(updated_at) do PMR de jun: ${maxUp || "(sem linhas)"}`);
+    if (maxUp && maxUp.slice(0, 10) > ANCORA_RESULTADO.cravadaEm) {
+      console.log("     => O PMR MUDOU DEPOIS DA ANCORA. Suspeita de ANCORA VENCIDA, nao de defeito.");
+      console.log("        Quem recravar escreve valor, data, procedencia e o que mudou — aqui, no codigo.");
+    } else {
+      console.log("     => O PMR NAO se moveu desde a ancora. Isto e DIVERGENCIA VIVA: o codigo mudou.");
+    }
+    falhas++;
+  }
 
   // ---- 2. JULHO: o alerta do dado incompleto ----
   console.log("\n" + "=".repeat(96));

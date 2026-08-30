@@ -499,9 +499,14 @@ em todo o banco — os 6 APPLIED são ADIANTAMENTO (5) e LIQUIDACAO_ANTECIPADA (
 
 ## 6b. O PADRÃO — nota de projeto que não é MEDIDA volta como pista errada
 
-> **Contagem em 29/08/2026: SEIS anotações derrubadas por medição — quatro herdadas,
-> duas escritas DEPOIS desta regra (a 5ª minha, a 6ª do Diego).** Ver também
-> `HANDOFF_TRIAGEM_ORFAOS.md`.
+> **Contagem em 29/08/2026, fim do dia: NOVE anotações derrubadas por medição —
+> quatro herdadas, CINCO escritas DEPOIS desta regra.** A tabela abaixo cobre as seis
+> primeiras; a 7ª (o SQL do piso), a 8ª (o `typecheck:gates` vermelho) e a 9ª (o
+> rc=127 classificado como "crash de ambiente") estão na seção "A CONTAGEM DA §6b" do
+> `HANDOFF_TRIAGEM_ORFAOS.md`, com a medição de cada uma.
+>
+> Duas das três novas moravam em MEMÓRIA de projeto, não em handoff: **o padrão não é
+> sobre onde a nota mora**, e sim sobre ela não ter sido medida.
 
 Registrado em 28/08/2026, depois da **terceira** ocorrência na mesma frente. Três
 anotações abriram um bloco de trabalho como se o defeito estivesse vivo, e nas três

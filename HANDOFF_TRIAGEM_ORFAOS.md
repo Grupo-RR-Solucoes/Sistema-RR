@@ -110,6 +110,10 @@ porque era órfão.
 
 ## O QUE FICA ABERTO
 
+> **REMEDIADO em 29/08/2026** pela frente `feat/triagem-bloco1-indeterminados`: os
+> itens 1, 2 e 4 estão **FECHADOS** — ver "A TRIAGEM FINAL", abaixo. O item 3
+> (repositório público) segue aberto e é decisão do Diego.
+
 1. **Os 5 indeterminados** — medidos, **não diagnosticados, nenhum presumido benigno**:
    ```
    motor_credito_trp_db_gate    rc=1   202,6s   169 divergências
@@ -133,15 +137,128 @@ porque era órfão.
 
 ---
 
-## A CONTAGEM DA §6b — são **SEIS**, e **DUAS** são minhas
+## A TRIAGEM FINAL — 17 vermelhos, **17 balde 2, ZERO defeito de produção**
 
-Canônico: §6b do `HANDOFF_RESIDUO_FINANCEIRO`. Somando as duas frentes:
+Frente `feat/triagem-bloco1-indeterminados`, ramificada de `main` em `9074033`.
+Commits `4a668ee` (bloco 1) e `d8fb05c` (bloco 2). Leitura pura, nada gravado no
+banco. `npm run gates` 30/30, `tsc --noEmit` e `typecheck:gates` limpos, `build` OK.
+
+Os 5 indeterminados + a falha restante do `test_ads_credito_competencia` + os 11
+`needs-db-lento`. **Nenhum era balde 1**: nenhum centavo errado, nenhuma produção
+escondida. É o resultado que fecha a tese das três frentes — o vermelho acumulado
+deste repositório era **âncora envelhecida, não defeito**.
+
+### A prova mecânica da tese — R$ 357,14 bisseccionados
+
+A âncora de crédito RR de jun/2026 (`109.538,42`, cravada em `3363ba5`, 12/07) era o
+único número da frente que podia ser dinheiro. Bisseccionada em `git worktree`,
+commit a commit, contra o banco de hoje:
+
+```
+109.587,23   código de 3363ba5 (12/07) rodado HOJE
+ -   23,17   competência do volume virou JANELA
+ -  960,93   d7d556e 25/08  teto 5,80% (repasse sai da base NO TETO)
+ +  578,15   d6febc5 25/08  carve-out INSS da Aldalene (critério = TAXA)
+ ---------
+109.181,28   HEAD — e as DUAS fontes de TRP dão este mesmo valor
+```
+
+Sem resíduo inexplicado. E o primeiro número é a tese inteira em uma linha: **com o
+código CONGELADO a base andou +R$ 48,81 em 48 dias** (reatribuições, imports tardios).
+Constante absoluta sobre tabela viva **vence sozinha**, sem ninguém tocar em código —
+por isso as duas do `mov2_relatorios` viraram comparação computada no mesmo run.
+
+Das 169 divergências do `motor_credito_trp_db_gate`: 132 `calculated_at` (relógio),
+30 `trp_version_id`/`trp_fallback` (procedência, que **devem** diferir entre json e
+db), 6 do `trend` (a janela de 6 meses andou para agosto e a tolerância estava presa a
+`month === 7`), 1 âncora. **Zero eram diferença de cálculo.** A impressão truncava em
+8 por seção e escondia a composição.
+
+### Bloco 2 — 10 dos 11 são DUAS causas
+
+1. **Julho fechou** (6 portões, 24 asserções). Todos cravavam `2026-07` como "o mês
+   ABERTO", porque julho estava aberto quando foram escritos. Alguns passaram a
+   reprovar o comportamento **certo**: o `mov2_grupoA` exigia que o lançamento caísse
+   em julho quando a resposta correta já era agosto.
+   Conserto único em **`scripts/_competenciaAberta.cjs`** — biblioteca (prefixo `_`),
+   uma cópia só porque o `ledgerHealth` já registra o preço que este repo pagou por
+   cópias divergentes de lógica de regime. Resolve por `detectMonthRegime` **no run** e
+   **LANÇA** quando não há mês aberto: nunca devolve um fechado disfarçado, senão o
+   portão passaria medindo a coisa errada. Provado por mutação (âncora de calendário em
+   2026-05, janela toda fechada): reprova com a lista dos regimes.
+2. **Dois universos de rank** (2 portões). O `gate_ritmo_diario` comparava a lista da
+   ROTA (escopada pela competência) com um COUNT da tabela `promoters` (sem
+   competência); o `projecao_rank_sem_master`, base escopada pela empresa da PRODUÇÃO
+   com rank escopado pela empresa DA PESSOA. 48 contra 53, e **os mesmos 5 nomes nos
+   dois** — todos com produção R$ 0,00, quatro cadastrados em agosto. **Contratar
+   alguém reprovava os dois portões no dia seguinte.** Varrido o grupo: dos 53
+   não-masters ativos com linha, 48 estão em algum rank e os 5 ausentes têm produção
+   zero — nenhum centavo fora do rank. Entrou a invariante que a contagem tentava
+   dizer, com os dois lados computados e guarda de não-vacuidade.
+
+### CATEGORIA NOVA na taxonomia — portão **MORTO**, não vermelho
+
+`pmr_aberto_sem_daily_gate` **não estava vermelho: estava morto.** Saía em
+`admin.from(...).select(...).eq(...).not is not a function` **antes da primeira
+asserção** — zero medição, inclusive do bloco de PRODUÇÃO. O commit `b30c6a2` deu ao
+chamador um `.not(...)` que o stub em memória não tinha, e atrás dele um `.gte`. O
+`try/catch` que o cabeçalho do arquivo invoca não protege: o `TypeError` estoura ao
+**montar** a query, não ao aguardá-la.
+
+**É pior que órfão, e merece linha própria na taxonomia.** Órfão ao menos é sabido:
+está listado, e quem lê o registro sabe que ninguém o roda. Este estava REGISTRADO,
+aparecia na contagem de vermelhos e **contava como cobertura que não existia** — a
+única guarda contra o fóssil do PMR em mês aberto voltar, e ela não media nada.
+Vermelho pede diagnóstico; morto não pede nada, porque parece só mais um vermelho.
+Stub alinhado e, o que importa mais, ele agora **reclama o NOME** do método que lhe
+falta em vez de morrer anônimo. Com o portão vivo, os 3 blocos passam: o fóssil não
+voltou.
+
+### A faixa `--db` — **não consertada, registrada**
+
+Remedida hoje: **193,3s** de teto 90s. O registro anterior dizia 358,4s; com os mesmos
+portões deu 193,3s, então aquele número carrega latência de banco. Estourado nas duas
+medições, e o custo **é concentrado, não gordura**:
+
+```
+ 91,3s  produtos_detalhamento_escopo_gate   <- sozinho passa do teto inteiro
+ 21,4s  reatribuicao_precedencia_gate
+ 13,2s  gate_ads_julho_dois_bugs
+ -----
+125,9s  de 193,3s = 65% em TRÊS. Os outros 27 dividem ~67s.
+```
+
+Tirar só o primeiro põe a faixa em ~102s — perto do teto, ainda acima. Problema
+separado por decisão do Diego. (`needs-db-lento`: 510,6s em 20, 60% em cinco.)
+
+---
+
+## A CONTAGEM DA §6b — são **NOVE**, e **QUATRO** não são herdadas
+
+Canônico: §6b do `HANDOFF_RESIDUO_FINANCEIRO`. Somando as três frentes:
 
 | # | de quem | a anotação | o que a medição mostrou |
 |---|---|---|---|
 | 1–4 | herdadas | chave J / cancelamento / "Comissões pagas" / §16 ADS | já consertado, meia verdade, já consertado, falsa |
 | 5 | **minha** | "volume medido (zero)", gatilho não disparado | tinha disparado 7 semanas antes (R$ 4,06) |
 | 6 | **do Diego** | "a escrita de 26/08 é a segunda sem rastro" | **há rastro**: §7 do `HANDOFF_ADS_FECHAMENTO_CAIXA`, 13:53 UTC, reimportação dele pelos 2 PDFs |
+| 7 | **minha** (memória) | "o SQL do piso NÃO está aplicado; a coluna `piso_zerou` não existe" | **os dois existem**: `piso_producao_rule_versions` tem régua (vigência 2026-08-01, piso 150k, 2 ids) e `promoter_monthly_results.piso_zerou` responde |
+| 8 | **minha** (memória) | "`typecheck:gates` está VERMELHO em `origin/main` e o CI não o roda" | **verde, e no CI** — `1c67ac7` (21/08) consertou as duas metades e é ancestral de `main` |
+| 9 | **do Diego** | "`mov2_dre_gate` rc=127 é CRASH DE AMBIENTE, não vermelho de asserção" | **é FLAKE**: à mão o portão termina em ~223s com rc=1 e falha de asserção real, que era premissa morta (`24625ef`) |
+
+**A conta pedida era OITO; contando dão NOVE** — a base era seis, e as três de hoje
+somam nove. Fica o número medido, não o esperado, que é a regra desta seção aplicada
+a ela mesma.
+
+**Quatro das nove não são herdadas, e todas foram escritas DEPOIS da regra que as
+condena** — a 5ª no dia em que a regra nasceu, a 6ª três turnos depois, a 7ª e a 8ª em
+memória de projeto, a 9ª numa classificação de portão. Isso não enfraquece a regra; é a
+evidência mais forte a favor dela. Nota não medida é frágil independentemente de idade,
+**de autor e de onde mora** — handoff, instrução falada ou memória, dá no mesmo.
+
+A 9ª tem um agravante próprio: **uma classificação errada custou uma frente inteira de
+atraso.** "Crash de ambiente" mandou parar de investigar; era uma falha de asserção
+real esperando diagnóstico.
 
 **As duas não-herdadas foram escritas DEPOIS da regra que as condena** — a 5ª no dia
 em que a regra foi escrita, a 6ª três turnos depois, por quem a escreveu. Isso não

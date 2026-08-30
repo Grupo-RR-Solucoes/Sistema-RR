@@ -56,13 +56,60 @@ function makeStub(tables) {
       eq: (c, v) => (preds.push((r) => String(r[c]) === String(v)), q),
       neq: (c, v) => (preds.push((r) => String(r[c]) !== String(v)), q),
       in: (c, arr) => (preds.push((r) => arr.map(String).includes(String(r[c]))), q),
+      // ACRESCENTADO em 29/08/2026. O portao NAO estava vermelho: estava MORTO,
+      // saindo em "admin.from(...).select(...).eq(...).not is not a function" antes
+      // da primeira assercao — nao mediu nada, nem o bloco de PRODUCAO.
+      // CAUSA: o commit b30c6a2 ("o vigia passa a olhar o que NAO chegou")
+      // acrescentou `.not("bbts_pag_avista", "is", null)` em
+      // lib/diagnostico/fechamentoParcial.ts:87, que o ledgerHealth importa. O stub
+      // daqui nao acompanhou a superficie do cliente real e passou a derrubar o
+      // processo. O try/catch que o cabecalho deste arquivo menciona NAO protege:
+      // o TypeError estoura ao MONTAR a query, nao ao aguarda-la.
+      // Suporta so o operador `is`, o unico que o chamador usa; qualquer outro
+      // estoura AQUI, com nome, em vez de filtrar errado em silencio.
+      not: (c, op, v) => {
+        if (op !== "is") throw new Error(`stub .not(): operador '${op}' nao implementado (so 'is'). Alinhe o stub ao chamador.`);
+        preds.push((r) => (v === null ? r[c] !== null && r[c] !== undefined : String(r[c]) !== String(v)));
+        return q;
+      },
+      // Familia de COMPARACAO. `gte` e usada por fechamentoParcial.ts:457
+      // (created_at >= corte); as outras tres entram junto porque sao a mesma
+      // regra e deixar so uma delas de fora e sortear qual sera o proximo
+      // TypeError. Comparacao por STRING de proposito: os campos que chegam aqui
+      // sao datas ISO e ids, onde a ordem lexicografica e a cronologica.
+      gte: (c, v) => (preds.push((r) => String(r[c]) >= String(v)), q),
+      lte: (c, v) => (preds.push((r) => String(r[c]) <= String(v)), q),
+      gt: (c, v) => (preds.push((r) => String(r[c]) > String(v)), q),
+      lt: (c, v) => (preds.push((r) => String(r[c]) < String(v)), q),
       order: () => q,
       limit: () => q,
       range: (a, b) => Promise.resolve({ data: apply().slice(a, b + 1), error: null }),
       maybeSingle: () => Promise.resolve({ data: apply()[0] || null, error: null }),
       then: (res, rej) => Promise.resolve({ data: apply(), error: null }).then(res, rej),
     };
-    return q;
+    // O STUB TEM DE DIZER O QUE LHE FALTA, em vez de morrer em TypeError.
+    //
+    // Foi assim que este portao ficou MORTO sem ninguem notar: o chamador ganhou
+    // um `.not(...)` novo, o stub nao tinha, e a mensagem foi
+    // "admin.from(...).select(...).eq(...).not is not a function" — que nao diz
+    // que o culpado e o STUB, nem que a consequencia e o portao inteiro nao medir
+    // nada. Depois do `.not` veio um `.gte` pelo mesmo caminho.
+    //
+    // O Proxy nao ADIVINHA metodo nenhum (isso seria pior: filtraria errado em
+    // silencio). Ele so troca a morte anonima por um erro que nomeia o metodo
+    // ausente e diz o que fazer. `then` fica de fora do trap porque o await
+    // consulta essa chave para saber se o objeto e thenable.
+    return new Proxy(q, {
+      get(alvo, prop) {
+        if (prop in alvo || typeof prop === "symbol") return alvo[prop];
+        throw new Error(
+          `stub de Supabase: metodo '${String(prop)}' nao implementado (tabela '${name}'). ` +
+            "O chamador REAL passou a usa-lo e este stub ficou para tras — sem isto o " +
+            "portao morre antes da primeira assercao e nao mede nada. " +
+            "Acrescente o metodo em makeStub, com o predicado correspondente.",
+        );
+      },
+    });
   };
   return {
     from: (name) => build(name),

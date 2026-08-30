@@ -36,8 +36,75 @@ const { createClient } = require("@supabase/supabase-js");
 const H = require("./_motor_credito_trp_db_lib.cjs");
 
 const PAGE = 1000;
-const ANCORA_RR = 109538.42;   // jun/2026 — orquestrador totals.repasse_credito_rr
+
+// ---------------------------------------------------------------------------
+// TRIAGEM DE 29/08/2026 — as 169 "divergencias" e o que cada uma era
+// ---------------------------------------------------------------------------
+// O portao reprovava com 169 divergencias. Decompostas UMA A UMA (nao por
+// amostra: a impressao era truncada em 8 por secao, e a contagem abaixo saiu de
+// uma execucao com o truncamento removido):
+//
+//   132  payload[].calculated_at   RELOGIO. O payload carrega o instante da
+//        execucao. O portao roda o MESMO codigo duas vezes, uma por fonte, com
+//        segundos de intervalo — esses dois carimbos NUNCA vao ser iguais. Nao
+//        havia defeito nenhum sendo medido aqui: era o comparador comparando o
+//        relogio consigo mesmo. 78% do vermelho.
+//    30  payload[].trp_version_id / trp_fallback   PROCEDENCIA. Estes campos
+//        EXISTEM para diferir entre as fontes: com json nao ha versao de regua
+//        (null) e nao ha flag de fallback; com db vem o id da versao que pagou.
+//        Exigir que fossem iguais era exigir que a frente inteira nao tivesse
+//        acontecido. Ignorar em silencio, porem, esconderia o db PERDENDO a
+//        procedencia — por isso viram ASSERCAO POSITIVA (`conferirProcedencia`
+//        abaixo), nao excecao muda.
+//     6  trend[].expectedTotal / deltaTotal   ANCORA VENCIDA. A tolerancia
+//        estava presa a `month === 7` por literal. A janela do `trend` e de 6
+//        meses e ANDA com o calendario: em 29/08/2026 ela termina em 2026-08, e
+//        agosto passou a carregar a MESMA correcao que julho carregava (d 100,20
+//        em ago, d 323,98 em jul) — o mesmo fenomeno ja documentado como
+//        "ESPERADO (e a correcao)", so que num mes que a constante nao cobria.
+//     1  ANCORA_RR                 CONSTANTE CONGELADA. Ver abaixo.
+//
+// NENHUMA das 169 era diferenca de CALCULO entre json e db em mes fechado. Tudo
+// que o portao promete de verdade ja passava: promoterAnalytics IDENTICO nas 3
+// competencias, bbtsMonthly IDENTICO em abril, DRIFT json=1203 -> db=0, ancora
+// da ADS OK e retrocompatibilidade 10/10.
+// ---------------------------------------------------------------------------
+
+// ANCORA DA ADS — segue de pe, conferida em 29/08/2026 (json e db, ambos 5.153,53).
 const ANCORA_ADS = 5153.53;    // jun/2026 — orquestrador totals.repasse_credito_ads
+
+// ANCORA DO RR — REANCORADA em 29/08/2026: 109.538,42 -> 109.181,28.
+// Ela nao estava errada: ENVELHECEU 48 dias e 540 commits. A antiga foi cravada
+// em 12/07/2026 (commit 3363ba5) e o delta de R$ 357,14 esta atribuido CENTAVO A
+// CENTAVO, por execucao em worktree de cada commit suspeito contra o banco de
+// hoje — nenhum residuo inexplicado:
+//
+//   109.587,23   codigo de 3363ba5 rodado hoje  (a propria BASE moveu +48,81 em
+//                48 dias com o codigo congelado: reatribuicoes e imports tardios.
+//                E a prova de que constante absoluta sobre tabela viva nao tem
+//                como ficar verde — ela vence sozinha, sem ninguem tocar codigo.)
+//    -  23,17   competencia do volume virou JANELA (o mesmo R$ 23,17 da ERIKA ja
+//               registrado na frente da janela)
+//    - 960,93   d7d556e 25/08 "teto 5,80%: o repasse do fechamento sai da base
+//               TRAZIDA AO TETO"
+//    + 578,15   d6febc5 25/08 "carve-out INSS da Aldalene: o criterio e a TAXA"
+//   ---------
+//   109.181,28   HEAD  (json e db dao EXATAMENTE este mesmo valor — nao e, e nunca
+//                foi, divergencia de fonte)
+const ANCORA_RR = {
+  valor: 109181.28,
+  cravadaEm: "2026-08-29",
+  procedencia:
+    "orquestrador consolidateMonthlyGroup(2026-06, dryRun).totals.repasse_credito_rr, " +
+    "medido nas DUAS fontes TRP (json e db) na mesma execucao — as duas dao 109.181,28. " +
+    "Delta de R$ 357,14 contra a ancora de 12/07/2026 atribuido por bissecao em " +
+    "worktree: +48,81 de movimento do banco, -23,17 da competencia por janela, " +
+    "-960,93 de d7d556e (teto 5,80%) e +578,15 de d6febc5 (carve-out INSS).",
+  escopo: { competencia: "2026-06", campo: "repasse_credito_rr", empresa: "RR" },
+};
+// HISTORICO: a ancora anterior era 109.538,42, cravada em 12/07/2026 no commit
+// 3363ba5, quando o campo ainda se chamava `credito_rr` (343ee9b o renomeou para
+// `repasse_credito_rr` em 01/08/2026).
 
 const NOOP = [
   { comp: "2026-06", y: 2026, m: 6, ancoras: true },
@@ -45,15 +112,64 @@ const NOOP = [
   { comp: "2026-05", y: 2026, m: 5 },
 ];
 
-/** Divergência tolerada? Só os campos do payload de fechamento que carregam JULHO. */
-function ehDeJulho(caminho, payload) {
+// CAMPOS QUE NAO SAO CALCULO. Exclui-los do diff nao e afrouxar o portao: e
+// parar de medir com ele o que ele nao mede. Cada um tem de ter motivo escrito,
+// e os de PROCEDENCIA ainda sao conferidos por assercao propria logo abaixo.
+// ATENCAO ao formato: H.deepDiff devolve a MENSAGEM inteira
+// ("payload[0].calculated_at: <a> != <b>"), nao so o caminho. Por isso o casamento
+// termina em `:` — um `$` aqui nao casaria nada e o filtro seria letra morta.
+const NAO_E_CALCULO = [
+  { re: /\.calculated_at:/, motivo: "relogio: carimbo do instante da execucao, difere entre as duas passadas por construcao" },
+  { re: /\.trp_version_id:/, motivo: "procedencia: json nao tem versao de regua (null), db tem — DEVE diferir" },
+  { re: /\.trp_fallback:/, motivo: "procedencia: flag que so o db preenche — DEVE diferir" },
+];
+const ehCalculo = (caminho) => !NAO_E_CALCULO.some((x) => x.re.test(caminho));
+
+/**
+ * CONTROLE POSITIVO da procedencia. Sem isto, o `NAO_E_CALCULO` acima viraria um
+ * buraco: o db poderia PARAR de gravar trp_version_id e o portao seguiria verde.
+ * Aqui a assimetria esperada e COBRADA — json sem versao, db com versao.
+ */
+function conferirProcedencia(saidaJson, saidaDb) {
+  const linhas = (p) => (Array.isArray(p?.payload) ? p.payload : []);
+  const lj = linhas(saidaJson), ld = linhas(saidaDb);
+  if (lj.length === 0 || ld.length === 0) return null; // sem linhas: nada a provar
+  const jsonSemVersao = lj.every((r) => r.trp_version_id == null);
+  const dbComVersao = ld.some((r) => typeof r.trp_version_id === "string" && r.trp_version_id.length > 0);
+  return { jsonSemVersao, dbComVersao, ok: jsonSemVersao && dbComVersao, nLinhas: ld.length };
+}
+
+/**
+ * Divergencia tolerada no payload de fechamento?
+ *
+ * O payload carrega, alem do mes pedido, a serie `trend` (6 meses) e
+ * `summary.futureDeferredBalance`. Esses campos alcancam meses em que o json NAO
+ * TEM regua e cai no fallback — que e exatamente o que a frente conserta. Ali o
+ * db diferir do json nao e regressao: e a correcao aparecendo.
+ *
+ * ANTES isto era `month === 7`, constante. A janela do trend ANDA com o
+ * calendario e em 29/08/2026 ja alcancava agosto, entao a constante reprovava o
+ * portao por envelhecimento. AGORA os dois lados saem da MESMA execucao: o mes e
+ * tolerado se, e so se, o json DRIFTOU nele (`mes=YYYY-MM` nas mensagens de
+ * DRIFT capturadas do proprio run). Nao ha mes cravado — se o json parar de
+ * driftar em agosto, agosto deixa de ser tolerado sozinho.
+ */
+function mesesComDriftJson(drifts) {
+  const s = new Set();
+  for (const d of drifts) {
+    const m = String(d).match(/mes=(\d{4})-(\d{2})/);
+    if (m) s.add(`${m[1]}-${m[2]}`);
+  }
+  return s;
+}
+function ehMesDeFallbackDoJson(caminho, payload, mesesDrift) {
   if (caminho.startsWith("summary.futureDeferredBalance")) return true;
   const m = caminho.match(/^trend\[(\d+)\]\./);
-  if (m) {
-    const p = payload.trend?.[Number(m[1])];
-    return p && p.year === 2026 && p.month === 7; // provado por year/month, não por índice
-  }
-  return false;
+  if (!m) return false;
+  const p = payload.trend?.[Number(m[1])];
+  if (!p) return false;
+  // provado por year/month + DRIFT medido no mesmo run, nunca por indice nem por literal
+  return mesesDrift.has(`${p.year}-${String(p.month).padStart(2, "0")}`);
 }
 
 const opDe = (r) => ({
@@ -111,21 +227,26 @@ async function main() {
 
     const orqJ = await H.comFonte("json", () => lib.orq.consolidateMonthlyGroup(sb, { year: c.y, month: c.m, dryRun: true }));
     const orqD = await H.comFonte("db", () => lib.orq.consolidateMonthlyGroup(sb, { year: c.y, month: c.m, dryRun: true }));
-    const difOrq = H.deepDiff(H.clone(orqJ.out), H.clone(orqD.out));
+    const difOrq = H.deepDiff(H.clone(orqJ.out), H.clone(orqD.out)).filter(ehCalculo);
 
     const rrJ = await H.comFonte("json", () => lib.closing.buildClosingAnalytics(sb, { year: c.y, month: c.m }));
     const rrD = await H.comFonte("db", () => lib.closing.buildClosingAnalytics(sb, { year: c.y, month: c.m }));
-    const difRRTodos = H.deepDiff(H.clone(rrJ.out), H.clone(rrD.out));
-    const difRRJulho = difRRTodos.filter((d) => ehDeJulho(d, rrD.out));
-    const difRRReal = difRRTodos.filter((d) => !ehDeJulho(d, rrD.out));
+    // Os meses tolerados saem do DRIFT medido NESTE run, nao de um literal.
+    const mesesDrift = mesesComDriftJson(rrJ.drifts);
+    const difRRTodos = H.deepDiff(H.clone(rrJ.out), H.clone(rrD.out)).filter(ehCalculo);
+    const difRRFallback = difRRTodos.filter((d) => ehMesDeFallbackDoJson(d, rrD.out, mesesDrift));
+    const difRRReal = difRRTodos.filter((d) => !ehMesDeFallbackDoJson(d, rrD.out, mesesDrift));
 
     const adsJ = await H.comFonte("json", () => lib.bbts.consolidateMonthlyFromBbts(sb, { year: c.y, month: c.m, dryRun: true }));
     const adsD = await H.comFonte("db", () => lib.bbts.consolidateMonthlyFromBbts(sb, { year: c.y, month: c.m, dryRun: true }));
-    const difADS = H.deepDiff(H.clone(adsJ.out), H.clone(adsD.out));
+    const difADS = H.deepDiff(H.clone(adsJ.out), H.clone(adsD.out)).filter(ehCalculo);
+    // CONTROLE POSITIVO: o que foi excluido do diff por ser procedencia tem de
+    // continuar existindo do lado do db. Sem isto a exclusao viraria cegueira.
+    const proc = conferirProcedencia(adsJ.out, adsD.out);
 
     const paJ = await H.comFonte("json", () => lib.promoter.buildPromoterAnalytics(sb, { year: c.y, month: c.m }));
     const paD = await H.comFonte("db", () => lib.promoter.buildPromoterAnalytics(sb, { year: c.y, month: c.m }));
-    const difPA = H.deepDiff(H.clone(paJ.out), H.clone(paD.out));
+    const difPA = H.deepDiff(H.clone(paJ.out), H.clone(paD.out)).filter(ehCalculo);
 
     console.log(`  orquestrador BBTS-2d (RR+ADS): ${difOrq.length === 0 ? "IDÊNTICO ✓" : `DIVERGIU ✗ (${difOrq.length})`}`);
     for (const d of difOrq.slice(0, 8)) console.log(`     • ${d}`);
@@ -135,18 +256,46 @@ async function main() {
     for (const d of difPA.slice(0, 8)) console.log(`     • ${d}`);
     console.log(`  closingAnalytics (fechamento): ${difRRReal.length === 0 ? "IDÊNTICO no mês ✓" : `DIVERGIU ✗ (${difRRReal.length})`}`);
     for (const d of difRRReal.slice(0, 8)) console.log(`     • ${d}`);
-    if (difRRJulho.length) {
-      console.log(`     ~ ${difRRJulho.length} campo(s) que carregam JULHO mudaram — ESPERADO (é a correção):`);
-      for (const d of difRRJulho) console.log(`        · ${d}`);
+    if (difRRFallback.length) {
+      console.log(`     ~ ${difRRFallback.length} campo(s) em mes(es) de FALLBACK do json mudaram — ESPERADO (é a correção).`);
+      console.log(`       meses com DRIFT medidos NESTE run: ${[...mesesDrift].sort().join(", ") || "(nenhum)"}`);
+      for (const d of difRRFallback) console.log(`        · ${d}`);
+    }
+    if (proc) {
+      console.log(`  PROCEDÊNCIA da TRP (controle positivo, ${proc.nLinhas} linha(s) ADS): ` +
+        `json sem trp_version_id ${proc.jsonSemVersao ? "✓" : "✗"} | db com trp_version_id ${proc.dbComVersao ? "✓" : "✗"}`);
+      if (!proc.ok) {
+        console.log("     !! a assimetria de procedência SUMIU. Os campos trp_version_id/trp_fallback");
+        console.log("        são excluídos do diff por DEVEREM diferir; se pararem de diferir, a");
+        console.log("        exclusão virou cegueira e o db pode ter perdido a versão da régua.");
+        falhas++;
+      }
     }
     console.log(`  DRIFT no motor: json=${rrJ.drifts.length + adsJ.drifts.length + orqJ.drifts.length}  db=${rrD.drifts.length + adsD.drifts.length + orqD.drifts.length}`);
 
     if (c.ancoras) {
       const tj = orqJ.out.totals, td = orqD.out.totals;
-      const okRR = Math.abs(tj.repasse_credito_rr - ANCORA_RR) < 0.005 && Math.abs(td.repasse_credito_rr - ANCORA_RR) < 0.005;
+      const okRR = Math.abs(tj.repasse_credito_rr - ANCORA_RR.valor) < 0.005 && Math.abs(td.repasse_credito_rr - ANCORA_RR.valor) < 0.005;
       const okADS = Math.abs(tj.repasse_credito_ads - ANCORA_ADS) < 0.005 && Math.abs(td.repasse_credito_ads - ANCORA_ADS) < 0.005;
-      console.log(`  ÂNCORA RR  crédito jun: json=${H.brl(tj.repasse_credito_rr)}  db=${H.brl(td.repasse_credito_rr)}  (esperado ${H.brl(ANCORA_RR)}) ${okRR ? "✓" : "✗"}`);
+      console.log(`  ÂNCORA RR  crédito jun: json=${H.brl(tj.repasse_credito_rr)}  db=${H.brl(td.repasse_credito_rr)}  (esperado ${H.brl(ANCORA_RR.valor)}) ${okRR ? "✓" : "✗"}`);
       console.log(`  ÂNCORA ADS crédito jun: json=${H.brl(tj.repasse_credito_ads)}  db=${H.brl(td.repasse_credito_ads)}  (esperado ${H.brl(ANCORA_ADS)}) ${okADS ? "✓" : "✗"}`);
+      if (!okRR) {
+        // As duas fontes darem o MESMO numero e a prova de que a frente (json x db)
+        // segue no-op: nesse caso o suspeito e a ANCORA, nao o codigo. Dizer qual
+        // dos dois e o suspeito e o que separa ancora vencida de divergencia viva.
+        const mesmaCoisa = Math.abs(tj.repasse_credito_rr - td.repasse_credito_rr) < 0.005;
+        const dias = Math.floor((Date.now() - Date.parse(ANCORA_RR.cravadaEm + "T00:00:00Z")) / 86400000);
+        console.log(`     A ÂNCORA tem ${dias} dia(s) — cravada em ${ANCORA_RR.cravadaEm}`);
+        console.log(`     procedência: ${ANCORA_RR.procedencia}`);
+        console.log(`     escopo cravado: ${JSON.stringify(ANCORA_RR.escopo)}`);
+        if (mesmaCoisa) {
+          console.log("     => json e db dão o MESMO valor: a frente segue no-op. Suspeita de");
+          console.log("        ÂNCORA VENCIDA (régua mudou), não de divergência de fonte. Quem");
+          console.log("        recravar escreve valor, data, procedência e o que mudou — aqui, no código.");
+        } else {
+          console.log("     => json e db DIVERGEM: isto é divergência VIVA de fonte, não âncora vencida.");
+        }
+      }
       if (!okRR || !okADS) falhas++;
     }
     falhas += difOrq.length + difADS.length + difPA.length + difRRReal.length;

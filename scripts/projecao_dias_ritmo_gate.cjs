@@ -1,6 +1,7 @@
 /*
  * GATE — /projecao: separa "dias decorridos EXIBIDOS" do "divisor do ritmo".
- * READ-ONLY (le prod). Janela jul/2026 = 30/06 -> 30/07, total 23 dias uteis.
+ * READ-ONLY (le prod). A competencia e a JANELA ABERTA do momento, resolvida no
+ * proprio run (era jul/2026 cravada; ver o bloco de comentario no corpo).
  *
  * Regra (Diego):
  *   - dias_uteis_decorridos = dias uteis vencidos com HOJE INCLUIDO (o "23/23").
@@ -8,14 +9,16 @@
  *                             competencia esta ABERTA e hoje e dia util.
  *   - periodoCompleto so quando refDate PASSA de end (em refDate == end extrapola).
  *
- * Esperado:
- *   2026-07-29 -> decorridos 22, ritmo 21, completo false
- *   2026-07-30 -> decorridos 23, ritmo 22, completo false
- *   2026-07-31 -> decorridos 23, completo true, projecao == acumulada
+ * Esperado, por POSICAO na janela (nunca por data cravada):
+ *   penultimo dia util -> decorridos = total-1, divisor = total-2, completo false
+ *   ultimo dia util    -> decorridos = total,   divisor = total-1, completo false
+ *   depois da janela   -> decorridos = total,   divisor = total,   completo true
  */
 require("./_ts_register.cjs");
+const { resolverCompetenciaAberta } = require("./_competenciaAberta.cjs");
 const { createClient } = require("@supabase/supabase-js");
 const { buildProjecaoMetas, consolidarGrupoEquipe, productionBusinessWindow } = require("../lib/projecaoMetas.ts");
+const { countBusinessDays } = require("../lib/trp/vigencia.ts");
 
 const sb = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
@@ -31,20 +34,52 @@ const d = (s) => new Date(`${s}T00:00:00Z`);
 
 (async () => {
   console.log(`TRP_SOURCE=${process.env.TRP_SOURCE ?? "(nao setado)"}`);
-  const w = productionBusinessWindow(2026, 7);
+  // ---- A COMPETENCIA E AS DATAS SAEM DO RUN, nao de literal ----
+  //
+  // Este bloco cravava jul/2026: janela de 23 dias uteis e as datas 29, 30 e 31/07
+  // com os divisores 21/22/23 escritos a mao. Julho estava ABERTO quando o portao
+  // foi escrito. Julho FECHOU, e com `res.fechado === true` o periodo passa a ser
+  // COMPLETO em qualquer referenceDate — as 9 assercoes caiam de uma vez, medindo
+  // o calendario em vez do divisor.
+  //
+  // O que o portao prova e PERMANENTE e nao tem nada com julho:
+  //   dias_uteis_decorridos EXIBE o dia corrente; dias_uteis_ritmo (o DIVISOR) o
+  //   exclui enquanto a competencia esta aberta, porque a producao de hoje so
+  //   entra amanha — estaria no denominador sem estar no numerador.
+  //
+  // Agora os tres casos sao DERIVADOS da janela do mes ABERTO, por POSICAO:
+  //   penultimo dia util -> decorridos = total-1, divisor = total-2, incompleto
+  //   ultimo dia util    -> decorridos = total,   divisor = total-1, incompleto
+  //   depois da janela   -> decorridos = total,   divisor = total,   COMPLETO
+  // Nenhum numero cravado: `total` sai de productionBusinessWindow e as datas de
+  // countBusinessDays — a MESMA aritmetica que a lib usa, nao uma copia.
+  // Ver scripts/_competenciaAberta.cjs: seis portoes caiam por esta mesma causa.
+  const ab = await resolverCompetenciaAberta(sb);
+  const w = productionBusinessWindow(ab.year, ab.month);
   console.log(
-    `\n=== JANELA jul/2026: ${w.start.toISOString().slice(0, 10)} -> ${w.end.toISOString().slice(0, 10)} | total=${w.total} ===`
+    `\n=== JANELA ${ab.comp} (mes ABERTO, resolvido no run): ${w.start.toISOString().slice(0, 10)} -> ${w.end.toISOString().slice(0, 10)} | total=${w.total} ===`
   );
-  ok(w.total === 23, `total de dias uteis da janela = 23 (veio ${w.total})`);
+  // Sem ao menos 2 dias uteis nao existe "penultimo" e o caso A seria inventado.
+  ok(w.total >= 2, `a janela tem ao menos 2 dias uteis para haver penultimo (total=${w.total})`);
+
+  const diaAntes = (dt) => new Date(dt.getTime() - 86400000);
+  const diaDepois = (dt) => new Date(dt.getTime() + 86400000);
+  // penultimo dia UTIL: anda para tras a partir do fim ate o contador cair 1.
+  let penultimo = diaAntes(w.end);
+  for (let i = 0; i < 10 && countBusinessDays(w.start, penultimo, w.holidays) !== w.total - 1; i++) {
+    penultimo = diaAntes(penultimo);
+  }
+  const iso = (dt) => dt.toISOString().slice(0, 10);
 
   const casos = [
-    { ref: "2026-07-29", decorridos: 22, ritmo: 21, completo: false },
-    { ref: "2026-07-30", decorridos: 23, ritmo: 22, completo: false },
-    { ref: "2026-07-31", decorridos: 23, ritmo: 23, completo: true },
+    { ref: iso(penultimo), decorridos: w.total - 1, ritmo: w.total - 2, completo: false },
+    { ref: iso(w.end), decorridos: w.total, ritmo: w.total - 1, completo: false },
+    { ref: iso(diaDepois(w.end)), decorridos: w.total, ritmo: w.total, completo: true },
   ];
+  console.log(`  casos derivados: ${casos.map((c) => `${c.ref}(exibe=${c.decorridos} divisor=${c.ritmo})`).join("  ")}`);
 
   for (const c of casos) {
-    const res = await buildProjecaoMetas(sb, { year: 2026, month: 7, referenceDate: d(c.ref) });
+    const res = await buildProjecaoMetas(sb, { year: ab.year, month: ab.month, referenceDate: d(c.ref) });
     const cons = consolidarGrupoEquipe(res);
     const jan = res.janela;
     const completo = res.fechado || d(c.ref) > w.end;

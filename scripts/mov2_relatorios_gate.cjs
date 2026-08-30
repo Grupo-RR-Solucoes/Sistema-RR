@@ -96,8 +96,27 @@ async function relatorioDepois(year, month) {
   const totalAntes = soma(aJun.rows, "final_commission_value");
   const totalDepois = soma(dJun.rows, "final_commission_value");
   console.log(`\n  Comissao de junho:  ANTES ${brl(totalAntes)}  ->  DEPOIS ${brl(totalDepois)}`);
-  const okJun = Math.abs(totalDepois - 118227.41) < 0.02;
-  console.log(`  Bate com o PMR fechado (R$ 118.227,41 — o que /promotores e o dashboard leem): ${okJun ? "OK" : "!! DIVERGE"}`);
+
+  // ---- OS DOIS LADOS COMPUTADOS NO MESMO RUN (era constante congelada) ----
+  // ERA: `Math.abs(totalDepois - 118227.41) < 0.02`. O 118.227,41 foi cravado
+  // quando a frente entrou e descrito como "o PMR fechado — o que /promotores e o
+  // dashboard leem". So que o PMR e TABELA VIVA: as 52 linhas de jun/2026 foram
+  // reescritas ate 27/08/2026 pelas reguas de agosto (teto 5,80%, carve-out INSS),
+  // e a constante virou o retrato de um PMR que nao existe mais. O portao ficou
+  // vermelho sem que nada tivesse quebrado.
+  //
+  // AGORA o lado direito e SOMADO do PMR nesta mesma execucao. Isso nao afrouxa a
+  // assercao — ao contrario, ela passa a medir o que a frase sempre prometeu ("o
+  // relatorio bate com o PMR que as outras telas leem") em vez de medir a idade da
+  // constante. Reprocessar o mes deixa de reprovar; o relatorio DIVERGIR do PMR
+  // volta a reprovar, que e o defeito real.
+  //
+  // ANTI-VACUIDADE: PMR vazio nao pode passar por 0 == 0.
+  const pmrJunTotal = soma(pmrJun, "final_commission_value");
+  const okJun = pmrJun.length > 0 && Math.abs(totalDepois - pmrJunTotal) < 0.02;
+  console.log(`  Bate com o PMR fechado (${brl(pmrJunTotal)}, somado das ${pmrJun.length} linhas de jun ` +
+    `com source fechamento|bbts — o que /promotores e o dashboard leem): ${okJun ? "OK" : "!! DIVERGE"}`);
+  if (pmrJun.length === 0) console.log("  !! PMR de junho VAZIO — o portao recusa passar por vacuidade.");
   if (!okJun) falhas++;
 
   console.log("\n" + "=".repeat(96));
@@ -140,10 +159,35 @@ async function relatorioDepois(year, month) {
   }
   console.log(`  ${pad("TOTAL que ia para CHAVE MASTER", 46)}${pad("", 11)}${brl(vaz)}`);
   console.log(`\n  comissao de abril: ANTES ${brl(tA)}  ->  DEPOIS ${brl(tD)}  (delta ${brl(tD - tA)})`);
-  const todasMaster = vazamentos.length > 0 && vazamentos.every((v) => v.master);
-  const okAbr = todasMaster && Math.abs(tD - 96143.14) < 0.02;
-  console.log(`  Todo o delta e comissao que ia para CHAVE MASTER (sem linha no PMR): ${todasMaster ? "OK" : "!! CONFERIR"}`);
-  console.log(`  DEPOIS bate com o PMR fechado (R$ 96.143,14): ${Math.abs(tD - 96143.14) < 0.02 ? "OK" : "!! DIVERGE"}`);
+
+  // ---- DUAS CORRECOES DE TRIAGEM, 29/08/2026 ----
+  //
+  // (1) `vazamentos.length > 0` era assercao de TRANSICAO e foi APOSENTADA. Ela
+  //     exigia que AINDA HOUVESSE vazamento para a chave master, para entao provar
+  //     que todo vazamento era de master. Em 29/08/2026 nao ha mais nenhum: ANTES e
+  //     DEPOIS dao o MESMO R$ 94.004,77 (delta R$ 0,00) e as 31 linhas a mais do
+  //     "ANTES" sao todas de comissao zero. Ou seja: o portao reprovava PORQUE o
+  //     defeito foi consertado. Assercao que so passa enquanto o bug existe nao e
+  //     portao, e lembrete — e este ja cumpriu o papel.
+  //     O que FICA (invariante permanente, vale com zero ou mil vazamentos): se
+  //     houver vazamento, TODO ele tem de ser de chave master. Se um dia vazar
+  //     comissao de promotor de verdade, isto reprova.
+  //
+  // (2) o 96.143,14 era CONSTANTE CONGELADA, pelo mesmo motivo do bloco de junho
+  //     acima: retrato de um PMR que foi reescrito depois. Passa a ser somado do
+  //     PMR de abril nesta mesma execucao, com guarda de nao-vacuidade.
+  const todasMaster = vazamentos.every((v) => v.master);
+  const { data: pmrAbr } = await sb.from("promoter_monthly_results")
+    .select("final_commission_value")
+    .eq("year", 2026).eq("month", 4).in("source", ["fechamento", "bbts"]);
+  const pmrAbrTotal = soma(pmrAbr || [], "final_commission_value");
+  const bateComPmr = (pmrAbr || []).length > 0 && Math.abs(tD - pmrAbrTotal) < 0.02;
+  const okAbr = todasMaster && bateComPmr;
+  console.log(`  Todo vazamento e de CHAVE MASTER (${vazamentos.length} vazamento(s) hoje; ` +
+    `zero tambem satisfaz — a assercao "tem de haver vazamento" foi aposentada): ${todasMaster ? "OK" : "!! CONFERIR"}`);
+  console.log(`  DEPOIS bate com o PMR fechado (${brl(pmrAbrTotal)}, somado das ${(pmrAbr || []).length} linhas ` +
+    `de abr com source fechamento|bbts): ${bateComPmr ? "OK" : "!! DIVERGE"}`);
+  if ((pmrAbr || []).length === 0) console.log("  !! PMR de abril VAZIO — o portao recusa passar por vacuidade.");
   if (!okAbr) falhas++;
 
   // A fonte das linhas do PDF

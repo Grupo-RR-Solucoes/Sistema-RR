@@ -56,6 +56,9 @@
 //
 // (2) A FAIXA --db NAO E RODADA, e o teto ja diz isso. Medida em 29/08/2026:
 //     358,4s de teto 90s — 4x estourado; o registro anterior dizia 216,9s.
+//     REMEDIDA no mesmo dia, mais tarde: 193,3s. Ver (3c) para a decomposicao —
+//     o numero oscila com a latencia do banco, mas o teto e estourado nas tres
+//     medicoes, e o custo esta CONCENTRADO em tres portoes, nao espalhado.
 //     Varri TODAS as mensagens de commit do repo: dezenas afirmam "npm run gates
 //     29/29", "17/17", "20/20"; NENHUMA jamais afirmou a faixa --db verde. Nao e
 //     "faz tempo que nao roda": nao ha registro de ela ter rodado verde alguma
@@ -80,9 +83,87 @@
 //                             hoje sao 24, 27 e 899,21. Ver a secao 6c do
 //                             HANDOFF_RESIDUO_FINANCEIRO: foi ele que guardou o
 //                             rastro da rodada de 27/08, e ninguem o rodou.
-//       NAO CARACTERIZADOS    os outros 11 (needs-db-lento). Cada um exige
-//                             investigacao propria; nenhum foi diagnosticado aqui
-//                             e nenhum deve ser presumido benigno.
+//       OS OUTROS 11 (needs-db-lento) — CARACTERIZADOS em 29/08/2026. Os 11 estao
+//                             VERDES e NENHUM era defeito de producao. Diagnostico
+//                             completo no bloco (3b), logo abaixo.
+//
+// (3b) OS 11 VERMELHOS needs-db-lento — TRIAGEM DE 29/08/2026
+//     Os 11 estao VERDES. NENHUM era defeito de producao: nenhum centavo errado,
+//     nenhuma producao escondida. Duas causas respondem por 10 deles.
+//
+//     CAUSA A — JULHO FECHOU (6 portoes, 24 assercoes, UMA causa so).
+//       guardas_regime_gate (5), projecao_dias_ritmo_gate (9),
+//       janela_ritmo_paridade_gate (4), mov1_ledger_gate (3),
+//       mov2_grupoA_gate (2), mov3_equipe_gate (1).
+//       Todos cravavam 2026-07 como "o mes ABERTO" porque julho estava aberto
+//       quando foram escritos. O que eles provam — "em mes ABERTO nao barra, nao
+//       reconsolida, o divisor do ritmo desconta o dia corrente" — e PERMANENTE;
+//       o que venceu foi a ESCOLHA de julho como representante do regime. Alguns
+//       chegavam a reprovar o comportamento CERTO (o mov2_grupoA cobrava que o
+//       lancamento caisse em julho quando a resposta correta ja era agosto).
+//       Conserto unico, em scripts/_competenciaAberta.cjs: a competencia aberta
+//       passa a ser resolvida NO RUN por detectMonthRegime, e o helper LANCA se
+//       nao houver mes aberto — nunca devolve um fechado disfarcado. As datas e
+//       os contadores de dias uteis do projecao_dias_ritmo e do
+//       janela_ritmo_paridade saem agora de productionBusinessWindow por POSICAO
+//       (penultimo dia util / ultimo / depois da janela), sem numero cravado.
+//
+//     CAUSA B — DOIS UNIVERSOS COMPARADOS COMO SE FOSSEM UM (2 portoes).
+//       gate_ritmo_diario (1) cobrava `somaRegionais === ativosNaoMaster`: a
+//       lista da ROTA (escopada pela competencia) contra um COUNT da tabela
+//       promoters (sem competencia). projecao_rank_sem_master (6) cobrava "o rank
+//       cai exatamente o nº de masters": base escopada pela empresa da PRODUCAO
+//       contra rank escopado pela empresa DA PESSOA.
+//       Medido: 48 na lista contra 53 na tabela, e os MESMOS 5 nomes nos dois
+//       portoes — KEYLLA, JOYCE, KELIANE, SAMUEL e SUZANA, todos com producao
+//       R$ 0,00, quatro deles cadastrados em agosto. Ou seja: CONTRATAR alguem
+//       reprovava os dois portoes no dia seguinte. Varrido o grupo inteiro: dos
+//       53 nao-masters ativos com linha na base, 48 aparecem em algum rank e os 5
+//       ausentes tem producao ZERO — nenhum centavo fora do rank.
+//       A contagem fragil saiu; entrou a invariante que ela tentava expressar,
+//       computada nos dois lados: "nenhum nao-master COM PRODUCAO fica fora de
+//       TODOS os ranks", com guarda de nao-vacuidade.
+//
+//     OS OUTROS 3, um a um:
+//       test_debitos_junho_congelado  O TRIPWIRE FUNCIONOU. 22/25/872,71 ->
+//           24/27/899,21. O evento esta apurado no HANDOFF_RESIDUO_FINANCEIRO 6c:
+//           ADICAO de +2 AUTO e +R$ 26,50 por operacoes orfas da fila ganhando
+//           dono (degrau +cms do PR #195), NAO troca de dono, ninguem perdeu nada.
+//           RECRAVADO com data e procedencia, nunca removido: e a unica coisa no
+//           repo que percebe junho — competencia congelada — sendo reescrito, e a
+//           causa segue viva (canc-run-fila.cjs contorna a trava do import).
+//       fix_truncamento_gate          A ancora buscava a promotora num mapa
+//           filtrado por `active`. KETLEY foi DESATIVADA; a linha dela sumiu do
+//           mapa e o `find` deu undefined. O numero nunca esteve errado: o PMR de
+//           jun ainda traz fechamento 4.862,44 + bbts 18.050,00 = 22.912,44,
+//           exatamente a ancora. A soma de um mes FECHADO nao deixa de valer
+//           porque a pessoa saiu da empresa — a busca deixou de filtrar por active.
+//       pmr_aberto_sem_daily_gate     NAO estava vermelho: estava MORTO. Saia em
+//           "admin.from(...).select(...).eq(...).not is not a function" antes da
+//           primeira assercao — zero medicao, inclusive do bloco de PRODUCAO. O
+//           commit b30c6a2 deu ao chamador um `.not(...)` que o stub em memoria
+//           nao tinha (e, atras dele, um `.gte`). Stub alinhado, e agora ele
+//           RECLAMA O NOME do metodo que lhe falta em vez de morrer anonimo. Com
+//           o portao vivo, os 3 blocos passam — o fossil nao voltou.
+//
+// (3c) DE ONDE VEM O TEMPO — medido em 29/08/2026, cronometro do proprio runner
+//     FAIXA --db: 193,3s de teto 90s (2,1x). O registro anterior dizia 358,4s; a
+//     medicao de hoje deu 193,3s com os mesmos gates, entao aquele numero carrega
+//     variacao de latencia do banco, nao so custo de codigo. Estourado nos dois casos.
+//     E CONCENTRADO — TRES portoes fazem 65% da faixa:
+//        91,3s  produtos_detalhamento_escopo_gate   <- sozinho passa do teto inteiro
+//        21,4s  reatribuicao_precedencia_gate
+//        13,2s  gate_ads_julho_dois_bugs
+//        ------
+//       125,9s  de 193,3s. Os outros 27 dividem ~67s.
+//     Ou seja: a faixa nao esta "gorda", ela tem UM portao de 91s dentro. Tirar so
+//     o produtos_detalhamento_escopo poe a faixa em ~102s — perto do teto, ainda
+//     acima. Nao consertado nesta frente de proposito (e problema separado).
+//
+//     FAIXA needs-db-lento: 510,6s nos 20 portoes. Tambem concentrada:
+//        78,3s mov2_proposals_get | 71,4s mov1_ledger | 61,5s gate_remuneracao_lideranca
+//        55,9s mov2_dashboard     | 39,7s mov2_grupoA
+//        = 306,8s (60%) em cinco.
 //
 // (4) OS ORFAOS — TRIADOS em 29/08/2026. Eram 19; a triagem os separou por CAUSA,
 //     e a lista abaixo e o estado depois dela. O universo foi RE-DERIVADO, nao herdado:
@@ -128,8 +209,23 @@
 //       test_ads_credito_competencia.cjs contagem "18 linhas" aposentada; as assercoes de
 //                                       COMPETENCIA seguem. Segue orfao (mesmo xlsx).
 //                                       ATENCAO: e uma das 2 unicas provas de
-//                                       lib/bbtsDailyImport.ts (390 linhas, 8 consumidores),
-//                                       e resta 1 falha nao diagnosticada nele.
+//                                       lib/bbtsDailyImport.ts (390 linhas, 8 consumidores).
+//                                       A "1 falha nao diagnosticada" FOI DIAGNOSTICADA em
+//                                       29/08/2026 e o portao esta 6 OK / 0 falhas. Era a
+//                                       mesma familia da contagem ja aposentada: a assercao
+//                                       (c) congelava TRES NUMEROS DE CONTRATO
+//                                       (219509685/219421812/219351243) como se fossem
+//                                       status permanente. Medido no xlsx de hoje, 2 dos 3
+//                                       viraram "Contratação CDC" no mundo real — grava-los
+//                                       e o comportamento CERTO. Reancorada no STATUS, com
+//                                       os dois lados computados: nenhuma "Proposta CDC"
+//                                       gravada (8 no arquivo) e TODA "Contratação CDC"
+//                                       gravada (35), ambas com guarda de nao-vacuidade.
+//                                       Provado por mutacao em lib/bbtsDailyImport.ts:243
+//                                       nos DOIS sentidos — aceitar Proposta CDC derruba
+//                                       (c) com 8 numeros, e nenhum deles estava na lista
+//                                       congelada antiga, que teria deixado passar; recusar
+//                                       Contratação derruba o controle positivo (c+).
 //
 //     DEIXADO ORFAO POR DECISAO (1):
 //       trp_paridade_gate_f3.cjs  passa (rc=0), mas uma das tres competencias sai com
@@ -143,15 +239,66 @@
 //           conserto correto (`b47ade6` preencheu o prazo do CONSIG_PRIVADO): aposentada.
 //           Segue orfao: le um PDF de TRP que nao esta versionado.
 //
-//     INDETERMINADOS (5) — medidos, NAO diagnosticados. Nao presumir benignos:
-//       motor_credito_trp_db_gate.cjs  rc=1 em 202,6s — "169 divergencia(s)"
-//       mov3_dre_inclui_tudo_gate.cjs  rc=1 em 255,5s — "1 FALHA(S)"
-//       mov2_dre_gate.cjs              rc=127 apos 118,2s — CRASH DE AMBIENTE, nao
-//                                      vermelho de assercao ("command not found")
-//       mov2_relatorios_gate.cjs       rc=1 em 149,5s — "2 FALHA(S)". Tambem toca
-//                                      promoterReportData
-//       test_ads_credito_trp_sempre.cjs rc=1 em 35,0s — 7 passaram, 1 falhou
-//     Os dois primeiros TERMINAM dentro de 600s: nao sao "portao que nao termina".
+//     INDETERMINADOS (5) — DIAGNOSTICADOS em 29/08/2026. Os 5 estao VERDES, e
+//     NENHUM era defeito de producao: nao havia dinheiro errado atras de nenhum
+//     deles. Cada falha foi isolada e classificada; o resultado, com o numero que
+//     derrubou cada nota:
+//
+//       motor_credito_trp_db_gate.cjs   169 divergencias -> 0. Decompostas uma a
+//           uma (a impressao truncava em 8 por secao e escondia a composicao):
+//           132 eram `calculated_at`, o RELOGIO — o portao roda o mesmo codigo
+//           duas vezes com segundos de intervalo e comparava os dois carimbos;
+//           30 eram `trp_version_id`/`trp_fallback`, campos de PROCEDENCIA que
+//           EXISTEM para diferir entre json e db; 6 eram a janela do `trend`, que
+//           andou para 2026-08 enquanto a tolerancia estava presa a `month === 7`;
+//           1 era a ancora de credito do RR. ZERO eram diferenca de calculo entre
+//           as fontes. Os 3 primeiros viraram exclusao COM MOTIVO ESCRITO mais um
+//           CONTROLE POSITIVO de procedencia (a exclusao nao pode virar cegueira),
+//           e a tolerancia do trend passou a sair do DRIFT medido no proprio run.
+//       mov3_dre_inclui_tudo_gate.cjs   ANCORA VENCIDA. 145.019,91 -> 143.942,13,
+//           reancorada com data e procedencia. Todas as assercoes de ESTRUTURA ja
+//           passavam, inclusive a identidade Sigma final - Sigma descontos ==
+//           comissao do DRE, exata ao centavo.
+//       mov2_dre_gate.cjs               O rc=127 NAO ERA CRASH DE AMBIENTE — era
+//           FLAKE, e a nota anterior foi enganada por ele. Rodado a mao, o portao
+//           termina em ~223s com rc=1 e UMA falha de assercao real. (O 127 se
+//           reproduziu uma vez nesta frente, noutro portao, morrendo em 6s sem
+//           imprimir erro; e intermitente e nao tem relacao com o veredito.)
+//           A falha era ANCORA VENCIDA por PREMISSA MORTA: o portao exigia que a
+//           ADS ficasse FORA do DRE, e o commit 24625ef ("DRE inclui ADS e
+//           inativos") reverteu essa regra DE PROPOSITO. Em 2026-06 a ADS entra
+//           com receita 9.321,02 e resultado POSITIVO de 4.126,33 — o prejuizo
+//           fabricado que a assercao impedia nao tem como acontecer. Aposentada;
+//           o lado permanente ja e asserido por mov3_dre_inclui_tudo_gate.
+//       mov2_relatorios_gate.cjs        2 CONSTANTES CONGELADAS (118.227,41 de jun
+//           e 96.143,14 de abr), descritas como "o PMR fechado" — mas o PMR e
+//           TABELA VIVA e foi reescrito ate 27/08 pelas reguas de agosto. Os dois
+//           lados passaram a ser computados no MESMO run (soma do PMR, com guarda
+//           de nao-vacuidade). Junto, uma assercao de TRANSICAO aposentada: abril
+//           exigia que AINDA HOUVESSE vazamento para a chave master, e reprovava
+//           PORQUE o vazamento foi consertado (hoje delta R$ 0,00). Ficou o
+//           invariante permanente: se houver vazamento, todo ele e de master.
+//       test_ads_credito_trp_sempre.cjs Mesma ancora do motor_credito_trp_db_gate
+//           (109.538,42), cravada em 12/07/2026. As duas foram reancoradas juntas.
+//
+//     A ANCORA DE CREDITO DO RR, atribuida centavo a centavo (era o unico numero
+//     desta frente que podia ser dinheiro, entao foi bisseccionada em worktree,
+//     commit a commit, contra o banco de hoje):
+//         109.587,23   codigo de 3363ba5 (12/07) rodado hoje
+//          -   23,17   competencia do volume virou JANELA
+//          -  960,93   d7d556e 25/08  teto 5,80% (repasse sai da base NO TETO)
+//          +  578,15   d6febc5 25/08  carve-out INSS da Aldalene (criterio = TAXA)
+//         ----------
+//         109.181,28   HEAD, identico nas DUAS fontes de TRP
+//     Nenhum residuo inexplicado. E note o primeiro numero: com o CODIGO CONGELADO
+//     a base moveu +48,81 em 48 dias (reatribuicoes, imports tardios). Constante
+//     absoluta sobre tabela viva VENCE SOZINHA, sem ninguem tocar em codigo — e a
+//     razao de as duas do mov2_relatorios terem virado comparacao no mesmo run.
+//
+//     SEGUEM ORFAOS, DE PROPOSITO: os 5 continuam fora do GATES[] abaixo. Juntos
+//     passam de 600s e a faixa --db ja esta 4x estourada (ver item 2); registra-los
+//     agora seria agravar um problema conhecido para resolver outro. E DIVIDA
+//     NOMEADA: verdes hoje, sem ninguem os rodando amanha.
 //
 // (4b) DIVIDA NOMEADA, fora do alcance desta frente — O REPOSITORIO E PUBLICO.
 //     Medido em 29/08/2026: a API do GitHub devolve `private: false, visibility: public`
