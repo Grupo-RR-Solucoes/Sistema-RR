@@ -35,6 +35,14 @@ export interface TrpVersionStamp {
   isFallback: boolean;
   /** Competencia cuja versao foi usada (== alvo, salvo fallback). */
   competenciaFornecedora: string;
+  /**
+   * true quando a competencia tem 2+ reguas ATIVAS (vigencia intra-mes). O
+   * carimbo do PMR NAO pode reduzir isso a um id: decisao (b) do Diego (31/08)
+   * e gravar trp_version_id = NULL + trp_multi_versao = true, porque carimbar a
+   * ultima regua seria afirmacao FALSA QUE CONFERE para os contratos da fatia
+   * anterior. Quem consome o carimbo tem de olhar este campo ANTES do versionId.
+   */
+  competenciaPartida: boolean;
 }
 
 /**
@@ -49,7 +57,7 @@ export type TrpCreditProvider = TrpRegraProvider & {
    * tem versao no DB (ex.: pre-abril, que caiu no JSON embutido) ou nao foi
    * pre-carregada — nos dois casos o carimbo no PMR fica NULL (desconhecido).
    */
-  getResolved(competencia: string): TrpVersionStamp | null;
+  getResolved(competencia: string, contractDate?: string): TrpVersionStamp | null;
 };
 
 /**
@@ -80,18 +88,22 @@ export async function buildTrpCreditProvider(
   );
   await preloader.preload([...comps]);
 
-  // CALLABLE (motor) + getResolved (detector). O closure de calculo e IDENTICO
-  // ao anterior; getResolved so expoe o carimbo ja resolvido no preload.
-  const provider = ((competencia: string): RegraMes | null =>
-    preloader.getRegraSync(competencia)) as TrpCreditProvider;
-  provider.getResolved = (competencia: string): TrpVersionStamp | null => {
-    const r = preloader.getResolvedSync(competencia);
+  // CALLABLE (motor) + getResolved (detector). O closure de calculo e o mesmo do
+  // anterior, mais a contractDate: sem ela (competencia com UMA regua ativa) o
+  // getRegraSync devolve exatamente a mesma regra de antes; com a competencia
+  // PARTIDA, escolhe a fatia que cobre a data. getResolved so expoe o carimbo ja
+  // resolvido no preload.
+  const provider = ((competencia: string, contractDate?: string): RegraMes | null =>
+    preloader.getRegraSync(competencia, contractDate ?? null)) as TrpCreditProvider;
+  provider.getResolved = (competencia: string, contractDate?: string): TrpVersionStamp | null => {
+    const r = preloader.getResolvedSync(competencia, contractDate ?? null);
     return r
       ? {
           versionId: r.versionId,
           versionNo: r.versionNo,
           isFallback: r.isFallback,
           competenciaFornecedora: r.competenciaFornecedora,
+          competenciaPartida: r.competenciaPartida,
         }
       : null;
   };

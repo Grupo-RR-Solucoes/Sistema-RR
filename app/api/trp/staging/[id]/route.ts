@@ -42,7 +42,11 @@ export async function GET(
       .select("competencia, version_no, regra_json")
       .lt("competencia", row.competencia)
       .eq("is_active", true)
+      // TIE-BREAK por valid_from (vigencia intra-mes): com a competencia anterior
+      // PARTIDA em 2+ reguas ativas, .limit(1) sem este desempate pegaria uma
+      // fatia ARBITRARIA. A que vale para o diff e a ULTIMA do mes anterior.
       .order("competencia", { ascending: false })
+      .order("valid_from", { ascending: false })
       .limit(1);
     if (prev.error) {
       return NextResponse.json(

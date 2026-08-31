@@ -100,7 +100,15 @@ function extrairContratoAvista(
  * createTrpRegraDbPreloader().getResolvedSync). Injetado pelo orquestrador que
  * já fez o preload async 1x — mantém este resolver síncrono, igual ao JSON.
  */
-export type TrpRegraDbProvider = (competencia: string) => {
+export type TrpRegraDbProvider = (
+  competencia: string,
+  /**
+   * VIGENCIA INTRA-MES (31/08/2026): data do contrato, para escolher a FATIA
+   * quando a competencia tem 2+ reguas ativas. Opcional — provider de 1
+   * parametro continua atribuivel a este tipo.
+   */
+  contractDate?: string | null,
+) => {
   regra: RegraMes;
   isFallback: boolean;
   competenciaFornecedora: string;
@@ -128,7 +136,9 @@ export function resolveAvistaTrpDb(
   if (!cd) return null;
 
   const competencia = competenciaDaData(cd);
-  const resolved = provider(competencia);
+  // A data vai JUNTO: numa competencia PARTIDA, o a-vista tem de cair na mesma
+  // fatia que o credito caiu (motor.ts:605/682). Com uma regua so, no-op.
+  const resolved = provider(competencia, cd);
   if (!resolved) return null;
 
   const contrato = extrairContratoAvista(record, competencia);

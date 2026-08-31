@@ -182,7 +182,12 @@ export async function buildAvistaProducao(
   //           preload async das competências da janela roda 1x aqui; o cálculo
   //           por contrato continua síncrono (preloader.getResolvedSync).
   const dbSource = isTrpDbSource();
-  let provider: ((competencia: string) => ReturnType<ReturnType<typeof createTrpRegraDbPreloader>["getResolvedSync"]>) | null = null;
+  let provider:
+    | ((
+        competencia: string,
+        contractDate?: string | null,
+      ) => ReturnType<ReturnType<typeof createTrpRegraDbPreloader>["getResolvedSync"]>)
+    | null = null;
   if (dbSource) {
     // trp_rule_versions é RLS default-deny (F1) — SÓ o service_role lê. Passamos
     // getSupabaseAdmin() (server-side), NÃO o client anon do request (que o RLS
@@ -195,7 +200,12 @@ export async function buildAvistaProducao(
       if (cd) comps.add(competenciaDaData(cd));
     }
     await preloader.preload([...comps]);
-    provider = (competencia: string) => preloader.getResolvedSync(competencia);
+    // VIGENCIA INTRA-MES: o a-vista TEM de resolver pela MESMA fatia que o
+    // credito. Sem a contractDate aqui, agosto/2026 sairia com o credito pela
+    // TRP38 (contrato de 03/08) e o a-vista pela TRP39 — duas reguas no mesmo
+    // contrato. Com competencia de uma regua so, e o mesmo resolvido de antes.
+    provider = (competencia: string, contractDate?: string | null) =>
+      preloader.getResolvedSync(competencia, contractDate ?? null);
   }
 
   // caixa (M+1) — início da cauda de diferido e destino do à-vista.

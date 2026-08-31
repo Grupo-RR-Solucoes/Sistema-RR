@@ -324,6 +324,18 @@ export async function auditAvistaMesVivo(
   });
   const diariaDisponivel = dailyMes.length > 0;
 
+  // VIGENCIA INTRA-MES: data do contrato por operacao, vinda da DIARIA. O
+  // fechamento (monthly_closing_entries) nao tem contract_date; sem este join a
+  // conferencia nao teria como saber por qual FATIA da competencia o contrato
+  // deveria ter sido pago. Mesma chave normalizada do lane produzido-nao-pago.
+  const contractDateByOp = new Map<string, string>();
+  for (const d of dailyMes) {
+    const opKey = normalizeOperationId(d.proposal_number);
+    if (opKey && d.contract_date && !contractDateByOp.has(opKey)) {
+      contractDateByOp.set(opKey, String(d.contract_date).slice(0, 10));
+    }
+  }
+
   // FAIXA — banda do volume do mês. Preferir o volume EXATO da diária quando há;
   // senão a soma de VALOR LÍQUIDO do fechamento (proxy validado: abr → FAIXA 3).
   const volDiaria = dailyMes.reduce(
@@ -411,6 +423,7 @@ export async function auditAvistaMesVivo(
       empresa,
       cnpj: c.company_cnpj ? String(c.company_cnpj).replace(/\D/g, "") : null,
       mes: ym, // competência do FECHAMENTO (o pago).
+      contractDate: contractDateByOp.get(opKey) ?? null,   // opKey = normalizeOperationId(c.contract_number)
       produto,
       tipo,
       convenio,

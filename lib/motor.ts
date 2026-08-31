@@ -42,7 +42,17 @@ type Operation = {
  * cai no JSON embutido (getRegra). Espelha o padrao da a-vista F4 (avistaProducao):
  * pre-carga async fora do motor, lookup sincrono aqui dentro.
  */
-export type TrpRegraProvider = (competencia: string) => RegraMes | null;
+export type TrpRegraProvider = (
+  competencia: string,
+  /**
+   * VIGENCIA INTRA-MES (31/08/2026): data do contrato ("YYYY-MM-DD"), usada para
+   * escolher a FATIA quando a competencia tem 2+ reguas ativas (ex.: agosto/2026,
+   * TRP38 ate 04/08 e TRP39 de 05/08). OPCIONAL de proposito: um provider de 1
+   * parametro (todos os anteriores) continua atribuivel a este tipo, entao os 6
+   * sitios de calcularOperacao seguem valendo SEM alteracao.
+   */
+  contractDate?: string,
+) => RegraMes | null;
 
 /**
  * Opcoes opcionais de calcularOperacao. Sem opts (ou sem trpProvider) o
@@ -592,7 +602,7 @@ function lookupCreditPercentTrp(
   // FONTE da RegraMes: DB (trp_rule_versions) quando o chamador injeta o provider
   // E a competencia tem versao (2026-04+); senao JSON embutido (getRegra), que
   // cobre o historico pre-abril. Sem provider -> so JSON (100% retrocompativel).
-  const fromDb = trpProvider ? trpProvider(mes) : null;
+  const fromDb = trpProvider ? trpProvider(mes, op.contract_date ?? undefined) : null;
   const r = fromDb
     ? { regra: fromDb, jsonRegra: "db:trp_rule_versions", regraInferida: false }
     : getRegra(mes);
@@ -669,7 +679,7 @@ function getCreditPercent(op: Operation, band: BandKey, trpProvider?: TrpRegraPr
   // mapa), então movê-la pra cima NÃO altera o resultado das outras guardas.
   const mes = competenciaDoContrato(op);
   const regraGate: RegraMes | null =
-    (mes && trpProvider ? trpProvider(mes) : null) ??
+    (mes && trpProvider ? trpProvider(mes, op.contract_date ?? undefined) : null) ??
     (mes ? getRegra(mes)?.regra ?? null : null);
 
   // Gates preservados na MESMA ORDEM (tiquete, depois rate, depois term). Só a

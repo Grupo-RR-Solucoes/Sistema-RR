@@ -49,6 +49,12 @@ export interface ReguaCompetencia {
   isFallback: boolean;
   /** Competência que forneceu a régra (== alvo, salvo fallback). */
   competenciaFornecedora: string;
+  /**
+   * true = a competência tem 2+ réguas ATIVAS (vigência intra-mês). Nesse caso
+   * NÃO existe "a régua do mês": cada contrato é conferido pela fatia da sua
+   * data. Sempre false no caminho JSON.
+   */
+  competenciaPartida: boolean;
 }
 
 /** Uma linha da conferência: o par (realizado, régua) por contrato. */
@@ -86,6 +92,8 @@ export interface ConferenciaTrpResult {
     fonte: "db" | "json" | null;
     isFallback: boolean;
     competenciaFornecedora: string | null;
+    /** true = competência com 2+ réguas ativas; cada linha usou a fatia da sua data. */
+    competenciaPartida: boolean;
   };
   linhas: LinhaConferencia[];
   resumo: {
@@ -105,11 +113,17 @@ export interface ConferenciaTrpResult {
 export async function resolveReguaCompetencia(
   sb: SupabaseClient,
   ym: string,
+  /**
+   * VIGENCIA INTRA-MES: data do contrato, para escolher a FATIA quando a
+   * competencia tem 2+ reguas ativas. Opcional — sem ela vale a fatia de maior
+   * valid_from, que numa competencia de regua unica e a propria (no-op).
+   */
+  contractDate?: string | null,
 ): Promise<ReguaCompetencia | null> {
   if (ym >= CORTE_VERSIONADA) {
     const preloader = createTrpRegraDbPreloader(sb);
     await preloader.preload([ym]);
-    const resolved = preloader.getResolvedSync(ym);
+    const resolved = preloader.getResolvedSync(ym, contractDate ?? null);
     if (resolved) {
       return {
         regra: resolved.regra,
@@ -117,6 +131,7 @@ export async function resolveReguaCompetencia(
         fonte: "db",
         isFallback: resolved.isFallback,
         competenciaFornecedora: resolved.competenciaFornecedora,
+        competenciaPartida: resolved.competenciaPartida,
       };
     }
     // defensivo: sem versão no banco (abril é seeded, não deveria) → cai no JSON.
@@ -129,7 +144,59 @@ export async function resolveReguaCompetencia(
     fonte: "json",
     isFallback: j.regraInferida,
     competenciaFornecedora: ym,
+    competenciaPartida: false,
   };
+}
+
+/**
+ * Como a resolveReguaCompetencia, mas devolvendo a FUNCAO de escolha por
+ * contrato: carrega o preloader UMA vez e escolhe a fatia por contract_date.
+ * Existe para o conferirTrpMes nao abrir uma conexao por linha.
+ */
+async function carregarReguaPorContrato(
+  sb: SupabaseClient,
+  ym: string,
+): Promise<{
+  /** null quando nem o DB nem o JSON tem regua para a competencia. */
+  escolher: (contractDate?: string | null) => ReguaCompetencia | null;
+  /** a regua "do mes" (fatia de maior valid_from) — para o cabecalho do result. */
+  cabecalho: ReguaCompetencia | null;
+  partida: boolean;
+}> {
+  if (ym >= CORTE_VERSIONADA) {
+    const preloader = createTrpRegraDbPreloader(sb);
+    await preloader.preload([ym]);
+    const comp = preloader.getCompetenciaSync(ym);
+    if (comp && comp.fatias.length > 0) {
+      const toRegua = (r: NonNullable<ReturnType<typeof preloader.getResolvedSync>>) => ({
+        regra: r.regra,
+        jsonRegra: "db:trp_rule_versions",
+        fonte: "db" as const,
+        isFallback: r.isFallback,
+        competenciaFornecedora: r.competenciaFornecedora,
+        competenciaPartida: r.competenciaPartida,
+      });
+      return {
+        escolher: (contractDate?: string | null) => {
+          const r = preloader.getResolvedSync(ym, contractDate ?? null);
+          return r ? toRegua(r) : null;
+        },
+        cabecalho: toRegua(comp.fatias[0]),
+        partida: comp.partida,
+      };
+    }
+  }
+  const j = getRegra(ym);
+  if (!j) return { escolher: () => null, cabecalho: null, partida: false };
+  const regua: ReguaCompetencia = {
+    regra: j.regra,
+    jsonRegra: j.jsonRegra,
+    fonte: "json",
+    isFallback: j.regraInferida,
+    competenciaFornecedora: ym,
+    competenciaPartida: false,
+  };
+  return { escolher: () => regua, cabecalho: regua, partida: false };
 }
 
 /**
@@ -230,7 +297,11 @@ export async function conferirTrpMes(
   const vivo = await auditAvistaMesVivo(sb, year, month);
   const ym = vivo.ym;
   const regime = getRegime(ym);
-  const regua = await resolveReguaCompetencia(sb, ym);
+  // VIGENCIA INTRA-MES: a regua deixa de ser UMA do mes e passa a ser escolhida
+  // POR CONTRATO (pela contract_date). Numa competencia de regua unica o
+  // escolher() devolve sempre a mesma — no-op contra o comportamento anterior.
+  const { escolher, cabecalho, partida } = await carregarReguaPorContrato(sb, ym);
+  const regua = cabecalho;
   // catDevida (Camada 1) — mesma resolução de categoria do engine: VOLUME
   // (TRP versionada) → null → usa a faixa per-contrato; META (histórico) → a
   // categoria do enquadramento. Sem isso, meses META caem em NAO_CONFERIVEL.
@@ -261,7 +332,34 @@ export async function conferirTrpMes(
         motivo: "sem régua (TRP) para a competência",
       };
     }
-    return compararContratoTrp(contrato, regime, regua, catDevida);
+    const reguaDoContrato = escolher(contrato.contractDate ?? null);
+    if (!reguaDoContrato) {
+      // competencia PARTIDA e a data do contrato nao cai em fatia nenhuma (ou o
+      // contrato nao tem data e a competencia esta partida). NAO confere contra
+      // "a regua do mes": auditaria pela regua errada e o SUBPAGAMENTO sairia
+      // inventado. Nao-conferivel com o motivo nomeado e a resposta honesta.
+      return {
+        contrato: contrato.contractNumber,
+        empresa: contrato.empresa,
+        produto: contrato.produto,
+        tipo: contrato.tipo,
+        prazo: contrato.prazo,
+        txJuros: contrato.txJuros,
+        faixa: contrato.catAplicada,
+        valorLiquido: contrato.valorLiquido,
+        pctRealizado: contrato.pctAplicado,
+        pctRegua: null,
+        pctTabelaCru: null,
+        comissaoPaga: contrato.comissaoPaga,
+        comissaoDevida: null,
+        diferenca: null,
+        deltaPct: null,
+        status: "NAO_CONFERIVEL" as const,
+        celula: null,
+        motivo: `competência ${ym} com vigência PARTIDA e contrato sem fatia (data=${contrato.contractDate ?? "ausente"})`,
+      };
+    }
+    return compararContratoTrp(contrato, regime, reguaDoContrato, catDevida);
   });
 
   linhas.sort(
@@ -291,6 +389,9 @@ export async function conferirTrpMes(
       fonte: regua?.fonte ?? null,
       isFallback: regua?.isFallback ?? false,
       competenciaFornecedora: regua?.competenciaFornecedora ?? null,
+      // true = NAO existe "a regua do mes"; cada linha foi conferida pela fatia
+      // da sua propria data. O cabecalho acima e o da ULTIMA fatia.
+      competenciaPartida: partida,
     },
     linhas,
     resumo: {
