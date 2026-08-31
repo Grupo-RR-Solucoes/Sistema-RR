@@ -343,3 +343,274 @@ duplicado. O que já existe fica de pé e o import não remove: `promoter_debits
 AUTO 1,40 para 211689509 (start 2026-07) e `promoter_debit_assignments` 2026-6
 PENDING para os outros dois, 20,70 + 20,83 = **41,53**. O desbalanço — débito
 lançado sem o crédito de origem — se fecha por decisão, não pelo import.
+
+---
+
+# REGRAS DE REMUNERACAO — DUAS CORRECOES DO DIEGO (30/08/2026)
+
+Registradas para **parar de reabrir**. As duas foram conferidas no codigo, com
+arquivo:linha.
+
+## 1. O teto de 5,80% esta CERTO — e regra INTERNA da RR
+
+**FECHADO. Nao e constante errada e NAO deve ser "corrigido" para 6.**
+
+Mesmo recebendo 6% da Promotiva, a RR limita a **visao do promotor** a 5,80%, e a
+remuneracao dele se baseia nessa visao. Os 0,20% sao margem da empresa, por
+desenho.
+
+O codigo ja diz isso, e diz melhor do que a nota que reabria o assunto —
+`lib/tetoAvistaRR.ts:1-14`:
+
+> CONCEITO (nao confundir com o teto da EMPRESA):
+> - Teto RR 5,80% (ESTE arquivo): limite OPERACIONAL da RR sobre o percentual de
+>   a-vista que remunera o PROMOTOR. A Promotiva paga ate 6%; a RR limita a visao
+>   do promotor a 5,80% e o spread fica com a empresa. O excedente vira DIFERIDO
+>   (100% empresa).
+> - Teto da EMPRESA 6,00% (`lib/promotivaCashPolicy.ts`): quanto a PROMOTIVA paga
+>   a RR. Outra entidade, outro proposito.
+> Os dois valem 5,8/6,0 hoje **por coincidencia de numero, NAO por serem a mesma
+> regra. NAO unificar.**
+
+Aplicacao: `lib/bbtsMonthly.ts:262` (ADS) e `lib/closingMonthly.ts:418` (RR), as
+duas lendo a fonte unica versionada `tetoAvistaRR()`.
+
+## 2. No SEGURO da ADS a base e o que a EMPRESA RECEBEU, nao o PMT da TRP
+
+**Confirmado: o sistema JA faz isso.**
+
+A BBTS paga menos que a Promotiva no seguro, entao a remuneracao do promotor se
+limita ao recebido: penetracao acima de 30% recebe **50% de 0,10% (base BBTS)**,
+nao 50% de 0,15% (base TRP).
+
+- `lib/bbts/seguroBbts.ts:10-14` — "FONTE UNICA DA ADS = a regua versionada
+  (`bbts_rule_versions`). NAO confundir com o SLIP do RR
+  (`lib/insuranceCalculator` + tabela `insurance_slip_rules`), que tem NUMEROS
+  DIFERENTES (0,15/0,25/0,40/0,55) e gestora diferente. Sao reguas
+  INDEPENDENTES — nunca unificar as duas fontes."
+- `lib/bbtsMonthly.ts:23-28` — "SEGURO: regua BBTS lida da FONTE VERSIONADA
+  (`bbts_rule_versions.regra_json.seguro`) via `resolveBbtsRegraDb` [...] Base =
+  `insurance_value`. [...] Fonte INDEPENDENTE da do RR."
+- `lib/bbtsMonthly.ts:278` — `comEmpSeguro = seguroBase * taxa.rate` (taxa BBTS).
+- `lib/bbtsMonthly.ts:366` — `comPromotorSeguro = a.comEmpSeguro * seguroShare *
+  fatorSeguro`: a comissao-empresa **pela regua BBTS**, multiplicada pela faixa
+  de penetracao. Bate com o medido no `gate_ads_seguro_via_render`
+  (43,87 x 25% = 10,97 | 31,66 x 50% = 15,83 | 13,00 x 35% = 4,55).
+
+## (a) No CREDITO da ADS o promotor recebe pela TRP — confirmado, com numeros
+
+Caminho: `lib/bbtsMonthly.ts:255` calcula `creditPercent` pela **TRP** (via
+`calcularOperacao` + `trpProvider`); `:262` aplica o teto
+(`Math.min(creditPercent, tetoAvistaRR)`); `:263` faz
+`comEmpAvista = gross * avistaPercent`. O que a BBTS pagou (`bbts_pag_avista`)
+**nao entra nessa conta em nenhum momento**.
+
+Medido em 2026-07 (42 contratos casados):
+
+| | valor |
+|---|---|
+| base do promotor pela TRP (pos-teto) | 17.915,67 |
+| o que a BBTS PAGOU a vista | 18.737,33 |
+| **sobra que fica na empresa** | **821,66** |
+
+Caso concreto — contrato **220992572**: financiado 60.000,00, TRP **3,340%** ->
+base do promotor **2.004,00**; a BBTS pagou **2.088,00**; sobra **84,00**.
+
+## (b) No seguro do RR a base e a TRP — e as duas bases divergem POR DESENHO
+
+`lib/insuranceCalculator.ts:1-27` e explicito: fonte unica
+`insurance_slip_rules`, com `SLIP mar/2026+: gross x pct_faixa(Parcelas)
+[TRP §188]` e `base_field` = `premio` (`insurance_value`) ou `gross`
+(`gross_value`).
+
+Entao: **RR usa a regua da TRP porque a empresa recebe a TRP; ADS usa a regua
+BBTS porque a empresa recebe da BBTS.** Bases diferentes, de proposito. E isso
+**esta escrito no codigo**, em dois lugares independentes
+(`seguroBbts.ts:10-14` e `bbtsMonthly.ts:27-28`), os dois com a instrucao
+"nunca unificar".
+
+## (c) A leitura que unifica NAO esta expressa — sao dois caminhos separados
+
+**E a diferenca entre uma regra e uma coincidencia, e aqui e coincidencia.**
+
+Varredura: `bbts_pag_avista` aparece em `lib/` **apenas** como coluna gravada
+pelo importador (`bbtsClosingImport.ts:545,635`) e lida para RECEITA
+(`dre.ts:390`, `financialAnalytics.ts:453,463`). **Ela nunca toca o caminho da
+remuneracao do promotor.** Zero ocorrencias de invariante do tipo "base do
+promotor <= recebido pela empresa"; nenhum `Math.min(..., pag_avista)`; nenhum
+portao vigiando.
+
+O seguro da ADS satisfaz a regra **por construcao** (a base E a regua BBTS). O
+credito da ADS satisfaz **por acidente aritmetico**: a TRP costuma dar menos que
+a BBTS paga.
+
+**E o acidente JA FALHOU.** Medido em 2026-06, mesmo metodo (18 contratos):
+
+| | valor |
+|---|---|
+| base do promotor pela TRP (pos-teto) | 8.835,13 |
+| o que a BBTS PAGOU a vista | 7.707,03 |
+| **sobra** | **-1.128,10** |
+
+Em junho a base do promotor **superou** o que a empresa recebeu, em R$ 1.128,10 —
+e nada no codigo acusou. Bate com a conferencia da ADS de junho, que acusou 16
+subpagamentos somando -1.509,44 (com a ressalva de que junho foi auditado com a
+regua de 2026-07, porque a de junho nunca foi subida).
+
+**Nao consertado — so nomeado.** A decisao sobre transformar a leitura numa regra
+de codigo (e sobre o que fazer quando a BBTS paga a menos) e do Diego.
+
+---
+
+# AS REGUAS DE AGOSTO/2026 — MEDIDO EM 30-31/08, NADA SUBIDO
+
+Nenhuma regua foi gravada. Tudo abaixo e medicao, e as decisoes seguem com o
+Diego.
+
+## 1. O MAIS GRAVE, e nao estava em nenhuma pergunta: COLUNA TROCADA NA PLANILHA
+
+A tabela de remuneracao de agosto promete, no bloco **SP e MG**, valores da
+**Faixa 4** em 3 das 5 linhas — onde a Faixa 3 (a que a coluna diz ser) paga
+menos:
+
+| taxa | planilha | Faixa 3 (o certo) | Faixa 4 |
+|---|---|---|---|
+| 1,72 | 1,3000 | **1,3000** OK | 1,36 |
+| 1,80 | 2,5200 | **2,5200** OK | 2,63 |
+| **1,90** | **3,8200** | 3,66 | **3,8200** ERRADO |
+| **2,00** | **4,6700** | 4,48 | **4,6700** ERRADO |
+| **2,10** | **5,5200** | 5,29 | **5,5200** ERRADO |
+
+**Para MAIS** — infla o promotor. E duas coisas o tornam perigoso:
+
+1. **O erro SOBREVIVE a atualizacao.** Refazer a planilha com os valores da
+   TRP39 sem corrigir a COLUNA mantem as tres linhas erradas: elas passariam a
+   trazer a Faixa 4 da TRP39 em vez da Faixa 4 da TRP38. Atualizar valor nao
+   conserta ler a coluna errada.
+2. **Ninguem descobriria sozinho.** O lado de CREDITO da planilha nao arbitra
+   nada no sistema (ver §4): o repasse sai da TRP via `lib/motor.ts`. A planilha
+   e o que se PROMETE ao promotor; o sistema paga outra coisa. A divergencia so
+   aparece quando alguem confere a mao.
+
+A aritmetica interna da planilha esta CERTA: 43 de 43 regras cumprem
+`min(received; 5,80%) x 58,33%`. O defeito e no INSUMO daquela conta.
+
+**A planilha tambem esta VELHA**, e isso e independente: importada em
+**04/08**, um dia antes de a TRP39 entrar em vigor. Contra a Faixa 3 de cada
+TRP: **28** regras batem com as duas (categorias que nao mudaram), **7** batem
+SO com a TRP38, **ZERO** batem so com a TRP39.
+
+> Entao a planilha nova precisa consertar DUAS coisas: atualizar para a TRP39 E
+> corrigir as tres linhas de SP e MG que leem a Faixa 4.
+
+## 2. O DANO DA VIGENCIA INTRA-MES (TRP39)
+
+A TRP39 vale **a partir de 05/08/2026**; o sistema tem **UMA regua por
+competencia**. Pela data REAL do contrato (`contract_date` / `proposal_date`,
+nunca `movement_date`):
+
+| | contratos | atingidos pela mudanca | efeito |
+|---|---|---|---|
+| ate 04/08 (deveriam seguir a TRP38) | **83** | **17** | **-115,28** <- o dano |
+| de 05/08 adiante (TRP39 legitima) | 496 | 100 | -1.397,87 |
+| total | 579 | 117 | -1.513,15 |
+
+O dano se espalha por **12 promotores**, maior individual **-27,89** (TACIANA
+MARIA GOMES DE MOURA, 3 contratos). A lista completa esta em
+`scripts/diag-trp39-vigencia-intra-mes.cjs`.
+
+**PMR de 2026-08 = 0 linhas.** Ninguem foi pago por agosto: a mudanca e
+**PROSPECTIVA**, nao ha reprocessamento nem valor a estornar. O que se decide e
+com que regua agosto vai FECHAR.
+
+O teto de 5,80% absorve **646,39** da queda (sem teto -2.159,54, com teto
+-1.513,15): parte da reducao caiu acima do teto, onde o excedente ja era
+diferido e nao remunerava o promotor.
+
+## 3. DIVIDA NOMEADA — o desenho da vigencia intra-mes (NAO implementado)
+
+O que seria preciso, medido:
+
+- **O indice.** `unique (competencia) where is_active` impede duas reguas ativas
+  na mesma competencia. Teria de virar exclusao por INTERVALO:
+  ```sql
+  exclude using gist (
+    competencia with =,
+    daterange(valid_from, valid_until, '[]') with &&
+  ) where (is_active)
+  ```
+  Exige `btree_gist`. A alternativa pobre (`unique (competencia, valid_from)`)
+  PERMITE sobreposicao e devolveria duas reguas para a mesma data — pior que o
+  problema.
+
+- **`resolveTrpRegraDb` passaria a receber a DATA.** Chamadores: 3 via
+  `createTrpRegraDbPreloader` (`lib/trp/creditTrpProvider.ts:23`,
+  `lib/trp/conferenciaTrp.ts:31`, `lib/recebiveis/avistaProducao.ts:30`) mais
+  `lib/trp/detectorReguaObsoleta.ts:89` direto. **Nenhum tem a data em maos** —
+  todos trabalham por competencia, porque o preloader carrega por competencia
+  para o motor poder ser SINCRONO.
+
+- **A assinatura do provider.** `TrpRegraProvider = (competencia) => RegraMes |
+  null` (`lib/motor.ts:45`). Mudar toca **13 sitios**: 4 internos do motor
+  (`:595, :672, :692, :728`), 6 chamadores de `calcularOperacao`
+  (`bbtsMonthly.ts:255`, `closingAnalytics.ts:970`, `baseLideranca.ts:381`,
+  `promoterAnalytics.ts:418`, `calculate/monthly/route.ts:158` e `:534`) e 3
+  construtores de provider (`bbtsMonthly.ts:182`, `closingAnalytics.ts:1372`,
+  `promoterAnalytics.ts:9`).
+
+- **A boa noticia:** o motor JA TEM a data. `motor.ts:670` faz
+  `competenciaDoContrato(op)`, que le `op.contract_date` — a data esta na
+  operacao e e DESCARTADA ao virar competencia antes de consultar o provider.
+
+**Custo x beneficio, dito com o numero:** o desenho correto toca o caminho que
+calcula TODA a comissao de TODAS as competencias, para corrigir **R$ 115,28**
+numa competencia sem PMR. Enquanto a Promotiva mudar a tabela no meio do mes
+raramente, a divida se paga sozinha; se virar rotina, a conta inverte.
+
+## 4. ACHADO ESTRUTURAL — o lado de credito da planilha nunca arbitrou nada
+
+As `productionRules` sao parseadas e gravadas **so em `audit_logs.payload`**
+(`app/api/import/promoter-remuneration/route.ts:133`). A tabela
+`commission_table_rows` tem **SO `INSURANCE/PENETRATION`** em TODAS as
+competencias:
+
+```
+2026-04 {"INSURANCE/PENETRATION": 16}
+2026-06 {"INSURANCE/PENETRATION": 16}
+2026-07 {"INSURANCE/PENETRATION": 16}
+2026-08 {"INSURANCE/PENETRATION": 16}
+```
+
+16 = 4 empresas x 4 faixas de penetracao. **Zero linhas de producao, em
+qualquer mes.** A planilha manda na escala de penetracao do seguro e em mais
+nada; o repasse de credito sai da TRP. E por isso que o erro de coluna do §1
+nao acende em lugar nenhum.
+
+## 5. A REGUA BBTS DE AGOSTO
+
+PDF vigente decidido pelo Diego: **`31__anonymous 2.pdf`** (o de 30/08, com
+BB_ENERGIA a partir de 2,10%). O outro fica descartado.
+
+- Um unico grupo mudou de valor: **NAO_CONSIGNADO**, 30 valores, **todos para
+  baixo**. `GRUPAMENTO_MG_SP` teve so as BANDAS recortadas (valores identicos).
+- Alcance: **9 contratos** da ADS em agosto, **-R$ 206,16**.
+- **0 contratos** nos 3 grupos removidos, em jun, jul e ago.
+- O seguro e **identico** ao de julho (ESTOQUE 0,10%; SLIP 0,10/0,15/0,25/0,35).
+- Agosto ainda nao tem fechamento importado (`pago 0,00`), entao a conferencia
+  de 2026-08 exibe o devido inteiro como subpagamento — **artefato, nao rombo**.
+
+## 6. DUAS ARMADILHAS DE MEDICAO QUE ESTA RODADA PAGOU
+
+Ficam registradas porque as duas produzem numero TRANQUILIZADOR e ERRADO:
+
+1. **Casar celula por assinatura de banda.** Quando a tabela RECORTA as bandas,
+   nenhuma celula casa e o diff devolve "nada mudou" com os valores diferentes.
+   Aconteceu na BBTS (30 valores) e de novo na TRP (35 valores), nas duas vezes
+   com "0 mudancas" por assinatura. **O numero que vale e o ORDINAL**, e os
+   diagnosticos rodam os dois e avisam quando ha banda recortada E celula sem
+   par.
+2. **Comparar percentual sem epsilon.** `1.64 / 100` da `0.016399999999999998`,
+   MENOR que o `tx_min` 0.0164 da celula — a linha do SIAPE caia na celula sem
+   limites e virava "divergencia" que nao existia. Com epsilon, 3 das 6
+   suspeitas viraram acerto e 2 viraram confirmacao; so as 3 do SP e MG
+   sobreviveram, e por outra causa.

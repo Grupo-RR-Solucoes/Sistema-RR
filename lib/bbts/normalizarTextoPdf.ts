@@ -178,6 +178,41 @@ export function casaExpressao(texto: unknown, rx: RegExp): boolean {
   return expansoes(t).some((c) => rx.test(c));
 }
 
+/**
+ * Igual a casaExpressao, mas tolerando tambem ESPACO ESPURIO dentro da palavra.
+ *
+ * POR QUE casaExpressao NAO BASTA. Ela trata LACUNA (U+FFFD), que e a ligadura
+ * PERDIDA. O outro modo de falha do mesmo gerador de PDF e a ligadura virar
+ * ESPACO: medido em 30/08/2026 na tabela BBTS de vigencia 31/07/2026, que traz
+ *     "Financiamento - BB Energia Ren ovavel*"
+ *     "Portabilidade de B eneficio do INSS*"
+ *     "Nao Consignado - 13o Salario Prazo:"
+ * enquanto o PDF da MESMA vigencia baixado 27 dias antes traz as tres integras.
+ * Sem lacuna nenhuma no texto, casaExpressao cai no `rx.test(t)` puro e falha —
+ * e o grupo inteiro some da regua em silencio.
+ *
+ * COMO: se o casamento normal falhar, remove TODO espaco do texto E os espacos
+ * LITERAIS da fonte da regex, e tenta de novo (ainda tolerando lacuna). A
+ * remocao e SIMETRICA, que e o que a torna segura: nao afrouxa o alfabeto, so
+ * deixa de exigir que o espaco esteja no lugar certo.
+ *
+ * LIMITE, dito porque a proxima pessoa vai querer reusar isto: so serve para
+ * expressao cujos espacos sao SEPARADORES DE PALAVRA. Uma regex que dependa de
+ * espaco como delimitador semantico (/A B/ para distinguir de /AB/) passa a
+ * casar os dois. As ancoras de grupo da BBTS sao frases longas ancoradas em ^,
+ * entao o risco e nulo ali; em outro sitio, meca antes.
+ *
+ * \s, \t e classes sobrevivem: so o caractere espaco LITERAL e removido da
+ * fonte, e um espaco escapado e preservado de proposito.
+ */
+export function casaRotuloFragmentado(texto: unknown, rx: RegExp): boolean {
+  if (casaExpressao(texto, rx)) return true;
+  const t = normalizarParaBusca(texto).replace(/\s+/g, "");
+  const rxSemEspacos = new RegExp(rx.source.replace(/(?<!\\) /g, ""), rx.flags);
+  if (!t.includes(LACUNA)) return rxSemEspacos.test(t);
+  return expansoes(t).some((c) => rxSemEspacos.test(c));
+}
+
 // ============================================================================
 // ELEICAO POR EVIDENCIA (03/08/2026) — quando a lacuna pode virar letra.
 //

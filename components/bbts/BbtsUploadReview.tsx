@@ -39,6 +39,8 @@ type RegraBbts = {
   };
   convenios: Record<string, { grupo: string; nome: string }>;
   grupos: Record<string, Grupo>;
+  /** grupos ESPERADOS que a BBTS nao trouxe neste documento. */
+  grupos_ausentes?: string[];
   seguro?: { slip: { prazo_min: number; prazo_max: number | null; pct: number }[]; estoque: { pct: number } };
 };
 type ParseMeta = {
@@ -322,6 +324,38 @@ export default function BbtsUploadReview({ canConfirm }: { canConfirm: boolean }
             </span>
           </div>
 
+          {/*
+            GRUPOS REMOVIDOS PELA BBTS — vem ANTES da régua lida, de propósito.
+            Quem sobe precisa ver o que o documento deixou de trazer ANTES de
+            commitar; embaixo da tabela de 15 grupos ninguém rolaria até aqui.
+            Ausência é DADO (grava em regra_json.grupos_ausentes), não erro — mas
+            é dado que muda o cálculo: contrato que cair num destes grupos é
+            RECUSADO por contrato, nunca calculado por fallback.
+          */}
+          {Array.isArray(r.grupos_ausentes) && r.grupos_ausentes.length > 0 ? (
+            <div className="bb-ausentes">
+              <h4 className="bb-rev__h">
+                Grupos que esta tabela NÃO traz{" "}
+                <Chip variant="warn">{r.grupos_ausentes.length}</Chip>
+              </h4>
+              <ul className="bb-ausentes__l">
+                {r.grupos_ausentes.map((g) => (
+                  <li key={g}>
+                    <b>{g}</b>
+                  </li>
+                ))}
+              </ul>
+              <p className="bb-ausentes__p">
+                A BBTS removeu {r.grupos_ausentes.length === 1 ? "este grupo" : "estes grupos"} do
+                documento desta vigência. A régua pode ser gravada assim — a ausência fica
+                registrada. O que muda: qualquer operação que caia {r.grupos_ausentes.length === 1 ? "nele" : "neles"}{" "}
+                passa a ser <b>recusada por contrato</b> (fora da tabela, com motivo nomeado), e
+                nunca calculada por fallback nem zerada em silêncio. Confira no PDF antes de
+                confirmar.
+              </p>
+            </div>
+          ) : null}
+
           <h4 className="bb-rev__h">
             Régua lida <Chip variant="ok">provado</Chip>
             <span className="lg">
@@ -493,6 +527,12 @@ export default function BbtsUploadReview({ canConfirm }: { canConfirm: boolean }
         .bb-rev__meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: #5b6472; margin-bottom: 14px; }
         .bb-rev__h { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: #101a33; margin: 18px 0 10px; }
         .bb-rev__h .lg { font-weight: 400; font-size: 12px; color: #5b6472; }
+        /* Grupos removidos pela BBTS: destaque de AVISO, nao de erro — a regua
+           pode ser gravada assim; o que muda e a recusa por contrato. */
+        .bb-ausentes { border: 1px solid #f0c36d; background: #fffaf0; border-radius: 8px; padding: 12px 14px; margin: 18px 0 4px; }
+        .bb-ausentes__l { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; padding: 0; margin: 0 0 8px; }
+        .bb-ausentes__l li { background: #fff; border: 1px solid #e6c98a; border-radius: 6px; padding: 3px 9px; font-size: 12.5px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+        .bb-ausentes__p { font-size: 12.5px; line-height: 1.55; color: #5a4520; margin: 0; }
         .bb-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
         .gcard { border: 1px solid var(--bd-soft, #eef0f4); border-radius: 10px; overflow: hidden; }
         .gcard__t { background: #f6f8fc; padding: 6px 10px; font-size: 11.5px; font-weight: 700; color: #101a33; display: flex; justify-content: space-between; }

@@ -107,6 +107,13 @@ function montarRegra(
     });
   }
 
+  // Os grupos ESPERADOS que este documento nao trouxe (ou trouxe sem celula).
+  // Mesmo criterio do validador, para as duas listas nunca divergirem.
+  const gruposAusentes = EXPECTED_GROUPS.filter((k) => {
+    const g = grupos[k];
+    return !g || !Array.isArray(g.celulas) || g.celulas.length === 0;
+  });
+
   const regra: RegraBbts = {
     _meta: {
       shape: SHAPE_VERSION_BBTS,
@@ -125,6 +132,13 @@ function montarRegra(
     },
     convenios: crua.convenios,
     grupos,
+    // AUSENCIA DECLARADA: o que o documento NAO trouxe vira DADO, aqui, em vez
+    // de virar recusa da regua inteira. A lista sai da comparacao com
+    // EXPECTED_GROUPS e o validador cobra que ela bata exatamente — ver a nota
+    // em RegraBbts.grupos_ausentes. Chave OMITIDA quando nao falta nada: assim
+    // `regra_json ? 'grupos_ausentes'` no SQL ja separa as reguas completas das
+    // que perderam grupo, sem precisar comparar array vazio.
+    ...(gruposAusentes.length > 0 ? { grupos_ausentes: gruposAusentes } : {}),
     ...(crua.seguro ? { seguro: crua.seguro } : {}),
   };
 

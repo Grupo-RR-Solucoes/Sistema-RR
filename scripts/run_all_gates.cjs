@@ -460,6 +460,31 @@ const GATES = [
       "rede, sem caminho absoluto",
   },
   {
+    arquivo: "scripts/bbts_grupos_ausentes_gate.cjs",
+    nome: "rotulo fragmentado + AUSENCIA DECLARADA de grupo (regua BBTS)",
+    modo: "self-contained",
+    motivo:
+      "NASCEU em 30/08/2026 de DOIS defeitos que se disfarcavam um do outro. " +
+      "(1) LEITURA: o gerador de PDF da BBTS parte a palavra com espaco " +
+      "('Ren ovavel', 'B eneficio') e com rx.test puro a ancora nao casa — o " +
+      "grupo some da regua SEM ERRO e a recusa aparece depois, culpando o " +
+      "DOCUMENTO por defeito de LEITURA. (2) DOCUMENTO: a BBTS REMOVEU 3 grupos " +
+      "na tabela de 31/07 (as palavras 'reduzidos' e 'bonificad' tem ZERO " +
+      "ocorrencia no PDF), e isso recusava a regua inteira — agosto ficava fora " +
+      "por grupos que a ADS nao usa (0 contratos em jun e jul). O gate prova que " +
+      "os dois seguem SEPARADOS: se a fragmentacao voltar, o grupo cai na lista " +
+      "de ausentes e a regua passa mesmo assim, que e o pior dos mundos. " +
+      "Mutacao nos dois sentidos: casaExpressao sozinha (o estado anterior) TEM " +
+      "de falhar no rotulo fragmentado; e a trava de ausencia mudou de lugar sem " +
+      "sumir — nao declarar, declarar de menos ou declarar grupo que existe, os " +
+      "tres LANCAM. Recusa POR CONTRATO com motivo nomeado, com anti-vacuidade " +
+      "exigindo contrato calculado com sucesso no mesmo run. ARMADILHAS que ele " +
+      "ja pagou: o teto da fixture e o da BBTS (6%), nao o teto interno da RR; e " +
+      "o roteamento vai pelo convenio (nao existe campo 'grupo' na operacao), " +
+      "entao GRUPAMENTO_MG_SP_REDUZIDOS so e alcancado com um convenio SP/MG " +
+      "real. Fixtures sinteticas (repo publico). Sem banco, sem rede, sem PDF",
+  },
+  {
     arquivo: "scripts/bbts_layouts_pdf_gate.cjs",
     nome: "os TRES layouts do PDF de seguro da BBTS + '#N/D' no PRT",
     modo: "self-contained",
