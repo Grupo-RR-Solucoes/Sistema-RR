@@ -177,6 +177,133 @@ export function vigenciaDaCompetencia(competencia: string | CompetenciaYM): Vige
   return { validFrom: ymd(win.start), validUntil: ymd(win.end) };
 }
 
+// ---------- Vigência intra-mês: o override que vem de FORA do PDF ----------
+
+/**
+ * Veredito de `validarOverrideNaJanela`. Discriminado por `ok`.
+ *
+ * POR QUE NÃO LANÇA. `TrpValidationError` mora em lib/trp/parseTrpDraft.ts, que
+ * IMPORTA este arquivo (`import { vigenciaDaCompetencia, competenciaKey } from
+ * "@/lib/trp/vigencia"`). Importá-lo de volta fecharia um ciclo. Então esta
+ * função devolve VEREDITO e quem tem contexto de API (commitTrpVersion) lança o
+ * erro tipado. Efeito colateral bom: dá para exercitar as 4 recusas no portão
+ * sem try/catch, e a mutação aparece como veredito diferente, não como exceção
+ * que sumiu.
+ */
+export type OverrideVerdict =
+  | { ok: true; validFrom: string; validUntil: string }
+  | { ok: false; motivo: string; detalhe: string };
+
+/**
+ * O override de início de vigência cai DENTRO da janela da competência e de fato
+ * PARTE o mês?
+ *
+ * A data de início da TRP39 (05/08/2026) só existe no e-mail da Promotiva —
+ * decisão do Diego (31/08): nunca vai estar no PDF. Esta é a única porta por
+ * onde ela entra, e é aqui que ela é conferida contra a régua da casa
+ * (`vigenciaDaCompetencia`, holiday-aware), que continua valendo para todo o
+ * resto.
+ *
+ * AS TRÊS RECUSAS:
+ *
+ *   fora da janela (antes de validFrom ou depois de validUntil)
+ *       -> RECUSA. Um override fora da janela não descreve esta competência.
+ *          Depois do fim seria régua que nunca vale; antes do início seria
+ *          régua valendo em competência alheia.
+ *
+ *   IGUAL a validFrom
+ *       -> RECUSA, e esta é a sutil. `>` ESTRITO, decisão do Diego (01/09):
+ *          override igual ao início não PARTE nada — no RPC ele cai na SAÍDA 1
+ *          (SUBSTITUI), que é o re-upload de sempre. Aceitá-lo em silêncio
+ *          gravaria em trp_rule_uploads.valid_from_override uma data que não
+ *          produziu efeito nenhum, e a próxima pessoa a ler aquela linha
+ *          concluiria que a competência foi partida quando não foi. Não se
+ *          normaliza para NULL em silêncio: quem digitou a data do início da
+ *          janela ou errou a data, ou queria substituir e não sabe — nos dois
+ *          casos a resposta certa é dizer, não adivinhar.
+ *
+ *   formato inválido
+ *       -> RECUSA. Só "YYYY-MM-DD".
+ *
+ * O QUE ESTA FUNÇÃO **NÃO** RESPONDE: se existe fatia ativa cobrindo o início da
+ * janela. Isso é estado do BANCO, não da régua de datas, e é conferido em
+ * commitTrpVersion — sem aquela conferência, subir a PRIMEIRA régua de uma
+ * competência já com override deixa a fatia inicial do mês DESCOBERTA, e o
+ * resolvedor lança TrpVigenciaGapError no primeiro contrato daquele pedaço
+ * (/promotores, /recebiveis e o motor). O EXCLUDE do banco pega SOBREPOSIÇÃO,
+ * nunca BURACO.
+ *
+ * @param competencia "YYYY-MM" | "YYYY-MM-DD" | { year, month }
+ * @param override    "YYYY-MM-DD" — o início declarado por fora do PDF.
+ */
+export function validarOverrideNaJanela(
+  competencia: string | CompetenciaYM,
+  override: string,
+): OverrideVerdict {
+  const comp = competenciaKey(competencia);
+  const { validFrom, validUntil } = vigenciaDaCompetencia(comp);
+
+  if (typeof override !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(override)) {
+    return {
+      ok: false,
+      motivo: "data de início de vigência inválida",
+      detalhe: `formato esperado AAAA-MM-DD, recebido '${String(override)}'`,
+    };
+  }
+  // Data real (rejeita 2026-02-31, que casa no regex e não existe no calendário).
+  const d = parseIsoDateOnly(override);
+  if (!d || ymd(d) !== override) {
+    return {
+      ok: false,
+      motivo: "data de início de vigência inexistente no calendário",
+      detalhe: `'${override}'`,
+    };
+  }
+
+  if (override < validFrom) {
+    return {
+      ok: false,
+      motivo: "a data de início é ANTERIOR à janela da competência",
+      detalhe: `${override} < ${validFrom} — a janela de ${comp} é ${validFrom} a ${validUntil}`,
+    };
+  }
+  if (override > validUntil) {
+    return {
+      ok: false,
+      motivo: "a data de início é POSTERIOR ao fim da janela da competência",
+      detalhe: `${override} > ${validUntil} — a régua nunca chegaria a valer em ${comp}`,
+    };
+  }
+  if (override === validFrom) {
+    return {
+      ok: false,
+      motivo: "esta data não PARTE a competência — é o próprio início da janela",
+      detalhe:
+        `${override} é o primeiro dia de ${comp}. Sem partir, o commit SUBSTITUI a régua ` +
+        `ativa, que é o caminho normal: suba sem informar data de início. Se a intenção era ` +
+        `partir o mês, informe o primeiro dia em que a régua NOVA passa a valer ` +
+        `(entre ${somaUmDia(validFrom)} e ${validUntil}).`,
+    };
+  }
+  return { ok: true, validFrom, validUntil };
+}
+
+/** Dia seguinte, em ISO. Usado nas mensagens e no cálculo do fim da fatia anterior. */
+export function somaUmDia(iso: string): string {
+  const d = parseIsoDateOnly(iso);
+  if (!d) throw new Error(`data inválida: '${iso}'`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return ymd(d);
+}
+
+/** Dia anterior, em ISO. É onde a fatia ANTERIOR passa a terminar quando o mês é partido. */
+export function subtraiUmDia(iso: string): string {
+  const d = parseIsoDateOnly(iso);
+  if (!d) throw new Error(`data inválida: '${iso}'`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return ymd(d);
+}
+
 /**
  * Competência (YYYY-MM) cuja janela de vigência holiday-aware CONTÉM a data.
  *

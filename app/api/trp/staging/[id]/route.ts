@@ -79,6 +79,10 @@ export async function GET(
       },
       confianca:
         row.confianca ?? { provado: { totalPct: 0, produtos: {} }, conferir: [] },
+      // Fase 3: o início de vigência informado por FORA do PDF, se houver. A tela
+      // do sócio mostra em destaque — é o único campo da revisão que não veio do
+      // documento, e é ele que PARTE a competência.
+      validFromOverride: row.valid_from_override ?? null,
       diff: { anterior },
     });
   } catch (error) {

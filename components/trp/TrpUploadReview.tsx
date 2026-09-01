@@ -9,6 +9,17 @@
 //   - Todos (socio+funcionario): "Salvar rascunho" chama /api/trp/staging.
 //   - Sócio: caixa "Rascunhos pendentes" (inbox) — abre um rascunho, revisa e confirma.
 // Só o sócio vê confirmar e a inbox; o funcionário só salva rascunho.
+//
+// FASE 3 (01/09/2026) — a data de início que vem de FORA do PDF.
+// A TRP39 passou a valer em 05/08/2026 e essa data só existe no e-mail da
+// Promotiva: nunca vai estar no documento. O campo abaixo é a única porta por
+// onde ela entra, e por isso ele nasce FECHADO — o caminho normal é não tocar
+// nele, e 100% das réguas até hoje foram assim. Aberto, ele mostra a janela
+// derivada e diz, em português, o que vai acontecer com a régua que já está
+// viva: ela é TRUNCADA e CONTINUA ATIVA, não é substituída.
+// O funcionário pode preencher no rascunho (rascunho não é régua); quem grava é
+// o sócio, e a revisão dele mostra a data EM DESTAQUE justamente porque ela é o
+// único campo da tela que não veio do PDF.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -36,6 +47,8 @@ type ParseOk = {
   meta: ParseMeta;
   confianca: Confianca;
   diff: { anterior: { competencia: string; version_no: number; regra_json: unknown } | null };
+  /** Só vem do staging (/api/trp/staging/[id]); o parse do PDF nunca traz. */
+  validFromOverride?: string | null;
 };
 type PendItem = {
   id: string;
@@ -43,6 +56,8 @@ type PendItem = {
   source_filename: string | null;
   parser_version: string | null;
   uploaded_at: string;
+  /** Fase 3: início de vigência informado por fora do PDF (parte a competência). */
+  valid_from_override?: string | null;
 };
 
 function fileToBase64(f: File): Promise<string> {
@@ -55,6 +70,25 @@ function fileToBase64(f: File): Promise<string> {
 }
 
 const pctFmt = (v: number) => `${(v * 100).toFixed(2).replace(".", ",")}%`;
+
+/** dd/mm a partir de "YYYY-MM-DD" — só para o texto do efeito. */
+const dm = (iso: string) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : "");
+
+/** Dia anterior em ISO. Espelha subtraiUmDia do servidor (é onde a fatia atual passa a terminar). */
+function diaAnterior(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Dia seguinte em ISO — o primeiro valor ACEITÁVEL de override (o `>` estrito do servidor). */
+function diaSeguinte(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
 
 // valores de pct do JSON canônico anterior, achatados por produto (p/ diff).
 function anteriorVals(regraJson: unknown): Record<string, number[]> {
@@ -89,6 +123,12 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
   const [oferta, setOferta] = useState<Array<{ year: number; month: number }> | null>(null);
   const [pendentes, setPendentes] = useState<PendItem[]>([]);
   const [loadingPend, setLoadingPend] = useState(false);
+  // FASE 3 — o override. Nasce FECHADO: o caminho normal e' nao tocar aqui.
+  const [overrideOn, setOverrideOn] = useState(false);
+  const [overrideData, setOverrideData] = useState("");
+  // Guarda o que veio do STAGING, para a revisao do socio poder dizer "esta data
+  // foi informada por quem salvou o rascunho" em vez de fingir que ele digitou.
+  const [overrideDoRascunho, setOverrideDoRascunho] = useState<string | null>(null);
 
   const anterior = useMemo(() => (result?.diff.anterior ? anteriorVals(result.diff.anterior.regra_json) : null), [result]);
 
@@ -118,6 +158,11 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
     setActionMsg(null);
     setActionErr(null);
     setCurrentUploadId(null); // upload fresco: não é rascunho da inbox
+    // upload fresco zera o override: ele NUNCA vem do PDF, então não pode
+    // sobreviver de uma revisão anterior e entrar caladamente na próxima régua.
+    setOverrideOn(false);
+    setOverrideData("");
+    setOverrideDoRascunho(null);
     try {
       const base64 = await fileToBase64(file);
       const resp = await fetch("/api/trp/parse", {
@@ -150,14 +195,29 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
         setActionErr({ msg: json.error || "não consegui abrir o rascunho", detalhe: json.detalhe });
         return;
       }
-      setResult(json as ParseOk);
+      const parsed = json as ParseOk;
+      setResult(parsed);
       setCurrentUploadId(id);
+      // O override do rascunho reabre o campo JÁ preenchido — se ele ficasse
+      // escondido, o sócio confirmaria uma competência partida sem ver a data
+      // que a parte.
+      const ov = parsed.validFromOverride ?? null;
+      setOverrideDoRascunho(ov);
+      setOverrideOn(!!ov);
+      setOverrideData(ov ?? "");
     } catch (e) {
       setActionErr({ msg: "falha ao abrir o rascunho", detalhe: e instanceof Error ? e.message : String(e) });
     } finally {
       setLoading(false);
     }
   }
+
+  /**
+   * O que vai no corpo: a data só quando a caixa está marcada E preenchida.
+   * Caixa desmarcada manda null EXPLÍCITO — é o que apaga um override que o
+   * rascunho tinha e o sócio decidiu não usar.
+   */
+  const overrideEnviado = overrideOn && overrideData ? overrideData : null;
 
   async function onSalvarRascunho() {
     if (!result) return;
@@ -173,6 +233,7 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
           regraDraft: result.regraDraft,
           confianca: result.confianca,
           meta: result.meta,
+          validFromOverride: overrideEnviado,
         }),
       });
       const json = await resp.json();
@@ -200,9 +261,16 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
     setActionErr(null);
     setOferta(null);
     try {
+      // DELEGADO: só o uploadId. O override NÃO vai no corpo de propósito — o
+      // servidor lê da LINHA do staging (mesma invariante do regraDraft). Se o
+      // sócio mudou a data aqui, ele salva o rascunho antes de confirmar.
       const body = currentUploadId
         ? { uploadId: currentUploadId }
-        : { regraDraft: result.regraDraft, meta: result.meta };
+        : {
+            regraDraft: result.regraDraft,
+            meta: result.meta,
+            validFromOverride: overrideEnviado,
+          };
       const resp = await fetch("/api/trp/commit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -263,7 +331,12 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
               {pendentes.map((p) => (
                 <li key={p.id} className="trp-inbox__item">
                   <span className="ci">{String(p.competencia).slice(0, 7)}</span>
-                  <span className="cf">{p.source_filename || "sem nome"}</span>
+                  <span className="cf">
+                    {p.source_filename || "sem nome"}
+                    {p.valid_from_override ? (
+                      <b className="cf__ov"> · parte o mês em {dm(p.valid_from_override)}</b>
+                    ) : null}
+                  </span>
                   <Button variant="secundario" onClick={() => onAbrirRascunho(p.id)} disabled={loading || busy}>
                     Abrir e revisar
                   </Button>
@@ -305,6 +378,87 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
             <span>vigência {result.meta.vigencia_inicio} → {result.meta.vigencia_fim}</span>
             <span>{result.meta.source_filename}{result.meta.n_lines ? ` · ${result.meta.n_lines} linhas` : ""} · {result.confianca.provado.totalPct} pct lidos</span>
           </div>
+
+          {/* ---- FASE 3: início de vigência que NÃO veio do PDF ----
+              Fechado por padrão. No fluxo DELEGADO (rascunho aberto da inbox) o
+              campo é SÓ LEITURA e aparece em destaque: o servidor lê o override
+              da LINHA do staging, então deixar editável aqui criaria a armadilha
+              de o sócio mudar a data, confirmar, e o sistema usar a outra. */}
+          {currentUploadId ? (
+            overrideDoRascunho ? (
+              <div className="trp-ov trp-ov--ro">
+                <div className="trp-ov__t">
+                  Este rascunho PARTE a competência em <b>{overrideDoRascunho}</b>
+                </div>
+                <p className="trp-ov__d">
+                  Data informada por fora do PDF por quem salvou o rascunho — confira no e-mail da
+                  Promotiva antes de gravar. A régua que hoje vale em {result.meta.competencia} será
+                  truncada em <b>{diaAnterior(overrideDoRascunho)}</b> e <b>continua ativa</b>; a
+                  régua deste PDF passa a valer de <b>{overrideDoRascunho}</b> a{" "}
+                  <b>{result.meta.vigencia_fim}</b>. Para mudar a data, salve o rascunho de novo —
+                  o que vale na gravação é o que está guardado, não o que está na tela.
+                </p>
+              </div>
+            ) : null
+          ) : (
+            <div className={`trp-ov${overrideOn ? " trp-ov--on" : ""}`}>
+              <label className="trp-ov__chk">
+                <input
+                  type="checkbox"
+                  checked={overrideOn}
+                  onChange={(e) => {
+                    setOverrideOn(e.target.checked);
+                    if (!e.target.checked) setOverrideData("");
+                  }}
+                  disabled={busy}
+                />
+                <span>Esta régua começa a valer em outra data (parte a competência)</span>
+              </label>
+              {overrideOn ? (
+                <div className="trp-ov__body">
+                  <label className="fld">
+                    <span>Início da nova régua</span>
+                    <input
+                      type="date"
+                      value={overrideData}
+                      min={diaSeguinte(result.meta.vigencia_inicio)}
+                      max={result.meta.vigencia_fim}
+                      onChange={(e) => setOverrideData(e.target.value)}
+                      disabled={busy}
+                    />
+                  </label>
+                  <p className="trp-ov__d">
+                    Só preencha quando a data vier de FORA do PDF (o e-mail da Promotiva). A janela
+                    padrão de {result.meta.competencia} é{" "}
+                    <b>
+                      {result.meta.vigencia_inicio} a {result.meta.vigencia_fim}
+                    </b>
+                    .{" "}
+                    {overrideData ? (
+                      <>
+                        Com <b>{overrideData}</b>: a régua que hoje vale nesta competência será
+                        truncada em <b>{diaAnterior(overrideData)}</b> e{" "}
+                        <b>continua ativa</b> — a régua deste PDF vale de <b>{overrideData}</b> até{" "}
+                        <b>{result.meta.vigencia_fim}</b>. Nada é substituído.
+                      </>
+                    ) : (
+                      <>
+                        A data tem de ser <b>posterior</b> a {result.meta.vigencia_inicio}: informar
+                        o próprio {result.meta.vigencia_inicio} não parte nada (seria o re-upload de
+                        sempre) e é recusado.
+                      </>
+                    )}
+                  </p>
+                </div>
+              ) : (
+                <p className="trp-ov__d trp-ov__d--off">
+                  Caminho normal: deixe fechado. A vigência sai da régua da casa —{" "}
+                  {result.meta.vigencia_inicio} a {result.meta.vigencia_fim} — e o envio SUBSTITUI a
+                  régua ativa da competência.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* PROVADOS */}
           <h4 className="trp-rev__h">Percentuais lidos <Chip variant="ok">provado</Chip></h4>
@@ -484,6 +638,16 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
         .conf__v { font-family: var(--font-mono), monospace; color: #7a5b00; }
         .conf__v--none { opacity: .6; }
         .conf__m { color: #6b6250; }
+        .trp-ov { margin: 0 0 14px; border: 1px solid var(--bd-soft, #eef0f4); border-radius: 10px; background: #fafbfe; padding: 10px 12px; }
+        .trp-ov--on { background: #fffdf0; border-color: #f5e7a8; }
+        .trp-ov--ro { background: #fffdf0; border-color: #f5e7a8; }
+        .trp-ov__chk { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: #101a33; cursor: pointer; }
+        .trp-ov__chk input { width: 15px; height: 15px; }
+        .trp-ov__t { font-size: 13px; color: #101a33; }
+        .trp-ov__body { display: flex; align-items: flex-start; gap: 14px; margin-top: 10px; flex-wrap: wrap; }
+        .trp-ov__d { margin: 6px 0 0; font-size: 12px; color: #5b6472; line-height: 1.5; max-width: 640px; }
+        .trp-ov__d--off { opacity: .85; }
+        .trp-inbox__item .cf__ov { color: #7a5b00; font-weight: 700; }
         .trp-diff { font-size: 12.5px; color: #5b6472; }
         .chg-inline { background: var(--accent, #fff000); padding: 0 4px; border-radius: 3px; color: #101a33; }
         .trp-rev__act { margin-top: 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
