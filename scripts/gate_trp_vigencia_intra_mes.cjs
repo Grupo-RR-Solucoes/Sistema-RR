@@ -10,9 +10,14 @@
  * e TRP39 de 05/08 a 28/08. Medido em 31/08: 83 contratos RR até 04/08 (17
  * atingidos, -115,28 = o DANO) e 496 de 05/08 em diante (-1.397,87, legítimo).
  *
- * ESTE GATE É DA FASE 1 (só código). O índice uq_trp_rule_versions_active ainda
- * está no banco, então NENHUMA competência real está partida — o CASO 1 roda
- * sobre FIXTURE, de propósito. O que o gate protege agora é o no-op.
+ * ESTADO (atualizado em 01/09/2026, depois da Fase 2). O índice antigo
+ * uq_trp_rule_versions_active JÁ FOI DERRUBADO e o banco JÁ ACEITA vigência
+ * partida (uq_trp_rule_versions_active_from + ex_trp_vigencia_sem_overlap).
+ * Mesmo assim NENHUMA competência real está partida ainda: a TRP39 não subiu, e
+ * só sobe na Fase 3. Por isso o CASO 1 continua rodando sobre FIXTURE — e o
+ * bloco (D) diz em voz alta, a cada run, qual dos dois mundos está medindo.
+ * Quando 2026-08 for partida de verdade, o (D) passa a listá-la e o CASO 1
+ * ganha o par real ao lado da fixture.
  *
  * OS QUATRO BLOCOS (e por que são quatro):
  *
@@ -221,7 +226,7 @@ function stubClient(linhasPorCompetencia) {
   );
   console.log(
     partidasReais.length === 0
-      ? "       nenhuma competência PARTIDA no banco — esperado na Fase 1 (o índice antigo ainda impõe 1). O CASO 1 roda sobre FIXTURE."
+      ? "       nenhuma competência PARTIDA no banco. NÃO é mais o índice antigo impedindo — ele caiu na Fase 2 (01/09/2026); é a TRP39 que ainda não subiu. O CASO 1 roda sobre FIXTURE."
       : `       competências PARTIDAS no banco: ${partidasReais.join(", ")}`,
   );
 
