@@ -271,7 +271,7 @@ deixar de ser único.
   aqui. Ele aborta no teardown pelo bug conhecido do libuv (a mesma nota que
   está em `detector_regua_camada1_gate.cjs`) — aborta igual em `origin/main`.
 
-### Onde a frente está agora
+### Onde a frente estava quando o bloco 1 foi commitado
 
 - Fase 1 (código) — em produção.
 - Fase 2 (estrutura) — aplicada e verificada.
@@ -284,3 +284,284 @@ deixar de ser único.
 **Se o fechamento chegar antes do deploy do bloco 1:** ou segurar a importação,
 ou aceitar que agosto nasce com carimbo mentiroso — e, pela dívida (ii), ninguém
 vai ser lembrado de consertar.
+
+> REMEDIADO em 01/09/2026: os três blocos foram para produção no mesmo dia
+> (90daea6 e f08fbb8, ambos Production/Ready) e a TRP39 subiu às 23:04. O estado
+> final está na seção **FRENTE FECHADA**, no fim deste arquivo. O aviso acima
+> deixou de valer: o fechamento não chegou antes do deploy.
+
+---
+
+# FRENTE FECHADA — 01/09/2026, 23:04:26Z
+
+**A TRP39 está viva com vigência a partir de 05/08/2026, e agosto está partido
+em duas fatias explícitas.** Foi o que a frente inteira existiu para permitir.
+
+## O estado final, medido (somente leitura, service_role)
+
+`trp_rule_versions` — 7 linhas:
+
+```
+2026-04-01 v1 ATIVA   2026-03-31 .. 2026-04-29 | TRP35 | 702e8431 | 2026-07-02T01:27:20
+2026-05-01 v1 ATIVA   2026-04-30 .. 2026-05-28 | TRP36 | 545d1dec | 2026-07-02T01:27:20
+2026-06-01 v1 ATIVA   2026-05-29 .. 2026-06-29 | TRP37 | ff32f334 | 2026-07-02T01:27:20
+2026-07-01 v1 INATIVA 2026-06-30 .. 2026-07-30 | TRP38 | 563fec5d | 2026-07-03T23:17:03
+2026-07-01 v2 ATIVA   2026-06-30 .. 2026-07-30 | TRP38 | 59025dd8 | 2026-07-17T23:29:13
+2026-08-01 v1 ATIVA   2026-07-31 .. 2026-08-04 | TRP38 | b7bcd68f | 2026-09-01T22:55:20
+2026-08-01 v2 ATIVA   2026-08-05 .. 2026-08-28 | TRP39 | f85dac76 | 2026-09-01T23:04:26
+```
+
+Agosto: **duas linhas, as duas ATIVAS**, sem se cruzar. A v1 nasceu cobrindo a
+janela inteira (31/07–28/08) no passo 1 e foi TRUNCADA em 04/08 pelo passo 2 —
+é a SAÍDA 2 (PARTE) do RPC tendo rodado, com o UPDATE antes do INSERT.
+
+**Julho INTACTO**: 2 linhas, 1 ativa, `30/06..30/07` nas duas, `uploaded_at` de
+03/07 e 17/07 — não foram tocados. É a prova do `where id = v_ativa.id` que a
+Fase 2 introduziu: com a competência partida, substituir/partir NÃO derruba a
+fatia anterior nem vaza para outra competência.
+
+**A trilha completa** — `trp_rule_uploads`:
+
+```
+2026-07-01 confirmado  override= null        | committed= 563fec5d | TRP38
+2026-08-01 confirmado  override= 2026-08-05  | committed= f85dac76 | TRP39
+```
+
+O `committed_version_id` aponta para a v2 de agosto. A data que só existia no
+e-mail da Promotiva está registrada **como declaração**, não apenas como efeito
+— porque o commit foi feito pelo staging, e não pelo fluxo direto.
+
+## A prova pelo motor REAL
+
+Resolvedor sobre 2026-08: `partida: true`, 2 fatias, janela `31/07..28/08`.
+
+```
+ATE 04/08 -> v1 (TRP38, b7bcd68f)
+  213731664  2026-08-04  1,9600%   213683815  2026-08-04  4,3100%
+  213058364  2026-08-03  2,3500%
+DE 05/08  -> v2 (TRP39, f85dac76)
+  216022526  2026-08-27  3,2100%   216004133  2026-08-27  0,0000%
+  216005364  2026-08-27  3,2100%
+```
+
+**Varredura exaustiva: 599 contratos da competência 2026-08 (74 até 04/08 e 525
+de 05/08), ZERO fora da fatia esperada.**
+
+## O NÚMERO QUE DECIDE
+
+```
+contratos ate 04/08 que MUDARAM:   0    delta      0,00   <- o dano NAO aconteceu
+contratos de 05/08 que MUDARAM : 104    delta -1.452,18   <- legitimo, a TRP39 valendo
+contratos de 29-31/08 (compet. 2026-09, por cascata): 12   delta   -200,52
+delta TOTAL:                                        -1.652,70
+```
+
+**Zero.** Os contratos de 31/07 a 04/08 não mudaram um centavo: seguem na TRP38,
+que é o que a v1 grava. **Os −115,28 medidos em 31/08 — o dano da falta de
+vigência intra-mês — NÃO ACONTECERAM.** Era exatamente para isso que esta frente
+existiu.
+
+Os −1.452,18 são a TRP39 valendo, e são maiores que os −1.397,87 de 31/08 porque
+agosto continuou entrando (496 → 525 contratos daquele lado).
+
+Os 12 contratos de 29–31/08 mudaram porque a competência **2026-09** não tem
+régua e agora herda por cascata a TRP39 (antes herdava a TRP38 de julho). Está
+CERTO — e é o desempate por `valid_from` da Fase 1 que faz a cascata pegar a
+TRP39 e não a v1 de agosto. Quando a TRP40 subir, esses números mudam de novo.
+
+## CORREÇÃO DE UM NÚMERO MEU: 74/525, não 83/558
+
+O recorte que circulou em 31/08 e em 01/09 — "83 até 04/08 e 558 de 05/08" — era
+por **data crua**. Pela **competência real** (que é o que o motor usa) os 641
+registros filtrados por `movement_date` de agosto se distribuem assim:
+
+```
+2026-07: 9    2026-08: 599    2026-09: 33
+```
+
+Dos 83, nove são de 30/07 ou antes e pertencem a **2026-07**; dos 558, trinta e
+três são de 29–31/08 e pertencem a **2026-09**. O par correto para agosto é
+**74 / 525**. Não muda o desenho nem o resultado — muda o número que se cita.
+
+## O `TrpVigenciaGapError` disparou no DADO VIVO
+
+Por acidente de script: pedi a fatia de um contrato de **31/08** dentro da
+competência 2026-08. O resolvedor RECUSOU:
+
+> BURACO de vigência em 2026-08 — a data 2026-08-31 não é coberta por nenhuma
+> das 2 régua(s) ativa(s) [2026-08-05..2026-08-28, 2026-07-31..2026-08-04].
+> Não escolho "a mais próxima": isso pagaria pela régua errada em silêncio.
+
+O erro era do script; a recusa está certa. Vale como prova acidental de que o
+FALHA ALTO funciona no dado de produção, não só na fixture do portão.
+
+## Onde a frente está
+
+- Fase 1 (resolvedor tolera N réguas) — **em produção**.
+- Fase 2 (DDL + RPC das 3 saídas) — **aplicada e verificada**.
+- Fase 3 bloco 1 (carimbo honesto + 5º estado) — **em produção** (90daea6).
+- Fase 3 bloco 2 (override + anteparo do buraco) — **em produção** (f08fbb8).
+- Fase 3 bloco 3 (a TRP39 pela tela) — **FEITO**, 01/09 22:55 e 23:04.
+
+PMR de 2026-08 continua em **0 linhas** e o fechamento da Promotiva não chegou:
+tudo isto é conserto de mês ABERTO, sem reprocessamento e sem PMR a reconsolidar.
+
+A **TRP40 (setembro) NÃO subiu**. Está em disco, e subir é outra decisão.
+
+## AS TRÊS DÍVIDAS QUE FICAM
+
+### 1. O diff da tela compara com a competência ANTERIOR, não com a fatia ativa da MESMA
+
+`app/api/trp/parse/route.ts:61` e o gêmeo em `app/api/trp/staging/[id]/route.ts`
+buscam a base do diff com `.lt("competencia", firstDayAlvo)` — competência
+**estritamente anterior**. O desempate por `valid_from` está lá (entrou na Fase
+1, para o caso de a competência ANTERIOR estar partida); o que falta é olhar
+para a própria competência primeiro.
+
+Enquanto uma competência tinha uma régua só e o upload SUBSTITUÍA, "a anterior"
+era a única base possível. Com vigência partida isso deixa de valer no instante
+em que a competência já tem régua — que aconteceu pela primeira vez na história
+em 01/09, no passo 2.
+
+**Sem consequência hoje, e isso foi MEDIDO**: comparei `2026-07 v2` (a base
+usada) com `2026-08 v1` (a base correta) — 11 produtos, mesmas chaves, **0
+diferenças**. São a mesma régua, então as células amarelas exibidas eram
+idênticas às que a base certa produziria. O diff é só EXIBIÇÃO: não entra em
+nada do que é gravado.
+
+**Onde engana de verdade:** numa **v3** corrigindo a TRP39. A base certa seria a
+2026-08 v2, mas a tela mostraria a TRP38 de julho e pintaria de amarelo tudo o
+que a TRP39 já havia mudado, como se fosse novidade da correção.
+
+**Conserto:** base = última fatia ATIVA da MESMA competência, se houver; senão a
+cascata para a anterior. Dois sítios. **É o primeiro item da próxima frente.**
+
+### 2. Rascunho salvo SEM override não pode ganhar a data depois
+
+Fechei uma armadilha e abri outra. No fluxo DELEGADO o campo do override é
+**só-leitura** (`trp-ov--ro`), porque o servidor lê o override da LINHA do
+staging: se o campo fosse editável ali, o sócio mudaria a data, confirmaria, e o
+sistema usaria a outra. Correto.
+
+Só que o botão "Salvar rascunho" **não existe com um rascunho aberto**
+(`{!currentUploadId ? <Button…/> : null}`). Consequência: um rascunho salvo sem
+override **não tem como receber a data pela caixa de rascunhos**.
+
+Isso ACONTECEU em 01/09: o rascunho da TRP39 foi salvo com
+`valid_from_override = null`. Confirmá-lo assim não partiria nada — cairia na
+SAÍDA 1 (SUBSTITUI), desativando a v1 e pondo a TRP39 valendo 31/07–28/08, que é
+exatamente o desenho **5b recusado pelo Diego**. Foi pego na conferência, não
+pelo sistema: **nada avisa**.
+
+O contorno usado (e que funciona): subir o PDF de novo — upload fresco reabre o
+campo —, marcar, digitar a data e **Salvar rascunho**, o que SOBRESCREVE a mesma
+linha pendente (o POST faz upsert por competência), agora com o override; e só
+então confirmar pela caixa.
+
+**Conserto possível (não decidido):** ou exibir "Salvar rascunho" também com
+rascunho aberto (e aí o campo volta a ser editável, com o salvar sendo o único
+caminho para valer), ou um aviso explícito na revisão delegada quando o rascunho
+NÃO tem override, dizendo que confirmar vai SUBSTITUIR e não partir. A segunda é
+menor e não reabre a armadilha original.
+
+### 3. PROVIDER SEM DATA — a terceira ocorrência da MESMA classe em 24 horas
+
+Esta não é uma dívida a mais na lista: é **um padrão**, e ele se manifestou três
+vezes em um dia, sempre igual.
+
+```
+ontem      os 28 scripts de diagnostico que chamam calcularOperacao   (NOMEADA no handoff)
+01/09 21h  o meu proprio script de medicao da frente                  (escolherFatia sem competencia certa)
+01/09 23h  scripts/paridade_avista_trp_gate.cjs — PORTAO REGISTRADO   (providerPrev sem data)
+```
+
+**A anatomia é sempre a mesma.** Todos foram construídos ANTES da Fase 1, num
+mundo em que competência tinha **uma régua só**. Nesse mundo, resolver por
+competência sem passar a data era *correto* — não havia o que escolher. Todos
+continuaram "certos" por meses. E todos ficaram **silenciosamente errados no
+instante em que a primeira competência partida passou a existir**, em 01/09/2026
+às 23:04. Nenhum deles quebrou: eles passaram a responder a pergunta errada com
+cara de resposta certa.
+
+O caso do portão é o mais instrutivo porque ele **acusou a produção de um defeito
+que a produção não tem**: 19 divergências, todas de contratos de 31/07–04/08,
+com o `previsto` dando TRP39 onde o motor dava TRP38. A causa era uma linha:
+
+```js
+// o portao, escrito antes da Fase 1:
+const providerPrev = (c) => preloader.getResolvedSync(c);           // <- sem data
+// a producao, avistaProducao.ts:208:
+provider = (competencia, contractDate) =>
+  preloader.getResolvedSync(competencia, contractDate ?? null);     // <- com data
+```
+
+Corrigido em 01/09. **Prova, não leitura:** com a data repassada, **2411/2411
+contratos iguais, 0 divergências**.
+
+#### REGRA: todo provider construído antes de 01/09/2026 está sob suspeita
+
+E o teste é uma pergunta só: **ele repassa a `contractDate`?**
+
+Varredura feita em 01/09/2026 (`getResolvedSync(` / `getRegraSync(` em `lib/`,
+`app/`, `components/`, `scripts/`):
+
+**PRODUÇÃO — os 4 sítios estão CERTOS, todos passam a data:**
+
+```
+lib/recebiveis/avistaProducao.ts:208   getResolvedSync(competencia, contractDate ?? null)
+lib/trp/conferenciaTrp.ts:126          getResolvedSync(ym, contractDate ?? null)
+lib/trp/conferenciaTrp.ts:181          getResolvedSync(ym, contractDate ?? null)
+lib/trp/creditTrpProvider.ts:97,99     getRegraSync/getResolvedSync(competencia, contractDate ?? null)
+```
+
+**scripts/ — o que sobra, com o dano de cada um:**
+
+```
+scripts/paridade_avista_trp_gate.cjs:121   CONSERTADO em 01/09 (era o vermelho falso)
+scripts/trp_prazo_min_gate.cjs:89          REGISTRADO. getRegraSync(COMP) sem data, e a COMP
+                                           e DESCOBERTA (a ultima com contrato). Passa hoje,
+                                           mas numa competencia partida mede so a ULTIMA
+                                           fatia e chama isso de "a TRP vigente".
+scripts/trp_tx_juros_min_gate.cjs:87       REGISTRADO. getRegraSync("2026-07") — julho nao esta
+                                           partida, entao esta certo HOJE, por sorte da
+                                           competencia escolhida, nao por construcao.
+scripts/trp_paridade_f5_json.cjs:148       nao registrado.
+scripts/diag_julho_candidate_list.cjs:46   nao registrado (diagnostico).
+```
+
+Os dois portões REGISTRADOS acima estão **verdes e não foram tocados** — verdes
+por medirem competência de régua única, não por passarem a data. É verde por
+sorte da competência, e a sorte acaba quando alguém partir a competência que
+eles olham.
+
+#### PORTÃO PROPOSTO (não implementado — decisão do Diego pendente)
+
+Um portão que varra os **construtores de provider** e exija que repassem a data.
+Esboço do que ele mediria, e por que dá para fazer sem heurística frágil:
+
+1. **Varredura estática, universo fechado.** Casar
+   `/(getResolvedSync|getRegraSync)\s*\(([^)]*)\)` em `lib/`, `app/`,
+   `components/` e `scripts/`. Cada ocorrência tem 1 ou 2 argumentos — contar
+   vírgulas de topo já separa os dois casos. Universo hoje: 11 sítios, dos quais
+   6 com data e 5 sem.
+2. **A asserção dura, e ela é sobre PRODUÇÃO:** nenhum sítio em `lib/`, `app/`
+   ou `components/` pode chamar com 1 argumento. Isso é invariante permanente, e
+   é o que impede a regressão que importa (dinheiro e tela).
+3. **A lista NOMEADA para `scripts/`:** um allowlist explícito, com motivo, para
+   os que ficam sem data de propósito. Sair da lista sem passar a data reprova;
+   entrar na lista exige escrever o porquê. Isso transforma "dívida esquecida"
+   em "dívida assinada".
+4. **A parte que só um portão VIVO pega**, e que vale mais que a estática:
+   quando existir competência partida no banco, resolver a MESMA competência
+   com e sem data e exigir que os resultados **difiram** — se derem igual, ou a
+   competência não está partida (e o portão se declara vacuidade em voz alta,
+   não passa calado), ou o `contractDate` parou de ser honrado pelo preloader,
+   que é o defeito de verdade.
+5. **Custo:** ~120 linhas, self-contained na parte estática; a parte (4) é
+   needs-db e a faixa `--db` já está estourando o teto (276,3s de 90s), então
+   ela entraria como bloco condicional do portão da vigência intra-mês, que já é
+   needs-db, em vez de portão novo.
+
+O que este portão NÃO resolve: um provider construído fora destes dois nomes de
+função. Se alguém criar um terceiro caminho de resolução, a varredura não o vê —
+e a única defesa continua sendo a regra escrita aqui.
