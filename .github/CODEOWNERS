@@ -1,0 +1,27 @@
+# CODEOWNERS — revisao obrigatoria de quem NAO escreveu a mudanca.
+#
+# POR QUE EXISTE (31/08/2026). A G5 de scripts/gate_teto_avista_rr.ts deixou de
+# proibir mudanca em lib/motor.ts e passou a EXIGIR justificativa no ledger
+# (scripts/motor-protegido/). Isso afrouxa uma coisa que o portao NAO consegue
+# fechar sozinho: a justificativa e AUTO-EMITIDA — quem muda o motor escreve a
+# propria aprovacao. Um hash prova que o conteudo e o aprovado; nao prova que a
+# aprovacao esta certa.
+#
+# Este arquivo e o unico lugar onde esse afrouxamento se fecha: poe uma segunda
+# pessoa no laco. Ele NAO substitui o portao e o portao nao substitui ele.
+#
+# ATENCAO — MODO DE FALHA SILENCIOSO: o GitHub IGNORA dono desconhecido, sem
+# avisar. CODEOWNERS com handle errado nao protege NADA e parece que protege.
+# O handle abaixo foi INFERIDO do autor dos merge commits dos PRs #197..#202
+# (todos "Grupo-RR-Solucoes"), nao confirmado na API. Se o revisor real for
+# outro, troque aqui — e confira em Settings > Branches que a protecao da main
+# tem "Require review from Code Owners" LIGADO, senao isto e decorativo.
+
+# O motor e a fonte do teto da empresa.
+/lib/motor.ts                  @Grupo-RR-Solucoes
+/lib/promotivaCashPolicy.ts    @Grupo-RR-Solucoes
+
+# O ledger que os aprova, e a regra que o le. Mudar a regra e mudar a protecao.
+/scripts/motor-protegido/      @Grupo-RR-Solucoes
+/scripts/_ledgerProtegido.ts   @Grupo-RR-Solucoes
+/scripts/gate_teto_avista_rr.ts @Grupo-RR-Solucoes
