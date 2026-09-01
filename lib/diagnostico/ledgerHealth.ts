@@ -309,24 +309,37 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
   //     usa TRP (RR vem pronto do arquivo -> NAO_APLICAVEL). STALE = a TRP mudou
   //     desde o calculo (reconsolidar); DESCONHECIDO = ADS fechado sem
   //     trp_version_id rastreado (resolve na proxima reconsolidacao) -> ALERTA.
+  //
+  //     + trp_multi_versao (INFO), desde 01/09/2026: competencia de VIGENCIA
+  //     PARTIDA. Ela NAO pode cair em trp_desconhecido — a descricao daquele
+  //     item ("calculado antes do rastreamento", "resolve na proxima
+  //     reconsolidacao") seria falsa nas DUAS metades: foi calculada COM
+  //     rastreamento, e reconsolidar grava o mesmo NULL. Alerta que nunca apaga
+  //     treina todo mundo a ignorar o painel. Bucket proprio, severidade INFO.
   // =========================================================================
   let trpStaleCount = 0;
   let trpDesconhecidoCount = 0;
+  let trpMultiVersaoCount = 0;
   let trpStaleDetalhe: unknown = [];
   let trpDesconhecidoDetalhe: unknown = [];
+  let trpMultiVersaoDetalhe: unknown = [];
   try {
     const trp = await detectTrpStaleCrossFechadas(admin);
     trpStaleCount = trp.counts.stale;
     trpDesconhecidoCount = trp.counts.desconhecido;
+    trpMultiVersaoCount = trp.counts.multi_versao;
     trpStaleDetalhe = trp.alteradas;
     trpDesconhecidoDetalhe = trp.desconhecidas;
+    trpMultiVersaoDetalhe = trp.partidas;
   } catch (e: any) {
     // Detector auxiliar: se falhar, reporta no proprio check em vez de derrubar
     // o diagnostico (igual a Camada 2).
     trpStaleCount = 0;
     trpDesconhecidoCount = 0;
+    trpMultiVersaoCount = 0;
     trpStaleDetalhe = { erro: e?.message || "detectTrpStaleCrossFechadas falhou" };
     trpDesconhecidoDetalhe = trpStaleDetalhe;
+    trpMultiVersaoDetalhe = trpStaleDetalhe;
   }
 
   // =========================================================================
@@ -460,6 +473,14 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
       descricao:
         "Camada 1 (TRP): PMR fechado da ADS sem trp_version_id rastreado (calculado antes do rastreamento). Resolve na proxima reconsolidacao.",
       detalhe: trpDesconhecidoDetalhe,
+    },
+    {
+      id: "trp_multi_versao",
+      severity: "info",
+      count: trpMultiVersaoCount,
+      descricao:
+        "Camada 1 (TRP): competencia com vigencia PARTIDA (2+ reguas ativas) — o PMR nao carimba versao unica, por construcao: seria afirmacao falsa que confere. NAO e pendencia e reconsolidar NAO muda. Consequencia: staleness desta competencia nao e detectavel pela Camada 1; se a regua for reeditada, conferir a mao.",
+      detalhe: trpMultiVersaoDetalhe,
     },
     {
       id: "cms_vs_pmr_stale",

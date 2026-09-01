@@ -39,6 +39,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getProductionPeriodFromValue, getProductionPeriodKey } from "./productionPeriod.ts";
 import { calcularOperacao } from "./motor.ts";
+import { carimboTrpDoPmr } from "./trp/carimboPmr.ts";
 import { buildTrpCreditProvider } from "./trp/creditTrpProvider.ts";
 import { fetchPromoterShareData, resolvePromoterShareSync } from "./proposalDetailing.ts";
 import {
@@ -175,6 +176,12 @@ export async function consolidateMonthlyFromBbts(
     count: number;
   };
   const agg = new Map<string, Agg>();
+  // O `-15` E CHAVE DE CACHE, NAO ESCOLHA DE REGUA (reescrito em 01/09/2026,
+  // Fase 3 bloco 1). Serve para pre-carregar a competencia no provider — o dia 15
+  // esta sempre dentro da janela holiday-aware. Quem escolhe a regua de cada
+  // contrato e o motor, pela contract_date (Fase 1). Numa competencia PARTIDA o
+  // dia 15 cai na ULTIMA fatia (em agosto/2026, a TRP39): por isso o carimbo NAO
+  // pode sair daqui, e sai do carimboTrpDoPmr (ver abaixo).
   const compDate = `${year}-${String(month).padStart(2, "0")}-15`; // competência p/ vigência TRP
   // TRP self-service: fonte da regra de crédito atrás da flag TRP_SOURCE. compDate
   // é único (a competência consolidada), então o preload é 1 competência. Sem
@@ -345,6 +352,10 @@ export async function consolidateMonthlyFromBbts(
   // no modo json, ou competencia sem versao no DB, fica NULL = desconhecido (o
   // numero veio do JSON embutido, sem versao a rastrear). NAO muda nenhum valor.
   const trpStamp = trpProvider ? trpProvider.getResolved(compKey) : null;
+  // REGUA UNICA do carimbo (lib/trp/carimboPmr.ts) — a MESMA que a rota
+  // calculate/monthly aplica. Regua unica -> id + false; competencia PARTIDA ->
+  // NULL + true; sem stamp -> NULL + NULL. Nao reimplementar aqui.
+  const carimboTrp = carimboTrpDoPmr(trpStamp);
 
   for (const [pid, a] of agg) {
     const acordo = acordoDe(pid);
@@ -406,9 +417,11 @@ export async function consolidateMonthlyFromBbts(
       target_status: params.statusMetaByPromoter?.get(pid) ?? "BELOW_META",
       source: "bbts",
       calculated_at: nowIso,
-      // Detector Camada 1: versao da TRP usada (NULL = desconhecido/sem versao).
-      trp_version_id: trpStamp?.versionId ?? null,
-      trp_fallback: trpStamp ? trpStamp.isFallback : null,
+      // Detector Camada 1: versao da TRP usada. NULL tem TRES significados,
+      // desambiguados por trp_multi_versao (ver lib/trp/carimboPmr.ts).
+      trp_version_id: carimboTrp.trp_version_id,
+      trp_fallback: carimboTrp.trp_fallback,
+      trp_multi_versao: carimboTrp.trp_multi_versao,
     });
   }
 

@@ -56,9 +56,17 @@ type DetectorTrp = {
   competencia?: string;
   current_version_id?: string | null;
   current_is_fallback?: boolean | null;
-  counts?: { ok: number; stale: number; desconhecido: number; nao_aplicavel: number };
+  counts?: {
+    ok: number;
+    stale: number;
+    desconhecido: number;
+    nao_aplicavel: number;
+    multi_versao?: number;
+  };
   has_stale?: boolean;
   has_desconhecido?: boolean;
+  /** Vigencia PARTIDA: 2+ reguas ativas na competencia (agosto/2026 e a primeira). */
+  has_multi_versao?: boolean;
 };
 
 // Detector de regua obsoleta — CAMADA 2 (hash de conteudo). READ-ONLY:
@@ -79,9 +87,13 @@ type DetectorRegras = {
 // fechada. MESMO shape da Camada 2 -> a lista clicavel reusa o MESMO irPara e o
 // mesmo estilo do contador. So a linha ADS (bbts) usa TRP no fechado.
 type DetectorTrpCross = {
-  counts?: { ok: number; stale: number; desconhecido: number };
+  counts?: { ok: number; stale: number; desconhecido: number; multi_versao?: number };
   alteradas?: Array<{ year: number; month: number }>;
   desconhecidas?: Array<{ year: number; month: number }>;
+  // Vigencia PARTIDA (agosto/2026 e a primeira). Bucket proprio desde 01/09/2026:
+  // sem ele uma competencia partida nao apareceria em bucket NENHUM e a tela
+  // diria "nada pendente" onde o certo e "aqui a Camada 1 nao sabe responder".
+  partidas?: Array<{ year: number; month: number }>;
 };
 
 const MESES = [
@@ -386,6 +398,18 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
                   grava o baseline e o estado passa a ser confiavel.
                 </div>
               </Banner>
+            ) : det.has_multi_versao ? (
+              <Banner variant="info">
+                <b>Regua TRP partida em {compLabel}.</b>
+                <div className="det">
+                  {det.counts?.multi_versao ?? 0} linha(s) foram produzidas por <b>mais de uma</b>{" "}
+                  versao da TRP (a competencia teve 2+ reguas vigentes). O PMR nao carimba versao
+                  unica aqui de proposito: carimbar uma so seria afirmacao falsa para os contratos
+                  da outra fatia. Reconsolidar <b>nao</b> muda isso. Se a regua desta competencia
+                  for reeditada, a conferencia e a mao — esta camada nao consegue dizer se o PMR
+                  ficou desatualizado.
+                </div>
+              </Banner>
             ) : (det.counts?.ok ?? 0) > 0 ? (
               <Banner variant="ok">
                 <b>PMR alinhado com a TRP vigente em {compLabel}.</b>
@@ -410,6 +434,7 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
               <Chip variant={(det.counts?.desconhecido ?? 0) > 0 ? "risk" : "neutral"}>
                 Desconhecido: {det.counts?.desconhecido ?? 0}
               </Chip>
+              <Chip variant="neutral">Regua partida: {det.counts?.multi_versao ?? 0}</Chip>
               <Chip variant={(det.counts?.ok ?? 0) > 0 ? "ok" : "neutral"}>
                 OK: {det.counts?.ok ?? 0}
               </Chip>
@@ -519,6 +544,9 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
               <Chip variant={(trpAll.counts?.desconhecido ?? 0) > 0 ? "risk" : "neutral"}>
                 {trpAll.counts?.desconhecido ?? 0} desconhecidas
               </Chip>
+              <Chip variant="neutral">
+                {trpAll.counts?.multi_versao ?? 0} com regua partida
+              </Chip>
               <Chip variant={(trpAll.counts?.ok ?? 0) > 0 ? "ok" : "neutral"}>
                 {trpAll.counts?.ok ?? 0} OK
               </Chip>
@@ -556,6 +584,29 @@ export default function PmrReconsolidarCard({ canConfirm }: { canConfirm: boolea
                       key={`t-d-${c.year}-${c.month}`}
                       type="button"
                       className="cam2-comp cam2-comp--desc"
+                      onClick={() => irPara(c.year, c.month)}
+                    >
+                      {String(c.month).padStart(2, "0")}/{c.year}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {(trpAll.partidas?.length ?? 0) > 0 ? (
+              <div className="cam2-grp">
+                <span className="cam2-grp__l">
+                  <b>Regua partida</b> (a competencia teve 2+ reguas da TRP vigentes; a linha do
+                  PMR nao carimba versao unica porque veio de mais de uma). NAO e pendencia e
+                  reconsolidar nao muda o carimbo. Se a regua desta competencia for reeditada,
+                  a conferencia e A MAO — a Camada 1 nao consegue dizer se ficou desatualizada:
+                </span>
+                <div className="cam2-grp__list">
+                  {trpAll.partidas!.map((c) => (
+                    <button
+                      key={`t-p-${c.year}-${c.month}`}
+                      type="button"
+                      className="cam2-comp"
                       onClick={() => irPara(c.year, c.month)}
                     >
                       {String(c.month).padStart(2, "0")}/{c.year}
