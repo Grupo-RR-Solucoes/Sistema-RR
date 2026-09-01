@@ -17,6 +17,13 @@ import { competenciaFirstDay, competenciaKey } from "@/lib/trp/vigencia";
 //
 // POST  (socio+funcionario): salva/atualiza o rascunho PENDENTE da competência.
 // GET   ?status=pendente (socio-only): inbox de rascunhos para o sócio revisar.
+//
+// valid_from_override (Fase 3, 01/09/2026): o início de vigência que vem de FORA
+// do PDF. O FUNCIONÁRIO pode gravá-lo no rascunho — decisão do Diego (01/09) —
+// porque rascunho NÃO é régua: nada aqui chega a trp_rule_versions. Quem grava a
+// régua é o sócio, e a tela de revisão dele mostra a data EM DESTAQUE justamente
+// porque ela não veio do documento. A validação séria (janela + anteparo do
+// buraco) é de commitTrpVersion; aqui a data é só transportada.
 
 // POST — salvar rascunho revisado (upsert por competência: 1 pendente).
 export async function POST(req: Request) {
@@ -71,6 +78,8 @@ export async function POST(req: Request) {
       status: "pendente" as const,
       uploaded_by: uid,
       uploaded_at: new Date().toISOString(),
+      // "" (input de data em branco) e undefined viram NULL: sem override.
+      valid_from_override: body?.validFromOverride ? String(body.validFromOverride) : null,
     };
 
     // Upsert manual respeitando o índice parcial único (1 pendente/competência):
@@ -125,7 +134,7 @@ export async function GET(req: Request) {
     const { data, error } = await supabase
       .from("trp_rule_uploads")
       .select(
-        "id, competencia, regime, trp_doc_ref, source_filename, parser_version, status, uploaded_by, uploaded_at",
+        "id, competencia, regime, trp_doc_ref, source_filename, parser_version, status, uploaded_by, uploaded_at, valid_from_override",
       )
       .eq("status", status)
       .order("competencia", { ascending: false })

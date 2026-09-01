@@ -1012,6 +1012,27 @@ const GATES = [
       "createClient; daily da ADS de PRODUCAO",
   },
   {
+    arquivo: "scripts/gate_trp_override_vigencia.cjs",
+    nome: "TRP - override de vigencia + ANTEPARO DO BURACO",
+    modo: "self-contained",
+    motivo:
+      "1,5s; sem banco, sem env, sem PDF. FASE 3 bloco 2: o override que vem do " +
+      "e-mail da Promotiva (a TRP39 a partir de 05/08) atravessa staging -> " +
+      "commit -> RPC. E O UNICO PONTO DA FRENTE QUE PODE DERRUBAR PRODUCAO: " +
+      "subir regua com override numa competencia sem regua deixa o inicio do mes " +
+      "DESCOBERTO e o resolvedor lanca TrpVigenciaGapError, que PROPAGA " +
+      "(/promotores, /recebiveis, motor). O banco nao cobre: o EXCLUDE recusa " +
+      "fatias que se CRUZAM, e buraco nao cruza nada. 6 blocos, 4 mutacoes: (1) " +
+      "sem o `>` estrito o inicio da janela seria aceito e gravaria override que " +
+      "nao parte nada; (3) sem o anteparo a chamada CHEGA ao RPC e o buraco " +
+      "nasce, e tomar fatias[0] em vez do MAXIMO aprovaria override que reescreve " +
+      "regua viva por baixo de outra (a 1a versao deste gate reprovou por isso e " +
+      "o conserto foi no CODIGO, nao no stub); (5) ler o override do body em vez " +
+      "da LINHA do staging traria data que ninguem revisou. CONTROLE POSITIVO no " +
+      "bloco 4: sem override o RPC recebe os MESMOS 11 parametros, p_valid_from = " +
+      "janela derivada, e ZERO leitura nova de trp_rule_versions",
+  },
+  {
     arquivo: "scripts/gate_trp_carimbo_multi_versao.cjs",
     nome: "TRP - carimbo em competencia PARTIDA (multi_versao)",
     modo: "self-contained",

@@ -19,6 +19,14 @@ import { TrpValidationError } from "@/lib/trp/parseTrpDraft";
 //
 // Re-valida o draft e recomputa a vigência no servidor (dentro de commitTrpVersion).
 // Draft inválido/adulterado -> 422, NADA gravado.
+//
+// valid_from_override (Fase 3, 01/09/2026) — DE ONDE ELE VEM, e isto não é
+// detalhe: no fluxo DELEGADO ele é lido da LINHA DO STAGING, nunca do corpo da
+// requisição. É a mesma invariante que já vale para o regraDraft: o servidor
+// confia no que ELE guardou, não no que o client mandou junto. Um `uploadId` com
+// um override no body seria uma data revisada por ninguém entrando na régua
+// viva. No fluxo DIRETO (o sócio subiu e revisou na mesma sessão) o override vem
+// do body — ali não há staging, e a rota inteira é socio-only.
 export async function POST(req: Request) {
   try {
     const { user, supabase } = await withSocioAdmin();
@@ -33,6 +41,7 @@ export async function POST(req: Request) {
     let sourceSha256: string | null = null;
     let parserVersion: string | null = null;
     let uploadId: string | null = null;
+    let validFromOverride: string | null = null;
 
     if (body?.uploadId) {
       // ---- fluxo delegado: draft vem do STAGING (não do client) ----
@@ -40,7 +49,7 @@ export async function POST(req: Request) {
       const { data: draftRow, error } = await supabase
         .from("trp_rule_uploads")
         .select(
-          "id, competencia, regra_draft, trp_doc_ref, source_filename, source_sha256, parser_version, status",
+          "id, competencia, regra_draft, trp_doc_ref, source_filename, source_sha256, parser_version, status, valid_from_override",
         )
         .eq("id", uploadId)
         .maybeSingle();
@@ -65,6 +74,9 @@ export async function POST(req: Request) {
       sourceFilename = draftRow.source_filename ?? null;
       sourceSha256 = draftRow.source_sha256 ?? null;
       parserVersion = draftRow.parser_version ?? null;
+      // DA LINHA DO STAGING, não do body — ver o cabeçalho. Ler daqui é o que
+      // garante que a data confirmada é a MESMA que o sócio viu na revisão.
+      validFromOverride = draftRow.valid_from_override ?? null;
     } else {
       // ---- fluxo direto: draft vem do client (será re-validado no servidor) ----
       regraJson = body?.regraDraft;
@@ -74,6 +86,8 @@ export async function POST(req: Request) {
       sourceFilename = meta?.source_filename ?? null;
       sourceSha256 = meta?.sha256 ?? null;
       parserVersion = meta?.parser_version ?? null;
+      // fluxo DIRETO: aqui não há staging, e a rota é socio-only.
+      validFromOverride = body?.validFromOverride ? String(body.validFromOverride) : null;
       if (!regraJson || !competencia) {
         return NextResponse.json(
           { error: "envie { uploadId } ou { regraDraft, meta } com competência" },
@@ -95,6 +109,7 @@ export async function POST(req: Request) {
           parserVersion,
           uploadedBy: socioId,
           notes: null,
+          validFromOverride,
         },
         supabase,
       );
@@ -167,6 +182,9 @@ export async function POST(req: Request) {
       is_active: committed.is_active,
       valid_from: committed.valid_from,
       valid_until: committed.valid_until,
+      // eco do que de fato partiu (ou não) a competência, para a tela dizer a
+      // verdade sem recalcular nada.
+      valid_from_override: validFromOverride,
       // OFERTA (não execução): competências FECHADAS a reconsolidar por causa desta
       // versão. Ausente quando nenhuma ficou stale (sem oferta espúria). As leituras
       // vivas e o mês aberto já usam a nova ativa — não precisam de oferta.
