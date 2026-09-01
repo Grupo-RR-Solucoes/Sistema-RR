@@ -45,6 +45,13 @@
  *   do bucket = 0 em TODA competencia: qualquer caso novo e um sub-caso novo
  *   (nao a classe antiga) e AVISA (exit 1) para alguem olhar.
  *
+ * VIGENCIA PARTIDA (01/09/2026): os DOIS lados resolvem COM a contract_date. O
+ *   providerPrev daqui nasceu antes da Fase 1, quando competencia tinha uma
+ *   regua so, e descartava a data — o que so ficou visivel quando agosto virou a
+ *   primeira competencia partida. Ver a divida 3 em
+ *   HANDOFF_TRP_VIGENCIA_INTRA_MES.md: todo provider construido antes de
+ *   01/09/2026 esta sob suspeita, e o teste e "ele repassa a contractDate?".
+ *
  * Uso: node scripts/paridade_avista_trp_gate.cjs
  * Exit: 0 = paridade ok + bucket motor-zera vazio. 1 = bucket motor-zera nao
  *       vazio (avisa). 2 = DIVERGENCIA DE PCT (regressao real). 3 = erro de infra.
@@ -118,7 +125,14 @@ async function main() {
   const comps = [...new Set(rr.map(compDoContrato).filter(Boolean))].sort();
   const preloader = createTrpRegraDbPreloader(sb);
   await preloader.preload(comps);
-  const providerPrev = (c) => preloader.getResolvedSync(c);
+  // A DATA VAI JUNTO — igual ao provider de PRODUCAO (avistaProducao.ts:208).
+  // Sem ela, numa competencia PARTIDA o previsto cai sempre na ULTIMA fatia e o
+  // gate acusa uma divergencia que a producao NAO tem. Aconteceu em 01/09/2026,
+  // no dia em que agosto virou a primeira competencia partida da historia: 19
+  // falsas divergencias, todas de contratos de 31/07-04/08, com o previsto
+  // dando TRP39 onde o motor (que recebe a data) dava TRP38. Com a data
+  // repassada: 2411/2411 iguais, 0 divergencias.
+  const providerPrev = (c, cd) => preloader.getResolvedSync(c, cd ?? null);
   const providerMotor = await buildTrpCreditProvider(comps.map((c) => c + "-15"));
 
   const porComp = {};
