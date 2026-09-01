@@ -190,13 +190,97 @@ Os `rollback` das provas funcionais não deixaram resíduo. **Nenhuma régua sub
 
 - Fase 1 (código) — **em produção**.
 - Fase 2 (estrutura) — **aplicada e verificada**.
-- Fase 3 (tela + staging + commit com o override) — **próxima, aguardando
-  autorização**. É ela que liga o `valid_from_override` da ponta à ponta e que
-  ensina os dois sítios do carimbo a gravar `trp_version_id = NULL` +
-  `trp_multi_versao = true` em competência partida.
+- Fase 3 — **AUTORIZADA em 01/09/2026 e partida em 3 blocos** (ver a seção do
+  bloco 1 no fim deste arquivo). O bloco 1 (carimbo + detector) está commitado;
+  o bloco 2 liga o `valid_from_override` da ponta à ponta; o 3 é a TRP39.
 - A **TRP39 não subiu** e só sobe por último, com autorização explícita.
 
 **O banco hoje aceita a vigência partida e ninguém a usou ainda.** Agosto segue
 resolvendo por cascata para a TRP38 de julho — certa até 04/08, errada de 05/08
 em diante, os mesmos −115,28 de dano medido. A estrutura está pronta; o conserto
 só acontece na Fase 3 + upload.
+
+## FASE 3 — BLOCO 1 (carimbo + detector) COMMITADO — 01/09/2026
+
+Branch `feat/trp-vigencia-fase3-carimbo`, commit `61802ba`, base `b608407`.
+**Nenhuma régua subiu. Nenhum valor mudou.**
+
+### A janela, medida antes de mexer (service_role, somente leitura)
+
+```
+promoter_monthly_results 2026-08 ....... 0 linhas   (controle: 2026-07 = 58)
+trp_rule_versions ...................... 5 linhas, 4 ativas, ZERO de 2026-08
+promoter_monthly_results.trp_multi_versao  existe, 0 linhas não-nulas no banco
+trp_rule_uploads.valid_from_override ....  existe, 1 linha (2026-07), null
+```
+
+O PMR de agosto ainda não nasceu — o fechamento da Promotiva chega dia 03/04.
+Este bloco entra ANTES dele: se só ele estiver de pé quando o fechamento chegar,
+agosto nasce carimbado **honesto** (id da TRP38 por cascata, que é a verdade
+enquanto a TRP39 não subir).
+
+### A ordem dentro da Fase 3, e por que o bloco 1 vem sozinho
+
+A janela de 2-3 dias **não é para a régua — é para o carimbo**. Se a TRP39
+subisse antes, o PMR de agosto nasceria com `trp_version_id` = TRP39 nas linhas
+dos 83 contratos de 31/07-04/08. E, ao contrário do valor, **reprocessar não
+conserta**: gravaria a mesma mentira de novo.
+
+### O que entrou
+
+- `lib/trp/carimboPmr.ts` — régua ÚNICA das 3 saídas do carimbo. Os dois
+  escritores consomem; nenhum decide por conta própria.
+- O comentário do `${comp}-15` reescrito nos dois sítios: virou **chave de
+  cache**, não escolha de régua (o motor resolve por `contract_date` desde a
+  Fase 1). Em agosto o dia 15 cai na TRP39 — era daí que saía o id falso.
+- `classify` ganhou o 5º estado `MULTI_VERSAO`, lido SEMPRE com `=== true`. O 4º
+  parâmetro é opcional: ausente se comporta exatamente como antes.
+- `ledgerHealth`: item `trp_multi_versao`, severidade **info**. Agosto não podia
+  cair em `trp_desconhecido` — aquela descrição seria falsa nas duas metades, e
+  alerta que nunca apaga treina todo mundo a ignorar o painel.
+- `PmrReconsolidarCard`: banner e chip próprios. Sem isso a tela diria "Nenhuma
+  linha usa TRP em agosto/2026" — flatly falso — e no cross agosto não apareceria
+  em bucket nenhum.
+
+### DÍVIDA (ii) — dita em voz alta, e ASSERTADA no portão
+
+**Staleness de competência partida não é detectável pela Camada 1.** Nem hoje
+nem depois. O PMR guarda UM id; uma competência partida foi produzida por N
+réguas; o NULL honesto tira um dos dois lados da comparação que É a Camada 1.
+
+Custo concreto: subir uma TRP39 v3 corrigida **não vai oferecer reconsolidar
+agosto — nunca**. Quem reconsolidar agosto faz a mão, porque decidiu.
+`detectTrpStaleAfetadasPorVersao` NÃO foi alterada, de propósito. O conserto
+(`trp_version_ids uuid[]`) está escrito no topo do detector para quando o caso
+deixar de ser único.
+
+### Portões — rodados DEPOIS do commit (a lição da G5, cumprida)
+
+- `npm run gates` (faixa rápida): **34/34**, com o gate novo
+  `gate_trp_carimbo_multi_versao` (1,4s) e o `detector_regua_camada1` re-apontado.
+- `npm run typecheck:gates`: **limpo**.
+- `npx tsc --noEmit`: **limpo**.
+- `npm run gates:db`: 26/31, **5 vermelhos — TODOS PRÉ-EXISTENTES**. Medido, não
+  afirmado: worktree em `origin/main` (b608407), os mesmos 4 gates, os MESMOS
+  códigos de saída (`produto_pmr_empresa_dona` 1, `competencia_janela_comissoes`
+  1, `check_audit_v9_tables` 4, `gate-srcc-ads` 1). O 5º é o teto de tempo da
+  faixa (159,9s de 90s), que é da faixa e não deste commit — o gate novo é
+  self-contained e roda na rápida.
+- `gate_schema_colunas`: **PASSOU** nos dois lados, e a diferença é a prova de
+  que a coluna existe no banco real: 2.868 colunas pedidas na base, **2.871**
+  aqui. Ele aborta no teardown pelo bug conhecido do libuv (a mesma nota que
+  está em `detector_regua_camada1_gate.cjs`) — aborta igual em `origin/main`.
+
+### Onde a frente está agora
+
+- Fase 1 (código) — em produção.
+- Fase 2 (estrutura) — aplicada e verificada.
+- **Fase 3 bloco 1 (carimbo + detector) — commitado, aguardando merge e deploy.**
+  É o que precisa estar em PRODUÇÃO antes de o fechamento de agosto chegar.
+- Fase 3 bloco 2 (o override ponta a ponta, **com a validação preventiva do
+  buraco junto, não depois**) — próximo.
+- Fase 3 bloco 3 (a TRP39 pela tela, com o Diego confirmando 05/08) — por último.
+
+**Se o fechamento chegar antes do deploy do bloco 1:** ou segurar a importação,
+ou aceitar que agosto nasce com carimbo mentiroso — e, pela dívida (ii), ninguém
+vai ser lembrado de consertar.

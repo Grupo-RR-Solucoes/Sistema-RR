@@ -2,11 +2,18 @@
  * GATE do detector de regua obsoleta — CAMADA 1 (TRP). READ-ONLY, nao grava.
  *
  * (1) Maquina de estados: exercita a funcao REAL classify (lib/trp/
- *     detectorReguaObsoleta.ts) na tabela-verdade dos 4 estados. Prova que
+ *     detectorReguaObsoleta.ts) na tabela-verdade dos 5 estados. Prova que
  *     versao diferente -> STALE, igual -> OK, NULL em bbts/daily -> DESCONHECIDO,
- *     fechamento/cms -> NAO_APLICAVEL (nunca colapsa DESCONHECIDO em OK).
- * (2) No-op estrutural: confirma que as colunas novas do PMR sao trp_version_id
- *     e trp_fallback (aditivas) e que nenhuma coluna de valor foi alterada.
+ *     fechamento/cms -> NAO_APLICAVEL (nunca colapsa DESCONHECIDO em OK), e
+ *     trp_multi_versao === true -> MULTI_VERSAO (01/09/2026).
+ * (2) No-op estrutural: confirma que o carimbo do PMR sai da REGUA UNICA
+ *     (lib/trp/carimboPmr.ts) nos dois escritores e que nenhuma coluna de valor
+ *     foi alterada.
+ *
+ * CONTROLE POSITIVO desta frente: as 10 asserces do bloco (1) que ja existiam
+ * seguem chamando classify com TRES argumentos, sem o 4o. Elas passarem
+ * inalteradas E a prova de que competencia de regua unica se comporta EXATAMENTE
+ * como antes de 01/09/2026 — o parametro novo e opcional e ausente == antes.
  */
 require("./_ts_register.cjs");
 
@@ -36,6 +43,15 @@ eq("cms (nao usa TRP)",                   classify("cms",        null, V1), "NAO
 // prova anti-regressao: DESCONHECIDO nunca vira OK mesmo com vigente NULL
 eq("bbts NULL x vigente NULL != OK",      classify("bbts",  null, null), "DESCONHECIDO");
 
+// 5o estado (01/09/2026) — competencia PARTIDA. So com === true.
+eq("bbts  multi_versao TRUE",             classify("bbts",  null, V1, true),  "MULTI_VERSAO");
+eq("daily multi_versao TRUE",             classify("daily", null, V1, true),  "MULTI_VERSAO");
+eq("multi_versao FALSE nao muda nada",    classify("bbts",  V1,   V1, false), "OK");
+eq("multi_versao NULL nao muda nada",     classify("bbts",  null, V1, null),  "DESCONHECIDO");
+eq("multi_versao ausente nao muda nada",  classify("bbts",  V1,   V2),        "STALE");
+// fechamento/cms tem precedencia: nem partida os torna aplicaveis.
+eq("fechamento com multi_versao TRUE",    classify("fechamento", null, V1, true), "NAO_APLICAVEL");
+
 console.log("\n=== (2) no-op estrutural: colunas novas sao SO aditivas ===");
 const fs = require("fs");
 const path = require("path");
@@ -43,12 +59,19 @@ const path = require("path");
 (async () => {
   // Prova offline: as colunas de VALOR do upsert nao foram tocadas — so 2 campos
   // novos foram ADICIONADOS. Verifica no fonte dos consolidadores.
+  // Desde 01/09/2026 o carimbo NAO se decide aqui: os dois escritores consomem a
+  // REGUA UNICA lib/trp/carimboPmr.ts. Esta assercao aponta para ela de proposito
+  // — se alguem reimplementar o carimbo inline outra vez, o portao cai.
   const src = fs.readFileSync(path.join(__dirname, "..", "lib", "bbtsMonthly.ts"), "utf8");
-  const temNovas = src.includes("trp_version_id: trpStamp?.versionId") &&
-    src.includes("trp_fallback: trpStamp ? trpStamp.isFallback : null");
+  const temNovas = src.includes("const carimboTrp = carimboTrpDoPmr(trpStamp);") &&
+    src.includes("trp_version_id: carimboTrp.trp_version_id,") &&
+    src.includes("trp_fallback: carimboTrp.trp_fallback,") &&
+    src.includes("trp_multi_versao: carimboTrp.trp_multi_versao,");
+  const semReimplementacao = !src.includes("trpStamp?.versionId");
   const valorIntacto = src.includes("final_commission_value: final,") &&
     src.includes("production_commission_value: comPromotorCredito,");
-  eq("bbtsMonthly grava as 2 colunas novas", temNovas, true);
+  eq("bbtsMonthly grava as 3 colunas pela regua unica", temNovas, true);
+  eq("bbtsMonthly NAO reimplementa o carimbo inline", semReimplementacao, true);
   eq("bbtsMonthly manteve os campos de valor", valorIntacto, true);
 
   // O SMOKE LIVE FOI REMOVIDO em 29/08/2026, e o gate virou self-contained.

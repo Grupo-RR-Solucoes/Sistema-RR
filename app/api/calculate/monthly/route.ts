@@ -11,6 +11,7 @@ import { competenciaExigePiso, pisoRrPuroPermitido } from "@/lib/pisoProducao";
 import { findImportedProductionRule } from "@/lib/promoterRemuneration";
 import { calcularOperacao, getProductionBandByValue } from "@/lib/motor";
 import type { TrpRegraProvider } from "@/lib/motor";
+import { carimboTrpDoPmr } from "@/lib/trp/carimboPmr";
 import { buildTrpCreditProvider } from "@/lib/trp/creditTrpProvider";
 import {
   calculateInsuranceCommissionFromRules,
@@ -1009,9 +1010,18 @@ export async function POST(req: Request) {
     // async 1x das competências dos registros (derivadas do contract_date, a MESMA
     // chave do motor); o cálculo por linha continua síncrono. Sem db-source,
     // provider=undefined -> motor lê o JSON (no-op).
-    // A data mid-month da competencia-alvo entra no preload para GARANTIR que o
-    // carimbo do detector (getResolved abaixo) ache a versao do mes do PMR, mesmo
-    // que nenhum contract_date individual caia exatamente nela.
+    // O `${comp}-15` E CHAVE DE CACHE, NAO ESCOLHA DE REGUA (reescrito em
+    // 01/09/2026, Fase 3 bloco 1). Ele entra no preload so para GARANTIR que a
+    // competencia-alvo esteja pre-carregada, e o getResolved abaixo a encontre,
+    // mesmo que nenhum contract_date individual caia nela. Quem escolhe a regua
+    // de CADA contrato e o motor, pela contract_date, fatia a fatia (Fase 1).
+    //
+    // Isso importa desde que a competencia pode estar PARTIDA: em agosto/2026 o
+    // dia 15 cai na TRP39, e ate esta frente era esse id que ia para o carimbo —
+    // afirmacao falsa que confere para os 83 contratos de 31/07-04/08. O dia 15
+    // continua servindo como chave (esta sempre dentro da janela holiday-aware),
+    // e quem desarma a mentira e o carimboTrpDoPmr, que NAO grava id nenhum
+    // quando a competencia e partida.
     const trpStampComp = `${year}-${String(month).padStart(2, "0")}`;
     const trpProvider = await buildTrpCreditProvider([
       `${trpStampComp}-15`,
@@ -1022,6 +1032,10 @@ export async function POST(req: Request) {
     // linhas daily compartilham year/month). NULL quando TRP_SOURCE=json ou
     // competencia sem versao no DB (numero veio do JSON embutido). No-op no valor.
     const trpStamp = trpProvider ? trpProvider.getResolved(trpStampComp) : null;
+    // REGUA UNICA do carimbo (lib/trp/carimboPmr.ts) — a MESMA que o bbtsMonthly
+    // aplica. Regua unica -> id + false; competencia PARTIDA -> NULL + true;
+    // sem stamp -> NULL + NULL. Nao reimplementar aqui.
+    const carimboTrp = carimboTrpDoPmr(trpStamp);
 
     for (const company of companies) {
       const records = companyGroups.get(company.id) || [];
@@ -1550,9 +1564,11 @@ export async function POST(req: Request) {
         target_status: targetStatus,
         source: "daily",
         calculated_at: new Date().toISOString(),
-        // Detector Camada 1: versao da TRP usada (NULL = desconhecido/sem versao).
-        trp_version_id: trpStamp?.versionId ?? null,
-        trp_fallback: trpStamp ? trpStamp.isFallback : null,
+        // Detector Camada 1: versao da TRP usada. NULL tem TRES significados,
+        // desambiguados por trp_multi_versao (ver lib/trp/carimboPmr.ts).
+        trp_version_id: carimboTrp.trp_version_id,
+        trp_fallback: carimboTrp.trp_fallback,
+        trp_multi_versao: carimboTrp.trp_multi_versao,
       });
     }
 

@@ -1012,6 +1012,25 @@ const GATES = [
       "createClient; daily da ADS de PRODUCAO",
   },
   {
+    arquivo: "scripts/gate_trp_carimbo_multi_versao.cjs",
+    nome: "TRP - carimbo em competencia PARTIDA (multi_versao)",
+    modo: "self-contained",
+    motivo:
+      "0,7s; sem banco e sem env. FASE 3 bloco 1 da vigencia intra-mes: numa " +
+      "competencia partida o PMR grava trp_version_id NULL + trp_multi_versao " +
+      "true, porque carimbar a ultima regua seria afirmacao FALSA QUE CONFERE " +
+      "para os 83 contratos de 31/07-04/08. 6 blocos, dois deles de MUTACAO com " +
+      "o criterio errado reimplementado no proprio gate e comparado: (A) o " +
+      "carimbo de 31/08 gravaria a TRP39 e o detector diria OK verdinho; (B) " +
+      "classify lendo `!multiVersao` reclassificaria TODO o historico (NULL) " +
+      "como MULTI_VERSAO e apagaria o detector em silencio. O bloco 5 roda o " +
+      "detector REAL sobre stub de Supabase e prova que a partida sai " +
+      "MULTI_VERSAO e nao DESCONHECIDO (que seria alerta imortal no " +
+      "ledgerHealth), e ASSERTA a divida (ii): partida nunca entra na oferta de " +
+      "reconsolidacao. O bloco 6 varre app/ e lib/ atras de escritor novo de " +
+      "trp_version_id fora dos 4 conhecidos",
+  },
+  {
     arquivo: "scripts/detector_regua_camada1_gate.cjs",
     nome: "detector de regua - camada 1",
     modo: "self-contained",
