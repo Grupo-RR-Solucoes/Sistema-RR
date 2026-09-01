@@ -85,3 +85,45 @@ que em agosto cai na TRP39. É exatamente o que a decisão (b) desarma na Fase 2
 28/08 foi o penúltimo dia útil de agosto. Enquanto agosto **não** for
 consolidado isto é conserto de mês aberto. Depois, é reprocessamento de mês
 fechado, com a trava conhecida (`trava-competencia-janela-volume`).
+
+## LIÇÃO — rodar os portões ANTES de commitar dá VERDE FALSO na G5
+
+Aconteceu nesta frente, no PR #203. Eu rodei `npm run gates`, reportei **33/33**
+e commitei depois. O CI reprovou o `gate_teto_avista_rr.ts`.
+
+**Não foi CI × local.** Reproduzido nesta máquina, com `origin/main` recém-buscado
+(71c9379, o mesmo do CI): reprova aqui também.
+
+A causa é a forma de **três pontos**. A G5 roda
+`git diff --name-only origin/main...HEAD`, que compara o *merge-base* com o
+**HEAD commitado** — ela **não enxerga a árvore de trabalho**. Medido:
+
+```
+git diff --name-only origin/main...c149895  -> lib/motor.ts aparece: 1
+git diff --name-only origin/main...8d8b9d4  -> lib/motor.ts aparece: 0
+   (8d8b9d4 = o commit do handoff; mudava só o .md)
+```
+
+Quando rodei os portões, o HEAD era `8d8b9d4`: o `lib/motor.ts` estava alterado
+**no disco**, mas ainda não commitado. O verde era verdadeiro naquele instante e
+**não cobria a mudança do motor**.
+
+Isso está documentado no próprio `scripts/_diffContraRef.ts`, e a distinção entre
+os dois gates é deliberada:
+
+> G5 usa `origin/main...HEAD` — só o COMMITADO da branch, desde a bifurcação.
+> G6 usa `origin/main`        — a árvore de trabalho contra a main, então também
+>                               pega alteração ainda não commitada.
+
+É a mesma família da armadilha já registrada em
+[[frente-runner-gates-3-faixas]] (gate novo ainda *untracked* dá verde falso
+porque o passo de cobertura lê `git ls-files`), só que do outro lado: código
+**modificado mas não commitado** passa por baixo da forma de três pontos.
+
+**RITUAL, a partir de agora: COMMIT PRIMEIRO, GATES DEPOIS.** Ou re-rodar
+`npm run gates` depois do commit, antes de abrir o PR. Um verde medido sobre um
+HEAD que não contém a mudança não é verde sobre a mudança.
+
+Corolário para quem for escrever gate novo: `A...B` mede commits, `A..B` e `A`
+medem a árvore. Escolher a forma é escolher O QUE se afirma — e a G5 afirma
+sobre o commitado de propósito, não por engano.
