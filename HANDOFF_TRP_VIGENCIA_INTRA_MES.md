@@ -127,3 +127,76 @@ HEAD que não contém a mudança não é verde sobre a mudança.
 Corolário para quem for escrever gate novo: `A...B` mede commits, `A..B` e `A`
 medem a árvore. Escolher a forma é escolher O QUE se afirma — e a G5 afirma
 sobre o commitado de propósito, não por engano.
+
+## FASE 2 APLICADA E VERIFICADA EM PRODUÇÃO — 01/09/2026
+
+O Diego rodou as duas migrations no Studio, **depois** de o código da Fase 1
+estar em produção (merge do PR #203 em `5f46418`, deploy Vercel de Production
+concluído em 01/09 02:49:56). A ordem não negociável foi cumprida.
+
+### `20260831_000001` — DDL
+
+| prova | resultado |
+|---|---|
+| (a) `btree_gist` | **1.7**, no schema `extensions` |
+| (b1) `ck_trp_vigencia_ordenada`, `ex_trp_vigencia_sem_overlap` | existem, `convalidated = true` |
+| (b2) índices | `uq_trp_rule_versions_active_from` PRESENTE · `uq_trp_rule_versions_active` SUMIU |
+| (c) as 5 linhas | intactas |
+| (d) as 3 colunas | nuláveis, sem default |
+| (e1) duas fatias sem sobrepor | **PASSOU** — é o caso TRP38/TRP39 |
+| (e2) sobreposição | **23P01** `ex_trp_vigencia_sem_overlap` |
+| (e3) mesmo `valid_from` ativo | **23505** `uq_trp_rule_versions_active_from` |
+| (e4) mesma vigência INATIVA | **PASSOU** — o par de 2026-07 |
+| (e5) vigência invertida | **23514** `ck_trp_vigencia_ordenada` |
+
+A (e3) é a que importa mais: prova que **não perdemos a garantia antiga** — o
+re-upload sem override continua colidindo, logo continua SUBSTITUINDO.
+
+### `20260831_000002` — o RPC das três saídas
+
+| prova | resultado |
+|---|---|
+| (a) assinatura | **1 só** (sem overload), `security_definer = true` |
+| (b) grants | `service_role` EXECUTE · **nada** para anon/authenticated |
+| (c1/c2) SAÍDA 0 + SAÍDA 2 (PARTE) | `1 t 2026-07-31..2026-08-04` (truncada) + `2 t 2026-08-05..2026-08-28` |
+| (c3) SAÍDA 1 (SUBSTITUI) | a **v1 SEGUE ATIVA**; só a v2 foi desativada |
+| (c4) SAÍDA 3 (RECUSA) | **P0001**, mensagem certa, linha 54 |
+
+A (c3) prova o ponto do `where id = v_ativa.id`: com a competência partida,
+substituir a última fatia **não derruba** a anterior. Era o risco real de
+regressão do RPC.
+
+**Uma diferença entre o esperado e o medido, e ela não é defeito:** o (b) trouxe
+`postgres EXECUTE` além do `service_role`, e o bloco de verificação dizia
+"service_role EXECUTE, e NADA para anon/authenticated/public". `postgres` é o
+**dono** da função e mantém EXECUTE por propriedade — o `revoke ... from public,
+anon, authenticated` não o alcança, e não deveria. A fronteira de segurança que
+importa (anon/authenticated sem nada) está intacta. Foi a minha linha de
+"esperado" que foi incompleta, não o resultado.
+
+### Conferido por medição independente (01/09, via service_role)
+
+Não tomei o relato como prova. Medido daqui depois do Studio:
+
+```
+promoter_monthly_results.trp_multi_versao  -> existe (null)
+trp_rule_uploads.valid_from_override       -> existe (null)
+trp_rule_versions: 5 linhas, 4 ativas, NENHUMA de 2026-08
+```
+
+Os `rollback` das provas funcionais não deixaram resíduo. **Nenhuma régua subiu.**
+
+### Onde a frente está
+
+- Fase 1 (código) — **em produção**.
+- Fase 2 (estrutura) — **aplicada e verificada**.
+- Fase 3 (tela + staging + commit com o override) — **próxima, aguardando
+  autorização**. É ela que liga o `valid_from_override` da ponta à ponta e que
+  ensina os dois sítios do carimbo a gravar `trp_version_id = NULL` +
+  `trp_multi_versao = true` em competência partida.
+- A **TRP39 não subiu** e só sobe por último, com autorização explícita.
+
+**O banco hoje aceita a vigência partida e ninguém a usou ainda.** Agosto segue
+resolvendo por cascata para a TRP38 de julho — certa até 04/08, errada de 05/08
+em diante, os mesmos −115,28 de dano medido. A estrutura está pronta; o conserto
+só acontece na Fase 3 + upload.
