@@ -10,7 +10,15 @@
 //   G3. Classificador novo == os DOIS literais antigos (0.058-0.00001 em
 //       decimal e 5.8-0.001 em percentual), valor a valor.
 //   G4. Nenhum literal de teto RR sobrou solto no codigo dos 5 arquivos.
-//   G5. O teto da EMPRESA (6%) segue INTOCADO.
+//   G5. O teto da EMPRESA (6%) segue INTOCADO. Em duas metades:
+//       (i)  INVARIANTE, nao negociavel: o motor nao importa tetoAvistaRR e
+//            segue no cashCapPercent. Roda ANTES do ledger; nenhuma
+//            justificativa a cobre.
+//       (ii) LEDGER (31/08/2026): o conteudo dos arquivos protegidos tem de
+//            bater com a impressao APROVADA em scripts/motor-protegido/.
+//            Substituiu 'nao foi tocado nesta branch', que era assercao de
+//            TRANSICAO e nao media NADA em main (diff vazio). O que isso
+//            afrouxa esta dito em scripts/_ledgerProtegido.ts.
 //
 // Roda:
 //   node -e "require('./scripts/_ts_register.cjs');require('./scripts/gate_teto_avista_rr.ts')"
@@ -18,7 +26,13 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { diffContraRef } from "./_diffContraRef.ts";
+import {
+  ARQUIVOS_PROTEGIDOS,
+  assinaturaCorpo,
+  impressaoDe,
+  lerEntrada,
+  lerEntradaEmRef,
+} from "./_ledgerProtegido.ts";
 
 import {
   tetoAvistaRR,
@@ -122,27 +136,180 @@ for (const f of [
 }
 
 // ---------- G5 ----------
+// Duas coisas DIFERENTES, e a ordem entre elas nao e estilo:
+//
+//   (i)  "o motor passou a importar a fonte do teto RR" -> PROIBIDO, SEMPRE.
+//   (ii) "lib/motor.ts mudou"                           -> precisa ser
+//        JUSTIFICADO no ledger, nao impossibilitado.
+//
+// Ate 31/08/2026 as duas eram tratadas como iguais e a (ii) reprovava cego. A
+// decisao do Diego (31/08) foi trocar a (ii) por um pedagio com nome. A (i) NAO
+// entrou nessa troca.
 console.log("\n=== G5. Teto da EMPRESA (6%) intocado ===");
-const motor = fs.readFileSync(path.join(ROOT, "lib/motor.ts"), "utf8");
-if (!/tetoAvistaRR/.test(motor)) ok("lib/motor.ts NAO importa a fonte do teto RR");
-else fail("lib/motor.ts passou a importar tetoAvistaRR — conceitos misturados");
-if (/cashCapPercent/.test(motor)) ok("motor segue no cashCapPercent (teto Promotiva 6%)");
-else fail("motor perdeu o cashCapPercent");
-// A COMPARACAO DE BRANCH FALHA QUANDO NAO PODE SER FEITA — a regra, e o porque
-// dela, moram em scripts/_diffContraRef.ts, que este gate divide com o G6 de
-// bbts_seguro_regua_gate.cjs. Aqui so se decide o que fazer com o veredito:
-// sem medicao, REPROVA. O conserto do outro lado (fetch-depth: 0) esta em
-// .github/workflows/gates.yml.
-const REF_BASE = "origin/main";
-const ARQUIVOS_INTOCADOS = ["lib/promotivaCashPolicy.ts", "lib/motor.ts"];
+
+// ---------- G5 (i) — INVARIANTE, NAO NEGOCIAVEL ----------
+// SE UM DIA ALGUEM APOSENTAR A (i) ACHANDO QUE A IMPRESSAO COBRE TUDO, O BLOCO
+// VIRA TEATRO. A impressao do ledger prova que o conteudo e o APROVADO; ela nao
+// le semantica e nao sabe o que o conteudo FAZ. Quem mede de verdade, com os
+// dois lados computados neste run e sem constante congelada, e este bloco (i).
+// Ele roda ANTES de qualquer entrada do ledger, de proposito: NENHUMA
+// justificativa cobre o motor importar tetoAvistaRR.
 {
-  const r = diffContraRef({ cwd: ROOT, expr: REF_BASE + "...HEAD", arquivos: ARQUIVOS_INTOCADOS });
-  if (!r.comparou) fail(r.mensagem);
-  else {
-    for (const f of ARQUIVOS_INTOCADOS) {
-      if (!r.arquivos.includes(f)) ok(f + " NAO foi alterado na branch (vs " + REF_BASE + ")");
-      else fail(f + " foi alterado (vs " + REF_BASE + ")");
+  const motor = fs.readFileSync(path.join(ROOT, "lib/motor.ts"), "utf8");
+  if (!/tetoAvistaRR/.test(motor)) ok("(i) lib/motor.ts NAO importa a fonte do teto RR");
+  else fail("(i) lib/motor.ts passou a importar tetoAvistaRR — conceitos misturados. " +
+            "NENHUMA entrada do ledger cobre isto: a (i) e invariante.");
+  if (/cashCapPercent/.test(motor)) ok("(i) motor segue no cashCapPercent (teto Promotiva 6%)");
+  else fail("(i) motor perdeu o cashCapPercent. NENHUMA entrada do ledger cobre isto.");
+}
+
+// ---------- G5 (ii) — LEDGER de conteudo aprovado ----------
+// A pergunta antiga ("foi tocado nesta branch?") so tinha resposta DENTRO de uma
+// branch: em main o diff origin/main...HEAD sai VAZIO e nao media nada — MEDIDO.
+// A pergunta nova ("o conteudo de hoje e o APROVADO?") tem resposta sempre, e
+// enxerga a ARVORE DE TRABALHO, nao o commitado.
+// A regra de ouro de _diffContraRef.ts continua: comparacao que NAO PODE ser
+// feita REPROVA (ver lerEntradaEmRef).
+const REF_BASE = "origin/main";
+console.log("\n=== G5 (ii). Conteudo protegido == conteudo APROVADO (ledger) ===");
+
+// PROVA DA NORMALIZACAO — antes de usar a impressao para qualquer veredito.
+// core.autocrlf=true e 709 de 1211 arquivos-fonte em CRLF nesta maquina; o CI
+// roda em Linux. Sem CRLF->LF o mecanismo nasce quebrado e o portao passaria a
+// reprovar por PLATAFORMA em vez de por conteudo.
+{
+  const lf = "linha um\nlinha dois\n";
+  const crlf = "linha um\r\nlinha dois\r\n";
+  if (impressaoDe(lf) === impressaoDe(crlf)) {
+    ok("(ii) normalizacao: MESMO conteudo em CRLF e em LF da a MESMA impressao");
+  } else {
+    fail("(ii) normalizacao QUEBRADA: CRLF e LF dao impressoes diferentes — o " +
+         "ledger reprovaria por plataforma, nao por conteudo");
+  }
+}
+
+// AUTOTESTE DA REGRA "TROCOU SO O HASH" — controlado, e por que ele existe.
+// A verificacao viva (mais abaixo) compara a entrada da arvore com a versao dela
+// em origin/main. Na PRIMEIRA aprovacao de um arquivo essa versao nao existe, o
+// estado e "ausente" e a regra fica INERTE — legitimamente, nao ha contra o que
+// comparar. Sem este bloco, a condicao so passaria a ser exercida na SEGUNDA
+// aprovacao, e ate la ninguem saberia se ela funciona. Aqui ela e medida HOJE,
+// sobre entradas sinteticas, com os dois lados computados neste run.
+{
+  const cab = (h: string) =>
+    "arquivo:   lib/motor.ts\nimpressao: sha256:" + h.repeat(64).slice(0, 64) +
+    "\naprovado:  2026-08-31\nfrente:    autoteste\n\n---\n\n";
+  const corpoA =
+    "## O QUE MUDOU\nmudou X\n\n## POR QUE NAO TOCA O TETO DA EMPRESA\nporque Y\n\n" +
+    "## O QUE MUDA DE COMPORTAMENTO\nnada\n";
+  const corpoB = corpoA.replace("mudou X", "mudou Z");
+  // mesma coisa, so espaco em branco e acento a mais: NAO pode contar como corpo novo
+  const corpoA2 = corpoA.replace("mudou X", "mudou   X").replace("porque Y", "porqué Y");
+
+  const iguais = (x: string, y: string) =>
+    assinaturaCorpo(lerEntrada(x).corpo) === assinaturaCorpo(lerEntrada(y).corpo);
+
+  if (iguais(cab("a") + corpoA, cab("b") + corpoA)) {
+    ok("(ii) autoteste: hash novo + corpo IDENTICO e detectado (assinatura do corpo bate)");
+  } else {
+    fail("(ii) autoteste: hash novo com corpo identico NAO seria detectado — a condicao " +
+         "'trocar so o hash reprova' esta quebrada");
+  }
+  if (!iguais(cab("a") + corpoA, cab("b") + corpoB)) {
+    ok("(ii) autoteste: hash novo + corpo REESCRITO passa (nao ha falso positivo)");
+  } else {
+    fail("(ii) autoteste: corpo reescrito foi tratado como identico — a regra reprovaria " +
+         "aprovacao legitima");
+  }
+  if (iguais(cab("a") + corpoA, cab("b") + corpoA2)) {
+    ok("(ii) autoteste: mexer so em espaco/acento NAO conta como corpo novo");
+  } else {
+    fail("(ii) autoteste: espaco/acento contou como corpo novo — a saida que a condicao " +
+         "existe para fechar esta aberta");
+  }
+}
+
+for (const { arquivo, entrada } of ARQUIVOS_PROTEGIDOS) {
+  const abs = path.join(ROOT, arquivo);
+  const absEntrada = path.join(ROOT, entrada);
+
+  if (!fs.existsSync(abs)) { fail("(ii) arquivo protegido " + arquivo + " NAO existe"); continue; }
+  if (!fs.existsSync(absEntrada)) {
+    fail("(ii) " + arquivo + " e protegido e NAO tem entrada no ledger (" + entrada +
+         "). Protegido sem aprovacao REPROVA.");
+    continue;
+  }
+
+  const e = lerEntrada(fs.readFileSync(absEntrada, "utf8"));
+
+  if (e.problemas.length > 0) {
+    fail("(ii) " + entrada + " malformada: " + e.problemas.join("; ")); continue;
+  }
+  if (e.arquivo !== arquivo) {
+    fail("(ii) " + entrada + " diz 'arquivo: " + e.arquivo + "' mas esta registrada para " +
+         arquivo + " — entrada sem arquivo correspondente REPROVA");
+    continue;
+  }
+  if (e.secoesFaltando.length > 0) {
+    fail("(ii) " + entrada + " sem as secoes obrigatorias (ausentes ou VAZIAS): " +
+         e.secoesFaltando.join(", ") + ". O portao nao le semantica, mas exige que a " +
+         "pergunta tenha sido respondida.");
+    continue;
+  }
+
+  const calculada = impressaoDe(fs.readFileSync(abs, "utf8"));
+  if (calculada !== e.impressao) {
+    fail("(ii) " + arquivo + " mudou e a mudanca NAO esta aprovada.\n" +
+         "          calculada : " + calculada + "\n" +
+         "          aprovada  : " + e.impressao + "  (" + entrada + ", aprovada em " + e.aprovado + ")\n" +
+         "        Este arquivo calcula toda a comissao. Para seguir, atualize a entrada:\n" +
+         "        troque a impressao E reescreva o corpo dizendo O QUE mudou linha a linha.\n" +
+         "        Substituir so o hash e o defeito que este bloco existe para pegar.");
+    continue;
+  }
+
+  // "Trocou so o hash" — o corpo TEM de mudar quando a impressao muda. So faz
+  // sentido durante uma branch (em main os dois lados sao o mesmo arquivo e a
+  // comparacao e no-op); a protecao PERMANENTE e a impressao x arquivo, acima.
+  const noRef = lerEntradaEmRef(ROOT, REF_BASE, entrada);
+  if (noRef.estado === "naoMediu") { fail("(ii) " + noRef.mensagem); continue; }
+  if (noRef.estado === "ausente") {
+    ok("(ii) " + arquivo + " == aprovado (" + entrada + ", PRIMEIRA aprovacao — nao existe em " +
+       REF_BASE + ")");
+  } else {
+    const anterior = lerEntrada(noRef.texto);
+    if (anterior.impressao !== e.impressao &&
+        assinaturaCorpo(anterior.corpo) === assinaturaCorpo(e.corpo)) {
+      fail("(ii) " + entrada + ": a impressao mudou (" + anterior.impressao + " -> " +
+           e.impressao + ") mas o CORPO esta INTACTO. Trocar so o hash e exatamente o que " +
+           "este bloco existe para pegar — diga O QUE mudou.");
+      continue;
     }
+    ok("(ii) " + arquivo + " == aprovado (" + entrada + ", aprovada em " + e.aprovado + ")");
+  }
+
+  // ECOA o corpo: quem le o CI VERDE precisa ver o que foi aprovado, nao um OK.
+  console.log("        +-- aprovacao vigente de " + arquivo + "  [" + e.frente + "]");
+  for (const linha of e.corpo.replace(/\n{3,}/g, "\n\n").trim().split("\n")) {
+    console.log("        | " + linha);
+  }
+  console.log("        +--");
+}
+
+// Entrada ORFA: existe no ledger e nao corresponde a nenhum protegido.
+{
+  const registradas = new Set(ARQUIVOS_PROTEGIDOS.map((x) => path.basename(x.entrada)));
+  const dir = path.join(ROOT, "scripts/motor-protegido");
+  const achadas = fs.existsSync(dir)
+    ? fs.readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "README.md")
+    : [];
+  const orfas = achadas.filter((f) => !registradas.has(f));
+  if (orfas.length === 0) {
+    ok("(ii) nenhuma entrada orfa (" + achadas.length + " entrada(s), " +
+       registradas.size + " protegido(s))");
+  } else {
+    fail("(ii) entrada(s) SEM arquivo protegido correspondente: " + orfas.join(", ") +
+         ". Entrada que nao aprova nada e aprovacao que ninguem le — REPROVA.");
   }
 }
 

@@ -961,6 +961,37 @@ const GATES = [
       "createClient; trp_rule_versions de PRODUCAO",
   },
   {
+    arquivo: "scripts/gate_trp_vigencia_intra_mes.cjs",
+    nome: "TRP - vigencia INTRA-MES (a TRP39 a partir de 05/08)",
+    modo: "needs-db",
+    motivo:
+      "3,2s; createClient; trp_rule_versions de PRODUCAO. FASE 1 da frente da " +
+      "vigencia intra-mes: o resolvedor tolera N reguas ativas por competencia e " +
+      "escolhe pela contract_date. 4 blocos: (A) TRANSICAO, o resolvedor novo x o " +
+      "de origin/main extraido por `git show` e carregado NO MESMO RUN (nao e " +
+      "constante congelada) -- MORRE no merge, e o gate diz isso em voz alta em " +
+      "vez de passar por vacuidade; (B) INVARIANTE PERMANENTE, competencia de " +
+      "regua UNICA resolve independente da data (122 dias medidos em 4 " +
+      "competencias) + o percentual do motor com sonda identica dia a dia; (C) o " +
+      "CASO CONCRETO sobre FIXTURE (agosto partido: 03-04/08 -> TRP38, 05-06/08 " +
+      "-> TRP39, as 2 fronteiras, os 2 buracos de vigencia e a cascata sobre mes " +
+      "partido); (D) AUSENCIA -- reprova sem service_role/TRP_SOURCE/competencia. " +
+      "Dentes MEDIDOS por 5 mutacoes, 5 de 5 acusadas (a M5, rowValidUntil, so " +
+      "passou a ser pega depois de acrescentar o buraco a DIREITA). O stub HONRA " +
+      "os .order() do resolvedor de proposito: um stub que ordenasse sozinho " +
+      "media o stub, e foi assim que a M2 passou verde na 1a versao. " +
+      "FICA na --db, e nao em LENTO, com a medicao na mesa: a faixa JA estourava " +
+      "o teto ANTES desta frente -- 119,1s de 90s medidos em worktree no proprio " +
+      "origin/main (71c9379) em 31/08/2026, com os MESMOS 3 gates vermelhos " +
+      "(produto_pmr_empresa_dona rc=1, gate-srcc-ads rc=1, check_audit_v9 rc=4, " +
+      "os tres reproduzidos isolados na base). Com este gate: 120,3s e 123,7s em " +
+      "duas execucoes, 3 vermelhos IDENTICOS, executados 30->31 e passaram 27->28. " +
+      "A regra 'nao se engorda banda estourada' (ver gate-avista-vs-fechamento) " +
+      "foi escrita para um gate de 185-358s; este custa 3,2s, menos que a variacao " +
+      "entre execucoes da propria faixa. A divida do teto e ANTERIOR e continua " +
+      "NOMEADA -- ela nao e desta frente e nao foi paga por ela.",
+  },
+  {
     arquivo: "scripts/gate_regua_bbts_independe_do_client.ts",
     nome: "regua BBTS independe do client",
     modo: "needs-db-lento",

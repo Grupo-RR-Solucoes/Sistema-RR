@@ -5,9 +5,21 @@
 // tocado nesta branch". Existe porque a regra estava duplicada e as duas copias
 // erravam igual:
 //
-//   gate_teto_avista_rr.ts (G5)      — lib/motor.ts, lib/promotivaCashPolicy.ts
 //   bbts_seguro_regua_gate.cjs (G6)  — lib/insuranceCalculator.ts,
 //                                      lib/insurancePenetration.ts
+//
+// CONSUMIDOR QUE SAIU (31/08/2026): gate_teto_avista_rr.ts (G5) usava isto para
+// lib/motor.ts e lib/promotivaCashPolicy.ts e NAO usa mais. Nao foi afrouxamento
+// de proposito nem abandono: a pergunta "foi tocado nesta branch?" so tem
+// resposta DENTRO de uma branch — em main o diff origin/main...HEAD sai VAZIO e
+// nao mede nada (MEDIDO). A G5 trocou por um LEDGER de conteudo aprovado
+// (scripts/_ledgerProtegido.ts), que compara impressao x arquivo e vale SEMPRE,
+// inclusive em main, e enxerga a arvore de trabalho em vez do commitado. A
+// REGRA DE OURO abaixo foi levada junto, literal, para la.
+//
+// O G6 continua aqui de proposito: ele usa a forma de DOIS pontos e ja enxerga a
+// arvore, entao nao tem o buraco que derrubou a G5. Se um dia ele tambem precisar
+// valer em main, o caminho e o mesmo ledger — nao um terceiro mecanismo.
 //
 // Ate 18/08/2026 as DUAS engoliam o erro do git num catch que so imprimia
 // "(git indisponivel)" e seguiam, sem reprovar. No CI isso era silencioso e
@@ -23,12 +35,17 @@
 // nunca que os arquivos estao intactos — e cabe ao chamador REPROVAR com ela.
 // O conserto do outro lado (fetch-depth: 0) esta em .github/workflows/gates.yml.
 //
-// POR QUE `expr` E PARAMETRO E NAO CONSTANTE. Os dois gates comparam coisas
-// diferentes de proposito, e unificar aqui mudaria o que cada um afirma:
-//   G5 usa "origin/main...HEAD" — so o COMMITADO da branch, desde a bifurcacao.
-//   G6 usa "origin/main"        — a arvore de trabalho contra a main, entao
-//                                 tambem pega alteracao ainda nao commitada.
+// POR QUE `expr` E PARAMETRO E NAO CONSTANTE. Os gates comparam coisas diferentes
+// de proposito, e unificar aqui mudaria o que cada um afirma:
+//   "origin/main...HEAD" — so o COMMITADO da branch, desde a bifurcacao.
+//   "origin/main"        — a arvore de trabalho contra a main, entao tambem pega
+//                          alteracao ainda nao commitada (e o que o G6 usa).
 // O que se compartilha e a regra "sem medicao, reprova", nao o recorte.
+//
+// ARMADILHA MEDIDA (31/08/2026, PR #203): rodar os gates ANTES de commitar da
+// VERDE numa assercao que usa TRES pontos — ela nao ve a arvore de trabalho. Foi
+// assim que um lib/motor.ts alterado passou por 33/33 local e reprovou no CI.
+// Ritual: commit primeiro, gates depois.
 // ============================================================================
 
 import { execFileSync } from "node:child_process";

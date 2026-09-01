@@ -72,6 +72,14 @@ export interface ContratoAvista {
   cnpj?: string | null;
   /** ISO YYYY-MM. */
   mes: string;
+  /**
+   * ISO YYYY-MM-DD — data do CONTRATO (da diaria), quando conhecida. Existe para
+   * a VIGENCIA INTRA-MES: numa competencia com 2+ reguas ativas (agosto/2026:
+   * TRP38 ate 04/08, TRP39 de 05/08) a conferencia precisa saber por QUAL fatia
+   * aquele contrato deveria ter sido pago. Opcional: a fonte da conferencia e o
+   * FECHAMENTO, que nao traz a data — ela vem do join com a diaria.
+   */
+  contractDate?: string | null;
   produto: string | null;
   /** "NOVO" | "RENOVACAO". */
   tipo: string | null;
