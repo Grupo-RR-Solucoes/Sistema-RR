@@ -6,6 +6,29 @@
 // isso o resolver NÃO mora dentro da auditoria — mora aqui, e não sabe nada sobre
 // conferência/divergência.
 //
+// DESALINHAMENTO CONHECIDO E NAO RESOLVIDO (02/09/2026) — leia antes de tratar
+// este arquivo como espelho fiel.
+//
+// "Espelho" deixou de ser verdade num ponto ESPECIFICO: a escolha de fatia por
+// DATA DO CONTRATO.
+//
+//   - A TRP escolhe fatia por data (resolveTrpRegraDb.escolherFatia) e, desde
+//     02/09/2026, a ULTIMA fatia cobre ate o dia anterior ao valid_from da
+//     competencia seguinte (lib/trp/vigenciaRegua.ts). Data que nenhuma fatia
+//     cobre -> TrpVigenciaGapError, que PROPAGA.
+//
+//   - A BBTS NAO escolhe fatia por data: resolve por COMPETENCIA com
+//     .maybeSingle() (ver o passo 1 abaixo). Numa data ORFA — 29-30/08/2026,
+//     28-29/11/2026, 29-30/05/2027 — a TRP LANCA e a BBTS entrega a regua da
+//     competencia EM SILENCIO. Os dois resolvedores ja discordam sobre o que
+//     uma data orfa significa.
+//
+// A BBTS ficou FORA daquela frente por decisao do Diego. Isto nao e defeito
+// aberto nem plano: e divergencia NOMEADA. Hoje ela nao tem consequencia
+// medida (a BBTS nao tem vigencia intra-mes, entao uma fatia so cobre a
+// competencia inteira de qualquer jeito), e so passaria a ter se a BBTS ganhar
+// fatias por data. Se isso acontecer, este bloco e o ponto de partida.
+//
 // Espelho de lib/trp/resolveTrpRegraDb.ts:
 //   1. resolve a competência-alvo (explícita ou pela data do contrato, via janela
 //      holiday-aware — competenciaDaData de lib/trp/vigencia.ts, REUSADO: não

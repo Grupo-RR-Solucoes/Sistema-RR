@@ -166,6 +166,17 @@ export interface Vigencia {
 }
 
 /**
+ * NÃO USE ESTA FUNÇÃO PARA DECIDIR COBERTURA DE RÉGUA DA TRP.
+ * Para isso existe `vigenciaReguaDaCompetencia` (lib/trp/vigenciaRegua.ts), e
+ * as duas DIVERGEM DE PROPÓSITO na cauda do mês. Esta aqui responde "que
+ * PRODUÇÃO conta neste mês" (meta, ritmo, faixa, valor pago — 17 sítios, e a
+ * TRAVA de lib/proposalDetailing.ts); a de lá responde "que TABELA rege este
+ * contrato" e precisa cobrir toda data que possa carregar um contract_date,
+ * inclusive as ÓRFÃS que esta janela deixa de fora (29-30/08/2026 e mais 24
+ * meses em 191). A semelhança é real; a separação é decisão do Diego,
+ * 02/09/2026. O porquê inteiro está no cabeçalho de vigenciaRegua.ts — leia
+ * antes de "unificar".
+ *
  * Vigência holiday-aware da competência (REGRA RR). É a MESMA janela que o motor
  * usa (productionBusinessWindow) — só formatada em ISO string para persistir.
  *
