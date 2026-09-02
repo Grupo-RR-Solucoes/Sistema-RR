@@ -34,6 +34,16 @@ import { fetchAllRows } from "@/lib/queryHelpers";
 // para lib/trp/vigencia.ts para ser reusável fora do painel (Fase 2 TRP
 // self-service: resolvedor DB + seed). Aqui só re-importamos e re-exportamos —
 // MESMA função, um único lugar. Comportamento inalterado.
+//
+// EMENDA 02/09/2026 — "um único lugar" deixou de valer para UM caso, e este
+// comentário viraria pista errada sem esta nota. A VIGÊNCIA DA RÉGUA da TRP
+// passou a ter função PRÓPRIA: `vigenciaReguaDaCompetencia`
+// (lib/trp/vigenciaRegua.ts). Ela estende a cauda do mês para cobrir os dias
+// ÓRFÃOS que a janela de produção deixa de fora — e que a régua precisa cobrir
+// porque podem carregar um contract_date, enquanto a produção não perde nada
+// ignorando-os (órfão é sempre dia NÃO-ÚTIL). A janela de produção daqui NÃO
+// mudou: nenhum dia útil entrou ou saiu, e ritmo/meta/faixa são bit-a-bit os
+// mesmos. Não unifique as duas sem ler o cabeçalho de vigenciaRegua.ts.
 // A aritmética de dias úteis (decorridos EXIBIDO × divisor do ritmo) saiu daqui
 // para lib/janelaRitmo.ts pelo mesmo motivo: a /equipe tinha uma segunda cópia.
 import { ymd } from "@/lib/trp/vigencia";

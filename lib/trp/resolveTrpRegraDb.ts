@@ -50,6 +50,7 @@ import {
   competenciaKey,
   vigenciaDaCompetencia,
 } from "@/lib/trp/vigencia";
+import { limiteEfetivoDaFatia } from "@/lib/trp/vigenciaRegua";
 
 /** Entrada do resolvedor: competência explícita OU data do contrato. */
 export interface ResolveTrpRegraDbParams {
@@ -303,7 +304,29 @@ export function escolherFatia(
   const data = contractDate ? String(contractDate).slice(0, 10) : null;
   if (!data) return comp.fatias[0];
 
-  const hit = comp.fatias.find((f) => data >= f.rowValidFrom && data <= f.rowValidUntil);
+  // COBERTURA DA CAUDA (02/09/2026). As janelas de competência NÃO particionam o
+  // calendário: entre o penúltimo dia útil de um mês (fim da janela de M) e o
+  // último (início da janela de M+1) sobram dias ÓRFÃOS — 29-30/08/2026,
+  // 28-29/11/2026, 29-30/05/2027, e 25 meses em 191 medidos. Um contract_date
+  // ali não era coberto por fatia nenhuma e o resolvedor lançava, derrubando
+  // /promotores e /recebiveis.
+  //
+  // A ÚLTIMA fatia (a de maior rowValidFrom) cobre até o dia anterior ao
+  // valid_from da competência seguinte. A régua e o porquê da separação em
+  // relação à janela de PRODUÇÃO estão em lib/trp/vigenciaRegua.ts — leia lá
+  // antes de unificar as duas.
+  //
+  // A ÚLTIMA é CALCULADA, não `fatias[0]`. O `.order()` da query diz o que eu
+  // QUERO; se ele sumir ou o PostgREST devolver de outro jeito, `fatias[0]` vira
+  // arbitrária e a extensão cairia numa fatia do MEIO — um contrato de 04/08
+  // escorregaria da TRP38 para a TRP39. Isso é dinheiro. (Mesma disciplina de
+  // commitVersion.ts; o portão entrega o fixture FORA DE ORDEM de propósito.)
+  const ultima = comp.fatias.reduce((a, b) => (b.rowValidFrom > a.rowValidFrom ? b : a));
+  const cobre = (f: TrpRegraDbResolved) =>
+    data >= f.rowValidFrom &&
+    data <= limiteEfetivoDaFatia(comp.competenciaAlvo, f.rowValidUntil, f === ultima);
+
+  const hit = comp.fatias.find(cobre);
   if (hit) return hit;
 
   throw new TrpVigenciaGapError(

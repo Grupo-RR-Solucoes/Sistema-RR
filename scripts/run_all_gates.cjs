@@ -395,6 +395,35 @@ const GATES = [
       "caminho absoluto",
   },
   {
+    arquivo: "scripts/trp_vigencia_regua_gate.cjs",
+    nome: "TRP - a vigencia da REGUA cobre o calendario inteiro (dia orfao)",
+    modo: "self-contained",
+    motivo:
+      "fixture SINTETICA sobre escolherFatia REAL (funcao pura) + vigenciaDaCompetencia " +
+      "(nao toca banco); sem createClient, sem caminho absoluto. As janelas de " +
+      "competencia NAO particionam o calendario: entre o PENULTIMO dia util de um mes " +
+      "e o ULTIMO sobram dias ORFAOS -- 25 meses em 191 medidos (13,1%), e nas " +
+      "competencias vivas 29-30/08/2026, 28-29/11/2026, 29-30/05/2027. Um contract_date " +
+      "ali nao era coberto por fatia nenhuma e o resolvedor lancava TrpVigenciaGapError, " +
+      "que NINGUEM captura: derrubava /promotores, /recebiveis e /dashboard na primeira " +
+      "linha. Conserto (decisao Diego 02/09/2026): a ULTIMA fatia ativa cobre ate o dia " +
+      "anterior ao valid_from da competencia seguinte, decidido na LEITURA -- nenhuma " +
+      "linha gravada foi reescrita, e isso tambem cobre o fallback em cascata, que monta " +
+      "fatia VIRTUAL e nao teria linha para um UPDATE alcancar. Nao-regressao MEDIDA: " +
+      "671 dias resolvidos antes e depois, 665 IDENTICOS e os 6 que mudaram sao " +
+      "exatamente as orfas (LANCOU -> OK). 6 blocos; as datas orfas sao COMPUTADAS no " +
+      "run, nunca cravadas. O bloco B usa 2024-05-30 (Corpus Christi, quinta): o unico " +
+      "formato que produz orfao em dia UTIL, o de risco real. O bloco C prova que buraco " +
+      "no MEIO continua LANCANDO -- estender a cauda nao pode virar tapar buraco. O " +
+      "bloco F vigia os 4 registros da divergencia (vigenciaRegua.ts, vigencia.ts, " +
+      "projecaoMetas.ts e o cabecalho da BBTS): a vigencia da REGUA e separada da janela " +
+      "de PRODUCAO de proposito, e sem esses avisos alguem 'unifica' de volta achando " +
+      "que e duplicacao. 5 MUTACOES no JS emitido, cada uma exigindo alvo confirmado " +
+      "(troca > 0, senao REPROVA); duas delas provam dano SILENCIOSO, nao excecao: " +
+      "esticar TODAS as fatias, ou trocar a ultima CALCULADA por fatias[0], faz a data " +
+      "cair na regua ERRADA (TRP38 no lugar da TRP39) sem lancar nada",
+  },
+  {
     arquivo: "scripts/trp_pct_separador_gate.cjs",
     nome: "TRP - percentual do PDF le VIRGULA e PONTO (e recusa o ambiguo)",
     modo: "self-contained",

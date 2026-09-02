@@ -226,6 +226,22 @@ async function conferirFatiaAnteriorCobre(
         `anterior, desative antes as posteriores — não adivinho o que fazer.`,
     );
   }
+  // ESTA RIGIDEZ E DELIBERADA — decisao do Diego, 02/09/2026. NAO "conserte".
+  //
+  // Desde 02/09 a ULTIMA fatia ativa cobre, na LEITURA, ate o dia anterior ao
+  // valid_from da competencia seguinte (lib/trp/vigenciaRegua.ts). Logo esta
+  // conferencia e mais rigida do que precisaria: ela compara com o valid_until
+  // GRAVADO, nao com o limite efetivo.
+  //
+  // EXEMPLO CONCRETO. Agosto/2026 v2 esta gravada ate 28/08 e cobre de fato ate
+  // 30/08. Um override de 30/08 NAO deixaria buraco nenhum, e mesmo assim esta
+  // conferencia o RECUSA, porque 30/08 > 28/08.
+  //
+  // Fica assim de proposito: recusar um split legitimo e o lado SEGURO do erro
+  // (o socio ve a mensagem e decide), enquanto aceitar um que deixe buraco
+  // derruba /promotores e /recebiveis em producao. Usar o limite efetivo aqui
+  // aumentaria a superficie do conserto sem fechar buraco nenhum — a extensao
+  // vive na CAUDA, e esta conferencia trata do MEIO da competencia.
   if (override > ultima.valid_until) {
     throw new TrpValidationError(
       "partir nesta data deixaria um BURACO",
