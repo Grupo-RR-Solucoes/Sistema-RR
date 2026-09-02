@@ -5,6 +5,10 @@ import { detectRulesStale } from "@/lib/rulesFingerprint";
 import { detectTrpStaleCrossFechadas } from "@/lib/trp/detectorReguaObsoleta";
 import { auditCmsVsPmr } from "@/lib/cms/auditCmsVsPmr";
 import { detectFechamentoParcial } from "@/lib/diagnostico/fechamentoParcial";
+import {
+  descontosNaoAplicadosPorPiso,
+  type LinhaDesconto as DescontoLinha,
+} from "@/lib/piso/descontoNaoAplicado";
 
 // ============================================================================
 // lib/diagnostico/ledgerHealth.ts — o VIGIA DO COFRE.
@@ -83,6 +87,8 @@ type PmrRow = {
   month: number;
   source: string;
   final_commission_value: number | string | null;
+  /** Rastro do piso de producao. Le-se SEMPRE `=== true` (null = legado). */
+  piso_zerou?: boolean | null;
 };
 
 const fmtComp = (year: number, month: number) =>
@@ -119,14 +125,27 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
   const pmr = await fetchAllPaged<PmrRow>(() =>
     admin
       .from("promoter_monthly_results")
-      .select("promoter_id, company_id, year, month, source, final_commission_value")
+      .select(
+        "promoter_id, company_id, year, month, source, final_commission_value, piso_zerou"
+      )
   );
 
-  const promoters = await fetchAllPaged<{ id: string; is_master: boolean | null }>(() =>
-    admin.from("promoters").select("id, is_master")
+  const promoters = await fetchAllPaged<{ id: string; name: string | null; is_master: boolean | null }>(
+    () => admin.from("promoters").select("id, name, is_master")
   );
   const masterSet = new Set(
     promoters.filter((p) => p.is_master === true).map((p) => p.id)
+  );
+  const nomePromotor = new Map(promoters.map((p) => [p.id, p.name ?? "(sem nome)"]));
+
+  // Parcelas de desconto — insumo do check `desconto_nao_cobrado_por_piso`.
+  // Tabela pequena (dezenas de linhas); nao vale indexar por competencia aqui.
+  const descontos = await fetchAllPaged<DescontoLinha>(() =>
+    admin
+      .from("promoter_discounts")
+      .select(
+        "id, promoter_id, year, month, amount, apply_to_company, status, notes, discount_type"
+      )
   );
 
   // Competencias candidatas para a checagem (a): as que tem cobertura de
@@ -409,6 +428,18 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
   // Sao 'alerta' por construcao: apontam descontinuidade, nao provam falta.
   const parciais = await detectFechamentoParcial(admin);
 
+  // DESCONTO x PISO — CONSOME a regra unica (lib/piso/descontoNaoAplicado.ts),
+  // nao a reimplementa. A mesma funcao decide o que o consolidador marca como
+  // WAIVED; se as duas divergissem, a tela mostraria um conjunto e o banco
+  // outro. `piso_zerou === true` e estrito la dentro.
+  const descontoPiso = descontosNaoAplicadosPorPiso(pmr, descontos).map((d) => ({
+    competencia: d.competencia,
+    promoter_id: d.promoter_id,
+    promotor: nomePromotor.get(d.promoter_id) ?? "(promotor desconhecido)",
+    valor: d.valor,
+    tipo: d.discount_type,
+  }));
+
   const checks: LedgerCheck[] = [
     {
       id: "regime_fechado_sem_pmr",
@@ -489,6 +520,32 @@ export async function buildLedgerHealth(admin: SupabaseClient): Promise<LedgerHe
       descricao:
         "Mes cms: o PMR (source='cms') deixou de reproduzir o cms_promoter_entries (ground-truth). Reimportaram o cms sem rodar o CLI (run_pmr_cms --apply)? Master fora e tolerancia meia-casa aplicados.",
       detalhe: cmsStaleDetalhe,
+    },
+    {
+      // =====================================================================
+      // O DESCONTO QUE O PISO NAO DEIXOU ACONTECER.
+      //
+      // 'info' porque NAO e defeito: e a decisao de 20/08/2026 funcionando
+      // (piso zerou o repasse => a parcela nao e consumida; nao e
+      // `max(0, final - desconto)`). O que faltava era VISIBILIDADE — o dinheiro
+      // deixava de ser cobrado e nenhuma tela dizia. Medido em 02/09/2026:
+      // 2 casos, ambos 2026-08, R$ 8,54, primeira ocorrencia da historia.
+      //
+      // POR QUE IMPORTA MESMO SENDO 'info': hoje os dois casos sao parcela 1/1
+      // (cobranca avulsa, sem cauda a deslocar). No dia em que cair aqui uma
+      // parcela de plano (um ADIANTAMENTO 3/9), o plano perde uma parcela em
+      // silencio — promoter_discounts nao tem contador e ninguem recria a que
+      // faltou. Este item e o unico lugar onde isso aparece no mesmo dia.
+      // =====================================================================
+      id: "desconto_nao_cobrado_por_piso",
+      severity: "info",
+      count: descontoPiso.length,
+      descricao:
+        "Parcela de desconto que NAO foi cobrada porque o piso de producao zerou o repasse " +
+        "do promotor na competencia. NAO e defeito — e a regra (o desconto nao acontece, " +
+        "nao e absorvido). Fica aqui porque o valor deixa de ser cobrado e nada mais o mostra. " +
+        "Parcela de PLANO caindo aqui (installments > 1) merece decisao: a cauda nao desloca sozinha.",
+      detalhe: descontoPiso.slice(0, 50),
     },
     {
       id: "promotor_multi_linha",
