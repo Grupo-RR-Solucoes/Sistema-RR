@@ -21,6 +21,7 @@ import {
   type ProdutoExtraido,
   type EscalaresCategoria,
 } from "@/lib/trp/parseTrpPdf";
+import { PCT_NUM_SRC, pctToDec, TrpPctError } from "@/lib/trp/pctTrp";
 import { vigenciaDaCompetencia, competenciaKey } from "@/lib/trp/vigencia";
 
 export const PARSER_VERSION = "f6a-unpdf-1";
@@ -55,28 +56,49 @@ export class TrpValidationError extends Error {
   }
 }
 
-function pctToDec(tok: string): number {
-  return Number((parseFloat(tok.replace(",", ".")) / 100).toFixed(6));
-}
-
 // --- parsing best-effort de faixas de taxa/prazo a partir do token ------------
+//
+// SEPARADOR DECIMAL: a FORMA do percentual vem de PCT_NUM_SRC e a conversao de
+// pctToDec (lib/trp/pctTrp.ts) — nenhum separador cravado a mao aqui. As tres
+// regexes abaixo sao montadas da mesma fonte que o parseMatrix usa, entao "aceitar
+// ponto" nao pode entrar por uma porta e faltar na outra.
+
+// String.raw NAO e decoracao. Em template literal cru, `\s` avalia para "s" —
+// as duas regexes viram `%s*as*%` e param de casar EM SILENCIO. Aconteceu na
+// primeira versao deste conserto (02/09/2026): `celulas_taxa_prazo` virou
+// `celulas_prazo` e o `tx_juros_min` sumiu das 5 TRPs antigas. O tsc ficou
+// verde e o olho nao pegou; quem pegou foi a medicao de nao-regressao sobre os
+// PDFs. O bloco 7 do trp_pct_separador_gate.cjs assere isto direto, para a
+// regressao nao voltar calada — e e por isso que as duas sao EXPORTADAS.
+
+/** "1,75% a 1,77%" / "1.75% a 1.77%" — a faixa fechada de taxa. */
+export const TX_FAIXA_RE = new RegExp(String.raw`(${PCT_NUM_SRC})%\s*a\s*(${PCT_NUM_SRC})%`, "i");
+/** "A partir de 2,48%" / "A partir de 2.48%" — a faixa aberta de taxa. */
+export const TX_ABERTA_RE = new RegExp(String.raw`A partir de\s*(${PCT_NUM_SRC})%`, "i");
+/** Mascara: apaga do token TODO percentual (qualquer separador) antes de ler
+ *  prazo. Se ela nao enxergar a forma com ponto, o "1.90%" sobrevive e o
+ *  `A partir de (\d+)` la embaixo le prazo_min = 1. */
+const PCT_MASCARA_RE = new RegExp(`${PCT_NUM_SRC}%`, "g");
 
 function parseTxRange(token: string): { tx_min: number; tx_max: number } | null {
-  let m = token.match(/(\d+,\d+)%\s*a\s*(\d+,\d+)%/i);
+  let m = token.match(TX_FAIXA_RE);
   if (m) return { tx_min: pctToDec(m[1]), tx_max: pctToDec(m[2]) };
-  m = token.match(/A partir de\s*(\d+,\d+)%/i);
+  m = token.match(TX_ABERTA_RE);
   if (m) return { tx_min: pctToDec(m[1]), tx_max: 999 };
   return null;
 }
 
 function parsePrazoRange(token: string): { prazo_min: number; prazo_max: number } | null {
   // remove tokens de taxa (%) para não confundir números
-  const t = token.replace(/\d+,\d+%/g, " ");
+  const t = token.replace(PCT_MASCARA_RE, " ");
   let m = t.match(/(\d+)\s*a\s*(\d+)/);
   if (m) return { prazo_min: Number(m[1]), prazo_max: Number(m[2]) };
   m = t.match(/Acima de\s*(\d+)/i);
   if (m) return { prazo_min: Number(m[1]) + 1, prazo_max: 999 };
-  m = t.match(/A partir de\s*(\d+)(?!\s*,)/i);
+  // 2a rede do separador: prazo e INTEIRO. Um numero seguido de ponto OU virgula
+  // e decimal que escapou da mascara — nao e prazo. (O lookahead so olhava a
+  // virgula; com o ponto aceito, "A partir de 1.90%" daria prazo_min = 1.)
+  m = t.match(/A partir de\s*(\d+)(?!\s*[.,])/i);
   if (m) return { prazo_min: Number(m[1]), prazo_max: 999 };
   return null;
 }
@@ -434,13 +456,28 @@ function derivarPisoDeCelulas(
   return undefined;
 }
 
+/** Converte a recusa do sítio do percentual (TrpPctError) no erro de validação
+ *  que a rota já sabe renderizar (422). Não engole nada: só troca o rótulo. */
+function comoErroDeRegua<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (e) {
+    if (e instanceof TrpPctError) {
+      throw new TrpValidationError(
+        `o PDF traz um percentual que não posso ler com segurança: ${e.message}`,
+        e.detalhe,
+      );
+    }
+    throw e;
+  }
+}
+
 /**
  * Monta o draft + valida. Lança TrpParseError / TrpValidationError em falha
  * (a rota converte em resposta de erro visível). NÃO grava, NÃO lê banco.
  */
 export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOptions): Promise<TrpDraftResult> {
   validarCompetencia(opts.competencia); // valida o RAW (formato/mês/faixa) antes de normalizar
-  const competencia = competenciaKey(opts.competencia);
 
   let lines: string[];
   try {
@@ -451,13 +488,30 @@ export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOpt
   if (lines.length === 0) {
     throw new TrpParseError("PDF sem texto extraível", "extração vazia (PDF escaneado/imagem?)");
   }
+  return buildTrpDraftFromLines(lines, opts);
+}
 
-  const produtos = parseMatrix(lines);
+/**
+ * O MESMO montador, a partir das LINHAS já extraídas. Existe separado por um
+ * motivo só: o portão do separador decimal precisa de fixture SINTÉTICA (os PDFs
+ * da TRP não estão no repo — ele é público), e uma fixture de LINHAS exercita o
+ * caminho inteiro (matriz + taxa + prazo + escalares + validações) em vez de só
+ * a regex da matriz. buildTrpDraft = extrair + delegar; nada de lógica
+ * duplicada nem de ramo "de teste".
+ */
+export function buildTrpDraftFromLines(lines: string[], opts: BuildTrpDraftOptions): TrpDraftResult {
+  validarCompetencia(opts.competencia);
+  const competencia = competenciaKey(opts.competencia);
+
+  // Um percentual ilegivel (forma ambigua de milhar, ou leitura >= 100) LANCA
+  // TrpPctError no sitio. Aqui ele vira TrpValidationError — o mesmo canal do
+  // resto: 422 com erro VISIVEL, nada de meia-regra e nada de valor adivinhado.
+  const produtos = comoErroDeRegua(() => parseMatrix(lines));
   validarProdutos(produtos);
-  const escalares = parseEscalares(lines);
+  const escalares = comoErroDeRegua(() => parseEscalares(lines));
   // prazo_min de categoria que vem numa LINHA ISOLADA (PORTAB/NAO_CONSIGNADO), que o
   // parseMatrix pula — o derivador não alcança (célula sem prazo). Capturado à parte.
-  const prazoCategoriaCapturado = parsePrazoCategoria(lines);
+  const prazoCategoriaCapturado = comoErroDeRegua(() => parsePrazoCategoria(lines));
 
   const vig = vigenciaDaCompetencia(competencia);
   const conferir: ConferirItem[] = [];
@@ -474,7 +528,7 @@ export async function buildTrpDraft(pdfBytes: Uint8Array, opts: BuildTrpDraftOpt
   const provadoProdutos: Record<string, number[][]> = {};
   let totalPct = 0;
   for (const k of EXPECTED_PRODUCTS) {
-    const produtoDraft = montarProdutoDraft(k, produtos[k], conferir);
+    const produtoDraft = comoErroDeRegua(() => montarProdutoDraft(k, produtos[k], conferir));
     // RESTAURADO em 29/08/2026. As duas linhas abaixo saíram por colateral em
     // `7ad20fc` (17/07/2026, tx_juros_min derivado) e nunca voltaram: `totalPct`
     // ficava declarado e NUNCA escrito, e `confianca.provado` viajava {0, {}} até

@@ -395,6 +395,28 @@ const GATES = [
       "caminho absoluto",
   },
   {
+    arquivo: "scripts/trp_pct_separador_gate.cjs",
+    nome: "TRP - percentual do PDF le VIRGULA e PONTO (e recusa o ambiguo)",
+    modo: "self-contained",
+    motivo:
+      "fixture SINTETICA de linhas (os PDFs da TRP nao estao no repo -- ele e " +
+      "publico) rodada pelo buildTrpDraftFromLines REAL, que e o mesmo montador do " +
+      "upload; sem banco, sem caminho absoluto. Guarda a decisao do Diego de " +
+      "02/09/2026: o documento pode escrever o pct com virgula OU com ponto e o " +
+      "sistema le os dois; a ambiguidade do milhar e RECUSADA (>= 100) ou LANCA " +
+      "('1.234'), nunca adivinhada. 7 blocos. MUTACAO em 3 sentidos sobre o JS " +
+      "emitido de lib/trp/pctTrp.ts, cada uma exigindo alvo confirmado (troca > 0, " +
+      "senao REPROVA): tirar o ponto derruba a fixture da TRP40; tirar a virgula " +
+      "derruba a das 5 antigas; tirar o teto de 100 faz '1234.56' PASSAR como " +
+      "1234,56% -- prova que quem recusa e o teto e nao a sorte da fixture. O bloco " +
+      "7 assere as regexes de taxa DIRETO porque a primeira versao do conserto usou " +
+      "template literal cru, onde `\s` vira 's': as regexes pararam de casar em " +
+      "silencio, `celulas_taxa_prazo` virou `celulas_prazo` e o `tx_juros_min` sumiu " +
+      "das 5 TRPs ja gravadas. O tsc ficou verde; quem pegou foi a medicao sobre os " +
+      "PDFs. Medido em 02/09: desfazer o String.raw derruba 7 assercoes do bloco 7 e " +
+      "ZERO dos outros 6 -- sem ele a regressao passaria calada",
+  },
+  {
     arquivo: "scripts/ads_no_regime_fechado_gate.cjs",
     nome: "a ADS ('bbts') entra em todo leitor do regime FECHADO",
     modo: "self-contained",
