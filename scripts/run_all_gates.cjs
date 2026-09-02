@@ -348,6 +348,52 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/gate_pos_import_diag.cjs",
+    nome: "o rastro do pos-import existe (o erro dos 4 blocos para de morrer no log)",
+    modo: "needs-db",
+    motivo:
+      "os 4 blocos best-effort do import de fechamento engoliam o proprio erro num " +
+      "console.error; num deploy serverless isso morre com a invocacao. Custo medido: a " +
+      "materializacao da carteira PRT falhava desde 2026-07-07 e passou DOIS fechamentos " +
+      "(julho e agosto) sem ninguem ver. Dois lados no mesmo run: (A) a regra de " +
+      "lib/diagnostico/posImportDiag.ts preserva a mensagem CRUA, nao descarta bloco e " +
+      "deriva houve_falha — provado por MUTACAO DO FONTE REAL (scripts/_mutanteTs.cjs), 3 " +
+      "mutantes; (B) a coluna monthly_closing_imports.pos_import_diag EXISTE no banco. Sem " +
+      "a coluna o conserto e INERTE (a rota leva 42703 no UPDATE e o rastro volta a ser " +
+      "invisivel), entao a ausencia REPROVA de proposito — migration 20260902_000001, " +
+      "aplicada a mao no Studio",
+  },
+  {
+    arquivo: "scripts/gate_desconto_piso.cjs",
+    nome: "piso zerou o repasse => o desconto NAO acontece (e a tela conta igual)",
+    modo: "needs-db",
+    motivo:
+      "regra do Diego de 20/08/2026: piso zerado nao e `max(0, final - desconto)` — a " +
+      "parcela nao e consumida. Duas coisas podiam apodrecer e o gate cobre as duas: a " +
+      "LEITURA FROUXA do flag (piso_zerou e null em quase todo o historico; `!== false` " +
+      "classificaria o passado inteiro como zerado, mesma armadilha do trp_multi_versao) e " +
+      "DUAS IMPLEMENTACOES (o ledgerHealth contando por conta propria divergiria do que o " +
+      "consolidador marca). O gate amarra ledgerHealth e regra no MESMO numero, recomputado " +
+      "do banco — sem constante de dinheiro congelada — e exige nao-vacuidade (tem de haver " +
+      "piso_zerou=true no banco). 3 mutantes do fonte real, mais a reversibilidade do " +
+      "marcador em `notes`: nao come texto humano, nao empilha, nao toca waiver de gente",
+  },
+  {
+    arquivo: "scripts/gate_master_sem_comissao.cjs",
+    nome: "chave master e balde: nao recebe comissao (e o fossil de 2026-04 nao cresce)",
+    modo: "needs-db",
+    motivo:
+      "cmsMonthly ja zerava a comissao da chave master na origem; closingMonthly NAO — dai " +
+      "2 linhas vivas em 2026-04, source='fechamento', R$ 164,04. TRES lados no mesmo run, " +
+      "porque cada um sozinho passa por engano: (A) a regra zera e le `=== true` estrito " +
+      "(is_master e null na maioria do cadastro), com 3 mutantes do fonte real; (B) o " +
+      "CONSOLIDADOR realmente chama a regra E carrega is_master na consulta — funcao pura " +
+      "sem chamador e decoracao, e este e o lado que apodrece calado; (C) o banco nao " +
+      "piora. A base do fossil e constante CONFERIDA no molde do DESCONHECIDO_BASE do vigia " +
+      "da TRP: os dois lados computados no mesmo run, e crescer REPROVA. Limpar o fossil " +
+      "exige reconsolidar mes fechado (mexe em dinheiro) e e decisao a parte",
+  },
+  {
     arquivo: "scripts/estorno_sem_leitor_gate.cjs",
     nome: "os estornos da aba Seguro tem UM leitor so (nao duplicam)",
     modo: "needs-db",
