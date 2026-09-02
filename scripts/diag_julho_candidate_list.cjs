@@ -43,7 +43,9 @@ async function main() {
       interest_rate: r.interest_rate, term_months: r.term_months,
       installments: r.installments, contract_date: r.contract_date, raw_payload: r.raw_payload,
     };
-    const prev = resolveAvistaTrpDb(rec, (c) => preloader.getResolvedSync(c));
+    // A DATA VAI JUNTO (forma (a) da divida do provider sem data, 02/09/2026):
+    // sem ela, numa competencia PARTIDA o previsto cai sempre na ULTIMA fatia.
+    const prev = resolveAvistaTrpDb(rec, (c, cd) => preloader.getResolvedSync(c, cd ?? null));
     const rawConvenio = readRawPayloadValue(r.raw_payload, ["Codigo Convenio", "Cod Convenio", "Convenio"]);
     const op = {
       valor_liquido: Number(r.net_value), valor_bruto: Number(r.gross_value || r.net_value),

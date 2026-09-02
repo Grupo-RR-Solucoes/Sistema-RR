@@ -145,7 +145,11 @@ async function main() {
   // provider db (service_role) pré-carregado para as competências usadas
   const preloader = resolver.createTrpRegraDbPreloader(sb);
   await preloader.preload(["2026-04", "2026-06", "2026-07"]);
-  const provider = (c) => preloader.getResolvedSync(c);
+  // A DATA VAI JUNTO (forma (a) da divida do provider sem data, 02/09/2026):
+  // sem ela, numa competencia PARTIDA cai sempre na ULTIMA fatia. Nenhuma das
+  // competencias deste gate esta partida hoje — o repasse e por construcao, para
+  // que continue certo quando alguma estiver.
+  const provider = (c, cd) => preloader.getResolvedSync(c, cd ?? null);
 
   let totalDiv = 0;
 

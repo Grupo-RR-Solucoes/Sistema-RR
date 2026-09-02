@@ -32,7 +32,11 @@ const { buildTrpDraft } = require("../lib/trp/parseTrpDraft.ts");
 const { parsePrazoCategoria } = require("../lib/trp/parseTrpPdf.ts");
 const { calcularOperacao, inferCreditTable, competenciaDaDataContrato } = require("../lib/motor.ts");
 const { buildTrpCreditProvider } = require("../lib/trp/creditTrpProvider.ts");
-const { createTrpRegraDbPreloader } = require("../lib/trp/resolveTrpRegraDb.ts");
+const {
+  createTrpRegraDbPreloader,
+  resolveTrpRegraDbCompetencia,
+  escolherFatia,
+} = require("../lib/trp/resolveTrpRegraDb.ts");
 const { getPrazoTrp } = require("../lib/prazoTrp.ts");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -85,18 +89,34 @@ async function fetchAll(t, s) { let f=0,o=[]; for(;;){ const {data,error}=await 
 ===== C) INVARIANTE — competencia DESCOBERTA: ${COMP} =====`);
   const rr = dpr.filter((r) => r.company_id !== BBTS && r.contract_date && Number(r.interest_rate) > 0 && Number(r.net_value) > 0 && competenciaDaDataContrato(String(r.contract_date).slice(0, 10)) === COMP);
   const provider = await buildTrpCreditProvider(rr.map((r) => String(r.contract_date).slice(0, 10)));
-  const preload = createTrpRegraDbPreloader(sb); await preload.preload([COMP]);
-  const regraDB = preload.getRegraSync(COMP);
+
+  // FORMA (b) DA DIVIDA DO PROVIDER SEM DATA (02/09/2026). Este bloco pergunta
+  // "a TRP vigente tem prazo_min?" — e numa competencia PARTIDA nao existe *a*
+  // regua, existem duas. `getRegraSync(COMP)` devolvia UMA (a de maior
+  // valid_from) e o gate afirmava sobre "a vigente" tendo olhado so ela: verde
+  // por sorte da fatia, nao por medicao. Passar uma data aqui NAO seria conserto
+  // — so trocaria uma fatia arbitraria por outra. O conserto e ITERAR TODAS.
+  const compRes = await resolveTrpRegraDbCompetencia(COMP, sb);
+  const fatias = compRes.fatias;
+  console.log(`  competencia ${COMP}: ${fatias.length} fatia(s) ATIVA(S)` +
+    (compRes.partida ? " — PARTIDA" : "") +
+    (fatias.length ? " | " + fatias.map((f) => `v${f.versionNo} ${f.rowValidFrom}..${f.rowValidUntil}`).join(" | ") : " | NENHUMA (cascata/ausencia)"));
   const TK2CAT = { PUBLICO_GERAL:"CONSIG_PUBLICO", SP_MG:"CONSIG_SP_MG", PRIVADO:"CONSIG_PRIVADO", PORTABILIDADE_PUBLICO:"PORTAB_PUBLICO", PORTABILIDADE_PRIVADO:"PORTAB_PRIVADO", AUTOMATICO_SALARIO_BENEFICIO:"NAO_CONSIGNADO", INSS_RENOVACAO:"INSS_RENOV", INSS_NOVO:"INSS_NOVO", SIAPE:"SIAPE", ADIANTAMENTO_13:"ADIANTAMENTO_13", FGTS:"FGTS" };
 
   // C.1 CAUSA RAIZ: a TRP vigente tem o campo onde o parser deriva/captura.
   // O conjunto que EXIGE nao e opiniao: e o que o parser extrai do PDF (5
   // derivadas + 3 capturadas); as 3 de particao omitem de proposito.
   const exigem = Object.keys(prazoJul).filter((k) => typeof prazoJul[k] === "number");
-  const semCampo = exigem.filter((k) => typeof (regraDB[k] || {}).prazo_min !== "number");
-  ok(semCampo.length === 0,
-    `CAUSA RAIZ: a TRP vigente de ${COMP} tem prazo_min nas ${exigem.length} categorias que exigem` +
-    (semCampo.length ? ` — FALTAM ${semCampo.join(", ")}: a guarda de regrasLoader.ts:155-160 fica DESLIGADA nelas` : ""));
+  // EM CADA FATIA, nao em uma. Uma fatia sem o campo desliga a guarda para os
+  // contratos DELA — e sao contratos reais, nao um subconjunto teorico.
+  ok(fatias.length > 0, `${COMP} tem ao menos uma regua ATIVA para conferir (senao nao ha o que medir)`);
+  for (const f of fatias) {
+    const semCampo = exigem.filter((k) => typeof (f.regra[k] || {}).prazo_min !== "number");
+    ok(semCampo.length === 0,
+      `CAUSA RAIZ: a fatia v${f.versionNo} de ${COMP} (${f.rowValidFrom}..${f.rowValidUntil}) tem ` +
+      `prazo_min nas ${exigem.length} categorias que exigem` +
+      (semCampo.length ? ` — FALTAM ${semCampo.join(", ")}: a guarda de regrasLoader.ts:155-160 fica DESLIGADA nelas` : ""));
+  }
 
   // C.2 SINTOMA: ninguem paga abaixo do piso.
   const abaixo = [];
@@ -106,7 +126,11 @@ async function fetchAll(t, s) { let f=0,o=[]; for(;;){ const {data,error}=await 
     const res = calcularOperacao(op, { trpProvider: provider });
     const cat = TK2CAT[inferCreditTable(op)] || inferCreditTable(op);
     if (cat === "FGTS") continue; // skip deliberado do motor (regrasLoader.ts:155)
-    const piso = (regraDB[cat] || {}).prazo_min;
+    // O PISO E DA FATIA QUE REGE ESTE CONTRATO (forma (a) dentro do mesmo gate):
+    // comparar o prazo de um contrato de 03/08 com o piso da regua de 05/08 seria
+    // medir contra uma regua que nunca valeu para ele.
+    const fatiaDoContrato = escolherFatia(compRes, String(r.contract_date).slice(0, 10));
+    const piso = ((fatiaDoContrato ? fatiaDoContrato.regra : {})[cat] || {}).prazo_min;
     if (typeof piso === "number") comPisoAvaliado++;
     if (typeof piso === "number" && op.prazo < piso && !(Number(res.credito.percentual) > 0)) abaixoDoPisoZerados++;
     if (typeof piso === "number" && op.prazo < piso && Number(res.credito.percentual) > 0) {
