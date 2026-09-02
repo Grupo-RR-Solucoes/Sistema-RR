@@ -19,7 +19,11 @@ const { createClient } = require("@supabase/supabase-js");
 const { buildTrpDraft } = require("../lib/trp/parseTrpDraft.ts");
 const { calcularOperacao, competenciaDaDataContrato } = require("../lib/motor.ts");
 const { buildTrpCreditProvider } = require("../lib/trp/creditTrpProvider.ts");
-const { createTrpRegraDbPreloader } = require("../lib/trp/resolveTrpRegraDb.ts");
+const {
+  createTrpRegraDbPreloader,
+  resolveTrpRegraDbCompetencia,
+  escolherFatia,
+} = require("../lib/trp/resolveTrpRegraDb.ts");
 const { getPrazoTrp } = require("../lib/prazoTrp.ts");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -82,13 +86,32 @@ async function fetchAll(table, sel) {
   const rr = dpr.filter((r) => r.company_id !== BBTS && r.contract_date && Number(r.interest_rate) > 0 && Number(r.net_value) > 0 && competenciaDaDataContrato(String(r.contract_date).slice(0,10)) === "2026-07");
 
   const provider = await buildTrpCreditProvider(rr.map((r) => String(r.contract_date).slice(0,10)));
-  const preload = createTrpRegraDbPreloader(sb);
-  await preload.preload(["2026-07"]);
-  const regraJulDB = preload.getRegraSync("2026-07");
-  // aplica o tx_juros_min DERIVADO (do buildTrpDraft de julho) sobre a regra do DB.
-  const regraJulDer = JSON.parse(JSON.stringify(regraJulDB));
-  for (const [k, v] of Object.entries(derivadoPorComp["2026-07"])) regraJulDer[k].tx_juros_min = v;
-  const providerDer = (c) => (c === "2026-07" ? regraJulDer : provider(c));
+  // FORMA (b) DA DIVIDA DO PROVIDER SEM DATA (02/09/2026). `getRegraSync("2026-07")`
+  // devolvia UMA regua; numa competencia PARTIDA existem duas, e substituir a
+  // competencia inteira por um objeto so mediria a fatia errada para metade dos
+  // contratos. Julho NAO esta partido hoje — o conserto e por CONSTRUCAO, para
+  // continuar certo quando alguma competencia deste gate estiver.
+  const compRes = await resolveTrpRegraDbCompetencia("2026-07", sb);
+  console.log(`  competencia 2026-07: ${compRes.fatias.length} fatia(s) ATIVA(S)` +
+    (compRes.partida ? " — PARTIDA" : "") +
+    (compRes.fatias.length ? " | " + compRes.fatias.map((f) => `v${f.versionNo} ${f.rowValidFrom}..${f.rowValidUntil}`).join(" | ") : ""));
+
+  // uma copia DERIVADA por FATIA, indexada pelo id da versao.
+  const derivadaPorVersao = new Map();
+  for (const f of compRes.fatias) {
+    const copia = JSON.parse(JSON.stringify(f.regra));
+    for (const [k, v] of Object.entries(derivadoPorComp["2026-07"])) {
+      if (copia[k]) copia[k].tx_juros_min = v;
+    }
+    derivadaPorVersao.set(f.versionId, copia);
+  }
+  // provider DERIVADO ciente da data: escolhe a MESMA fatia que o provider real
+  // escolheria para aquele contrato, e devolve a copia derivada DELA.
+  const providerDer = (c, cd) => {
+    if (c !== "2026-07") return provider(c, cd);
+    const f = escolherFatia(compRes, cd ?? null);
+    return f ? derivadaPorVersao.get(f.versionId) ?? null : null;
+  };
 
   let diverg = 0, n = 0;
   for (const r of rr) {

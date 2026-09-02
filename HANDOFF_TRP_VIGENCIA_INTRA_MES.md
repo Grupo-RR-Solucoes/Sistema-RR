@@ -64,16 +64,37 @@ primeiro upload partido. É o gêmeo exato da armadilha do `piso_zerou`.
 
 ## DÍVIDA NOMEADA — não corrigida agora
 
-**Os 28 scripts de `scripts/` que chamam `calcularOperacao`** (dos quais os que
-constroem provider via `buildTrpCreditProvider`: `diag-16-veredito.mts`,
-`diag-220147900-e-ads.mts`, `diag-ausentes-valor-medido.mts`,
-`diag-bloco2-completo.mts` e os demais) **passam a medir agosto pela ÚLTIMA
-régua da competência** quando 2026-08 estiver partida — porque resolvem por
-competência, sem `contract_date`.
-
-Isso é **certo para 496 contratos e errado para 83**. Os diagnósticos ficam
-levemente otimistas até serem atualizados para passar a data. Dívida
-**nomeada, não corrigida** nesta frente, por decisão explícita.
+> ## ⚠ ESTE PARÁGRAFO ESTAVA ERRADO. REMEDIADO EM 02/09/2026.
+>
+> O texto abaixo, riscado, afirmava que 28 diagnósticos passariam a medir agosto
+> pela última régua. **É falso, e a próxima pessoa precisa saber QUE TIPO de erro
+> foi**: não foi medição que envelheceu — foi **precaução escrita como se fosse
+> medição**. Eu supus, no dia em que a Fase 1 entrou, que os scripts resolviam
+> por competência, e escrevi isso com a mesma voz com que escrevo o que medi. Um
+> leitor não tinha como distinguir.
+>
+> **O que a medição de 02/09 mostra:** `lib/motor.ts:605` e `:682` fazem
+> `trpProvider(mes, op.contract_date ?? undefined)` — **o motor passa a data**.
+> Logo, todo script que usa `buildTrpCreditProvider` + `calcularOperacao`
+> resolve a fatia CERTA, porque quem consulta o provider é o motor, com a data do
+> contrato em mãos. Medido: **29** scripts constroem provider assim, **28**
+> mencionam `contract_date`, e os três nominalmente citados abaixo
+> (`diag-16-veredito`, `diag-220147900-e-ads`, `diag-ausentes-valor-medido`)
+> montam o `op` com `contract_date: r.contract_date`. O único que não menciona
+> (`diag-bloco2-origem244.mts`) pré-carrega só `2026-04-15` e `2026-07-15` e
+> nunca chega em agosto.
+>
+> **O que de fato sobra são 4 sítios, em DUAS formas diferentes** — está na
+> dívida 3, no fim deste arquivo. Custou uma varredura de 10 minutos que eu não
+> fiz na hora de escrever.
+>
+> ~~Os 28 scripts de `scripts/` que chamam `calcularOperacao` (dos quais os que
+> constroem provider via `buildTrpCreditProvider`: `diag-16-veredito.mts`,
+> `diag-220147900-e-ads.mts`, `diag-ausentes-valor-medido.mts`,
+> `diag-bloco2-completo.mts` e os demais) passam a medir agosto pela ÚLTIMA
+> régua da competência quando 2026-08 estiver partida — porque resolvem por
+> competência, sem `contract_date`. Isso é certo para 496 contratos e errado
+> para 83.~~
 
 O mesmo vale, com efeito diferente, para o carimbo: os dois sítios que escrevem
 `trp_version_id` (`app/api/calculate/monthly/route.ts:1015-1024` e
@@ -410,6 +431,18 @@ A **TRP40 (setembro) NÃO subiu**. Está em disco, e subir é outra decisão.
 
 ## AS TRÊS DÍVIDAS QUE FICAM
 
+> **STATUS EM 02/09/2026** — uma frente própria, só de dívidas, foi aberta e a
+> ordem decidida foi **3 → 2 → 1**, com o VIGIA por fora.
+>
+> | # | o que é | estado |
+> |---|---|---|
+> | 1 | o diff da tela pela competência ANTERIOR (`.lt`) | **RESOLVIDA** em 02/09 (régua única + rótulo por fatia) |
+> | 2 | rascunho sem override não pode ganhar a data | **RESOLVIDA** em 02/09 (aviso condicional) |
+> | 3 | a classe "provider sem data" | **RESOLVIDA** em 02/09 (4 sítios + portão) |
+>
+> As seções abaixo ficam como estão, com o registro do que era o defeito; o que
+> mudou está anotado no fim de cada uma.
+
 ### 1. O diff da tela compara com a competência ANTERIOR, não com a fatia ativa da MESMA
 
 `app/api/trp/parse/route.ts:61` e o gêmeo em `app/api/trp/staging/[id]/route.ts`
@@ -435,6 +468,26 @@ que a TRP39 já havia mudado, como se fosse novidade da correção.
 
 **Conserto:** base = última fatia ATIVA da MESMA competência, se houver; senão a
 cascata para a anterior. Dois sítios. **É o primeiro item da próxima frente.**
+
+### ✔ RESOLVIDA em 02/09/2026 — régua única + o rótulo dizendo a FATIA
+
+`lib/trp/baseDoDiff.ts` (novo): a última fatia ATIVA da PRÓPRIA competência — a
+mesma contra quem o RPC decide substituir/partir — com fallback para a anterior
+quando o mês ainda não tem régua. Os dois sítios eram cópia um do outro e agora
+chamam o mesmo helper; o `.lt` inline saiu dos dois.
+
+O rótulo da tela passou a dizer a fatia e a vigência, e a distinguir base própria
+de herdada: *"Comparando com **2026-08 v1** (2026-07-31 a 2026-08-04) — a régua
+que está valendo nesta competência"*. Antes dizia só `2026-07 (v2)`, que era
+verdade sobre o que ele comparava e mentira sobre o que ele devia comparar.
+
+Portão `scripts/gate_trp_base_do_diff.cjs` (self-contained), com as 2 mutações —
+voltar ao `.lt` (bases divergem, e as RÉGUAS divergem) e remover o fallback (o
+primeiro upload do mês perde o diff). **A fixture não repete o azar de produção**:
+lá as duas bases são a mesma régua, e é por isso que o defeito passou
+despercebido; com réguas iguais na fixture a mutação não derrubaria nada. O bloco
+0 prova que as três réguas da fixture são diferentes antes de qualquer asserção
+depender disso.
 
 ### 2. Rascunho salvo SEM override não pode ganhar a data depois
 
@@ -463,6 +516,38 @@ rascunho aberto (e aí o campo volta a ser editável, com o salvar sendo o únic
 caminho para valer), ou um aviso explícito na revisão delegada quando o rascunho
 NÃO tem override, dizendo que confirmar vai SUBSTITUIR e não partir. A segunda é
 menor e não reabre a armadilha original.
+
+### ✔ RESOLVIDA em 02/09/2026 — saída (i), o aviso condicional
+
+Decisão do Diego: a (i), **sem** reabrir a armadilha do só-leitura.
+
+A condição virou régua pura em `lib/trp/avisoRascunhoSubstitui.ts`, com **três
+pernas**, e a terceira é a que evita ruído:
+
+```
+1. estamos no fluxo DELEGADO (há rascunho aberto)
+2. o rascunho NÃO tem override
+3. a competência JÁ TEM régua ativa      <- sem esta, o aviso apareceria em todo
+                                            primeiro upload de todo mês, onde
+                                            confirmar sem override é o caminho
+                                            NORMAL. Aviso que aparece quando não
+                                            há o que avisar treina a ignorar.
+```
+
+A perna (3) é **estado do banco** — o client não tem como saber. Por isso o
+`GET /api/trp/staging/[id]` passou a devolver `fatiasAtivas` (as fatias ATIVAS da
+PRÓPRIA competência, só-leitura).
+
+O aviso **diz o que acontece e o que fazer**, não "atenção, verifique": nomeia a
+fatia que será desativada (a de maior `valid_from`, calculada em código e não por
+posição na lista), diz que a régua do PDF passará a valer o mês inteiro, e ensina
+o caminho — subir o PDF de novo pelo formulário, marcar a caixa, informar a data
+e **salvar o rascunho**, que substitui o pendente já com a data.
+
+Portão: bloco 7 do `gate_trp_override_vigencia`, com **3 mutações**: sem condição
+(o aviso apareceria no rascunho partido e no mês vazio), sem aviso (o caso
+perigoso passa calado) e sem a perna do override (o rascunho que PARTE receberia
+o aviso).
 
 ### 3. PROVIDER SEM DATA — a terceira ocorrência da MESMA classe em 24 horas
 
@@ -514,19 +599,33 @@ lib/trp/conferenciaTrp.ts:181          getResolvedSync(ym, contractDate ?? null)
 lib/trp/creditTrpProvider.ts:97,99     getRegraSync/getResolvedSync(competencia, contractDate ?? null)
 ```
 
-**scripts/ — o que sobra, com o dano de cada um:**
+**E SÃO DUAS FORMAS, não uma** (medido em 02/09/2026 — a primeira versão desta
+dívida tratava tudo como o mesmo caso, e não é):
+
+- **forma (a) — resolução POR CONTRATO.** Aqui faltar a data É o defeito: numa
+  competência partida cai sempre na última fatia. Conserto = passar a data.
+- **forma (b) — inspeção da RÉGUA DO MÊS.** Aqui "passar a data" NÃO é o
+  conserto: a pergunta é "a TRP vigente tem o campo X?", e numa competência
+  partida **não existe *a* régua, existem duas**. Conserto = iterar TODAS as
+  fatias ativas e exigir a asserção em CADA uma. Passar uma data só trocaria
+  uma fatia arbitrária por outra.
+
+**scripts/ — o que sobra, com a forma e o dano de cada um:**
 
 ```
-scripts/paridade_avista_trp_gate.cjs:121   CONSERTADO em 01/09 (era o vermelho falso)
-scripts/trp_prazo_min_gate.cjs:89          REGISTRADO. getRegraSync(COMP) sem data, e a COMP
-                                           e DESCOBERTA (a ultima com contrato). Passa hoje,
-                                           mas numa competencia partida mede so a ULTIMA
-                                           fatia e chama isso de "a TRP vigente".
-scripts/trp_tx_juros_min_gate.cjs:87       REGISTRADO. getRegraSync("2026-07") — julho nao esta
-                                           partida, entao esta certo HOJE, por sorte da
-                                           competencia escolhida, nao por construcao.
-scripts/trp_paridade_f5_json.cjs:148       nao registrado.
-scripts/diag_julho_candidate_list.cjs:46   nao registrado (diagnostico).
+(a) scripts/paridade_avista_trp_gate.cjs:121  CONSERTADO em 01/09 (era o vermelho falso)
+(a) scripts/diag_julho_candidate_list.cjs:46  nao registrado. Gemeo exato do acima:
+                                              resolveAvistaTrpDb(rec, (c) => getResolvedSync(c))
+(a) scripts/trp_paridade_f5_json.cjs:148      nao registrado. Mesma forma.
+(b) scripts/trp_prazo_min_gate.cjs:89         REGISTRADO. getRegraSync(COMP), e a COMP e
+                                              DESCOBERTA (compsRR[length-1], a ultima com
+                                              contrato) — ele ja aponta para agosto/setembro e
+                                              afirma sobre "a regua vigente" tendo olhado UMA
+                                              fatia. Verde por sorte, e sem NOMEAR na saida qual
+                                              competencia escolheu.
+(b) scripts/trp_tx_juros_min_gate.cjs:87      REGISTRADO. getRegraSync("2026-07") — julho nao
+                                              esta partida, entao esta certo HOJE por sorte da
+                                              competencia cravada, nao por construcao.
 ```
 
 Os dois portões REGISTRADOS acima estão **verdes e não foram tocados** — verdes
@@ -534,7 +633,66 @@ por medirem competência de régua única, não por passarem a data. É verde po
 sorte da competência, e a sorte acaba quando alguém partir a competência que
 eles olham.
 
-#### PORTÃO PROPOSTO (não implementado — decisão do Diego pendente)
+## VIGIA — o carimbo NUNCA rodou contra dado real (verificação com gatilho)
+
+**Não é dívida e não entra em fila: é uma verificação que espera um gatilho
+externo.** Medido em 02/09/2026:
+
+```
+PMR 2026-08: 0 | linhas com trp_multi_versao NAO nulo (banco INTEIRO): 0
+fechamento de 2026-08 importado: 0
+```
+
+`trp_multi_versao` **nunca foi escrito uma vez sequer, em lugar nenhum**. O
+portão `gate_trp_carimbo_multi_versao` prova o caminho com stub de Supabase; o
+banco nunca viu. E agora existe a primeira competência partida da história, então
+a **primeira gravação real** acontece quando o fechamento da Promotiva entrar.
+
+**O GATILHO:** o PMR de 2026-08 nascer (`promoter_monthly_results` deixar de ter
+0 linhas para year=2026, month=8).
+
+**O QUE CONFERIR, na hora:**
+
+1. as linhas `source='daily'` e `source='bbts'` de 2026-08 saíram com
+   `trp_version_id = NULL` **E** `trp_multi_versao = true` — as duas coisas, não
+   uma. `NULL` sozinho é indistinguível de "esqueceram de carimbar";
+2. as linhas `source='fechamento'` (RR) seguem com os dois NULL — elas não usam
+   TRP e isso é legítimo;
+3. `detectTrpStaleForCompetencia({year:2026,month:8})` devolve
+   `has_multi_versao: true`, `has_desconhecido: false` e `has_stale: false`;
+4. o `ledgerHealth` põe agosto no item **`trp_multi_versao` (info)** e **NÃO** em
+   `trp_desconhecido` (alerta).
+
+**SE SAIR ERRADO:** a decisão (b) inteira cai — o carimbo honesto não estaria
+sendo gravado, e a fila de dívidas muda de assunto na hora. Custo da conferência:
+~15 minutos, somente leitura.
+
+**Por que isto precisa estar escrito:** pela dívida (ii) deste mesmo arquivo,
+**nada acusa** uma competência partida mal carimbada. Não há alerta, não há
+oferta de reconsolidação, não há vermelho. Se ninguém for olhar por decisão, não
+se olha nunca.
+
+#### ✔ RESOLVIDA em 02/09/2026 — 4 sítios + o portão que vigia a classe
+
+- **forma (a)**, 1 linha cada: `diag_julho_candidate_list.cjs` e
+  `trp_paridade_f5_json.cjs` passaram a repassar a data.
+- **forma (b)**: `trp_prazo_min_gate` e `trp_tx_juros_min_gate` passaram a
+  resolver a competência inteira, **imprimem quantas fatias ativas acharam** e
+  rodam a asserção **em cada fatia**. No `prazo_min` apareceu um segundo defeito
+  que não estava na lista: o piso do sintoma vinha de uma régua só, então o prazo
+  de um contrato de 03/08 seria comparado com o piso da régua de 05/08 — passou a
+  vir da fatia que rege AQUELE contrato.
+- **portão novo** `scripts/gate_provider_repassa_data.cjs` (self-contained,
+  0,5s): asserção dura sobre produção, allowlist assinada (hoje vazia) com
+  checagem de entrada morta, não-vacuidade, e mutação do scanner.
+- **bloco (E) vivo** dentro do `gate_trp_vigencia_intra_mes` (needs-db):
+  resolve a mesma competência com e sem data e exige fatias DIFERENTES. Contra
+  produção: `2026-08`, sem data → v2, com `2026-07-31` → v1. Com auto-declaração
+  de vacuidade obrigatória se um dia não houver competência partida.
+
+O desenho abaixo é o que foi proposto e implementado.
+
+#### PORTÃO PROPOSTO (implementado em 02/09/2026)
 
 Um portão que varra os **construtores de provider** e exija que repassem a data.
 Esboço do que ele mediria, e por que dá para fazer sem heurística frágil:

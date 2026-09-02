@@ -442,6 +442,101 @@ function stubClient(linhasPorCompetencia) {
     `cascata de 2026-09 sobre agosto PARTIDO pega a ÚLTIMA fatia (TRP39), não uma arbitrária  [obtido ${casc ? casc.regra._meta.trp : "null"}, fallback=${casc && casc.isFallback}]`,
   );
 
+  // =========================================================================
+  // (E) BLOCO VIVO — a contractDate e HONRADA no banco de PRODUCAO
+  //
+  // Regra (3) do portao da classe "provider sem data" (ver
+  // gate_provider_repassa_data.cjs e a divida 3 do HANDOFF). A parte estatica
+  // conta argumentos no fonte; ela nao consegue dizer se o preloader de verdade
+  // usa a data que recebe. Este bloco diz — e so agora da para dizer, porque so
+  // em 01/09/2026 passou a existir uma competencia PARTIDA no banco.
+  //
+  // O TESTE: resolver a MESMA competencia COM e SEM data tem de dar fatias
+  // DIFERENTES. Se der igual, ou (i) nao ha competencia partida — e ai isto e
+  // vacuidade, dita em voz alta abaixo —, ou (ii) o contractDate parou de ser
+  // honrado, que e o defeito de verdade.
+  // =========================================================================
+  console.log("\n===== (E) VIVO: a contractDate e honrada no banco =====");
+  {
+    const { data: linhas, error: errE } = await sb
+      .from("trp_rule_versions")
+      .select("id, competencia, version_no, valid_from, valid_until, is_active")
+      .eq("is_active", true)
+      .order("competencia", { ascending: true })
+      .order("valid_from", { ascending: true });
+    if (errE) {
+      fatal(`(E) nao consegui ler trp_rule_versions: ${errE.message}`);
+    } else {
+      const porComp = new Map();
+      for (const l of linhas || []) {
+        const k = String(l.competencia).slice(0, 7);
+        if (!porComp.has(k)) porComp.set(k, []);
+        porComp.get(k).push(l);
+      }
+      const partidas = [...porComp.entries()].filter(([, fs_]) => fs_.length > 1);
+
+      if (partidas.length === 0) {
+        // VACUIDADE EM VOZ ALTA — obrigatoria. Um bloco que passa calado quando
+        // nao tem sujeito e a forma mais cara de verde falso que existe neste
+        // repositorio (ver a varredura dos 8 gates que engoliam a ausencia).
+        console.log(
+          "  [VACUIDADE] NENHUMA competencia do banco tem 2+ reguas ATIVAS hoje.\n" +
+          "  Este bloco NAO mediu nada: sem competencia partida, resolver com e sem\n" +
+          "  data da o mesmo resultado por construcao, e um verde aqui nao diria\n" +
+          "  absolutamente nada sobre o contractDate ser honrado.\n" +
+          "  Se agosto/2026 deixou de estar partida, ALGUEM desfez a frente inteira\n" +
+          "  da vigencia intra-mes — va conferir antes de seguir."
+        );
+        ok(true, "(E) declarada VACUIDADE em voz alta (nao ha competencia partida para medir)");
+      } else {
+        for (const [comp, fatias] of partidas) {
+          const primeira = fatias[0];
+          const ultima = fatias[fatias.length - 1];
+          const dataPrimeira = String(primeira.valid_from).slice(0, 10);
+          console.log(
+            `  ${comp}: ${fatias.length} fatias ativas | ` +
+            fatias.map((f) => `v${f.version_no} ${f.valid_from}..${f.valid_until}`).join(" | ")
+          );
+
+          const semData = await novo.resolveTrpRegraDb({ competencia: comp }, sb);
+          const comData = await novo.resolveTrpRegraDb(
+            { competencia: comp, contractDate: dataPrimeira },
+            sb,
+          );
+          ok(
+            semData && semData.versionId === ultima.id,
+            `${comp} SEM data resolve a ULTIMA fatia (v${ultima.version_no}) ` +
+              `— obtido v${semData && semData.versionNo}`,
+          );
+          ok(
+            comData && comData.versionId === primeira.id,
+            `${comp} COM data ${dataPrimeira} resolve a PRIMEIRA fatia ` +
+              `(v${primeira.version_no}) — obtido v${comData && comData.versionNo}`,
+          );
+          ok(
+            semData && comData && semData.versionId !== comData.versionId,
+            `${comp}: com e sem data dao fatias DIFERENTES — a contractDate E honrada ` +
+              `(sem=v${semData && semData.versionNo} com=v${comData && comData.versionNo})`,
+          );
+          ok(
+            comData && comData.competenciaPartida === true,
+            `${comp} carimba competenciaPartida=true (o PMR grava NULL + trp_multi_versao)`,
+          );
+          // As duas fatias tem de ser reguas DIFERENTES — se o conteudo fosse
+          // igual, o teste acima passaria sem provar nada de valor.
+          const iguais =
+            JSON.stringify(semData && semData.regra) === JSON.stringify(comData && comData.regra);
+          if (iguais) {
+            console.log(
+              `  [ATENCAO] as 2 fatias de ${comp} tem regra_json IDENTICA — o bloco prova a\n` +
+              "  ESCOLHA da fatia, mas nao que ela muda numero nenhum."
+            );
+          }
+        }
+      }
+    }
+  }
+
   console.log(`\n===== RESULTADO: ${falhas === 0 ? "PASSOU" : `${falhas} FALHA(S)`} =====`);
   process.exit(falhas === 0 ? 0 : 1);
 })().catch((e) => {

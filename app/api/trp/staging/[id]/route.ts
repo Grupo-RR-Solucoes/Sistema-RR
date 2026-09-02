@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { apiGuardErrorResponse, withSocioAdmin } from "@/lib/auth/guards";
 import { PARSER_VERSION } from "@/lib/trp/parseTrpDraft";
+import { resolverBaseDoDiff } from "@/lib/trp/baseDoDiff";
 import { competenciaKey, vigenciaDaCompetencia } from "@/lib/trp/vigencia";
 
 // F6b sub-fase 3 — GET /api/trp/staging/[id] (socio-only).
@@ -36,32 +37,41 @@ export async function GET(
     const comp = competenciaKey(String(row.competencia));
     const vig = vigenciaDaCompetencia(comp);
 
-    // DIFF (só-leitura): versão ATIVA da competência anterior mais recente.
-    const prev = await supabase
+    // FATIAS ATIVAS DA PRÓPRIA COMPETÊNCIA (item 2, 02/09/2026). A tela precisa
+    // saber se já EXISTE régua aqui para decidir se avisa que confirmar este
+    // rascunho vai SUBSTITUIR em vez de PARTIR. Só-leitura, e é estado do banco
+    // — o client não tem como saber sozinho.
+    const ativas = await supabase
       .from("trp_rule_versions")
-      .select("competencia, version_no, regra_json")
-      .lt("competencia", row.competencia)
+      .select("version_no, valid_from, valid_until")
+      .eq("competencia", row.competencia)
       .eq("is_active", true)
-      // TIE-BREAK por valid_from (vigencia intra-mes): com a competencia anterior
-      // PARTIDA em 2+ reguas ativas, .limit(1) sem este desempate pegaria uma
-      // fatia ARBITRARIA. A que vale para o diff e a ULTIMA do mes anterior.
-      .order("competencia", { ascending: false })
-      .order("valid_from", { ascending: false })
-      .limit(1);
-    if (prev.error) {
+      .order("valid_from", { ascending: true });
+    if (ativas.error) {
       return NextResponse.json(
-        { error: "erro ao ler a TRP anterior para o diff", detalhe: prev.error.message },
+        { error: "erro ao ler a vigência atual da competência", detalhe: ativas.error.message },
         { status: 500 },
       );
     }
-    const anterior =
-      prev.data && prev.data[0]
-        ? {
-            competencia: competenciaKey(String((prev.data[0] as { competencia: string }).competencia)),
-            version_no: (prev.data[0] as { version_no: number }).version_no,
-            regra_json: (prev.data[0] as { regra_json: unknown }).regra_json,
-          }
-        : null;
+
+    // DIFF (só-leitura): a base sai da RÉGUA ÚNICA lib/trp/baseDoDiff.ts — a
+    // última fatia ATIVA da PRÓPRIA competência, com fallback para a anterior
+    // quando o mês ainda não tem régua. Ver o cabeçalho de lá: o `.lt` daqui
+    // mentia o rótulo assim que a competência passava a ter régua, e isso virou
+    // possível em 01/09/2026.
+    let anterior = null;
+    try {
+      anterior = await resolverBaseDoDiff(supabase, comp);
+    } catch (e) {
+      // erro de infra na leitura da base -> falha visível (não mascara)
+      return NextResponse.json(
+        {
+          error: "erro ao ler a TRP anterior para o diff",
+          detalhe: e instanceof Error ? e.message : String(e),
+        },
+        { status: 500 },
+      );
+    }
 
     return NextResponse.json({
       uploadId: row.id,
@@ -83,6 +93,8 @@ export async function GET(
       // do sócio mostra em destaque — é o único campo da revisão que não veio do
       // documento, e é ele que PARTE a competência.
       validFromOverride: row.valid_from_override ?? null,
+      // Fatias ATIVAS desta competência (vazio = mês ainda sem régua).
+      fatiasAtivas: ativas.data ?? [],
       diff: { anterior },
     });
   } catch (error) {

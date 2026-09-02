@@ -19,6 +19,12 @@
  *      parametros, p_valid_from = janela derivada, e ZERO leitura extra.
  *   5) O FLUXO DELEGADO LE DO STAGING, nao do body + MUTACAO.
  *   6) A coluna atravessa staging (POST/GET) e a tela.
+ *   7) O AVISO DE SUBSTITUICAO (item 2 da frente de dividas, 02/09/2026): um
+ *      rascunho salvo SEM override nao tem como receber a data depois — no fluxo
+ *      delegado o campo e so-leitura e o botao "Salvar rascunho" nao existe.
+ *      Confirmar assim cai na SAIDA 1 (SUBSTITUI) e desfaz uma particao em
+ *      silencio: o desenho 5b, RECUSADO pelo Diego. Aconteceu em 01/09 e foi
+ *      pego na conferencia, nao pelo sistema. 3 MUTACOES, nos dois sentidos.
  */
 require("./_ts_register.cjs");
 
@@ -33,6 +39,10 @@ const {
 } = require("../lib/trp/vigencia.ts");
 const { commitTrpVersion } = require("../lib/trp/commitVersion.ts");
 const { EXPECTED_PRODUCTS, TrpValidationError } = require("../lib/trp/parseTrpDraft.ts");
+const {
+  deveAvisarSubstituicao,
+  fatiaQueSeriaSubstituida,
+} = require("../lib/trp/avisoRascunhoSubstitui.ts");
 
 let falhas = 0;
 function ok(cond, nome, det) {
@@ -325,6 +335,92 @@ console.log("===== GATE — override de vigencia + anteparo do buraco =====\n");
       "upload fresco ZERA o override (ele nunca vem do PDF)");
     ok(ui.includes("trp-ov--ro"),
       "no delegado o campo e SO LEITURA em destaque (o que vale e o que esta guardado)");
+  }
+
+  // ============================================================== BLOCO 7
+  console.log("\n7) O AVISO DE SUBSTITUICAO — rascunho sem override em mes que JA tem regua");
+  console.log(linha("-"));
+  {
+    const FATIA = [{ version_no: 1, valid_from: JAN.validFrom, valid_until: JAN.validUntil }];
+    const PARTIDA = [
+      { version_no: 1, valid_from: JAN.validFrom, valid_until: "2026-08-04" },
+      { version_no: 2, valid_from: OVER, valid_until: JAN.validUntil },
+    ];
+
+    // ---- tabela-verdade da regua REAL ----
+    ok(
+      deveAvisarSubstituicao({ delegado: true, overrideDoRascunho: null, fatiasAtivas: FATIA }) === true,
+      "AVISA: delegado + SEM override + competencia JA COM regua"
+    );
+    ok(
+      deveAvisarSubstituicao({ delegado: true, overrideDoRascunho: OVER, fatiasAtivas: FATIA }) === false,
+      "NAO avisa: rascunho COM override (ele PARTE, nao substitui)"
+    );
+    ok(
+      deveAvisarSubstituicao({ delegado: true, overrideDoRascunho: null, fatiasAtivas: [] }) === false,
+      "NAO avisa: mes VAZIO — confirmar sem override e o caminho normal, e aviso ali seria ruido"
+    );
+    ok(
+      deveAvisarSubstituicao({ delegado: false, overrideDoRascunho: null, fatiasAtivas: FATIA }) === false,
+      "NAO avisa: upload FRESCO (fluxo direto) — la o campo e editavel, nao ha armadilha"
+    );
+    ok(
+      deveAvisarSubstituicao({ delegado: true, overrideDoRascunho: "   ", fatiasAtivas: FATIA }) === true,
+      "override em branco ('   ') conta como SEM override — string vazia nao parte nada"
+    );
+
+    // ---- a fatia nomeada e a que o RPC vai desativar (a de MAIOR valid_from) ----
+    const alvo = fatiaQueSeriaSubstituida(PARTIDA);
+    eq("nomeia a fatia que seria desativada (a de maior valid_from)", alvo && alvo.version_no, 2);
+    ok(fatiaQueSeriaSubstituida([]) === null, "sem fatia ativa, nao nomeia nenhuma");
+    // ORDEM DE ENTRADA INVERTIDA de proposito: quem toma [0] pega a errada.
+    const invertida = [PARTIDA[1], PARTIDA[0]];
+    const alvoInv = fatiaQueSeriaSubstituida(invertida);
+    eq("a escolha NAO depende da ordem da lista", alvoInv && alvoInv.version_no, 2);
+    ok(invertida[0].version_no === 2 && alvoInv.version_no === invertida[0].version_no,
+      "CONTROLE: na ordem invertida, [0] e a certa por acaso — por isso a outra ordem e que prova");
+
+    // ---- MUTACAO 1: aviso SEM condicao (aparece sempre) ----
+    const mutSempre = () => true;
+    ok(
+      mutSempre({ delegado: true, overrideDoRascunho: OVER, fatiasAtivas: FATIA }) !==
+        deveAvisarSubstituicao({ delegado: true, overrideDoRascunho: OVER, fatiasAtivas: FATIA }),
+      "MUTACAO 1: sem condicao, o aviso apareceria no rascunho PARTIDO — vereditos divergem"
+    );
+    ok(
+      mutSempre({ delegado: true, overrideDoRascunho: null, fatiasAtivas: [] }) !==
+        deveAvisarSubstituicao({ delegado: true, overrideDoRascunho: null, fatiasAtivas: [] }),
+      "MUTACAO 1: e apareceria no mes VAZIO — que e o ruido que treina a ignorar"
+    );
+
+    // ---- MUTACAO 2: aviso removido (nunca aparece) ----
+    const mutNunca = () => false;
+    ok(
+      mutNunca({ delegado: true, overrideDoRascunho: null, fatiasAtivas: FATIA }) !==
+        deveAvisarSubstituicao({ delegado: true, overrideDoRascunho: null, fatiasAtivas: FATIA }),
+      "MUTACAO 2: sem o aviso, o caso PERIGOSO passa calado — vereditos divergem"
+    );
+
+    // ---- MUTACAO 3: perna do override removida ----
+    const mutSemOverride = (i) => i.delegado && (i.fatiasAtivas?.length ?? 0) > 0;
+    ok(
+      mutSemOverride({ delegado: true, overrideDoRascunho: OVER, fatiasAtivas: FATIA }) !==
+        deveAvisarSubstituicao({ delegado: true, overrideDoRascunho: OVER, fatiasAtivas: FATIA }),
+      "MUTACAO 3: sem a perna do override, o rascunho COM data receberia o aviso — e ele PARTE"
+    );
+
+    // ---- a tela CONSOME a regua e nao a reimplementa; e o servidor manda as fatias ----
+    const ui = fs.readFileSync(path.join(ROOT, "components/trp/TrpUploadReview.tsx"), "utf8");
+    ok(ui.includes("deveAvisarSubstituicao({"), "a tela CHAMA a regua (nao reimplementa a condicao)");
+    ok(ui.includes("fatiaQueSeriaSubstituida(fatiasAtivas)"), "e nomeia a fatia pela mesma regua");
+    ok(/SUBSTITUIR a\s*\n?\s*régua|SUBSTITUIR a régua/.test(ui),
+      "o aviso diz o que ACONTECE (SUBSTITUIR a regua que esta valendo)");
+    ok(ui.includes("salve o rascunho"), "e diz o que FAZER (subir de novo e salvar o rascunho com a data)");
+    const get = fs.readFileSync(path.join(ROOT, "app/api/trp/staging/[id]/route.ts"), "utf8");
+    ok(get.includes("fatiasAtivas: ativas.data ?? []"),
+      "o staging GET :id devolve as fatias ATIVAS da propria competencia");
+    ok(get.includes('.eq("competencia", row.competencia)') && get.includes('.eq("is_active", true)'),
+      "e a consulta e da PROPRIA competencia, ativa (o estado que o client nao tem como saber)");
   }
 
   console.log("\n" + (falhas === 0 ? "GATE OK (0 falhas)" : `GATE FALHOU (${falhas} falha(s))`));
