@@ -366,8 +366,16 @@ const GATES = [
   {
     arquivo: "scripts/gate_desconto_piso.cjs",
     nome: "piso zerou o repasse => o desconto NAO acontece (e a tela conta igual)",
-    modo: "needs-db",
+    modo: "needs-db-lento",
     motivo:
+      "LENTO por MEDICAO, nao por escolha: 16,7s, e o peso vem de buildLedgerHealth — o " +
+      "vigia INTEIRO. Pagar esse preco e proposital: e ele que sustenta a assercao que mais " +
+      "importa aqui (a TELA e a REGRA contando o MESMO numero); a alternativa era " +
+      "reimplementar a regra dentro do gate e passar a ter duas respostas para a mesma " +
+      "pergunta. Fora da faixa --db porque ela JA ESTAVA ESTOURADA antes desta frente — " +
+      "medido em 02/09/2026 no commit 8b99513 (origin/main): 130,0s de 90s, com 5 gates " +
+      "vermelhos que nada tem a ver com este trabalho. Nao se engorda banda estourada. Os " +
+      "outros dois portoes desta frente custam 1,4s e 0,9s e ficam na --db. " +
       "regra do Diego de 20/08/2026: piso zerado nao e `max(0, final - desconto)` — a " +
       "parcela nao e consumida. Duas coisas podiam apodrecer e o gate cobre as duas: a " +
       "LEITURA FROUXA do flag (piso_zerou e null em quase todo o historico; `!== false` " +

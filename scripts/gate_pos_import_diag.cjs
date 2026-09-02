@@ -156,14 +156,15 @@ async function main() {
   console.log("\n" + "=".repeat(60));
   if (falhas.length === 0) {
     console.log("GATE pos_import_diag: PASSOU");
-    process.exit(0);
+    process.exitCode = 0;
+    return;
   }
   console.log(`GATE pos_import_diag: REPROVOU (${falhas.length})`);
   for (const f of falhas) console.log("  - " + f);
-  process.exit(1);
+  process.exitCode = 1;
 }
 
 main().catch((e) => {
   console.error("GATE pos_import_diag: ERRO", e.message);
-  process.exit(1);
+  process.exitCode = 1;
 });

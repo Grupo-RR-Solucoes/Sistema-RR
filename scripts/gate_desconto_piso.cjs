@@ -189,14 +189,15 @@ async function main() {
   console.log("\n" + "=".repeat(60));
   if (falhas.length === 0) {
     console.log("GATE desconto x piso: PASSOU");
-    process.exit(0);
+    process.exitCode = 0;
+    return;
   }
   console.log(`GATE desconto x piso: REPROVOU (${falhas.length})`);
   for (const f of falhas) console.log("  - " + f);
-  process.exit(1);
+  process.exitCode = 1;
 }
 
 main().catch((e) => {
   console.error("GATE desconto x piso: ERRO", e.message);
-  process.exit(1);
+  process.exitCode = 1;
 });
