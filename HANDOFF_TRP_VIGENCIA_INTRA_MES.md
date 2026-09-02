@@ -64,16 +64,37 @@ primeiro upload partido. É o gêmeo exato da armadilha do `piso_zerou`.
 
 ## DÍVIDA NOMEADA — não corrigida agora
 
-**Os 28 scripts de `scripts/` que chamam `calcularOperacao`** (dos quais os que
-constroem provider via `buildTrpCreditProvider`: `diag-16-veredito.mts`,
-`diag-220147900-e-ads.mts`, `diag-ausentes-valor-medido.mts`,
-`diag-bloco2-completo.mts` e os demais) **passam a medir agosto pela ÚLTIMA
-régua da competência** quando 2026-08 estiver partida — porque resolvem por
-competência, sem `contract_date`.
-
-Isso é **certo para 496 contratos e errado para 83**. Os diagnósticos ficam
-levemente otimistas até serem atualizados para passar a data. Dívida
-**nomeada, não corrigida** nesta frente, por decisão explícita.
+> ## ⚠ ESTE PARÁGRAFO ESTAVA ERRADO. REMEDIADO EM 02/09/2026.
+>
+> O texto abaixo, riscado, afirmava que 28 diagnósticos passariam a medir agosto
+> pela última régua. **É falso, e a próxima pessoa precisa saber QUE TIPO de erro
+> foi**: não foi medição que envelheceu — foi **precaução escrita como se fosse
+> medição**. Eu supus, no dia em que a Fase 1 entrou, que os scripts resolviam
+> por competência, e escrevi isso com a mesma voz com que escrevo o que medi. Um
+> leitor não tinha como distinguir.
+>
+> **O que a medição de 02/09 mostra:** `lib/motor.ts:605` e `:682` fazem
+> `trpProvider(mes, op.contract_date ?? undefined)` — **o motor passa a data**.
+> Logo, todo script que usa `buildTrpCreditProvider` + `calcularOperacao`
+> resolve a fatia CERTA, porque quem consulta o provider é o motor, com a data do
+> contrato em mãos. Medido: **29** scripts constroem provider assim, **28**
+> mencionam `contract_date`, e os três nominalmente citados abaixo
+> (`diag-16-veredito`, `diag-220147900-e-ads`, `diag-ausentes-valor-medido`)
+> montam o `op` com `contract_date: r.contract_date`. O único que não menciona
+> (`diag-bloco2-origem244.mts`) pré-carrega só `2026-04-15` e `2026-07-15` e
+> nunca chega em agosto.
+>
+> **O que de fato sobra são 4 sítios, em DUAS formas diferentes** — está na
+> dívida 3, no fim deste arquivo. Custou uma varredura de 10 minutos que eu não
+> fiz na hora de escrever.
+>
+> ~~Os 28 scripts de `scripts/` que chamam `calcularOperacao` (dos quais os que
+> constroem provider via `buildTrpCreditProvider`: `diag-16-veredito.mts`,
+> `diag-220147900-e-ads.mts`, `diag-ausentes-valor-medido.mts`,
+> `diag-bloco2-completo.mts` e os demais) passam a medir agosto pela ÚLTIMA
+> régua da competência quando 2026-08 estiver partida — porque resolvem por
+> competência, sem `contract_date`. Isso é certo para 496 contratos e errado
+> para 83.~~
 
 O mesmo vale, com efeito diferente, para o carimbo: os dois sítios que escrevem
 `trp_version_id` (`app/api/calculate/monthly/route.ts:1015-1024` e
@@ -514,25 +535,78 @@ lib/trp/conferenciaTrp.ts:181          getResolvedSync(ym, contractDate ?? null)
 lib/trp/creditTrpProvider.ts:97,99     getRegraSync/getResolvedSync(competencia, contractDate ?? null)
 ```
 
-**scripts/ — o que sobra, com o dano de cada um:**
+**E SÃO DUAS FORMAS, não uma** (medido em 02/09/2026 — a primeira versão desta
+dívida tratava tudo como o mesmo caso, e não é):
+
+- **forma (a) — resolução POR CONTRATO.** Aqui faltar a data É o defeito: numa
+  competência partida cai sempre na última fatia. Conserto = passar a data.
+- **forma (b) — inspeção da RÉGUA DO MÊS.** Aqui "passar a data" NÃO é o
+  conserto: a pergunta é "a TRP vigente tem o campo X?", e numa competência
+  partida **não existe *a* régua, existem duas**. Conserto = iterar TODAS as
+  fatias ativas e exigir a asserção em CADA uma. Passar uma data só trocaria
+  uma fatia arbitrária por outra.
+
+**scripts/ — o que sobra, com a forma e o dano de cada um:**
 
 ```
-scripts/paridade_avista_trp_gate.cjs:121   CONSERTADO em 01/09 (era o vermelho falso)
-scripts/trp_prazo_min_gate.cjs:89          REGISTRADO. getRegraSync(COMP) sem data, e a COMP
-                                           e DESCOBERTA (a ultima com contrato). Passa hoje,
-                                           mas numa competencia partida mede so a ULTIMA
-                                           fatia e chama isso de "a TRP vigente".
-scripts/trp_tx_juros_min_gate.cjs:87       REGISTRADO. getRegraSync("2026-07") — julho nao esta
-                                           partida, entao esta certo HOJE, por sorte da
-                                           competencia escolhida, nao por construcao.
-scripts/trp_paridade_f5_json.cjs:148       nao registrado.
-scripts/diag_julho_candidate_list.cjs:46   nao registrado (diagnostico).
+(a) scripts/paridade_avista_trp_gate.cjs:121  CONSERTADO em 01/09 (era o vermelho falso)
+(a) scripts/diag_julho_candidate_list.cjs:46  nao registrado. Gemeo exato do acima:
+                                              resolveAvistaTrpDb(rec, (c) => getResolvedSync(c))
+(a) scripts/trp_paridade_f5_json.cjs:148      nao registrado. Mesma forma.
+(b) scripts/trp_prazo_min_gate.cjs:89         REGISTRADO. getRegraSync(COMP), e a COMP e
+                                              DESCOBERTA (compsRR[length-1], a ultima com
+                                              contrato) — ele ja aponta para agosto/setembro e
+                                              afirma sobre "a regua vigente" tendo olhado UMA
+                                              fatia. Verde por sorte, e sem NOMEAR na saida qual
+                                              competencia escolheu.
+(b) scripts/trp_tx_juros_min_gate.cjs:87      REGISTRADO. getRegraSync("2026-07") — julho nao
+                                              esta partida, entao esta certo HOJE por sorte da
+                                              competencia cravada, nao por construcao.
 ```
 
 Os dois portões REGISTRADOS acima estão **verdes e não foram tocados** — verdes
 por medirem competência de régua única, não por passarem a data. É verde por
 sorte da competência, e a sorte acaba quando alguém partir a competência que
 eles olham.
+
+## VIGIA — o carimbo NUNCA rodou contra dado real (verificação com gatilho)
+
+**Não é dívida e não entra em fila: é uma verificação que espera um gatilho
+externo.** Medido em 02/09/2026:
+
+```
+PMR 2026-08: 0 | linhas com trp_multi_versao NAO nulo (banco INTEIRO): 0
+fechamento de 2026-08 importado: 0
+```
+
+`trp_multi_versao` **nunca foi escrito uma vez sequer, em lugar nenhum**. O
+portão `gate_trp_carimbo_multi_versao` prova o caminho com stub de Supabase; o
+banco nunca viu. E agora existe a primeira competência partida da história, então
+a **primeira gravação real** acontece quando o fechamento da Promotiva entrar.
+
+**O GATILHO:** o PMR de 2026-08 nascer (`promoter_monthly_results` deixar de ter
+0 linhas para year=2026, month=8).
+
+**O QUE CONFERIR, na hora:**
+
+1. as linhas `source='daily'` e `source='bbts'` de 2026-08 saíram com
+   `trp_version_id = NULL` **E** `trp_multi_versao = true` — as duas coisas, não
+   uma. `NULL` sozinho é indistinguível de "esqueceram de carimbar";
+2. as linhas `source='fechamento'` (RR) seguem com os dois NULL — elas não usam
+   TRP e isso é legítimo;
+3. `detectTrpStaleForCompetencia({year:2026,month:8})` devolve
+   `has_multi_versao: true`, `has_desconhecido: false` e `has_stale: false`;
+4. o `ledgerHealth` põe agosto no item **`trp_multi_versao` (info)** e **NÃO** em
+   `trp_desconhecido` (alerta).
+
+**SE SAIR ERRADO:** a decisão (b) inteira cai — o carimbo honesto não estaria
+sendo gravado, e a fila de dívidas muda de assunto na hora. Custo da conferência:
+~15 minutos, somente leitura.
+
+**Por que isto precisa estar escrito:** pela dívida (ii) deste mesmo arquivo,
+**nada acusa** uma competência partida mal carimbada. Não há alerta, não há
+oferta de reconsolidação, não há vermelho. Se ninguém for olhar por decisão, não
+se olha nunca.
 
 #### PORTÃO PROPOSTO (não implementado — decisão do Diego pendente)
 
