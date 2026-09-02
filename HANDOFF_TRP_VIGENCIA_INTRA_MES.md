@@ -431,6 +431,18 @@ A **TRP40 (setembro) NÃO subiu**. Está em disco, e subir é outra decisão.
 
 ## AS TRÊS DÍVIDAS QUE FICAM
 
+> **STATUS EM 02/09/2026** — uma frente própria, só de dívidas, foi aberta e a
+> ordem decidida foi **3 → 2 → 1**, com o VIGIA por fora.
+>
+> | # | o que é | estado |
+> |---|---|---|
+> | 1 | o diff da tela pela competência ANTERIOR (`.lt`) | **ABERTA** — é a próxima |
+> | 2 | rascunho sem override não pode ganhar a data | **RESOLVIDA** em 02/09 (aviso condicional) |
+> | 3 | a classe "provider sem data" | **RESOLVIDA** em 02/09 (4 sítios + portão) |
+>
+> As seções abaixo ficam como estão, com o registro do que era o defeito; o que
+> mudou está anotado no fim de cada uma.
+
 ### 1. O diff da tela compara com a competência ANTERIOR, não com a fatia ativa da MESMA
 
 `app/api/trp/parse/route.ts:61` e o gêmeo em `app/api/trp/staging/[id]/route.ts`
@@ -484,6 +496,38 @@ rascunho aberto (e aí o campo volta a ser editável, com o salvar sendo o únic
 caminho para valer), ou um aviso explícito na revisão delegada quando o rascunho
 NÃO tem override, dizendo que confirmar vai SUBSTITUIR e não partir. A segunda é
 menor e não reabre a armadilha original.
+
+### ✔ RESOLVIDA em 02/09/2026 — saída (i), o aviso condicional
+
+Decisão do Diego: a (i), **sem** reabrir a armadilha do só-leitura.
+
+A condição virou régua pura em `lib/trp/avisoRascunhoSubstitui.ts`, com **três
+pernas**, e a terceira é a que evita ruído:
+
+```
+1. estamos no fluxo DELEGADO (há rascunho aberto)
+2. o rascunho NÃO tem override
+3. a competência JÁ TEM régua ativa      <- sem esta, o aviso apareceria em todo
+                                            primeiro upload de todo mês, onde
+                                            confirmar sem override é o caminho
+                                            NORMAL. Aviso que aparece quando não
+                                            há o que avisar treina a ignorar.
+```
+
+A perna (3) é **estado do banco** — o client não tem como saber. Por isso o
+`GET /api/trp/staging/[id]` passou a devolver `fatiasAtivas` (as fatias ATIVAS da
+PRÓPRIA competência, só-leitura).
+
+O aviso **diz o que acontece e o que fazer**, não "atenção, verifique": nomeia a
+fatia que será desativada (a de maior `valid_from`, calculada em código e não por
+posição na lista), diz que a régua do PDF passará a valer o mês inteiro, e ensina
+o caminho — subir o PDF de novo pelo formulário, marcar a caixa, informar a data
+e **salvar o rascunho**, que substitui o pendente já com a data.
+
+Portão: bloco 7 do `gate_trp_override_vigencia`, com **3 mutações**: sem condição
+(o aviso apareceria no rascunho partido e no mês vazio), sem aviso (o caso
+perigoso passa calado) e sem a perna do override (o rascunho que PARTE receberia
+o aviso).
 
 ### 3. PROVIDER SEM DATA — a terceira ocorrência da MESMA classe em 24 horas
 
@@ -608,7 +652,27 @@ sendo gravado, e a fila de dívidas muda de assunto na hora. Custo da conferênc
 oferta de reconsolidação, não há vermelho. Se ninguém for olhar por decisão, não
 se olha nunca.
 
-#### PORTÃO PROPOSTO (não implementado — decisão do Diego pendente)
+#### ✔ RESOLVIDA em 02/09/2026 — 4 sítios + o portão que vigia a classe
+
+- **forma (a)**, 1 linha cada: `diag_julho_candidate_list.cjs` e
+  `trp_paridade_f5_json.cjs` passaram a repassar a data.
+- **forma (b)**: `trp_prazo_min_gate` e `trp_tx_juros_min_gate` passaram a
+  resolver a competência inteira, **imprimem quantas fatias ativas acharam** e
+  rodam a asserção **em cada fatia**. No `prazo_min` apareceu um segundo defeito
+  que não estava na lista: o piso do sintoma vinha de uma régua só, então o prazo
+  de um contrato de 03/08 seria comparado com o piso da régua de 05/08 — passou a
+  vir da fatia que rege AQUELE contrato.
+- **portão novo** `scripts/gate_provider_repassa_data.cjs` (self-contained,
+  0,5s): asserção dura sobre produção, allowlist assinada (hoje vazia) com
+  checagem de entrada morta, não-vacuidade, e mutação do scanner.
+- **bloco (E) vivo** dentro do `gate_trp_vigencia_intra_mes` (needs-db):
+  resolve a mesma competência com e sem data e exige fatias DIFERENTES. Contra
+  produção: `2026-08`, sem data → v2, com `2026-07-31` → v1. Com auto-declaração
+  de vacuidade obrigatória se um dia não houver competência partida.
+
+O desenho abaixo é o que foi proposto e implementado.
+
+#### PORTÃO PROPOSTO (implementado em 02/09/2026)
 
 Um portão que varra os **construtores de provider** e exija que repassem a data.
 Esboço do que ele mediria, e por que dá para fazer sem heurística frágil:

@@ -36,6 +36,23 @@ export async function GET(
     const comp = competenciaKey(String(row.competencia));
     const vig = vigenciaDaCompetencia(comp);
 
+    // FATIAS ATIVAS DA PRÓPRIA COMPETÊNCIA (item 2, 02/09/2026). A tela precisa
+    // saber se já EXISTE régua aqui para decidir se avisa que confirmar este
+    // rascunho vai SUBSTITUIR em vez de PARTIR. Só-leitura, e é estado do banco
+    // — o client não tem como saber sozinho.
+    const ativas = await supabase
+      .from("trp_rule_versions")
+      .select("version_no, valid_from, valid_until")
+      .eq("competencia", row.competencia)
+      .eq("is_active", true)
+      .order("valid_from", { ascending: true });
+    if (ativas.error) {
+      return NextResponse.json(
+        { error: "erro ao ler a vigência atual da competência", detalhe: ativas.error.message },
+        { status: 500 },
+      );
+    }
+
     // DIFF (só-leitura): versão ATIVA da competência anterior mais recente.
     const prev = await supabase
       .from("trp_rule_versions")
@@ -83,6 +100,8 @@ export async function GET(
       // do sócio mostra em destaque — é o único campo da revisão que não veio do
       // documento, e é ele que PARTE a competência.
       validFromOverride: row.valid_from_override ?? null,
+      // Fatias ATIVAS desta competência (vazio = mês ainda sem régua).
+      fatiasAtivas: ativas.data ?? [],
       diff: { anterior },
     });
   } catch (error) {

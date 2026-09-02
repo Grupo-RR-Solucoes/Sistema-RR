@@ -24,6 +24,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button, Banner, Chip } from "@/components/ui";
+import {
+  deveAvisarSubstituicao,
+  fatiaQueSeriaSubstituida,
+  type FatiaAtiva,
+} from "@/lib/trp/avisoRascunhoSubstitui";
 
 const FAIXA_LABELS = ["Faixa 1", "Faixa 2", "Faixa 3", "Faixa 4", "Faixa 5", "pct_geral"];
 
@@ -49,6 +54,8 @@ type ParseOk = {
   diff: { anterior: { competencia: string; version_no: number; regra_json: unknown } | null };
   /** Só vem do staging (/api/trp/staging/[id]); o parse do PDF nunca traz. */
   validFromOverride?: string | null;
+  /** Fatias ATIVAS da competência (só do staging). Vazio = mês sem régua ainda. */
+  fatiasAtivas?: FatiaAtiva[];
 };
 type PendItem = {
   id: string;
@@ -129,6 +136,9 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
   // Guarda o que veio do STAGING, para a revisao do socio poder dizer "esta data
   // foi informada por quem salvou o rascunho" em vez de fingir que ele digitou.
   const [overrideDoRascunho, setOverrideDoRascunho] = useState<string | null>(null);
+  // Fatias ATIVAS da competência do rascunho aberto — vêm do staging, porque é
+  // estado do BANCO. Decide se o aviso de substituição aparece.
+  const [fatiasAtivas, setFatiasAtivas] = useState<FatiaAtiva[]>([]);
 
   const anterior = useMemo(() => (result?.diff.anterior ? anteriorVals(result.diff.anterior.regra_json) : null), [result]);
 
@@ -163,6 +173,7 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
     setOverrideOn(false);
     setOverrideData("");
     setOverrideDoRascunho(null);
+    setFatiasAtivas([]);
     try {
       const base64 = await fileToBase64(file);
       const resp = await fetch("/api/trp/parse", {
@@ -202,6 +213,7 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
       // escondido, o sócio confirmaria uma competência partida sem ver a data
       // que a parte.
       const ov = parsed.validFromOverride ?? null;
+      setFatiasAtivas(parsed.fatiasAtivas ?? []);
       setOverrideDoRascunho(ov);
       setOverrideOn(!!ov);
       setOverrideData(ov ?? "");
@@ -385,7 +397,42 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
               da LINHA do staging, então deixar editável aqui criaria a armadilha
               de o sócio mudar a data, confirmar, e o sistema usar a outra. */}
           {currentUploadId ? (
-            overrideDoRascunho ? (
+            deveAvisarSubstituicao({
+              delegado: !!currentUploadId,
+              overrideDoRascunho,
+              fatiasAtivas,
+            }) ? (
+              (() => {
+                const alvo = fatiaQueSeriaSubstituida(fatiasAtivas);
+                return (
+                  <Banner variant="warn">
+                    <b>
+                      Este rascunho NÃO parte {result.meta.competencia} — confirmar vai SUBSTITUIR a
+                      régua que está valendo.
+                    </b>
+                    <div className="det">
+                      {alvo ? (
+                        <>
+                          A régua ativa <b>v{alvo.version_no}</b> ({alvo.valid_from} a{" "}
+                          {alvo.valid_until}) será <b>desativada</b>, e a régua deste PDF passa a
+                          valer de <b>{result.meta.vigencia_inicio}</b> a{" "}
+                          <b>{result.meta.vigencia_fim}</b> — o mês inteiro.{" "}
+                        </>
+                      ) : null}
+                      Se era isso que você queria (re-upload corrigindo a régua do mês), pode
+                      confirmar.
+                    </div>
+                    <div className="det">
+                      <b>Se a intenção era PARTIR a competência</b>, não dá para acrescentar a data
+                      aqui: o servidor grava o que está guardado no rascunho, não o que está na
+                      tela. Suba o PDF de novo pelo formulário acima, marque{" "}
+                      <b>&ldquo;Esta régua começa a valer em outra data&rdquo;</b>, informe a data e{" "}
+                      <b>salve o rascunho</b> — aí ele substitui este, já com a data.
+                    </div>
+                  </Banner>
+                );
+              })()
+            ) : overrideDoRascunho ? (
               <div className="trp-ov trp-ov--ro">
                 <div className="trp-ov__t">
                   Este rascunho PARTE a competência em <b>{overrideDoRascunho}</b>
