@@ -16,6 +16,7 @@
 
 import { getDocumentProxy } from "unpdf";
 
+import { pctToDec, pctTokenRegex } from "@/lib/trp/pctTrp";
 import { competenciaDaData, vigenciaDaCompetencia, competenciaKey } from "@/lib/trp/vigencia";
 
 // Regime canônico por competência — espelho da tabela de getRegime() (spec v9 §9),
@@ -83,12 +84,10 @@ function deacc(s: string): string {
   return s.normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
 
-const PCT = /(\d+,\d+)%/g;
-
-/** "2,44" -> 0.0244 (round 6, igual ao Python round(x/100, 6)). */
-function pctToDec(tok: string): number {
-  return Number((parseFloat(tok.replace(",", ".")) / 100).toFixed(6));
-}
+// SEPARADOR DECIMAL: a forma do percentual (vírgula OU ponto) e a conversão
+// moram em lib/trp/pctTrp.ts — sítio único da decisão, com a régua da
+// ambiguidade do milhar escrita lá. Aqui só se CONSOME. Nada de separador
+// cravado à mão neste arquivo.
 
 type Kind = "faixa" | "geral";
 const PROD_ANCHORS: [RegExp, string, Kind][] = [
@@ -107,9 +106,9 @@ const PROD_ANCHORS: [RegExp, string, Kind][] = [
 const STOP = /^(Condi..es de uso|Tabela:|T.quete:|Custo de|C.digo conv.nio|Classifica..o|\d - Cr.dito|4 - Lista|2 - Cr.dito|3 - Cr.dito|1 - Cr.dito)/i;
 const HDR = /Taxa de Juros\s+(T.quete\s+)?Prazo/i;
 
-/** Percentuais (\d+,\d+) presentes numa linha. */
+/** Percentuais (com vírgula OU ponto decimal) presentes numa linha, na ordem. */
 function pctsIn(line: string): string[] {
-  return (line.match(PCT) || []).map((m) => m.slice(0, -1));
+  return (line.match(pctTokenRegex()) || []).map((m) => m.slice(0, -1));
 }
 
 export interface ProdutoExtraido {
