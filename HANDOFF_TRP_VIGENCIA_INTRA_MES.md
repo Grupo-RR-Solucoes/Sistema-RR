@@ -723,3 +723,82 @@ Esboço do que ele mediria, e por que dá para fazer sem heurística frágil:
 O que este portão NÃO resolve: um provider construído fora destes dois nomes de
 função. Se alguém criar um terceiro caminho de resolução, a varredura não o vê —
 e a única defesa continua sendo a regra escrita aqui.
+
+---
+
+## A LINHA DE BASE DO `trp_desconhecido` — medida 02/09/2026, ANTES do import
+
+A decisão (b) nunca rodou contra dado real. **2026-08 é a primeira competência
+PARTIDA** (TRP38 até 04/08 `b7bcd68f`, TRP39 de 05/08 `f85dac76` — conferido no
+banco), e o PMR de agosto ainda não existe: o import do fechamento da ADS é o que
+vai acioná-la.
+
+Antes disso, o contador do vigia foi medido:
+
+```
+trp_stale            count=0  (erro)
+trp_desconhecido     count=1  (alerta)   detalhe: [{"year":2026,"month":6}]
+trp_multi_versao     count=0  (info)
+```
+
+**`trp_desconhecido` JÁ ESTÁ EM 1, e aponta para JUNHO/2026.** Isso é **anterior
+a esta frente** e não tem relação com agosto: é PMR fechado da ADS calculado
+antes de o rastreamento existir, e resolve numa reconsolidação de junho.
+
+### O que se cobra quando agosto entrar
+
+> **O contador tem de CONTINUAR EM 1, e o detalhe tem de continuar dizendo só
+> junho.** Se virar **2** — ou se `2026-08` aparecer no detalhe — agosto caiu no
+> **bucket errado** e a **decisão (b) falhou**.
+
+O erro que isso pegaria é preciso: a competência partida estaria sendo
+classificada como *"esqueceram de carimbar"* (`trp_desconhecido`, alerta) em vez
+de *"não cabe em um id"* (`trp_multi_versao`, info). O `ledgerHealth.ts:312-317`
+já explica por que os buckets são separados — a descrição do `trp_desconhecido`
+seria falsa nas duas metades: agosto foi calculado **com** rastreamento, e
+reconsolidar grava o **mesmo** NULL. *"Alerta que nunca apaga treina todo mundo a
+ignorar o painel."*
+
+Nota: **zero não é a expectativa correta** aqui. Cobrar `trp_desconhecido === 0`
+faria o vigia reprovar por causa de junho, que é dívida legítima e conhecida. A
+asserção certa é *não cresceu* + *agosto não está na lista*.
+
+### Onde isso está cravado, para não depender de memória
+
+Comparar "antes × depois" a olho depende de alguém lembrar do número. Por isso a
+base virou **constante conferida** em `scripts/diag-vigia-carimbo-trp.cjs`:
+
+```js
+const DESCONHECIDO_BASE = 1;
+const DESCONHECIDO_BASE_COMPETENCIAS = ["2026-06"];
+```
+
+O script imprime `linha de base` e `agora` lado a lado e reprova (exit 1) se
+crescer ou se a competência-alvo aparecer no detalhe.
+
+### Como rodar o vigia
+
+```
+node scripts/diag-vigia-carimbo-trp.cjs            # 2026-08 alvo, 2026-07 controle
+node scripts/diag-vigia-carimbo-trp.cjs 2026-08 2026-07
+```
+
+**Só depois do import do fechamento da ADS.** O fechamento da **RR não exercita o
+carimbo**: `closingMonthly.ts:574-580` grava `trp_version_id: null` por
+construção — a comissão já vem pronta do arquivo e a TRP ali é régua de
+**auditoria**, não insumo do PMR. Quem exercita é `bbtsMonthly.ts:422`.
+
+Os 4 pontos que o script cobra, já corrigidos por medição:
+
+| # | esperado |
+|---|---|
+| 1 | linhas da ADS em 2026-08 com `trp_version_id` NULL e `trp_multi_versao === true` |
+| 2 | **zero** linhas com id carimbado (uma que seja é o defeito), e `trp_fallback` false |
+| 3 | agosto em `trp_multi_versao` (info); `trp_desconhecido` **continua em 1 (junho)**; `trp_stale` zerado |
+| 4 | controle julho: mantém `id=59025dd8` e `multi=NULL` — **NULL, não `false`** |
+
+O ponto 4 tem armadilha própria: todo o histórico do PMR está `NULL` (medido
+01/09: 0 linhas não-nulas no banco inteiro), porque as linhas são anteriores à
+coluna. Julho só vira `false` se for **reconsolidado**. Cobrar `false` ali
+acusaria defeito onde não há — foi por isso que o enunciado original do ponto 4
+precisou ser corrigido.
