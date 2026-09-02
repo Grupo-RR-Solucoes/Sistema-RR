@@ -1012,6 +1012,23 @@ const GATES = [
       "createClient; daily da ADS de PRODUCAO",
   },
   {
+    arquivo: "scripts/gate_trp_base_do_diff.cjs",
+    nome: "TRP - a base do diff e a fatia da PROPRIA competencia",
+    modo: "self-contained",
+    motivo:
+      "0,7s; stub de Supabase, sem banco e sem env. Item 1 da frente de dividas: " +
+      "as 2 rotas da revisao buscavam a base do diff com .lt (competencia " +
+      "ESTRITAMENTE ANTERIOR), o que era a unica base possivel quando competencia " +
+      "tinha UMA regua — e virou mentira de rotulo quando agosto passou a ter a " +
+      "propria. A FIXTURE NAO REPETE O AZAR DE PRODUCAO, e isso e o ponto: la a " +
+      "2026-07 v2 e a 2026-08 v1 sao a MESMA regua (TRP38), e foi por isso que o " +
+      "defeito passou despercebido; com reguas iguais na fixture a mutacao nao " +
+      "derrubaria nada e o portao passaria por vacuidade. O bloco 0 prova que as " +
+      "3 reguas da fixture sao diferentes ANTES de qualquer assercao depender " +
+      "disso. 2 MUTACOES: voltar ao .lt (bases divergem, e as REGUAS divergem) e " +
+      "remover o fallback (o primeiro upload do mes perde o diff)",
+  },
+  {
     arquivo: "scripts/gate_provider_repassa_data.cjs",
     nome: "provider repassa a contractDate (a classe 'provider sem data')",
     modo: "self-contained",

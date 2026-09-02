@@ -51,7 +51,21 @@ type ParseOk = {
   regraDraft: Record<string, unknown>;
   meta: ParseMeta;
   confianca: Confianca;
-  diff: { anterior: { competencia: string; version_no: number; regra_json: unknown } | null };
+  diff: {
+    // A base do diff: a fatia ATIVA da PRÓPRIA competência quando já há régua
+    // (`origem: "propria"`), senão a última da anterior (`"anterior"`). O nome
+    // do campo continua `anterior` por compatibilidade do shape.
+    anterior:
+      | {
+          competencia: string;
+          version_no: number;
+          valid_from?: string;
+          valid_until?: string;
+          regra_json: unknown;
+          origem?: "propria" | "anterior";
+        }
+      | null;
+  };
   /** Só vem do staging (/api/trp/staging/[id]); o parse do PDF nunca traz. */
   validFromOverride?: string | null;
   /** Fatias ATIVAS da competência (só do staging). Vazio = mês sem régua ainda. */
@@ -579,7 +593,26 @@ export default function TrpUploadReview({ canConfirm }: { canConfirm: boolean })
           <h4 className="trp-rev__h">Mudanças vs TRP anterior</h4>
           {result.diff.anterior ? (
             <p className="trp-diff">
-              Comparando com <b>{result.diff.anterior.competencia}</b> (v{result.diff.anterior.version_no}). As células destacadas em <span className="chg-inline">amarelo</span> na grade acima mudaram de valor. Passe o mouse para ver o valor anterior.
+              {/* O rótulo diz a FATIA, não só a competência: numa competência
+                  partida existem duas réguas ativas, e dizer só o mês faria o
+                  texto mentir exatamente no caso novo. */}
+              Comparando com{" "}
+              <b>
+                {result.diff.anterior.competencia} v{result.diff.anterior.version_no}
+              </b>
+              {result.diff.anterior.valid_from && result.diff.anterior.valid_until ? (
+                <>
+                  {" "}
+                  ({result.diff.anterior.valid_from} a {result.diff.anterior.valid_until})
+                </>
+              ) : null}
+              {result.diff.anterior.origem === "anterior" ? (
+                <> — a competência ainda não tem régua própria, então a base é a do mês anterior</>
+              ) : (
+                <> — a régua que está valendo nesta competência</>
+              )}
+              . As células destacadas em <span className="chg-inline">amarelo</span> na grade acima
+              mudaram de valor. Passe o mouse para ver o valor anterior.
             </p>
           ) : (
             <p className="trp-diff">Sem TRP anterior no banco — nada a comparar (primeira competência).</p>

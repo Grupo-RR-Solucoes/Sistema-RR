@@ -8,7 +8,8 @@ import {
   TrpParseError,
   TrpValidationError,
 } from "@/lib/trp/parseTrpDraft";
-import { competenciaKey, competenciaFirstDay } from "@/lib/trp/vigencia";
+import { resolverBaseDoDiff } from "@/lib/trp/baseDoDiff";
+import { competenciaKey } from "@/lib/trp/vigencia";
 
 // F6b sub-fase 1 — POST /api/trp/parse (READ-ONLY, NÃO grava).
 //
@@ -53,33 +54,24 @@ export async function POST(req: Request) {
       throw e;
     }
 
-    // DIFF (só-leitura): versão ATIVA da competência anterior mais recente.
-    const firstDayAlvo = competenciaFirstDay(competenciaKey(competencia));
-    const prev = await supabase
-      .from("trp_rule_versions")
-      .select("competencia, version_no, regra_json")
-      .lt("competencia", firstDayAlvo)
-      .eq("is_active", true)
-      // TIE-BREAK por valid_from (vigencia intra-mes): com a competencia anterior
-      // PARTIDA em 2+ reguas ativas, .limit(1) sem este desempate pegaria uma
-      // fatia ARBITRARIA. A que vale para o diff e a ULTIMA do mes anterior.
-      .order("competencia", { ascending: false })
-      .order("valid_from", { ascending: false })
-      .limit(1);
-    if (prev.error) {
-      // erro de infra na leitura do anterior -> falha visível (não mascara)
+    // DIFF (só-leitura): a base sai da RÉGUA ÚNICA lib/trp/baseDoDiff.ts — a
+    // última fatia ATIVA da PRÓPRIA competência, com fallback para a anterior
+    // quando o mês ainda não tem régua. Ver o cabeçalho de lá: o `.lt` daqui
+    // mentia o rótulo assim que a competência passava a ter régua, e isso virou
+    // possível em 01/09/2026.
+    let anterior = null;
+    try {
+      anterior = await resolverBaseDoDiff(supabase, competenciaKey(competencia));
+    } catch (e) {
+      // erro de infra na leitura da base -> falha visível (não mascara)
       return NextResponse.json(
-        { error: "erro ao ler a TRP anterior para o diff", detalhe: prev.error.message },
+        {
+          error: "erro ao ler a TRP anterior para o diff",
+          detalhe: e instanceof Error ? e.message : String(e),
+        },
         { status: 500 },
       );
     }
-    const anterior = prev.data && prev.data[0]
-      ? {
-          competencia: competenciaKey(String((prev.data[0] as { competencia: string }).competencia)),
-          version_no: (prev.data[0] as { version_no: number }).version_no,
-          regra_json: (prev.data[0] as { regra_json: unknown }).regra_json,
-        }
-      : null;
 
     return NextResponse.json({
       regraDraft: draft.regraDraft,

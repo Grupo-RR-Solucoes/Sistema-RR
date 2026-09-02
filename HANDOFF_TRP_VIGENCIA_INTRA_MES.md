@@ -436,7 +436,7 @@ A **TRP40 (setembro) NÃO subiu**. Está em disco, e subir é outra decisão.
 >
 > | # | o que é | estado |
 > |---|---|---|
-> | 1 | o diff da tela pela competência ANTERIOR (`.lt`) | **ABERTA** — é a próxima |
+> | 1 | o diff da tela pela competência ANTERIOR (`.lt`) | **RESOLVIDA** em 02/09 (régua única + rótulo por fatia) |
 > | 2 | rascunho sem override não pode ganhar a data | **RESOLVIDA** em 02/09 (aviso condicional) |
 > | 3 | a classe "provider sem data" | **RESOLVIDA** em 02/09 (4 sítios + portão) |
 >
@@ -468,6 +468,26 @@ que a TRP39 já havia mudado, como se fosse novidade da correção.
 
 **Conserto:** base = última fatia ATIVA da MESMA competência, se houver; senão a
 cascata para a anterior. Dois sítios. **É o primeiro item da próxima frente.**
+
+### ✔ RESOLVIDA em 02/09/2026 — régua única + o rótulo dizendo a FATIA
+
+`lib/trp/baseDoDiff.ts` (novo): a última fatia ATIVA da PRÓPRIA competência — a
+mesma contra quem o RPC decide substituir/partir — com fallback para a anterior
+quando o mês ainda não tem régua. Os dois sítios eram cópia um do outro e agora
+chamam o mesmo helper; o `.lt` inline saiu dos dois.
+
+O rótulo da tela passou a dizer a fatia e a vigência, e a distinguir base própria
+de herdada: *"Comparando com **2026-08 v1** (2026-07-31 a 2026-08-04) — a régua
+que está valendo nesta competência"*. Antes dizia só `2026-07 (v2)`, que era
+verdade sobre o que ele comparava e mentira sobre o que ele devia comparar.
+
+Portão `scripts/gate_trp_base_do_diff.cjs` (self-contained), com as 2 mutações —
+voltar ao `.lt` (bases divergem, e as RÉGUAS divergem) e remover o fallback (o
+primeiro upload do mês perde o diff). **A fixture não repete o azar de produção**:
+lá as duas bases são a mesma régua, e é por isso que o defeito passou
+despercebido; com réguas iguais na fixture a mutação não derrubaria nada. O bloco
+0 prova que as três réguas da fixture são diferentes antes de qualquer asserção
+depender disso.
 
 ### 2. Rascunho salvo SEM override não pode ganhar a data depois
 
