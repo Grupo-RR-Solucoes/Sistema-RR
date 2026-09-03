@@ -58,40 +58,70 @@ la** — mas o max ja era 2026-08 e so o max podia ser pedido. `previsao_snapsho
 e write-once: vintage nao congelado na hora so volta por essa porta. O resultado
 agora carrega `competenciaOrigem: "parametro" | "max_carteira"`.
 
-### PENDENTE E BLOQUEANTE
+### APLICADA E PROVADA DE PONTA A PONTA — 03/09/2026
 
-**A migration `supabase/migrations/20260903_000002_materializacao_fila.sql` NAO
-foi aplicada.** O portao `scripts/gate_materializacao_fila.cjs` reprova em **D1**
-(tabela) e **D3** (RPC) ate ela rodar — isso e projeto, nao defeito: sem ela a
-rota enfileira para ninguem.
+A migration foi aplicada no Studio e o ciclo esta provado com dado real.
 
-Medido no Studio em 03/09/2026, antes: `pg_extension` vazio;
-`pg_available_extensions` com **pg_cron 1.6.4**, `installed_version` NULL. Por
-isso o `create extension` entra na propria migration.
+**O NUMERO QUE SUSTENTA O DESENHO INTEIRO:**
 
-Depois de aplicar, a prova de ponta a ponta **sem import**:
-
-```sql
-insert into materializacao_fila (origem, year, month) values ('manual', 2026, 8);
--- ... 1 min ...
-select status, ms, linhas_carteira, carteira_competencia_max, erro
-  from materializacao_fila where origem = 'manual' order by criado_em desc limit 1;
+```
+fila origem='manual', 2026-08:
+  status OK | ms = 60.150 | linhas_producao 270.198 | linhas_carteira 74.956
+  carteira_competencia_max 2026-08
 ```
 
-E daqui: `node scripts/gate_materializacao_fila.cjs` fica verde e
-`node scripts/diag-materializacao-async-medir.cjs` passa a responder as secoes 4 e 5.
+**Sessenta segundos contra um teto de oito: 7,5x.** E o portao imprime o teto no
+mesmo run, lido do banco:
+`authenticator -> ["session_preload_libraries=safeupdate","statement_timeout=8s","lock_timeout=8s"]`.
+Nao era margem apertada — era impossibilidade. Nenhuma otimizacao razoavel da
+funcao caberia nos 8s, e e por isso que "escopar por competencia" nunca ia
+resolver.
 
-### ARMADILHA que o portao documenta
+Agendador vivo: `cron.job` jobid 1, `materializacao_fila`, `* * * * *`,
+`active=true`; `cron.job_run_details` com **10 execucoes registradas, todas
+`succeeded`**, uma por minuto.
 
-Antes da migration, chamar o worker devolve `PGRST202` — **o mesmo codigo que o
-revoke produz depois de aplicada**. Ler isso como "o revoke pegou" seria verde
-por vacuidade, entao a assercao **D10 fica suspensa ate D3 passar**.
+**ARMADILHA CORRIGIDA — `'1 minute'` NAO E ACEITO.** Eu tinha escrito
+`cron.schedule(..., '1 minute', ...)` e esta versao do pg_cron **recusa**: ela
+aceita cron classico (`* * * * *`) ou intervalo em segundos (`'[1-59] seconds'`),
+e nada entre os dois. Pior, a justificativa que eu havia deixado no arquivo
+("'1 minute' nao depende do suporte a intervalo sub-minuto") estava errada nos
+DOIS sentidos: o suporte sub-minuto existe, e era a forma em minutos que nao era
+aceita. Migration corrigida em disco para `* * * * *`.
+
+**Sobre o trabalho passar do minuto** (60.150 ms ja passa, por 150 ms): o disparo
+seguinte cai no `pg_try_advisory_xact_lock` e volta na hora, sem fila dupla. E
+para isso que o lock esta la, e e por isso que ele e `xact` e nao `session`.
+
+**A ARMADILHA DO D10 SE RESOLVEU NA DIRECAO CERTA.** Antes da migration, chamar o
+worker devolvia `PGRST202` — o mesmo codigo que a ausencia da funcao produz —, e
+por isso a assercao ficava SUSPENSA. Com a migration aplicada ela voltou a valer e
+devolve **`42501` (permission denied)**: codigo DIFERENTE, e prova de que o revoke
+pegou de verdade. Se eu tivesse deixado o D10 valer desde o inicio, ele teria
+passado verde por vacuidade e ninguem saberia se o revoke funcionava.
+
+**Portao VERDE**, os 4 lados: 12 assercoes de regra + 7 mutantes, 10 de rota, 10
+da migration, 10 do banco.
+
+### RESIDUO ABERTO: o vintage de 2026-07
+
+A linha `manual` da fila esta com `congelamento_pendente=true` e competencia
+**2026-08** — entao o proximo import de fechamento congela o vintage de agosto.
+**Julho continua devendo e nao tem linha na fila.** Para recuperar:
+
+```
+POST /api/recebiveis/congelar?competencia=2026-07
+```
+
+(usar `?dryRun=1` antes para ver o que sairia; `previsao_snapshot` e write-once,
+entao o primeiro congelamento de julho e o definitivo). Conferir depois que o
+resultado volta com `competenciaOrigem: "parametro"`.
 
 ### Gates (depois do commit)
 
-`npm run gates` **39/39**. `npm run gates:db`: 5 vermelhos — 1 desta frente
-(D1/D3, esperado) e **4 anteriores e alheios**, nenhum deles lendo os modulos
-tocados aqui: `produto_pmr_empresa_dona` (crash de teardown 3221226505),
+`npm run gates` **39/39**. `npm run gates:db`, depois da migration aplicada: o
+portao desta frente PASSA, e sobram **4 vermelhos anteriores e alheios**, nenhum
+deles lendo os modulos tocados aqui: `produto_pmr_empresa_dona` (crash de teardown 3221226505),
 `gate_trp_vigencia_intra_mes`, `gate-srcc-ads`, `check_audit_v9_tables`.
 Teto da faixa `--db`: **204,0s de 90s**, ja estourado antes; os 2,2s deste portao
 sao ~1%. `tsc --noEmit` 0.

@@ -10,6 +10,13 @@
 -- funcoes rodam sem problema no Studio (foi assim que a carteira foi posta em
 -- 2026-08 no dia 02/09/2026, `created_at` unico 2026-09-02T21:27:50).
 --
+-- NUMERO DE FECHAMENTO, medido DENTRO do worker depois de aplicada esta
+-- migration (fila origem='manual', 2026-08): **ms = 60.150**, com
+-- linhas_producao 270.198, linhas_carteira 74.956 e carteira_competencia_max
+-- 2026-08. Sessenta segundos contra um teto de oito: **7,5x**. Nao era margem
+-- apertada, era impossibilidade -- e nenhuma otimizacao razoavel da funcao
+-- caberia nos 8s. E este numero que sustenta o desenho inteiro.
+--
 -- Escopar por competencia NAO resolve: a 2a funcao nao tem competencia para
 -- escopar -- ela comeca com TRUNCATE e reconstroi a janela 2026+ inteira.
 --
@@ -255,12 +262,25 @@ begin
   end if;
 end $$;
 
--- 1 minuto, e nao segundos: o congelamento NAO espera mais a fila (roda no
--- import seguinte ou por chamada explicita), entao latencia de fila nao e
--- requisito -- e '1 minute' nao depende do suporte a intervalo sub-minuto.
+-- A CADA MINUTO, em cron CLASSICO.
+--
+-- CORRECAO DE 03/09/2026, medida na aplicacao: eu tinha escrito `'1 minute'` e
+-- ESTA VERSAO DO pg_cron RECUSA essa forma. Ela aceita cron classico
+-- (`* * * * *`) ou intervalo em segundos (`'[1-59] seconds'`) — e nada entre os
+-- dois. A justificativa que estava aqui antes ("'1 minute' nao depende do
+-- suporte a intervalo sub-minuto") estava ERRADA nos dois sentidos: o suporte
+-- sub-minuto existe, e era a forma em minutos que nao era aceita.
+--
+-- Por que 1 minuto e nao segundos: o congelamento NAO espera mais a fila (roda
+-- no import seguinte ou por chamada explicita), entao latencia de fila nao e
+-- requisito. E MEDIDO em 03/09/2026, o trabalho leva **60.150 ms** — disparar a
+-- cada 10s so faria o worker encontrar a si mesmo. Quando isso acontecer (o
+-- trabalho passar do minuto, como ja passa por 150 ms), o disparo seguinte cai
+-- no `pg_try_advisory_xact_lock` e volta na hora, sem fila dupla. E para isso
+-- que o lock esta la.
 select cron.schedule(
   'materializacao_fila',
-  '1 minute',
+  '* * * * *',
   'select public.fn_materializacao_fila_processar(1);'
 );
 
