@@ -50,3 +50,7 @@ scripts/_tmp_*
 # servidos pelo app — Next.js serve estáticos de public/). O app real vive em
 # app/. Nenhum .html legítimo é servido da raiz.
 /*.html
+
+# Snapshot do PMR gravado ANTES de uma reconsolidacao (scripts/reconsolidar-*).
+# NAO versionar: o repositorio e PUBLICO e o arquivo tem comissao por promotor.
+.pmr-*.json
