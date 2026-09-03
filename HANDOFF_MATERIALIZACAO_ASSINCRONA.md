@@ -176,9 +176,31 @@ inteira em 02/09 e a chegada dos fechamentos de julho e agosto reclassifica
 contratos. E exatamente por isso que o vintage e write-once — ele guarda o que se
 sabia entao.
 
-**Residuo que continua aberto:** a linha `manual` da fila e de **2026-08** com
-`congelamento_pendente=true`, entao o vintage de agosto e congelado pelo proximo
-import de fechamento (ou pela mesma rota com `?competencia=2026-08`).
+### O vintage de 2026-08 — CONGELADO em 03/09/2026
+
+Era o ultimo residuo da frente. Dry-run limpo, mesma estrutura de julho (ja
+conferida no item 3 acima), gravado por `?competencia=2026-08`.
+
+```json
+{ "snapshot": "2026-08", "competenciaOrigem": "parametro",
+  "linhasGravadas": 146, "linhasProjetadas": 146,
+  "vintageJaExistia": false, "linhasDescartadas": 0,
+  "vintageIncompleto": false, "avisos": [] }
+```
+
+`previsao_snapshot`: **294 -> 440 linhas**
+(`{"2026-06":148, "2026-07":146, "2026-08":146}`). Alvos 2026-08..2038-09,
+`base_snapshot_prt` = `2026-08` nas 146. Sigma `previsto_prt` 656.050,60 |
+`previsto_avista` 178.461,87 | `previsto_diferido` 5.674,59.
+
+As quatro conferencias, todas OK: (1) 146 linhas; (2) `competenciaOrigem` =
+`"parametro"`; (3) a-vista **178.461,87 no alvo 2026-08**, com ZERO linhas de
+a-vista em qualquer outro alvo; (4) **2026-06 e 2026-07 INTACTOS** — 148 e 146
+linhas antes e depois, com **0 campos diferentes** na comparacao campo a campo
+contra uma leitura da tabela inteira feita ANTES da escrita.
+
+Os tres vintages existem, e a serie "previsto ENTAO vs recebido DEPOIS" volta a
+ser continua de 2026-06 em diante.
 
 ### Gates (depois do commit)
 
