@@ -165,10 +165,24 @@ async function fetchDailyNaJanela(
  */
 export async function buildAvistaProducao(
   supabase: SupabaseClient,
-  options: { refDate?: Date } = {},
+  options: {
+    refDate?: Date;
+    /**
+     * Competência da produção, explícita. Quando informada, NÃO se deriva do
+     * refDate — nem se aplica o rolamento de janela de
+     * determinarCompetenciaProducao.
+     *
+     * Existe para o congelamento em CATCH-UP: congelar o vintage de 2026-07 em
+     * setembro tem de ler a janela de JULHO. Derivar de um refDate escolhido a
+     * dedo funcionaria por acidente (a última data de julho pode cair depois do
+     * fim da janela útil e rolar para agosto) — e um vintage errado gravado é
+     * definitivo, porque previsao_snapshot é write-once.
+     */
+    competencia?: { year: number; month: number };
+  } = {},
 ): Promise<AvistaProducaoResult> {
   const refDate = options.refDate ?? new Date();
-  const comp = determinarCompetenciaProducao(refDate);
+  const comp = options.competencia ?? determinarCompetenciaProducao(refDate);
   const win = productionBusinessWindow(comp.year, comp.month);
   const inicioISO = ymd(win.start);
   const fimISO = ymd(win.end);

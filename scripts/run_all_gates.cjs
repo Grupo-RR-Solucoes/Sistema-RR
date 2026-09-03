@@ -348,6 +348,36 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/gate_materializacao_fila.cjs",
+    nome: "materializacao da carteira PRT e ASSINCRONA, e o assincrono NAO e silencioso",
+    modo: "needs-db",
+    motivo:
+      "a materializacao era chamada pelo PostgREST e nao PODIA terminar: medido, o role " +
+      "`authenticator` corta em 8s (statement_timeout e lock_timeout) e as duas funcoes " +
+      "queimam 38-51s. Ficou morta de 2026-07-07 a 2026-09-02, dois fechamentos. O conserto " +
+      "tira a execucao da API — a rota INSERE em materializacao_fila e um job pg_cron roda " +
+      "dentro do banco, sem teto (migration 20260903_000002, aplicada a mao no Studio). " +
+      "O RISCO DO CONSERTO E TROCAR UM DEFEITO VISIVEL POR UM INVISIVEL, e e dai que sai " +
+      "metade das assercoes: 'enfileirei' nao e 'funcionou' — sem o job vivo o insert " +
+      "continua dando 200 e a carteira envelhece calada. QUATRO lados no mesmo run: " +
+      "(A) as regras de lib/materializacao/filaRegras.ts — congelar so sobre status='OK', " +
+      "ordem cronologica (julho antes de agosto), flag lida em ESTRITO (`!== false` " +
+      "classificaria o historico inteiro, mesma armadilha do trp_multi_versao e do " +
+      "piso_zerou) e fila doente derrubando o bloco do rastro — 7 MUTANTES do fonte real; " +
+      "(B) as rotas — a de import nao chama mais fn_materializar_* direto, e o congelamento " +
+      "recebe a competencia da FILA e nunca do max(competencia) da carteira: foi o max que " +
+      "deixou o vintage de 2026-07 INALCANCAVEL (quando a carteira foi materializada em " +
+      "02/09 o max ja era 2026-08, e previsao_snapshot e write-once); (C) a migration em " +
+      "disco tem `set local statement_timeout = 0`, lock de TRANSACAO (o de sessao nao " +
+      "volta no rollback e travaria a fila), SKIP LOCKED, ordem asc, os revokes do worker e " +
+      "a mensagem crua do sqlerrm; (D) o BANCO — tabela, RPC de diagnostico, job do cron " +
+      "ATIVO e com execucao REGISTRADA em cron.job_run_details (job que nunca rodou nao " +
+      "prova nada). Custo medido 03/09/2026: 2,2s / 2,2s. ARMADILHA que o proprio gate " +
+      "documenta: antes da migration a chamada ao worker devolve o MESMO PGRST202 que o " +
+      "revoke produz depois — a assercao D10 fica suspensa ate D3 passar, senao seria verde " +
+      "por vacuidade",
+  },
+  {
     arquivo: "scripts/gate_pos_import_diag.cjs",
     nome: "o rastro do pos-import existe, NAS DUAS rotas de fechamento",
     modo: "needs-db",
