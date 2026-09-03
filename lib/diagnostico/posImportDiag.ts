@@ -94,5 +94,72 @@ export function montarPosImportDiag(
   };
 }
 
-/** Nome da coluna que guarda o diagnóstico (migration 20260902_000001). */
-export const COLUNA_POS_IMPORT_DIAG = "pos_import_diag";
+/** Tabela que guarda o diagnóstico (migration 20260903_000001). */
+export const TABELA_POS_IMPORT_DIAG = "import_pos_diag";
+
+/**
+ * De onde veio o import. Texto, não enum — as duas rotas de fechamento
+ * registram em tabelas diferentes (`monthly_closing_imports` para a RR,
+ * `daily_imports` para a ADS) e a terceira rota que vier não deve exigir
+ * migration nova só para se nomear.
+ */
+export type OrigemImport = "closing_rr" | "closing_ads";
+
+interface SupabaseLike {
+  from: (t: string) => any;
+}
+
+/**
+ * Grava o rastro. NUNCA lança — um import que já escreveu o ledger não pode cair
+ * por causa do próprio diagnóstico.
+ *
+ * MAS a falha daqui não é aceitável em silêncio, e é o que separa esta função de
+ * "mais um best-effort": se a tabela não existir (migration 20260903_000001 não
+ * aplicada no Studio), o console diz isso com todas as letras, o conteúdo
+ * perdido vai junto para o log, E o portão scripts/gate_pos_import_diag.cjs
+ * reprova. Verde sem a tabela seria a mesma mentira que este módulo veio
+ * desfazer.
+ */
+export async function registrarPosImportDiag(
+  supabase: SupabaseLike,
+  params: {
+    origem: OrigemImport;
+    importId?: string | null;
+    year: number;
+    month: number;
+    diag: PosImportDiag;
+  }
+): Promise<boolean> {
+  const comp = `${params.year}-${String(params.month).padStart(2, "0")}`;
+  try {
+    const { error } = await supabase.from(TABELA_POS_IMPORT_DIAG).insert({
+      origem: params.origem,
+      import_id: params.importId ?? null,
+      year: params.year,
+      month: params.month,
+      houve_falha: params.diag.houve_falha,
+      falharam: params.diag.falharam,
+      ms_total: Math.round(params.diag.ms_total),
+      blocos: params.diag.blocos,
+    });
+    if (error) throw new Error(`${error.code || ""} ${error.message}`.trim());
+    if (params.diag.houve_falha) {
+      console.error(
+        `[pos-import ${params.origem} ${comp}] falha em: ${params.diag.falharam.join(", ")} ` +
+          `— rastro em ${TABELA_POS_IMPORT_DIAG} (import ${params.importId ?? "?"}).`
+      );
+    }
+    return true;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(
+      `[pos-import ${params.origem} ${comp}] NAO FOI POSSIVEL GRAVAR o rastro dos efeitos ` +
+        `colaterais — ele voltou a ser invisivel. Se o erro for de tabela inexistente, aplique ` +
+        `supabase/migrations/20260903_000001_import_pos_diag.sql no Studio. Detalhe: ${msg}`
+    );
+    console.error(
+      `[pos-import ${params.origem} ${comp}] conteudo perdido: ${JSON.stringify(params.diag)}`
+    );
+    return false;
+  }
+}

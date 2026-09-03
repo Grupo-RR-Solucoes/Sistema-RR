@@ -349,19 +349,23 @@ const DB_ONLY = process.argv.includes("--db");
 const GATES = [
   {
     arquivo: "scripts/gate_pos_import_diag.cjs",
-    nome: "o rastro do pos-import existe (o erro dos 4 blocos para de morrer no log)",
+    nome: "o rastro do pos-import existe, NAS DUAS rotas de fechamento",
     modo: "needs-db",
     motivo:
-      "os 4 blocos best-effort do import de fechamento engoliam o proprio erro num " +
-      "console.error; num deploy serverless isso morre com a invocacao. Custo medido: a " +
-      "materializacao da carteira PRT falhava desde 2026-07-07 e passou DOIS fechamentos " +
-      "(julho e agosto) sem ninguem ver. Dois lados no mesmo run: (A) a regra de " +
-      "lib/diagnostico/posImportDiag.ts preserva a mensagem CRUA, nao descarta bloco e " +
-      "deriva houve_falha — provado por MUTACAO DO FONTE REAL (scripts/_mutanteTs.cjs), 3 " +
-      "mutantes; (B) a coluna monthly_closing_imports.pos_import_diag EXISTE no banco. Sem " +
-      "a coluna o conserto e INERTE (a rota leva 42703 no UPDATE e o rastro volta a ser " +
-      "invisivel), entao a ausencia REPROVA de proposito — migration 20260902_000001, " +
-      "aplicada a mao no Studio",
+      "os blocos de efeito colateral do import engoliam o proprio erro num console.error; " +
+      "num deploy serverless isso morre com a invocacao. Custo medido: a materializacao da " +
+      "carteira PRT falhava desde 2026-07-07 e passou DOIS fechamentos (julho e agosto) sem " +
+      "ninguem ver. TRES lados no mesmo run: (A) a regra de lib/diagnostico/posImportDiag.ts " +
+      "preserva a mensagem CRUA, nao descarta bloco e deriva houve_falha — provado por " +
+      "MUTACAO DO FONTE REAL (scripts/_mutanteTs.cjs), 3 mutantes; (B) a TABELA " +
+      "import_pos_diag existe no banco — sem ela o conserto e INERTE e a ausencia REPROVA de " +
+      "proposito (migration 20260903_000001, aplicada a mao no Studio); (C) AS DUAS rotas " +
+      "gravam, e este lado nasceu de buraco REAL: a 1a versao instrumentou so " +
+      "app/api/import/closing/route.ts e o fechamento da ADS de 02/09/2026 passou sem deixar " +
+      "foto — a ADS entra por .../closing/ads/route.ts e se registra em daily_imports, nao em " +
+      "monthly_closing_imports. O lado C tambem cobra que instrumentar NAO virou engolir: a " +
+      "rota da ADS e fail-loud nos dois blocos, entao o gate exige o `throw e` depois do " +
+      "registro e o registro ANTES do 422 da ancora",
   },
   {
     arquivo: "scripts/gate_desconto_piso.cjs",

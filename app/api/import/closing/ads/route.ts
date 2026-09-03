@@ -12,6 +12,11 @@ import {
   competenciaCarimbo,
   textoRecusaCarimboPosterior,
 } from "@/lib/bbts/carimboPosterior";
+import {
+  montarPosImportDiag,
+  registrarPosImportDiag,
+  type BlocoPosImport,
+} from "@/lib/diagnostico/posImportDiag";
 
 // ============================================================================
 // /api/import/closing/ads — FECHAMENTO da ADS/BBTS por 2 PDFs (crédito + seguro).
@@ -184,14 +189,67 @@ export async function POST(req: Request) {
       );
     }
 
+    // ============================================================
+    // RASTRO DOS EFEITOS COLATERAIS — a MESMA tabela da rota da RR
+    // (`import_pos_diag`, migration 20260903_000001), com origem='closing_ads'.
+    //
+    // POR QUE ESTA ROTA PRECISA DISSO mesmo NÃO tendo os 4 blocos best-effort
+    // do fechamento da RR: em 02/09/2026 o fechamento da ADS de agosto rodou e
+    // não deixou foto nenhuma — nem teria deixado com a instrumentação da outra
+    // rota aplicada, porque a ADS se registra em `daily_imports` e não em
+    // `monthly_closing_imports`. Rastro que só existe numa das duas rotas de
+    // fechamento não é rastro.
+    //
+    // REGRA QUE NÃO SE QUEBRA AQUI: os dois blocos desta rota são FAIL-LOUD de
+    // propósito (âncora que não fecha vira 422; reconsolidação que falha vira
+    // erro). Instrumentar é REGISTRAR E RELANÇAR — nunca transformar em
+    // best-effort. Silenciar por engano seria criar o defeito que este arquivo
+    // veio medir.
+    // ============================================================
+    const blocos: BlocoPosImport[] = [];
+    const gravarDiag = (importId: string | null) =>
+      registrarPosImportDiag(supabase, {
+        origem: "closing_ads",
+        importId,
+        year: input.year,
+        month: input.month,
+        diag: montarPosImportDiag(blocos),
+      });
+
     let res;
+    const tImport = Date.now();
     try {
       res = await importBbtsClosing(supabase, input, {
         dryRun,
         fileName: String(body.fileName || "fechamento_ads.pdf"),
       });
+      blocos.push({
+        nome: "import_fechamento_ads",
+        ok: true,
+        ms: Date.now() - tImport,
+        extra: {
+          dry_run: res.dry_run,
+          ancora_ok: res.ancora_ok,
+          propostas: res.propostas,
+          gravadas: res.gravadas,
+          cabecalho_gravado: res.cabecalho_gravado,
+          cabecalho_aviso: (res as { cabecalho_aviso?: string }).cabecalho_aviso ?? null,
+          seguro_pdf_ausente: res.seguro_pdf_ausente,
+          abertura_conta: res.abertura_conta,
+          puladas_carimbo_posterior: (res.puladas_carimbo_posterior || []).length,
+        },
+      });
     } catch (e: any) {
       // gate de âncora do importBbtsClosing (não fechou => nada gravado)
+      blocos.push({
+        nome: "import_fechamento_ads",
+        ok: false,
+        ms: Date.now() - tImport,
+        erro: String(e?.message || e),
+      });
+      // A âncora que não fecha é a falha MAIS cara desta rota. Registrar ANTES
+      // de devolver o 422 — depois do return não há mais instante nenhum.
+      await gravarDiag(null);
       return NextResponse.json({ error: `Âncora do fechamento não fechou: ${e?.message || e}` }, { status: 422 });
     }
 
@@ -202,15 +260,43 @@ export async function POST(req: Request) {
     // e no-op por guarda de regime. NAO best-effort: falha aqui vira erro.
     let pmrFechado = null;
     if (!dryRun) {
-      pmrFechado = await reconsolidarCompetenciaFechada(supabase, {
-        year: input.year,
-        month: input.month,
-        dryRun: false,
-      });
+      const tRecon = Date.now();
+      try {
+        pmrFechado = await reconsolidarCompetenciaFechada(supabase, {
+          year: input.year,
+          month: input.month,
+          dryRun: false,
+        });
+        blocos.push({
+          nome: "reconsolidacao_competencia",
+          ok: true,
+          ms: Date.now() - tRecon,
+          extra: {
+            regime: pmrFechado?.regime ?? null,
+            ran: pmrFechado?.ran ?? null,
+            promotores: pmrFechado?.promotores ?? null,
+            gravadas: pmrFechado?.gravadas ?? null,
+            // best-effort DENTRO da reconsolidação: roda pelas duas rotas e não
+            // pertence a nenhuma. Sem isto, a falha dele fica só no console.
+            desconto_piso: pmrFechado?.desconto_piso ?? null,
+          },
+        });
+      } catch (e: any) {
+        blocos.push({
+          nome: "reconsolidacao_competencia",
+          ok: false,
+          ms: Date.now() - tRecon,
+          erro: String(e?.message || e),
+        });
+        await gravarDiag(res.daily_import_id);
+        throw e; // FAIL-LOUD preservado: registrar não é engolir.
+      }
       clearMemoryCache("closing:");
       clearMemoryCache("promoters:");
       clearMemoryCache("dashboard:");
     }
+
+    const diagGravado = await gravarDiag(res.daily_import_id);
 
     return NextResponse.json({
       success: true,
@@ -236,6 +322,8 @@ export async function POST(req: Request) {
       // NAO entrou — e o unico registro de que o dinheiro ficou de fora.
       puladas_carimbo_posterior: res.puladas_carimbo_posterior,
       importedBy: user.session.appUser.email,
+      posImportDiag: montarPosImportDiag(blocos),
+      posImportDiagGravado: diagGravado,
     });
   } catch (error) {
     return apiGuardErrorResponse(error);

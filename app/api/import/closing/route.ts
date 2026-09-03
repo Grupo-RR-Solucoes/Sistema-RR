@@ -10,8 +10,8 @@ import { congelarPrevisao } from "@/lib/recebiveis/congelarPrevisao";
 import { materializarCarteiraConsorcio } from "@/lib/consorcio/carteira";
 import { persistConsorcioInadimplenciaSnapshot } from "@/lib/consorcio/inadimplencia";
 import {
-  COLUNA_POS_IMPORT_DIAG,
   montarPosImportDiag,
+  registrarPosImportDiag,
 } from "@/lib/diagnostico/posImportDiag";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
@@ -52,12 +52,18 @@ export async function POST(req: Request) {
     // carteira desatualizada — por isso (1) vem antes de (2).
     //
     // O ERRO DE CADA BLOCO NÃO MORRE MAIS NO console.error. Cada um é
-    // cronometrado e o resultado vai para monthly_closing_imports.pos_import_diag
-    // (migration 20260902_000001). Motivo: a materialização (1) falhava desde
-    // 2026-07-07 e passou DOIS fechamentos sem ninguém ver, porque a única
-    // testemunha era o log da invocação serverless. O `ms` faz parte do rastro —
-    // foi o tempo (bloco 2 em 5,5s dentro de uma janela de 43-57s) que revelou
-    // que (1) morre depois de ~38-51s em vez de falhar na hora.
+    // cronometrado e o resultado vai para a tabela `import_pos_diag`
+    // (migration 20260903_000001), com origem='closing_rr'. Motivo: a
+    // materialização (1) falhava desde 2026-07-07 e passou DOIS fechamentos sem
+    // ninguém ver, porque a única testemunha era o log da invocação serverless.
+    // O `ms` faz parte do rastro — foi o tempo (bloco 2 em 5,5s dentro de uma
+    // janela de 43-57s) que revelou que (1) morre depois de ~38-51s em vez de
+    // falhar na hora.
+    //
+    // A ADS escreve no MESMO lugar, com origem='closing_ads'
+    // (app/api/import/closing/ads/route.ts). Rastro que só existe numa das duas
+    // rotas de fechamento não é rastro — foi assim que o import da ADS de agosto
+    // passou sem deixar foto.
     // ============================================================
 
     // (1) Materialização da carteira PRT por-contrato: TRUNCATE + INSERT via as
@@ -264,32 +270,13 @@ export async function POST(req: Request) {
     ]);
 
     const importId = (payload as { importId?: string }).importId;
-    if (importId) {
-      try {
-        const { error: diagError } = await getSupabaseAdmin()
-          .from("monthly_closing_imports")
-          .update({ [COLUNA_POS_IMPORT_DIAG]: posImportDiag })
-          .eq("id", importId);
-        if (diagError) throw new Error(`${diagError.code || ""} ${diagError.message}`.trim());
-      } catch (diagWriteError) {
-        const message =
-          diagWriteError instanceof Error ? diagWriteError.message : String(diagWriteError);
-        console.error(
-          `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
-            `NAO FOI POSSIVEL GRAVAR pos_import_diag (o rastro dos efeitos colaterais ` +
-            `voltou a ser invisivel). Se o erro for de coluna inexistente, aplique a ` +
-            `migration 20260902_000001_pos_import_diag.sql no Studio. Detalhe: ${message}`
-        );
-      }
-    }
-
-    if (posImportDiag.houve_falha) {
-      console.error(
-        `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
-          `pos-import com falha em: ${posImportDiag.falharam.join(", ")} ` +
-          `(rastro em monthly_closing_imports.pos_import_diag do import ${importId ?? "?"}).`
-      );
-    }
+    const diagGravado = await registrarPosImportDiag(getSupabaseAdmin(), {
+      origem: "closing_rr",
+      importId,
+      year,
+      month,
+      diag: posImportDiag,
+    });
 
     return NextResponse.json({
       ...payload,
@@ -298,6 +285,7 @@ export async function POST(req: Request) {
       inadimplenciaMonitor,
       consorcioCarteira,
       posImportDiag,
+      posImportDiagGravado: diagGravado,
     });
   } catch (error) {
     if (error instanceof DuplicateImportInFlightError) {
