@@ -60,6 +60,19 @@ export interface PrtAgenda {
 export interface PrtAgendaOptions {
   /** Quantidade de meses a projetar à frente (default 12). */
   horizonteMeses?: number;
+  /**
+   * Competência do snapshot. Quando informada, NÃO se consulta
+   * findLatestCarteiraMonth — é este parâmetro que manda.
+   *
+   * POR QUE EXISTE: o max(competencia) da carteira era a única forma de escolher
+   * o vintage, e isso tornou o vintage de 2026-07 INALCANÇÁVEL. A materialização
+   * esteve morta de 07/07 a 02/09; quando finalmente rodou, reconstruiu a
+   * carteira de 2026-01 em diante — logo julho ESTÁ lá — mas o max já era
+   * 2026-08 e nenhuma chamada conseguia mais pedir julho. Com o congelamento em
+   * catch-up (a fila de materialização diz qual competência está devendo), pedir
+   * a competência é o que torna o atraso recuperável.
+   */
+  competencia?: { ano: number; mes: number };
 }
 
 // ------------------------------------------------------------------ helpers --
@@ -335,10 +348,23 @@ export async function buildPrtAgenda(
   supabase: SupabaseClient,
   options: PrtAgendaOptions = {},
 ): Promise<PrtAgenda> {
-  const snap = await findLatestCarteiraMonth(supabase);
+  // A competência PEDIDA vence o max da carteira. Quando ela vem, o max NÃO é
+  // nem consultado — consultar e ignorar seria só uma ida ao banco a mais, mas
+  // deixaria a porta aberta para alguém "corrigir" o parâmetro pelo max, que é o
+  // defeito que este parâmetro existe para fechar.
+  const snap = options.competencia ?? (await findLatestCarteiraMonth(supabase));
   if (!snap) {
     throw new Error("Nenhuma competência ativa encontrada em carteira_contrato.");
   }
   const contracts = await fetchCarteiraSnapshot(supabase, snap.ano, snap.mes);
+  if (options.competencia && contracts.length === 0) {
+    // Competência pedida e vazia é ERRO, não agenda de zero: agenda vazia
+    // gravaria um vintage de R$ 0,00 que o write-once nunca deixaria consertar.
+    throw new Error(
+      `carteira_contrato nao tem contrato ATIVO em ${snap.ano}-${pad2(snap.mes)} — ` +
+        `nao ha o que congelar nessa competencia (materializacao ainda nao cobriu, ` +
+        `ou a competencia esta fora da janela 2026+ que fn_materializar_carteira_contrato reconstroi).`,
+    );
+  }
   return projectPrtAgenda(contracts, snap, options);
 }

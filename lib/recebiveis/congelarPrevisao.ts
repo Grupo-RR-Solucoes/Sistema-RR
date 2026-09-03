@@ -21,6 +21,17 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** "YYYY-MM" → {ano, mes}. null quando ausente OU malformada (não adivinha). */
+function parseCompetencia(comp?: string | null): { ano: number; mes: number } | null {
+  if (comp == null) return null;
+  const m = /^(\d{4})-(\d{2})$/.exec(String(comp).trim());
+  if (!m) return null;
+  const ano = Number(m[1]);
+  const mes = Number(m[2]);
+  if (mes < 1 || mes > 12) return null;
+  return { ano, mes };
+}
+
 export interface CongelarPrevisaoResult {
   /** Competência do snapshot (vintage) usado neste congelamento. */
   competenciaSnapshot: string;
@@ -44,6 +55,15 @@ export interface CongelarPrevisaoResult {
   dryRun: boolean;
   /** As linhas que seriam/foram gravadas — para conferência no dry-run. */
   linhas: PrevisaoSnapshotRow[];
+  /**
+   * De onde saiu a competência congelada: "parametro" (quem chamou pediu) ou
+   * "max_carteira" (derivada do max(competencia) de carteira_contrato).
+   *
+   * NÃO é enfeite: "max_carteira" é o caminho que perdeu o vintage de 2026-07
+   * para sempre. Ele continua existindo para as chamadas manuais legadas, mas
+   * agora DIZ que foi ele — e o portão exige que os imports usem "parametro".
+   */
+  competenciaOrigem: "parametro" | "max_carteira";
 }
 
 export interface PrevisaoSnapshotRow {
@@ -66,14 +86,36 @@ const CAMPOS_PREVISAO = ["previsto_prt", "previsto_avista", "previsto_diferido"]
  */
 export async function congelarPrevisao(
   supabase: SupabaseClient,
-  options: { horizonteMeses?: number; dryRun?: boolean } = {},
+  options: { horizonteMeses?: number; dryRun?: boolean; competencia?: string } = {},
 ): Promise<CongelarPrevisaoResult> {
   const horizonteMeses = options.horizonteMeses ?? 12;
   const dryRun = options.dryRun === true;
 
+  // A COMPETÊNCIA VEM DE PARÂMETRO. O max(competencia) de carteira_contrato
+  // sobrou como fallback das chamadas manuais legadas, e o resultado DIZ qual
+  // dos dois foi usado — porque foi o max que deixou o vintage de 2026-07
+  // inalcançável: entre 07/07 e 02/09 a materialização esteve morta; quando
+  // rodou, o max já era 2026-08 e julho nunca mais pôde ser pedido.
+  const pedida = parseCompetencia(options.competencia);
+  if (options.competencia !== undefined && !pedida) {
+    throw new Error(
+      `competencia invalida: ${JSON.stringify(options.competencia)} — esperado "YYYY-MM".`,
+    );
+  }
+  const competenciaOrigem: "parametro" | "max_carteira" = pedida ? "parametro" : "max_carteira";
+
   const [agenda, avista] = await Promise.all([
-    buildPrtAgenda(supabase, { horizonteMeses }),
-    buildAvistaProducao(supabase, {}),
+    buildPrtAgenda(supabase, {
+      horizonteMeses,
+      ...(pedida ? { competencia: { ano: pedida.ano, mes: pedida.mes } } : {}),
+    }),
+    // O à-vista TEM de ler a MESMA competência do PRT. Sem isto, um catch-up de
+    // julho gravaria previsto_prt de julho ao lado de previsto_avista de
+    // setembro na mesma linha — e write-once torna isso permanente.
+    buildAvistaProducao(
+      supabase,
+      pedida ? { competencia: { year: pedida.ano, month: pedida.mes } } : {},
+    ),
   ]);
 
   const competenciaSnapshot = agenda.snapshot.competencia;
@@ -175,6 +217,7 @@ export async function congelarPrevisao(
       avisos,
       dryRun: true,
       linhas: rows,
+      competenciaOrigem,
     };
   }
 
@@ -202,5 +245,6 @@ export async function congelarPrevisao(
     avisos,
     dryRun: false,
     linhas: rows,
+    competenciaOrigem,
   };
 }

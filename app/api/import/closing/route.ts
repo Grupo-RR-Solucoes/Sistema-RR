@@ -7,6 +7,18 @@ import {
   importMonthlyClosingWorkbook,
 } from "@/lib/monthlyClosingImport";
 import { congelarPrevisao } from "@/lib/recebiveis/congelarPrevisao";
+import {
+  enfileirarMaterializacao,
+  lerFilaRecente,
+  marcarCongelamentoFeito,
+} from "@/lib/materializacao/fila";
+import {
+  congelamentosPendentes,
+  diagnosticoFila,
+  blocoEnfileiramento,
+  type DiagnosticoFila,
+  type LinhaFila,
+} from "@/lib/materializacao/filaRegras";
 import { materializarCarteiraConsorcio } from "@/lib/consorcio/carteira";
 import { persistConsorcioInadimplenciaSnapshot } from "@/lib/consorcio/inadimplencia";
 import {
@@ -44,12 +56,19 @@ export async function POST(req: Request) {
 
     // ============================================================
     // Pós-import (efeitos colaterais best-effort): cada etapa loga e NÃO derruba
-    // o import. ORDEM CRÍTICA:
-    //   (1) materializar producao_contrato + carteira_contrato →
-    //   (2) congelarPrevisao (lê carteira_contrato via buildPrtAgenda) →
+    // o import.
+    //   (1) ENFILEIRA a materialização de producao_contrato + carteira_contrato
+    //       (o job pg_cron executa dentro do banco) →
+    //   (2) congelarPrevisao em CATCH-UP das competências que a fila já
+    //       materializou e ainda não congelou →
     //   (3) monitor de inadimplência (independente, lê metadata).
-    // Materializar DEPOIS de congelar deixaria a previsão congelada sobre uma
-    // carteira desatualizada — por isso (1) vem antes de (2).
+    //
+    // A ORDEM (1)→(2) DEIXOU DE SER A GARANTIA, e isso é deliberado. Enquanto a
+    // materialização era síncrona, (2) só podia rodar depois de (1) na mesma
+    // requisição. Com a fila, (1) só PEDE — e a dependência "congelar sobre
+    // carteira fresca" passou a ser garantida pelo DADO, não pela ordem das
+    // linhas: (2) congela apenas competências com status='OK' na fila. Fazer a
+    // rota esperar a fila teria reposto o sincronismo (e os mesmos 38-51s).
     //
     // O ERRO DE CADA BLOCO NÃO MORRE MAIS NO console.error. Cada um é
     // cronometrado e o resultado vai para a tabela `import_pos_diag`
@@ -66,76 +85,156 @@ export async function POST(req: Request) {
     // passou sem deixar foto.
     // ============================================================
 
-    // (1) Materialização da carteira PRT por-contrato: TRUNCATE + INSERT via as
-    // funções versionadas (migration 20260706_000004), com service_role (mesmo
-    // client das demais escritas). SÓ no import COMPLETO com entries
-    // (fileType === "TODOS"); os caminhos de idempotência (alreadyProcessed) e
-    // parciais não gravam entries PRT novas, então não há o que rematerializar.
-    let materializacaoCarteira: { ran: boolean; error?: string } = { ran: false };
+    // (1) MATERIALIZAÇÃO DA CARTEIRA PRT — ASSÍNCRONA desde 03/09/2026.
+    // (migration 20260903_000002_materializacao_fila.sql)
+    //
+    // ANTES: este bloco chamava fn_materializar_producao_contrato e
+    // fn_materializar_carteira_contrato direto pelo PostgREST. MEDIDO: o role
+    // `authenticator` tem statement_timeout=8s e lock_timeout=8s, e as duas
+    // funções juntas queimam 38-51s. A chamada não podia terminar por aquela
+    // porta — e não terminava desde 2026-07-07. As mesmas funções rodam no
+    // Studio sem problema (foi assim que a carteira chegou a 2026-08 em 02/09).
+    //
+    // AGORA: um INSERT na fila (milissegundos) e o job pg_cron
+    // `materializacao_fila` executa DENTRO do banco, sem o teto da API.
+    //
+    // Escopar por competência NÃO era saída: a 2ª função não tem competência
+    // para escopar — ela começa com TRUNCATE e reconstrói a janela 2026+ toda.
+    //
+    // "ENFILEIREI" NÃO É "FUNCIONOU", e é aqui que o assíncrono poderia trocar
+    // um defeito visível por um invisível: se o job do cron não estiver vivo, o
+    // insert continua devolvendo 200 e a carteira envelhece calada. Por isso o
+    // bloco lê a fila INTEIRA e só sai ok=true quando o insert passou E a fila
+    // está saudável — a denúncia de um import atrasado chega no import seguinte.
+    // SÓ no import COMPLETO (fileType === "TODOS"); os caminhos de idempotência
+    // (alreadyProcessed) e parciais não gravam entries PRT novas.
+    const importId = (payload as { importId?: string }).importId;
+    let materializacaoFila: {
+      enfileirado: boolean;
+      jobId: string | null;
+      error?: string;
+      diagnostico: DiagnosticoFila | null;
+    } = { enfileirado: false, jobId: null, diagnostico: null };
+    let filaRecente: LinhaFila[] = [];
     const importCompleto = "fileType" in payload && payload.fileType === "TODOS";
     const tMat = Date.now();
     if (importCompleto) {
+      const admin = getSupabaseAdmin();
+      let erroEnfileirar: string | undefined;
+      let jobId: string | null = null;
       try {
-        const admin = getSupabaseAdmin();
-        const prod = await admin.rpc("fn_materializar_producao_contrato");
-        if (prod.error) throw new Error(prod.error.message);
-        const cart = await admin.rpc("fn_materializar_carteira_contrato");
-        if (cart.error) throw new Error(cart.error.message);
-        materializacaoCarteira = { ran: true };
-        console.log(
-          `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
-            `carteira materializada (producao_contrato + carteira_contrato).`
-        );
+        jobId = await enfileirarMaterializacao(admin, {
+          origem: "closing_rr",
+          importId,
+          year,
+          month,
+        });
       } catch (matError) {
-        const message =
-          matError instanceof Error ? matError.message : "Erro desconhecido na materialização.";
-        materializacaoCarteira = { ran: false, error: message };
+        erroEnfileirar =
+          matError instanceof Error ? matError.message : "Erro desconhecido ao enfileirar.";
+      }
+      // A leitura da fila acontece TAMBÉM quando o insert falhou: o diagnóstico
+      // do que já estava na fila é a informação mais útil nesse caso.
+      try {
+        filaRecente = await lerFilaRecente(admin);
+      } catch (leituraError) {
+        const msg =
+          leituraError instanceof Error ? leituraError.message : "Erro ao ler a fila.";
+        erroEnfileirar = erroEnfileirar ? `${erroEnfileirar} | ${msg}` : msg;
+      }
+      materializacaoFila = {
+        enfileirado: !!jobId && !erroEnfileirar,
+        jobId,
+        error: erroEnfileirar,
+        diagnostico: filaRecente.length > 0 ? diagnosticoFila(filaRecente, Date.now()) : null,
+      };
+      console.log(
+        `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
+          `materializacao ENFILEIRADA (job ${jobId ?? "?"}); o job pg_cron ` +
+          `materializacao_fila executa em ate 1 min.`
+      );
+      if (materializacaoFila.diagnostico && !materializacaoFila.diagnostico.saudavel) {
         console.error(
           `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
-            `materialização da carteira falhou (import preservado; carteira fica ` +
-            `desatualizada até o próximo fechamento): ${message}`
+            `FILA DE MATERIALIZACAO DOENTE: ${materializacaoFila.diagnostico.mensagem}`
         );
       }
     }
     const msMat = Date.now() - tMat;
 
-    // (2) Pipeline de Recebíveis — congela a previsão vigente no momento do
-    // fechamento (para depois confrontar "previsto ENTÃO vs recebido DEPOIS").
-    // LÊ carteira_contrato (buildPrtAgenda → fetchCarteiraSnapshot) → depende da
-    // materialização (1) acima. Efeito colateral: falha aqui é logada mas NÃO
-    // derruba o import. Idempotente (ON CONFLICT DO NOTHING). SÓ nesta rota
-    // (fechamento corrente), NÃO na import/closing-history (backfill — ali o
-    // previsto seria contaminado pelo estoque atual).
+    // (2) CONGELAMENTO DA PREVISÃO — virou CATCH-UP, e por COMPETÊNCIA EXPLÍCITA.
+    //
+    // POR QUE NÃO ESPERA A FILA: esperar reintroduziria o sincronismo que esta
+    // frente veio matar (e o tempo total continuaria sendo os 38-51s, só num
+    // lugar diferente). O congelamento roda para as competências que a fila
+    // marca como JÁ MATERIALIZADAS e ainda não congeladas — na prática, o do
+    // import ANTERIOR. Também dá para forçar pela rota /api/recebiveis/congelar.
+    //
+    // POR QUE A COMPETÊNCIA VEM DA FILA, E NÃO DO max DA CARTEIRA: o max é o que
+    // deixou o vintage de 2026-07 INALCANÇÁVEL. A materialização morreu em
+    // 07/07; quando finalmente rodou (02/09) ela reconstruiu a carteira de
+    // 2026-01 em diante — julho ESTÁ lá — mas o max já era 2026-08, e como o
+    // congelamento só sabia pedir o max, julho nunca mais teve como ser pedido.
+    // previsao_snapshot é write-once: vintage perdido não volta.
+    //
+    // Efeito colateral: falha aqui é registrada mas NÃO derruba o import.
+    // Idempotente (ON CONFLICT DO NOTHING). A dívida da fila só é baixada
+    // DEPOIS de o congelamento daquela competência voltar sem lançar.
     let congelamentoPrevisao: {
       ran: boolean;
-      linhas?: number;
-      snapshot?: string;
-      error?: string;
-      vintageJaExistia?: boolean;
-      vintageIncompleto?: boolean;
+      nadaADever: boolean;
+      competencias: Array<{
+        competencia: string;
+        linhas: number;
+        vintageJaExistia: boolean;
+        vintageIncompleto: boolean;
+        competenciaOrigem: string;
+      }>;
       avisos?: string[];
-    } = {
-      ran: false,
-    };
+      error?: string;
+    } = { ran: false, nadaADever: false, competencias: [] };
     const tCongel = Date.now();
     try {
-      const congel = await congelarPrevisao(getSupabaseAdmin());
+      const admin = getSupabaseAdmin();
+      const devidos = congelamentosPendentes(filaRecente);
+      const feitas: typeof congelamentoPrevisao.competencias = [];
+      const avisos: string[] = [];
+      for (const devido of devidos) {
+        const congel = await congelarPrevisao(admin, { competencia: devido.competencia });
+        // Só depois de voltar sem lançar. Baixar antes (ou num finally) marcaria
+        // como pago um congelamento que falhou, e aquela competência nunca mais
+        // entraria no catch-up.
+        await marcarCongelamentoFeito(admin, devido.id);
+        feitas.push({
+          competencia: devido.competencia,
+          linhas: congel.linhasGravadas,
+          vintageJaExistia: congel.vintageJaExistia,
+          vintageIncompleto: congel.vintageIncompleto,
+          competenciaOrigem: congel.competenciaOrigem,
+        });
+        for (const aviso of congel.avisos) avisos.push(`${devido.competencia}: ${aviso}`);
+        console.log(
+          `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
+            `congelamento (catch-up) de ${devido.competencia}: ${congel.linhasGravadas} ` +
+            `novas linhas (${congel.linhasProjetadas} projetadas, origem da ` +
+            `competencia=${congel.competenciaOrigem}).`
+        );
+      }
       congelamentoPrevisao = {
         ran: true,
-        linhas: congel.linhasGravadas,
-        snapshot: congel.competenciaSnapshot,
-        // Anti-silêncio: o import passa a DIZER quando o congelamento não gravou nada
-        // porque o vintage já existia — e quando o vintage gravado está incompleto.
-        vintageJaExistia: congel.vintageJaExistia,
-        vintageIncompleto: congel.vintageIncompleto,
-        avisos: congel.avisos.length ? congel.avisos : undefined,
+        nadaADever: devidos.length === 0,
+        competencias: feitas,
+        avisos: avisos.length ? avisos : undefined,
       };
-      console.log(
-        `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
-          `congelamento de previsão: ${congel.linhasGravadas} novas linhas ` +
-          `(snapshot ${congel.competenciaSnapshot}, ${congel.linhasProjetadas} projetadas).`
-      );
-      for (const aviso of congel.avisos) {
+      if (devidos.length === 0) {
+        console.log(
+          `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
+            `congelamento: nada a dever na fila (a materializacao deste import ` +
+            `ainda esta PENDENTE; ela sera congelada no import seguinte ou por ` +
+            `POST /api/recebiveis/congelar).`
+        );
+      }
+      for (const aviso of congelamentoPrevisao.avisos ?? []) {
         console.warn(
           `[import closing ${year}-${String(month).padStart(2, "0")}] congelamento: ${aviso}`
         );
@@ -143,7 +242,7 @@ export async function POST(req: Request) {
     } catch (congelError) {
       const message =
         congelError instanceof Error ? congelError.message : "Erro desconhecido no congelamento.";
-      congelamentoPrevisao = { ran: false, error: message };
+      congelamentoPrevisao = { ran: false, nadaADever: false, competencias: [], error: message };
       console.error(
         `[import closing ${year}-${String(month).padStart(2, "0")}] ` +
           `congelamento de previsão falhou (import preservado): ${message}`
@@ -230,23 +329,26 @@ export async function POST(req: Request) {
     // seria exatamente a mentira que este conserto veio desfazer.
     // ============================================================
     const posImportDiag = montarPosImportDiag([
-      {
-        nome: "materializacao_carteira_prt",
-        ok: materializacaoCarteira.ran,
+      // O NOME DO BLOCO NAO MUDA com a troca de sincrono para fila: quem procura
+      // "materializacao_carteira_prt" no rastro tem de achar as duas eras. O que
+      // ele passou a ser esta em extra.via='fila'.
+      blocoEnfileiramento({
+        jobId: materializacaoFila.jobId,
         ms: msMat,
-        erro: materializacaoCarteira.error,
-        extra: { pulado_por_filetype: !importCompleto },
-      },
+        erro: materializacaoFila.error,
+        diagnostico: materializacaoFila.diagnostico,
+        puladoPorFileType: !importCompleto,
+      }),
       {
         nome: "congelamento_previsao",
         ok: congelamentoPrevisao.ran,
         ms: msCongel,
         erro: congelamentoPrevisao.error,
         extra: {
-          linhas_gravadas: congelamentoPrevisao.linhas ?? null,
-          vintage: congelamentoPrevisao.snapshot ?? null,
-          vintage_ja_existia: congelamentoPrevisao.vintageJaExistia ?? null,
-          vintage_incompleto: congelamentoPrevisao.vintageIncompleto ?? null,
+          // `nada_a_dever` separa "congelou" de "nao havia o que congelar" — as
+          // duas dao ok=true e sao coisas diferentes.
+          nada_a_dever: congelamentoPrevisao.nadaADever,
+          competencias: congelamentoPrevisao.competencias,
           avisos: congelamentoPrevisao.avisos ?? null,
         },
       },
@@ -269,7 +371,6 @@ export async function POST(req: Request) {
       },
     ]);
 
-    const importId = (payload as { importId?: string }).importId;
     const diagGravado = await registrarPosImportDiag(getSupabaseAdmin(), {
       origem: "closing_rr",
       importId,
@@ -280,7 +381,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ...payload,
-      materializacaoCarteira,
+      materializacaoFila,
       congelamentoPrevisao,
       inadimplenciaMonitor,
       consorcioCarteira,
