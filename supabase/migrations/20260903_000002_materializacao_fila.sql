@@ -264,6 +264,11 @@ select cron.schedule(
   'select public.fn_materializacao_fila_processar(1);'
 );
 
+-- O PostgREST guarda um CACHE DE SCHEMA. Tabela e funcao novas so aparecem na
+-- API depois do reload; sem isto o portao continua dizendo PGRST205/PGRST202
+-- como se a migration nao tivesse rodado.
+notify pgrst, 'reload schema';
+
 -- ============================================================
 -- CONFERENCIA (rodar depois, no Studio ou pela RPC de diagnostico):
 --   select * from cron.job where jobname = 'materializacao_fila';
