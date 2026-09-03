@@ -388,26 +388,89 @@ function stubClient(linhasPorCompetencia) {
     `buraco de vigência (03/08 sem fatia) LANÇA TrpVigenciaGapError em vez de pagar pela régua errada  [${lancou ? lancou.name : "NÃO LANÇOU"}]`,
   );
 
-  // BURACO A DIREITA: a ultima fatia termina ANTES do fim da janela (28/08) e um
-  // contrato cai no vao. Sem esta assercao, o rowValidUntil da linha nao seria
-  // carregado por NADA — a busca em ordem decrescente acerta a fatia mesmo com o
-  // limite superior errado, e uma mutacao que trocasse rowValidUntil pela janela
-  // do mes passava VERDE (medido: mutacao M5, 31/08).
-  const fxBuracoDireita = stubClient({
+  // A CAUDA DA ULTIMA FATIA — assercao REESCRITA em 03/09/2026.
+  //
+  // O que estava aqui antes: "buraco a DIREITA (ultima fatia acaba 20/08,
+  // contrato de 25/08) LANCA em vez de esticar a regua". Ela era CERTA quando
+  // nasceu (c984b98) e virou FALSA em `e564c89` — "a vigencia da REGUA cobre o
+  // calendario inteiro (o dia orfao)" —, que passou a ESTICAR a ultima fatia de
+  // proposito: as janelas de competencia nao particionam o calendario e sobravam
+  // dias orfaos (29-30/08/2026, 28-29/11/2026, ... 25 meses em 191), onde o
+  // resolvedor lancava e derrubava /promotores e /recebiveis. Esticar a ULTIMA
+  // fatia ate a vespera da competencia seguinte e o conserto, nao o defeito.
+  //
+  // Assercao de TRANSICAO morre; a INVARIANTE fica. Sao DUAS aqui, e juntas
+  // cobrem o mesmo que a antiga cobria:
+  //   (i)  a cauda estica ate `reguaUntil` da competencia — e NAO alem;
+  //   (ii) passado esse limite ainda LANCA (a extensao tem fim; se nao tivesse,
+  //        um contrato de setembro seria pago pela regua de agosto).
+  //
+  // E O rowValidUntil PRECISOU DE ANCORA NOVA. Eu tinha escrito aqui que o
+  // buraco A ESQUERDA logo acima ja defendia contra a mutacao M5 (trocar
+  // rowValidUntil pela janela do mes). MEDI e estava ERRADO: aquela fixture tem
+  // UMA fatia so, que portanto E a ultima; a data 03/08 cai ANTES do valid_from
+  // dela e o lancamento acontece por qualquer caminho. Com M5 aplicada o portao
+  // inteiro seguia VERDE — rowValidUntil tinha ficado sem ninguem olhando.
+  // Por isso existe a (iii) abaixo: um vao ENTRE DUAS fatias, onde a primeira
+  // NAO e a ultima e o limite dela e o proprio rowValidUntil.
+  const fxCauda = stubClient({
     "2026-08-01": [
       { id: V38, competencia: "2026-08-01", version_no: 1, valid_from: "2026-07-31", valid_until: "2026-08-04", regra_json: regra38 },
       { id: V39, competencia: "2026-08-01", version_no: 2, valid_from: "2026-08-05", valid_until: "2026-08-20", regra_json: regra39 },
     ],
   });
-  let lancouDir = null;
+  // (i) 25/08 esta DEPOIS do valid_until da ultima fatia (20/08) e ANTES do fim
+  //     da regua de 2026-08 (30/08): resolve pela ULTIMA, sem lancar.
+  let caudaVer = null;
+  let caudaErro = null;
   try {
-    await novo.resolveTrpRegraDb({ competencia: "2026-08", contractDate: "2026-08-25" }, fxBuracoDireita);
+    caudaVer = await novo.resolveTrpRegraDb({ competencia: "2026-08", contractDate: "2026-08-25" }, fxCauda);
   } catch (e) {
-    lancouDir = e;
+    caudaErro = e;
   }
   ok(
-    lancouDir instanceof novo.TrpVigenciaGapError,
-    `buraco à DIREITA (última fatia acaba 20/08, contrato de 25/08) LANÇA em vez de esticar a régua  [${lancouDir ? lancouDir.name : "NÃO LANÇOU"}]`,
+    !caudaErro && caudaVer && caudaVer.versionId === V39,
+    `cauda: 25/08 (apos o valid_until 20/08, dentro da regua ate 30/08) resolve pela ULTIMA fatia  ` +
+      `[${caudaErro ? caudaErro.name : caudaVer && caudaVer.versionId === V39 ? "TRP39" : "outro"}]`,
+  );
+  // (ii) 31/08 ja e a regua de 2026-09 (reguaFrom 2026-08-31): a extensao NAO
+  //      chega la, e o resolvedor tem de lancar. Sem este lado, "esticar" nao
+  //      teria fim e um contrato de setembro seria pago pela regua de agosto.
+  let lancouAlem = null;
+  try {
+    await novo.resolveTrpRegraDb({ competencia: "2026-08", contractDate: "2026-08-31" }, fxCauda);
+  } catch (e) {
+    lancouAlem = e;
+  }
+  ok(
+    lancouAlem instanceof novo.TrpVigenciaGapError,
+    `cauda: 31/08 (ja e a regua de 2026-09) LANCA — a extensao da ultima fatia TEM fim  ` +
+      `[${lancouAlem ? lancouAlem.name : "NÃO LANÇOU"}]`,
+  );
+
+  // (iii) A ANCORA DO rowValidUntil. Vao ENTRE duas fatias: a primeira acaba em
+  //       02/08, a segunda comeca em 05/08, e o contrato e de 03/08. A primeira
+  //       NAO e a ultima, entao o limite dela e o rowValidUntil CRU — trocar isso
+  //       pela janela do mes (mutacao M5) faria ela engolir o vao e pagar 03/08
+  //       pela regua errada, em silencio. Verificado por mutacao em 03/09/2026:
+  //       com M5 aplicada em lib/trp/vigenciaRegua.ts, ESTA assercao fica
+  //       vermelha (e so ela).
+  const fxVaoEntreFatias = stubClient({
+    "2026-08-01": [
+      { id: V38, competencia: "2026-08-01", version_no: 1, valid_from: "2026-07-31", valid_until: "2026-08-02", regra_json: regra38 },
+      { id: V39, competencia: "2026-08-01", version_no: 2, valid_from: "2026-08-05", valid_until: "2026-08-28", regra_json: regra39 },
+    ],
+  });
+  let lancouVao = null;
+  try {
+    await novo.resolveTrpRegraDb({ competencia: "2026-08", contractDate: "2026-08-03" }, fxVaoEntreFatias);
+  } catch (e) {
+    lancouVao = e;
+  }
+  ok(
+    lancouVao instanceof novo.TrpVigenciaGapError,
+    `vao ENTRE fatias (v1 ate 02/08, v2 desde 05/08, contrato 03/08) LANCA — a fatia NAO-ultima ` +
+      `respeita o proprio valid_until  [${lancouVao ? lancouVao.name : "NÃO LANÇOU"}]`,
   );
 
   // Régua única na fixture: a data não pode mudar nada (a invariante, offline).

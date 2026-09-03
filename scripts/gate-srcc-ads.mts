@@ -189,15 +189,65 @@ checa(`nenhuma linha REGREDIU para "Sem informação" (${regrediram.length})`, r
 
 const estados = contaLabel(ads, (r) => getSrccEstado(r));
 console.log("  estados ADS:", [...estados].sort().map(([k, n]) => `${k}: ${n}`).join("  ·  "));
-checa("nenhuma linha ADS vira 'restrito'", (estados.get("restrito") || 0) === 0);
-checa("19 viram 'neutro' (resposta conhecida)", (estados.get("neutro") || 0) === 19);
-checa("nenhum tingimento novo", ads.every((r) => getSrccRowTint(r as any) === null));
+// AS CINCO ASSERCOES QUE ESTAVAM AQUI ERAM RETRATOS, E MORRERAM — 03/09/2026.
+//
+// Eram: "nenhuma linha ADS vira 'restrito'", "19 viram 'neutro'", "nenhum
+// tingimento novo", "nenhuma linha ADS tem srcc_resolucao gravada ainda (so o
+// import grava)" e "nenhuma linha ADS tem is_srcc_restricted=true". Todas
+// descreviam o mundo ANTES de o import da ADS ter rodado. Ele rodou: hoje ha 2
+// linhas 'restrito', 113 'neutro', tingimento, srcc_resolucao gravada e
+// is_srcc_restricted=true. As cinco reprovavam TODO DIA anunciando que o recurso
+// FUNCIONOU — o oposto do que um portao serve para dizer.
+//
+// E o MESMO erro que o bloco logo acima ja corrigiu em 01/08/2026, quando as
+// contagens 18/1/35/54 viraram invariante ("Retrato so vale no dia em que foi
+// tirado"). Estas cinco escaparam daquela varredura.
+//
+// No lugar entram INVARIANTES DE COERENCIA: o que vale com 2 restritos ou com 2
+// mil. Cada uma amarra DUAS leituras da mesma verdade — coluna do banco x rotulo
+// da tela, booleano do dinheiro x estado da tela, estado x tingimento —, que e
+// exatamente o que um retrato nunca fez.
+console.log(`  [contexto] restrito=${estados.get("restrito") || 0}  neutro=${estados.get("neutro") || 0}  ` +
+  `sem-info=${estados.get("sem-info") || 0}  indefinido=${estados.get("indefinido") || 0}`);
+
+// (1) COERENCIA estado -> tingimento. O tingimento e DERIVADO do estado; se um
+//     dia alguem tingir por outro criterio, a tela passa a mentir sobre o risco.
+const tingeErrado = ads.filter((r) => {
+  const e = getSrccEstado(r as any);
+  const t = getSrccRowTint(r as any);
+  if (e === "restrito") return t !== "risco";
+  if (e === "indefinido") return t !== "alerta";
+  return t !== null;
+});
+checa(`tingimento SEMPRE deriva do estado (restrito=risco, indefinido=alerta, resto=null) — ${tingeErrado.length} fora`,
+  tingeErrado.length === 0);
+
+// (2) COERENCIA coluna -> tela. `srcc_resolucao` gravada e uma resposta da
+//     gestora; a tela NAO pode exibir "Sem informação" ao lado dela. E a falha de
+//     origem desta frente (19 linhas de junho com srcc_cd ao lado de "Sem
+//     informação"), agora vigiada pela OUTRA fonte.
+const comColuna = ads.filter((r) => String(r.srcc_resolucao ?? "").trim() !== "");
+const colunaMentindo = comColuna.filter((r) => getSrccRestrictionLabel(r as any) === "Sem informação");
+checa(`srcc_resolucao gravada => a tela NUNCA diz "Sem informação" (${comColuna.length} com coluna, ${colunaMentindo.length} mentindo)`,
+  colunaMentindo.length === 0);
+
+// (3) COERENCIA booleano -> estado. `is_srcc_restricted` e o que o DINHEIRO le
+//     (elegibilidade); o estado e o que a TELA mostra. Divergir aqui e pagar uma
+//     coisa e exibir outra.
+const boolRestrito = ads.filter((r) => r.is_srcc_restricted === true);
+const boolIncoerente = boolRestrito.filter((r) => getSrccEstado(r as any) !== "restrito");
+checa(`is_srcc_restricted=true => estado 'restrito' (${boolRestrito.length} marcadas, ${boolIncoerente.length} incoerentes)`,
+  boolIncoerente.length === 0);
+
+// (4) NAO-VACUIDADE do conserto: as CHAVES_NOVAS tem de mudar ALGUM rotulo. Sem
+//     isto as invariantes acima passariam mesmo que o conserto nao existisse.
+//     Numero REPORTADO, nunca cravado — foi cravar 19 que matou a assercao velha.
+checa(`as CHAVES_NOVAS mudam o rotulo de ao menos uma linha ADS (${mudou.length})`,
+  mudou.length > 0);
 
 // ================================================= 4. o dinheiro nao se move ==
-console.log("\n4. PRODUCAO E BOOLEANO — INTOCADOS\n" + L);
-checa("nenhuma linha ADS tem srcc_resolucao gravada ainda (so o import grava)",
-  ads.every((r) => r.srcc_resolucao == null));
-checa("nenhuma linha ADS tem is_srcc_restricted=true", ads.every((r) => r.is_srcc_restricted !== true));
+console.log("\n4. PRODUCAO — INTOCADA\n" + L);
+
 
 // elegibilidade de producao: mesma funcao, antes e depois — ela le o BOOLEANO,
 // nao o rotulo, entao tem de ser identica linha a linha.

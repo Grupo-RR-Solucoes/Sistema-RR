@@ -50,6 +50,12 @@ const brl = (n) =>
 
 const YEAR = 2026;
 const MONTH = 7;
+// Onde procurar o cenario de COLAPSO quando ele nao estiver na competencia deste
+// gate. Nao e "meses quaisquer": e a janela em que existe atribuicao de produto
+// (2026-04 e o primeiro fechamento com produto desdobrado).
+const COMPETENCIAS_VARRIDAS = [
+  [2026, 4], [2026, 5], [2026, 6], [2026, 7], [2026, 8],
+];
 // Os 4 medidos em 24/08: a aba Detalhamento zerou a comissao deles.
 const ZERADOS = ["THAYNARA", "MAYANNE", "ERIVAN", "JAMERSON"];
 
@@ -151,11 +157,58 @@ const ZERADOS = ["THAYNARA", "MAYANNE", "ERIVAN", "JAMERSON"];
     "UMA chave de PMR por promotor DISTINTO",
     `${res.chaves.size} x ${pidsDistintos.size}`
   );
+  // ANTI-VACUIDADE — REESCRITA em 03/09/2026, e a reescrita e o achado.
+  //
+  // Estava assim: `res.promotores > pidsDistintos.size` ("ha COLAPSO real").
+  // Ela REPROVAVA todo dia, e nao por regressao: VARRI as competencias e o
+  // cenario de colapso NAO EXISTE em nenhuma —
+  //     2026-04: 0 buckets  | 2026-05: 0  | 2026-06: 13 -> 13 chaves
+  //     2026-07: 22 -> 22   | 2026-08: 0
+  // Nenhum promotor teve produto em DUAS empresas na mesma competencia, nunca.
+  // Era uma guarda amarrada a um formato de dado que o banco nao produz — ela
+  // nao vigiava nada, so ficava vermelha, e vermelho permanente e ruido que
+  // ensina a ignorar o painel.
+  //
+  // O QUE FICA NO LUGAR, em dois pedacos, porque afrouxar era a saida errada:
+  //   (1) nao-vacuidade DO QUE E PROVAVEL: tem de haver bucket para medir. Sem
+  //       isto o gate passaria feliz num mes sem produto nenhum — que e
+  //       exatamente o mes 2026-08 de hoje.
+  //   (2) uma VARREDURA que continua procurando o colapso em todas as
+  //       competencias. Enquanto nao existir, o gate DIZ que a assercao de
+  //       colapso nao foi exercitada (nao finge que foi). No dia em que existir,
+  //       ele REPROVA cobrando que o gate aponte para aquele mes — que e quando
+  //       a assercao passa a valer alguma coisa.
   ok(
-    res.promotores > pidsDistintos.size,
-    "ANTI-VACUIDADE: ha COLAPSO real (mais buckets que promotores)",
-    `${res.promotores} buckets -> ${pidsDistintos.size} linhas`
+    res.promotores > 0,
+    "ANTI-VACUIDADE: ha bucket de produto para medir nesta competencia",
+    `${res.promotores} buckets`
   );
+  const colapsoAqui = res.promotores > pidsDistintos.size;
+  console.log(
+    colapsoAqui
+      ? `   [colapso] ${MONTH}/${YEAR} TEM colapso — a assercao de 1 chave por promotor foi exercitada de verdade`
+      : `   [colapso] ${MONTH}/${YEAR} NAO tem colapso (1 bucket por promotor): a assercao de colapso ` +
+        `passa por 1:1, nao por conserto. Varrendo as demais competencias...`
+  );
+  if (!colapsoAqui) {
+    const achados = [];
+    for (const [yy, mm] of COMPETENCIAS_VARRIDAS) {
+      if (yy === YEAR && mm === MONTH) continue;
+      try {
+        const r2 = await applyProdutoRepasseAoPmr(sb, { year: yy, month: mm, dryRun: true });
+        const distintos2 = new Set([...r2.chaves].map((k) => k.split("|")[0])).size;
+        console.log(`      ${yy}-${String(mm).padStart(2, "0")}: buckets=${r2.promotores} chaves=${r2.chaves.size}`);
+        if (r2.promotores > distintos2) achados.push(`${yy}-${String(mm).padStart(2, "0")}`);
+      } catch (e) {
+        console.log(`      ${yy}-${String(mm).padStart(2, "0")}: nao mediu (${String(e.message).slice(0, 60)})`);
+      }
+    }
+    ok(
+      achados.length === 0,
+      "o colapso NAO existe em competencia nenhuma (se existir, este gate tem de apontar para ela)",
+      achados.length ? `APONTE O GATE PARA: ${achados.join(", ")}` : "varredura limpa"
+    );
+  }
   let naDona = 0;
   let foraDaDona = 0;
   for (const k of res.chaves) {
