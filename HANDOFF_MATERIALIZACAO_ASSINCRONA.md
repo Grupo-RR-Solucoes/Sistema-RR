@@ -103,19 +103,82 @@ passado verde por vacuidade e ninguem saberia se o revoke funcionava.
 **Portao VERDE**, os 4 lados: 12 assercoes de regra + 7 mutantes, 10 de rota, 10
 da migration, 10 do banco.
 
-### RESIDUO ABERTO: o vintage de 2026-07
+### O vintage de 2026-07 — RECUPERADO em 03/09/2026
 
-A linha `manual` da fila esta com `congelamento_pendente=true` e competencia
-**2026-08** — entao o proximo import de fechamento congela o vintage de agosto.
-**Julho continua devendo e nao tem linha na fila.** Para recuperar:
+Era o residuo desta frente e **esta fechado**. Congelado por
+`POST /api/recebiveis/congelar?competencia=2026-07`, depois de dry-run e da
+medicao do item 3 abaixo.
+
+```json
+{ "snapshot": "2026-07", "competenciaOrigem": "parametro",
+  "linhasGravadas": 146, "linhasProjetadas": 146,
+  "vintageJaExistia": false, "linhasDescartadas": 0,
+  "vintageIncompleto": false, "avisos": [] }
+```
+
+`previsao_snapshot`: **148 -> 294 linhas** (`{"2026-06": 148, "2026-07": 146}`).
+Alvos 2026-07 .. 2038-08; `base_snapshot_prt` = `2026-07` nas 146.
+Sigma `previsto_prt` 656.003,26 | `previsto_avista` 229.791,99 |
+`previsto_diferido` 9.805,59.
+
+Quatro conferencias, todas OK:
+1. 146 linhas com `competencia_snapshot='2026-07'`;
+2. `competenciaOrigem = "parametro"` — o `max(competencia)` da carteira (hoje
+   2026-08) nao foi consultado. **Era isto que tornava julho inalcancavel**;
+3. `previsto_avista` **229.791,99 no alvo 2026-07**, e ZERO linhas com a-vista em
+   qualquer outro alvo — prova de que a competencia chegou tambem ao
+   `buildAvistaProducao`. Sem isso o vintage misturaria dois meses, em definitivo;
+4. vintage **2026-06 INTACTO**: 148 linhas antes e depois, e **0 linhas com
+   qualquer campo diferente** (comparacao campo a campo, incluindo `id` e
+   `data_congelamento`, contra uma leitura da tabela inteira feita ANTES da
+   escrita).
+
+**ARMADILHA de execucao, sem dano:** a 1a tentativa morreu em `ENOENT` ao gravar o
+arquivo do "antes" — caminho MSYS (`/c/Users/...`) vira `C:\c\Users\...` no Node
+do Windows. Como a leitura do "antes" acontece ANTES do congelamento, nada foi
+escrito no banco; conferido (`{"2026-06": 148}`) antes de repetir. Se a ordem
+fosse a inversa, a falha teria acontecido DEPOIS de gravar um vintage write-once,
+sem o "antes" para comparar.
+
+### Item 3 do dry-run — RESOLVIDO, e eu tinha lido errado
+
+Antes de autorizar, o Diego mandou provar a igualdade `previsto_prt` de 2026-07 e
+2026-08 (51.358,22 nos dois, caindo so em 2026-09). Eu tinha escrito que era
+"nenhum contrato com exatamente 1 parcela restante". **Errado.**
+
+A igualdade e **ESTRUTURAL**: `projectPrtAgenda` (`lib/recebiveis/prtAgenda.ts:172`)
+filtra por `parcelasRestantes >= h`, e NAO `> h` — o `> h` era um off-by-one que
+derrubava a ultima parcela, ja corrigido la, com comentario. Logo `h=1` inclui
+todo contrato com `restantes >= 1`, isto e, TODOS os ativos. A igualdade com a
+base vale sempre que nenhum ativo tenha `restantes = 0`.
+
+Medido em `carteira_contrato` 2026-07, `status='ativo'` (9.289 contratos,
+Sigma comissao 51.358,22):
 
 ```
-POST /api/recebiveis/congelar?competencia=2026-07
+restantes = 0 :   0 contratos | Sigma 0,00      <- explica a igualdade
+restantes = 1 :  22 contratos | Sigma 70,71
+restantes = 2 :  42 contratos | Sigma 131,42
+restantes < 0 :   0
 ```
 
-(usar `?dryRun=1` antes para ver o que sairia; `previsao_snapshot` e write-once,
-entao o primeiro congelamento de julho e o definitivo). Conferir depois que o
-resultado volta com `competenciaOrigem: "parametro"`.
+**Os degraus batem ao centavo com as coortes**, o que mata a hipotese de "o
+horizonte soma algo que nao deveria":
+`51.358,22 - 51.287,51 = 70,71` (os 22 de `restantes=1`) e
+`51.287,51 - 51.156,09 = 131,42` (os 42 de `restantes=2`).
+
+E o vintage de **2026-06 ja gravado tem a MESMA forma**: 51.669,43 em 2026-06 e
+em 2026-07 (delta 0,00), caindo so em 2026-08 (-120,78). Nao havia sinal.
+
+Nota de contexto, nao defeito: a base gravada de junho (51.669,43) nao bate com o
+que a carteira de 2026-06 da hoje (51.226,00), porque a carteira foi reconstruida
+inteira em 02/09 e a chegada dos fechamentos de julho e agosto reclassifica
+contratos. E exatamente por isso que o vintage e write-once — ele guarda o que se
+sabia entao.
+
+**Residuo que continua aberto:** a linha `manual` da fila e de **2026-08** com
+`congelamento_pendente=true`, entao o vintage de agosto e congelado pelo proximo
+import de fechamento (ou pela mesma rota com `?competencia=2026-08`).
 
 ### Gates (depois do commit)
 
