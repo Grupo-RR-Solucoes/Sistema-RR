@@ -152,10 +152,57 @@ JARLES -369,47, BIANCA -358,16, JENIFFER -193,15.
 **CONSEQUENCIA ACEITA, e ela e visivel:** `detect_rules_stale` fica **ACESO** em
 2026-07 (`state: STALE`, `stored_fp` `86ccd6ad415ab1c3cf308694db4fee51`,
 `current_fp` `774cea4d3319d6543eaecce2dc44e318`, fingerprint gravada em
-2026-08-30T00:34:32). **Isso NAO e um alarme a apagar.** Ele diz a verdade: a
-regua de hoje produziria um PMR diferente do que esta gravado, e a decisao foi
-manter o gravado. Quem for "consertar" o STALE de julho reconsolidando esta
-retirando R$ 5.225,75 de 20 promotores ja pagos.
+2026-08-30T00:34:32). **Isso NAO e um alarme a apagar** — mas o motivo NAO e o
+que esta secao dizia antes.
+
+> **CORRECAO DE 03/09/2026 — duas coisas que este handoff tratava como UMA.**
+>
+> Eu tinha escrito aqui que o STALE de julho "diz a verdade: a regua de hoje
+> produziria um PMR diferente do que esta gravado". **Isso conflacionava duas
+> coisas independentes, e a medicao separou as duas:**
+>
+> 1. **`detect_rules_stale` hasheia DADO, nunca CODIGO.** Os 8 sub-hashes de
+>    `compute_rules_fingerprint` (migration 20260715_000001) leem TABELAS:
+>    `promoter_share_profile`, `promoter_goal_repasse`, `monthly_targets`,
+>    `j_keys`, `companies` e agregados de `monthly_closing_entries` /
+>    `daily_production_records`. Nenhum deles enxerga uma linha de TypeScript.
+> 2. **Os -R$ 5.225,75 vem de mudanca de CODIGO** (a janela do volume, o
+>    zeramento da chave master, a precedencia do diario), nao de regua editada.
+>
+> Logo **o STALE de julho NAO e o -5.225,75**. Sao dois fatos verdadeiros sobre a
+> mesma competencia, com causas diferentes, e o alarme nao esta apontando para o
+> dinheiro. A decisao de nao reconsolidar continua valendo pelo motivo do numero
+> — mes ja pago —, mas quem ler o STALE esperando encontrar os 5.225,75 atras
+> dele nao vai achar.
+>
+> **MEDIDO (03/09/2026), e e o que sustenta a correcao:** nenhum dos 8 insumos se
+> moveu depois do baseline, nem em julho nem em agosto —
+> `d_src_cash`/`d_src_ins` de 2026-08 tem `max(created_at)` 2026-09-02T14:25:09 e
+> `d_src_ads` 14:45:27, contra baseline 21:09:44; as 5 tabelas de regua tem
+> `max(updated_at)` em 2026-08-25T18:47 **ou antes**. E os baselines mais VELHOS
+> (abril 25/08, junho 27/08) estao **OK** enquanto os mais NOVOS (julho 30/08,
+> agosto 02/09) estao **STALE** — o inverso do que "algo mudou depois" produziria.
+>
+> **HIPOTESE NAO TESTADA, registrada para quem pegar:** `pmr_prom` — o escopo dos
+> sub-hashes 1 a 4 — e lido LIVE de `promoter_monthly_results` dentro da propria
+> funcao. Se o baseline for computado num instante em que o PMR daquela
+> competencia ainda nao esta completo (as linhas `source='bbts'` da ADS entram
+> ~7s depois das `source='fechamento'` da RR), o hash gravado cobre um conjunto
+> de promotores DIFERENTE do que a recomputacao de hoje ve — e o STALE aparece
+> sem que regua nenhuma tenha mudado. A hipotese concorrente, de implementacao
+> dupla JS/PG, esta **DESCARTADA**: `lib/rulesFingerprint.ts` chama a MESMA RPC.
+>
+> **ANOTADO, sem explicacao:** o baseline de 2026-08 tem `computed_at`
+> **2026-09-02T21:09:44**, cerca de **6 horas DEPOIS** dos quatro imports das
+> 14:20-14:25 daquele dia. Alguma coisa reescreveu aquela linha as 21:09 e nao se
+> sabe o que — nenhum import, nenhuma reconsolidacao e nenhuma materializacao
+> esta registrada nesse horario (a materializacao manual daquele dia foi as 20:31
+> e 21:27). Enquanto isso nao for explicado, a hipotese do `pmr_prom` nao pode
+> ser confirmada nem descartada.
+
+Quem for "consertar" o STALE de julho reconsolidando esta, de qualquer modo,
+retirando R$ 5.225,75 de 20 promotores ja pagos — e sem sequer resolver o STALE,
+porque a causa dele nao esta medida.
 
 Refazer a medicao a qualquer momento, sem gravar:
 ```
@@ -164,8 +211,10 @@ COMPETENCIAS=2026-07 TRP_SOURCE=db node -e "require('./scripts/_ts_register.cjs'
 
 **2026-08 tambem esta STALE** (`stored_fp` `45a4f9a431a3fd7c15a1ad95dcecc053`,
 `current_fp` `63faefb962f27c3153e29583946a41d8`, gravada em 2026-09-02T21:09:44).
-E de **classe diferente** da de julho — ver o diag `adcf3da` — e NAO foi tocado
-nesta frente.
+MEDIDO em 03/09/2026: e a **MESMA classe** da de julho, e a nota antiga de que
+seriam classes diferentes nao se sustenta na medicao — em NENHUM dos dois meses
+qualquer insumo do fingerprint se moveu depois do baseline. Ver a correcao na
+secao 2. Nao foi reconsolidado, e nao ha numero de dinheiro medido para agosto.
 
 ---
 
