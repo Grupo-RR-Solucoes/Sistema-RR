@@ -64,6 +64,7 @@ import {
 } from "./insurancePenetration.ts";
 import { baseRepasseAvistaRR, isFaixaTetoAvistaRR } from "./tetoAvistaRR.ts";
 import { detectSpecialAgreementsMesFechado } from "./agreements/specialFechadoAviso.ts";
+import { comissaoDeChaveMaster } from "./master/comissaoChaveMaster.ts";
 
 // Chave master BBTS/ADS — excluída DESTA consolidação (a da RR, via fechamento).
 // A produção da ADS/BBTS tem consolidador próprio: lib/bbtsMonthly.ts (PMR da ADS
@@ -343,12 +344,19 @@ export async function consolidateMonthlyFromClosing(
   const share = await fetchPromoterShareData(supabase, efetivos, year, month, rrCompanyIds);
 
   // Nomes p/ carve-out Aldalene INSS.
+  // + is_master: chave master e BALDE (CNPJ), nao recebe repasse. O cms ja zerava
+  //   na origem (cmsMonthly:268-275); esta consolidacao NAO — dai as 2 linhas de
+  //   2026-04 com R$ 164,04. Ver lib/master/comissaoChaveMaster.ts.
   const nameById = new Map<string, string>();
+  const isMasterById = new Map<string, boolean>();
   {
     const proms = await fetchAllPaged<any>(() =>
-      supabase.from("promoters").select("id, name")
+      supabase.from("promoters").select("id, name, is_master")
     );
-    for (const p of proms) nameById.set(p.id, p.name);
+    for (const p of proms) {
+      nameById.set(p.id, p.name);
+      isMasterById.set(p.id, p.is_master === true);
+    }
   }
 
   // Volume/produção efetivos p/ a escala: CONSOLIDADO (RR+ADS) quando injetado
@@ -530,9 +538,19 @@ export async function consolidateMonthlyFromClosing(
     const fatorSeguro = params.fatorSeguroByPromoter?.get(pid) ?? 1;
     const pisoZerou = fatorCredito === 0 || fatorSeguro === 0;
 
-    const productionCommission = a.avista * fatorCredito;
-    const insuranceCommission = seguroEmpresa * seguroShare * fatorSeguro;
-    const finalCommission = productionCommission + insuranceCommission;
+    // CHAVE MASTER NAO RECEBE COMISSAO. Aplicado por ULTIMO, depois do piso, e
+    // de proposito: master zerado nao e "piso zerou" — o balde nunca teve
+    // repasse a perder, entao `pisoZerou` acima segue dizendo a verdade sobre o
+    // PISO, e o desconto do promotor nao e afetado por uma coisa pela outra.
+    // Producao (a.net), contagem e penetracao ficam INTACTAS: a linha do balde
+    // continua mostrando a producao que existiu; so o repasse e zero.
+    // Ver lib/master/comissaoChaveMaster.ts.
+    const { productionCommission, insuranceCommission, finalCommission } =
+      comissaoDeChaveMaster(
+        isMasterById.get(pid),
+        a.avista * fatorCredito,
+        seguroEmpresa * seguroShare * fatorSeguro
+      );
 
     const t = targetByPromoter.get(pid);
     const targetValue = t ? toNumber(t.meta) : 0;

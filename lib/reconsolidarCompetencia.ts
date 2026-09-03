@@ -52,6 +52,7 @@ import { detectMonthRegime, type MonthRegime } from "./cmsMonthly.ts";
 import { persistRulesFingerprint } from "./rulesFingerprint.ts";
 import { applyProdutoRepasseAoPmr } from "./produtoAssignments.ts";
 import { computeConsorcioGestorPayout } from "./consorcio/gestorPayout.ts";
+import { marcarDescontosNaoAplicadosPorPiso } from "./piso/descontoNaoAplicado.ts";
 import { applyVendaPropriaGestao } from "./gestaoVendaPropria.ts";
 
 type SupabaseLike = SupabaseClient;
@@ -92,6 +93,17 @@ export type ReconsolidacaoResultado = {
     gestor_user_id: string | null;
     total_10: number;
     empresas: number;
+  };
+  /**
+   * Parcelas de desconto que o PISO impediu de acontecer nesta competência.
+   * Só `status`/`notes` de promoter_discounts — nenhum centavo muda de lugar.
+   */
+  desconto_piso?: {
+    marcadas: number;
+    revertidas: number;
+    ja_corretas: number;
+    total_nao_cobrado: number;
+    erro?: string;
   };
   grupo?: any;
 };
@@ -276,6 +288,46 @@ export async function reconsolidarCompetenciaFechada(
     }
   }
 
+  // ---- PISO x DESCONTO — o status para de mentir ----
+  // O PMR acabou de ser escrito, então `piso_zerou` desta competência é o de
+  // agora. As parcelas alcançadas pelo piso viram WAIVED (com marcador em
+  // `notes`), e as que deixaram de ser alcançadas voltam a PENDING. Escreve SÓ
+  // status/notes; nenhum valor muda. Ver lib/piso/descontoNaoAplicado.ts.
+  //
+  // BEST-EFFORT como o fingerprint acima, e pela mesma razão: o ledger já está
+  // gravado e não pode ser derrubado por um rótulo. A diferença é que a falha
+  // NÃO fica muda — vai no resultado, em `desconto_piso.erro`.
+  let descontoPiso: ReconsolidacaoResultado["desconto_piso"];
+  try {
+    const r = await marcarDescontosNaoAplicadosPorPiso(supabase, { year, month, dryRun });
+    descontoPiso = {
+      marcadas: r.marcadas.length,
+      revertidas: r.revertidas.length,
+      ja_corretas: r.ja_corretas,
+      total_nao_cobrado: r.total_nao_cobrado,
+    };
+    if (r.marcadas.length > 0 || r.revertidas.length > 0) {
+      console.log(
+        `[reconsolidar] ${competencia}: desconto x piso — ${r.marcadas.length} marcada(s) ` +
+          `WAIVED, ${r.revertidas.length} revertida(s) a PENDING, ` +
+          `total nao cobrado R$ ${r.total_nao_cobrado.toFixed(2)}${dryRun ? " (dryRun)" : ""}.`
+      );
+    }
+  } catch (e: any) {
+    descontoPiso = {
+      marcadas: 0,
+      revertidas: 0,
+      ja_corretas: 0,
+      total_nao_cobrado: 0,
+      erro: e?.message || String(e),
+    };
+    console.error(
+      `[reconsolidar] ${competencia}: falha ao marcar desconto nao aplicado por piso ` +
+        `(o PMR esta gravado; so o rotulo ficou para tras). Detalhe:`,
+      e
+    );
+  }
+
   return {
     ran: true,
     regime,
@@ -308,6 +360,7 @@ export async function reconsolidarCompetenciaFechada(
       total_10: gestorPayout.total_10,
       empresas: gestorPayout.linhas.length,
     },
+    desconto_piso: descontoPiso,
     grupo,
   };
 }

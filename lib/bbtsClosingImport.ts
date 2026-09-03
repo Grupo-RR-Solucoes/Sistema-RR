@@ -186,6 +186,12 @@ export type BbtsClosingResult = {
   prt_valor: number; // Σ das parcelas PRT do mês
   gravadas: number;
   /**
+   * id da linha de daily_imports criada por ESTE import (null em dryRun ou sem
+   * registros). E por ele que o rastro de pos-import (import_pos_diag) amarra a
+   * foto ao evento — a ADS nao passa por monthly_closing_imports.
+   */
+  daily_import_id: string | null;
+  /**
    * Propostas EXCLUIDAS da gravacao por ja estarem carimbadas em competencia
    * POSTERIOR a esta. Sempre preenchido — a rota recusa com 409 quando nao
    * vazio e sem confirmacao, mas a exclusao acontece SEMPRE, confirmada ou
@@ -383,6 +389,7 @@ export async function importBbtsClosing(
     srcc_resolucoes: { SIM: 0, NAO: 0, NAO_SE_APLICA: 0, indefinidas: 0 },
     com_seguro: 0,
     seguro_only_lines: 0,
+    daily_import_id: null,
     debitos: seguroDebito.map((s) => ({ contrato: String(s.contrato).trim(), valor_seguro: Number(s.valor_seguro) || 0, tipo: s.tipo ?? null })),
     prt_parcelas: 0,
     prt_valor: round2((input.prt ?? []).reduce((a, p) => a + (Number(p.valor_parcela) || 0), 0)),
@@ -717,6 +724,7 @@ export async function importBbtsClosing(
       daily_import_id: log.id,
     });
     result.gravadas = merged.inserted + merged.updated;
+    result.daily_import_id = log.id;
 
     await supabase.from("daily_imports").update({ status: "COMPLETED", rows_count: records.length }).eq("id", log.id);
   }

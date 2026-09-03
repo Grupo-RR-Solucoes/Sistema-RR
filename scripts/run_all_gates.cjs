@@ -348,6 +348,64 @@ const DB_ONLY = process.argv.includes("--db");
 
 const GATES = [
   {
+    arquivo: "scripts/gate_pos_import_diag.cjs",
+    nome: "o rastro do pos-import existe, NAS DUAS rotas de fechamento",
+    modo: "needs-db",
+    motivo:
+      "os blocos de efeito colateral do import engoliam o proprio erro num console.error; " +
+      "num deploy serverless isso morre com a invocacao. Custo medido: a materializacao da " +
+      "carteira PRT falhava desde 2026-07-07 e passou DOIS fechamentos (julho e agosto) sem " +
+      "ninguem ver. TRES lados no mesmo run: (A) a regra de lib/diagnostico/posImportDiag.ts " +
+      "preserva a mensagem CRUA, nao descarta bloco e deriva houve_falha — provado por " +
+      "MUTACAO DO FONTE REAL (scripts/_mutanteTs.cjs), 3 mutantes; (B) a TABELA " +
+      "import_pos_diag existe no banco — sem ela o conserto e INERTE e a ausencia REPROVA de " +
+      "proposito (migration 20260903_000001, aplicada a mao no Studio); (C) AS DUAS rotas " +
+      "gravam, e este lado nasceu de buraco REAL: a 1a versao instrumentou so " +
+      "app/api/import/closing/route.ts e o fechamento da ADS de 02/09/2026 passou sem deixar " +
+      "foto — a ADS entra por .../closing/ads/route.ts e se registra em daily_imports, nao em " +
+      "monthly_closing_imports. O lado C tambem cobra que instrumentar NAO virou engolir: a " +
+      "rota da ADS e fail-loud nos dois blocos, entao o gate exige o `throw e` depois do " +
+      "registro e o registro ANTES do 422 da ancora",
+  },
+  {
+    arquivo: "scripts/gate_desconto_piso.cjs",
+    nome: "piso zerou o repasse => o desconto NAO acontece (e a tela conta igual)",
+    modo: "needs-db-lento",
+    motivo:
+      "LENTO por MEDICAO, nao por escolha: 16,7s, e o peso vem de buildLedgerHealth — o " +
+      "vigia INTEIRO. Pagar esse preco e proposital: e ele que sustenta a assercao que mais " +
+      "importa aqui (a TELA e a REGRA contando o MESMO numero); a alternativa era " +
+      "reimplementar a regra dentro do gate e passar a ter duas respostas para a mesma " +
+      "pergunta. Fora da faixa --db porque ela JA ESTAVA ESTOURADA antes desta frente — " +
+      "medido em 02/09/2026 no commit 8b99513 (origin/main): 130,0s de 90s, com 5 gates " +
+      "vermelhos que nada tem a ver com este trabalho. Nao se engorda banda estourada. Os " +
+      "outros dois portoes desta frente custam 1,4s e 0,9s e ficam na --db. " +
+      "regra do Diego de 20/08/2026: piso zerado nao e `max(0, final - desconto)` — a " +
+      "parcela nao e consumida. Duas coisas podiam apodrecer e o gate cobre as duas: a " +
+      "LEITURA FROUXA do flag (piso_zerou e null em quase todo o historico; `!== false` " +
+      "classificaria o passado inteiro como zerado, mesma armadilha do trp_multi_versao) e " +
+      "DUAS IMPLEMENTACOES (o ledgerHealth contando por conta propria divergiria do que o " +
+      "consolidador marca). O gate amarra ledgerHealth e regra no MESMO numero, recomputado " +
+      "do banco — sem constante de dinheiro congelada — e exige nao-vacuidade (tem de haver " +
+      "piso_zerou=true no banco). 3 mutantes do fonte real, mais a reversibilidade do " +
+      "marcador em `notes`: nao come texto humano, nao empilha, nao toca waiver de gente",
+  },
+  {
+    arquivo: "scripts/gate_master_sem_comissao.cjs",
+    nome: "chave master e balde: nao recebe comissao (e o fossil de 2026-04 nao cresce)",
+    modo: "needs-db",
+    motivo:
+      "cmsMonthly ja zerava a comissao da chave master na origem; closingMonthly NAO — dai " +
+      "2 linhas vivas em 2026-04, source='fechamento', R$ 164,04. TRES lados no mesmo run, " +
+      "porque cada um sozinho passa por engano: (A) a regra zera e le `=== true` estrito " +
+      "(is_master e null na maioria do cadastro), com 3 mutantes do fonte real; (B) o " +
+      "CONSOLIDADOR realmente chama a regra E carrega is_master na consulta — funcao pura " +
+      "sem chamador e decoracao, e este e o lado que apodrece calado; (C) o banco nao " +
+      "piora. A base do fossil e constante CONFERIDA no molde do DESCONHECIDO_BASE do vigia " +
+      "da TRP: os dois lados computados no mesmo run, e crescer REPROVA. Limpar o fossil " +
+      "exige reconsolidar mes fechado (mexe em dinheiro) e e decisao a parte",
+  },
+  {
     arquivo: "scripts/estorno_sem_leitor_gate.cjs",
     nome: "os estornos da aba Seguro tem UM leitor so (nao duplicam)",
     modo: "needs-db",
