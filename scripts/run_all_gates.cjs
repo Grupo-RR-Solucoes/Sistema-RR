@@ -1368,10 +1368,18 @@ const GATES = [
   },
   {
     arquivo: "scripts/check_audit_v9_tables.cjs",
-    nome: "audit_v9: nenhuma das 4 tabelas esvaziou",
+    nome: "audit_v9: as 6 tabelas existem e nenhuma das 4 BASE esvaziou",
     modo: "needs-db",
     motivo:
-      "createClient; count nas 4 audit_v9_* de PRODUCAO. Assercao INVERTIDA em 01/08: vigiava 'ainda nao semeei', agora vigia 'nao pode esvaziar'",
+      "createClient; count nas 6 audit_v9_* de PRODUCAO + a RPC pg_indexes_audit_v9 (migration " +
+      "20260903_000003, aplicada 03/09/2026). Assercao INVERTIDA em 01/08: vigiava 'ainda nao " +
+      "semeei', agora vigia 'nao pode esvaziar'. DE 4 PARA 6 TABELAS em 03/09/2026, e quem " +
+      "descobriu foi o proprio conserto: assim que a RPC passou a MEDIR, ela devolveu indexes de " +
+      "SEIS tabelas — audit_v9_duplicates_quarantine e audit_v9_padrao_d_exclusoes existiam, " +
+      "tinham indice proprio e ninguem checava se sumiam. As duas entram so pela EXISTENCIA, nao " +
+      "pela regra do 'nao pode esvaziar': quarentena de duplicatas e lista de exclusoes VAZIAS " +
+      "sao resultado legitimo, e portao que fica vermelho por boa noticia e a doenca que esta " +
+      "suite acabou de curar. Exits distintos: 3 = mediu e achou menos de 7 indexes; 4 = nao mediu",
   },
   {
     arquivo: "scripts/trp_prazo_min_gate.cjs",

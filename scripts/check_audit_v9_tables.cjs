@@ -3,9 +3,22 @@
  * scripts/check_audit_v9_tables.cjs — validação pós-migration Fase 4.1.
  *
  * Verifica:
- *   1. 4 tabelas audit_v9_* existem (via SELECT em cada uma)
- *   2. 7+ indexes não-PK criados (via RPC se disponível, ou skip com aviso)
- *   3. Nenhuma das 4 tabelas ESVAZIOU (count > 0)
+ *   1. as 6 tabelas audit_v9_* existem (via SELECT em cada uma)
+ *   2. 7+ indexes não-PK criados (via RPC pg_indexes_audit_v9; hoje são 13)
+ *   3. Nenhuma das 4 tabelas BASE ESVAZIOU (count > 0)
+ *
+ * DE 4 PARA 6 TABELAS (03/09/2026). O bloco 1 só conhecia 4, e a RPC de indexes
+ * — assim que passou a medir de verdade — mostrou índices de SEIS tabelas
+ * audit_v9_*. `audit_v9_duplicates_quarantine` e `audit_v9_padrao_d_exclusoes`
+ * existiam, tinham índice próprio e NINGUÉM checava se sumiam.
+ *
+ * MAS ELAS NÃO ENTRAM NA REGRA DO "NÃO PODE ESVAZIAR", e isso é decisão, não
+ * esquecimento: quarentena de duplicatas e lista de exclusões VAZIAS são
+ * resultado legítimo (zero duplicatas é boa notícia). Um gate que fica vermelho
+ * quando a auditoria não achou nada é exatamente a doença que esta suíte acabou
+ * de curar — 4 portões cronicamente vermelhos, nenhum deles apontando defeito.
+ * Para as duas, o que se cobra é EXISTÊNCIA (sumir é sempre defeito) e o count
+ * vai impresso, para quem lê ver o número mudar.
  *
  * ASSERCAO INVERTIDA EM 01/08/2026. Ela nasceu como validacao pos-migration —
  * "as tabelas existem e ainda estao vazias, o seed nao rodou". Depois do seed
@@ -44,12 +57,23 @@ if (!url || !key) {
 }
 const supabase = createClient(url, key, { auth: { persistSession: false } });
 
-const TABELAS = [
+// BASE da auditoria v9: esvaziar QUALQUER uma delas deixa /auditoria sem chão,
+// e em silêncio. São estas que respondem pela regra do "não pode esvaziar".
+const TABELAS_BASE = [
   "audit_v9_avista",
   "audit_v9_enquadramento",
   "audit_v9_prt",
   "audit_v9_reconciliacao",
 ];
+
+// DERIVADAS: quarentena de duplicatas e exclusões do padrão D. Vazias são
+// resultado legítimo — ver o cabeçalho. Cobra-se existência, não conteúdo.
+const TABELAS_DERIVADAS = [
+  "audit_v9_duplicates_quarantine",
+  "audit_v9_padrao_d_exclusoes",
+];
+
+const TABELAS = [...TABELAS_BASE, ...TABELAS_DERIVADAS];
 
 async function checkTabela(t) {
   const { count, error } = await supabase.from(t).select("*", { count: "exact", head: true });
@@ -64,13 +88,21 @@ async function main() {
   console.log("\n=== 1. Tabelas e contagens ===");
   const resultados = [];
   for (const t of TABELAS) resultados.push(await checkTabela(t));
-  for (const r of resultados) {
+  console.log("  -- BASE (nao podem esvaziar):");
+  for (const r of resultados.filter((x) => TABELAS_BASE.includes(x.tabela))) {
     if (r.existe) console.log(`  PASS — ${r.tabela}: count=${r.count} ${r.vazia ? "(vazia)" : "(POPULADA)"}`);
     else console.log(`  FAIL — ${r.tabela}: ${r.erro}`);
   }
+  console.log("  -- DERIVADAS (vazio e resultado legitimo; cobra-se so existencia):");
+  for (const r of resultados.filter((x) => TABELAS_DERIVADAS.includes(x.tabela))) {
+    if (r.existe) console.log(`  PASS — ${r.tabela}: count=${r.count}`);
+    else console.log(`  FAIL — ${r.tabela}: ${r.erro}`);
+  }
   const todasExistem = resultados.every((r) => r.existe);
-  // INVERTIDO: o defeito e ESVAZIAR, nao estar populada.
-  const vazias = resultados.filter((r) => r.vazia === true);
+  // INVERTIDO: o defeito e ESVAZIAR, nao estar populada. E vale SO para as BASE
+  // — ver o cabecalho: reprovar porque a quarentena de duplicatas esta vazia
+  // seria ficar vermelho por boa noticia.
+  const vazias = resultados.filter((r) => r.vazia === true && TABELAS_BASE.includes(r.tabela));
   const nenhumaVazia = vazias.length === 0;
 
   // 2. Indexes (via RPC supabase-js — se RPC não existir, fallback aviso)
@@ -102,27 +134,32 @@ async function main() {
     console.log("    where schemaname='public' and tablename like 'audit_v9_%'");
     console.log("    order by tablename, indexname;");
     console.log("");
-    console.log("  Esperado (12 entradas: 4 PKs + 7 não-PK + 1 unique):");
-    console.log("    audit_v9_avista          | audit_v9_avista_pkey");
-    console.log("    audit_v9_avista          | audit_v9_avista_mes_status_idx");
-    console.log("    audit_v9_avista          | audit_v9_avista_bloco_idx");
-    console.log("    audit_v9_avista          | audit_v9_avista_convenio_idx");
-    console.log("    audit_v9_enquadramento   | audit_v9_enquadramento_pkey");
-    console.log("    audit_v9_enquadramento   | audit_v9_enquadramento_regime_idx");
-    console.log("    audit_v9_prt             | audit_v9_prt_pkey");
-    console.log("    audit_v9_prt             | audit_v9_prt_mes_status_idx");
-    console.log("    audit_v9_prt             | audit_v9_prt_bloco_idx");
-    console.log("    audit_v9_prt             | audit_v9_prt_convenio_idx");
-    console.log("    audit_v9_reconciliacao   | audit_v9_reconciliacao_pkey");
-    console.log("    audit_v9_reconciliacao   | audit_v9_reconciliacao_mes_idx");
-    console.log("    audit_v9_reconciliacao   | audit_v9_reconciliacao_mes_cnpj_key (unique)");
+    // Lista ATUALIZADA em 03/09/2026 pelo que a RPC devolveu de verdade. A
+    // anterior prometia "12 entradas" e listava so as 4 tabelas que o bloco 1
+    // conhecia; sao 13 NAO-PK, em SEIS tabelas — as duas ultimas nao estavam
+    // aqui nem la. Lista escrita a mao envelhece calada: se divergir de novo,
+    // e a RPC que manda.
+    console.log("  Esperado (13 nao-PK, medido em 03/09/2026 pela propria RPC):");
+    console.log("    audit_v9_avista                 | audit_v9_avista_bloco_idx");
+    console.log("    audit_v9_avista                 | audit_v9_avista_convenio_idx");
+    console.log("    audit_v9_avista                 | audit_v9_avista_mes_status_idx");
+    console.log("    audit_v9_duplicates_quarantine  | audit_v9_duplicates_quarantine_contract_idx");
+    console.log("    audit_v9_duplicates_quarantine  | audit_v9_duplicates_quarantine_reason_idx");
+    console.log("    audit_v9_enquadramento          | audit_v9_enquadramento_regime_idx");
+    console.log("    audit_v9_padrao_d_exclusoes     | audit_v9_padrao_d_exclusoes_mes_idx");
+    console.log("    audit_v9_padrao_d_exclusoes     | audit_v9_padrao_d_exclusoes_motivo_idx");
+    console.log("    audit_v9_prt                    | audit_v9_prt_bloco_idx");
+    console.log("    audit_v9_prt                    | audit_v9_prt_convenio_idx");
+    console.log("    audit_v9_prt                    | audit_v9_prt_mes_status_idx");
+    console.log("    audit_v9_reconciliacao          | audit_v9_reconciliacao_mes_cnpj_key (unique)");
+    console.log("    audit_v9_reconciliacao          | audit_v9_reconciliacao_mes_idx");
   }
 
   // 3. Resumo
   console.log("\n=== 3. Resumo ===");
-  console.log(`  4 tabelas existem: ${todasExistem ? "PASS" : "FAIL"}`);
+  console.log(`  ${TABELAS.length} tabelas existem: ${todasExistem ? "PASS" : "FAIL"}`);
   console.log(
-    `  nenhuma tabela ESVAZIOU: ${nenhumaVazia ? "PASS" : "FAIL — " + vazias.map((r) => r.tabela).join(", ") + " sem linhas; a auditoria v9 fica sem base"}`
+    `  nenhuma tabela BASE ESVAZIOU: ${nenhumaVazia ? "PASS" : "FAIL — " + vazias.map((r) => r.tabela).join(", ") + " sem linhas; a auditoria v9 fica sem base"}`
   );
   console.log(
     `  7+ indexes nao-PK: ${
