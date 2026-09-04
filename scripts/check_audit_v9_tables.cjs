@@ -132,7 +132,32 @@ async function main() {
 
   if (!todasExistem) process.exit(1);
   if (!nenhumaVazia) process.exit(2);
-  if (indexesFalha || indexesOk !== true) {
+
+  // MEDIU E ACHOU POUCO != NAO MEDIU. Ate 03/09/2026 os dois casos caiam no
+  // MESMO ramo e saiam com exit 4 imprimindo "REPROVADO PORQUE NAO MEDIU" — de
+  // modo que, no dia em que a RPC existisse e um index estivesse REALMENTE
+  // faltando, o gate acusaria a propria cegueira em vez do defeito, e o achado
+  // de verdade ficaria escondido atras da mensagem errada. Sao exits diferentes
+  // de proposito: 3 = mediu e achou; 4 = nao mediu.
+  if (!indexesFalha && indexesOk !== true) {
+    console.log(`
+  REPROVADO PORQUE MEDIU E ACHOU MENOS DE 7 indexes nao-PK.
+
+  A RPC pg_indexes_audit_v9 respondeu — a cegueira do bloco 2 acabou. O que
+  sobrou e um achado REAL: as tabelas audit_v9_* estao com menos indexes do que
+  a migration que as criou prometeu. Sem eles, /auditoria varre as tabelas
+  inteiras a cada abertura.
+
+  Confira no Studio o que existe e o que falta:
+
+    select tablename, indexname from pg_indexes
+     where schemaname='public' and tablename like 'audit_v9_%'
+     order by tablename, indexname;
+`);
+    process.exit(3);
+  }
+
+  if (indexesFalha) {
     console.log(`
   REPROVADO PORQUE NAO MEDIU, nao porque mediu e achou defeito.
 
@@ -143,7 +168,9 @@ async function main() {
 
   DUAS SAIDAS, as duas deliberadas — escolha uma, nao afrouxe este bloco:
 
-  (a) CRIAR A RPC (o gate passa a medir de verdade). No SQL Editor:
+  (a) CRIAR A RPC (o gate passa a medir de verdade). O SQL ja esta versionado em
+      supabase/migrations/20260903_000003_pg_indexes_audit_v9.sql — aplique-o no
+      Studio. E o mesmo corpo abaixo:
 
         create or replace function public.pg_indexes_audit_v9()
         returns table (tablename text, indexname text)

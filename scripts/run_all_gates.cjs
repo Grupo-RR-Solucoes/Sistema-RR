@@ -1509,7 +1509,7 @@ arquivo: "scripts/gate_projecao_gestor.mts",
 // no mesmo.
 //
 //   npm run gates       self-contained            ~55s    CI
-//   npm run gates:db    needs-db rapido           ~90s    antes do PR
+//   npm run gates:db    needs-db rapido          ~200s    antes do PR (teto 300s)
 //   npm run gates:full  tudo, inclusive os lentos ~11min  antes do merge
 const SELF = GATES.filter((g) => g.modo === "self-contained");
 const DB_RAPIDO = GATES.filter((g) => g.modo === "needs-db");
@@ -1519,7 +1519,38 @@ const aPular = FULL ? [] : GATES.filter((g) => !aRodar.includes(g));
 // TETO DA FAIXA --db. Sem teto ela cresce sozinha ate virar o --full, e ai o
 // problema volta inteiro. Se estourar, FALHA: alguem tem de tirar um gate da
 // faixa ou promove-lo a needs-db-lento.
-const TETO_DB_MS = Number(process.env.GATES_DB_TETO_MS || 90000);
+//
+// 90s -> 300s em 03/09/2026, E O NUMERO TEM MEDICAO ATRAS.
+// ---------------------------------------------------------------------------
+// O teto de 90s foi posto quando a faixa era menor e vinha sendo estourado em
+// TODA medicao registrada desde 03/08/2026 (113,0s; 130,0s; 290,7s; 185,4s;
+// 193,2s). Teto que reprova sempre nao informa nada — e a mesma doenca dos 4
+// gates cronicamente vermelhos que esta frente acabou de curar: vermelho
+// permanente ensina a ignorar o painel.
+//
+// A CONTA, com as quatro medicoes de 03/09/2026 (204,0 / 175,2 / 180,6 / 198,6s):
+//   pior medicao        204,0s
+//   x dispersao de 1,43 — NAO e chute: e a razao 111,7s / 78,0s que as notas
+//                         deste proprio arquivo registram para o MESMO conjunto
+//                         de gates medido no mesmo dia; a variacao e latencia de
+//                         banco, nao codigo.
+//   = 292s              -> arredondado para 300s.
+// Ou seja: a faixa so reprova se crescer ~50% alem do pior dia de hoje.
+//
+// E a soma dos gates E o tempo da faixa (196,3s de gates para 198,6s de faixa na
+// medicao de 03/09): nao ha overhead do runner para cortar. Quem quiser baixar
+// este numero tem de tirar gate, nao afinar o runner.
+const TETO_DB_MS = Number(process.env.GATES_DB_TETO_MS || 300000);
+
+// TETO POR GATE, novo em 03/09/2026. O escalar da faixa NAO distingue "a faixa
+// cresceu" de "UM gate ficou lento", e e o segundo caso que sempre foi o
+// problema aqui — em 30/08 um unico gate de 91,3s respondia por 65% da faixa.
+// Com 4 gates segurando 51% do tempo hoje, o total pode ficar dentro dos 300s
+// enquanto um deles dobra sozinho, sem ninguem ver.
+// 45s = 1,37x o maior de hoje (32,9s, `reatribuicao manual`). Folga suficiente
+// para a dispersao de latencia acima e apertado o bastante para pegar um gate
+// que dobre.
+const TETO_GATE_MS = Number(process.env.GATES_GATE_TETO_MS || 45000);
 
 const linha = (c) => c.repeat(74);
 console.log(linha("="));
@@ -1819,6 +1850,26 @@ if (DB_ONLY) {
     for (const r of ordenados.slice(0, 3)) {
       console.log("            " + ((r.ms || 0) / 1000).toFixed(1) + "s  " + r.nome);
     }
+  }
+
+  // TETO POR GATE. Cobrado separado do da faixa de proposito: um gate que dobra
+  // sozinho cabe folgado dentro do teto do total e nao apareceria ali.
+  const gordos = resultados.filter((r) => (r.ms || 0) > TETO_GATE_MS);
+  console.log(
+    "  " + (gordos.length === 0 ? "PASSOU " : "FALHOU ") + " | teto POR GATE da faixa --db: " +
+    (gordos.length === 0
+      ? "o mais lento tem " +
+        (Math.max(0, ...resultados.map((r) => r.ms || 0)) / 1000).toFixed(1) +
+        "s de " + (TETO_GATE_MS / 1000) + "s"
+      : gordos.length + " gate(s) acima de " + (TETO_GATE_MS / 1000) + "s")
+  );
+  if (gordos.length > 0) {
+    tetoEstourou = true;
+    for (const r of gordos.sort((a, b) => (b.ms || 0) - (a.ms || 0))) {
+      console.log("            " + ((r.ms || 0) / 1000).toFixed(1) + "s  " + r.nome);
+    }
+    console.log("          Um gate sozinho passou do teto individual. Ou ele emagrece,");
+    console.log("          ou vira needs-db-lento — a faixa nao e o lugar de gate gordo.");
   }
 }
 
